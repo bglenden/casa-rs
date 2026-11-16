@@ -186,17 +186,47 @@ impl ImageInfo {
 
     /// Deserializes image info from a casacore-compatible keyword record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, ImageError> {
-        let beam_set = if let Some(Value::Record(beam_rec)) = rec.get("perplanebeams") {
-            ImageBeamSet::from_record(beam_rec)?
-        } else if let Some(Value::Record(beam_rec)) = rec.get("restoringbeam") {
-            ImageBeamSet::new(GaussianBeam::from_record(beam_rec)?)
-        } else {
-            ImageBeamSet::default()
+        let single = match rec.get("restoringbeam") {
+            Some(Value::Record(beam_rec)) => {
+                let beam = GaussianBeam::from_record(beam_rec)?;
+                if beam.is_null() {
+                    return Err(ImageError::InvalidMetadata(
+                        "Beam is null and therefore invalid".into(),
+                    ));
+                }
+                Some(beam)
+            }
+            Some(_) => {
+                return Err(ImageError::InvalidMetadata(
+                    "Invalid restoring beam record".into(),
+                ));
+            }
+            None => None,
+        };
+        let beam_set = match rec.get("perplanebeams") {
+            Some(Value::Record(beam_rec)) => ImageBeamSet::from_record(beam_rec)?,
+            Some(_) => {
+                return Err(ImageError::InvalidMetadata(
+                    "Invalid per-plane beam record".into(),
+                ));
+            }
+            None => single.map_or_else(ImageBeamSet::default, ImageBeamSet::new),
         };
 
+        // ImageInfo::fromRecord uses ImageInfo::imageType, which maps an
+        // unrecognized spelling (including an empty one) to Intensity.
         let image_type = match rec.get("imagetype") {
-            Some(Value::Scalar(ScalarValue::String(s))) => s.parse()?,
-            _ => ImageType::Undefined,
+            Some(Value::Scalar(ScalarValue::String(s))) => s
+                .parse::<ImageType>()
+                .ok()
+                .filter(|kind| kind.to_string().eq_ignore_ascii_case(s))
+                .unwrap_or(ImageType::Intensity),
+            None => ImageType::Intensity,
+            Some(_) => {
+                return Err(ImageError::InvalidMetadata(
+                    "incorrect data type for imageinfo.imagetype".into(),
+                ));
+            }
         };
 
         let object_name = match rec.get("objectname") {
@@ -245,6 +275,13 @@ mod tests {
             ImageType::VelocityDispersion
         );
         assert!("Garbage".parse::<ImageType>().is_err());
+    }
+
+    #[test]
+    fn record_rejects_a_non_string_image_type_as_casacore_does() {
+        let mut record = RecordValue::default();
+        record.upsert("imagetype", Value::Scalar(ScalarValue::Int32(1)));
+        assert!(ImageInfo::from_record(&record).is_err());
     }
 
     #[test]

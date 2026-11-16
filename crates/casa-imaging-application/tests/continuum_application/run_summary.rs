@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The run summary for each way a run ends (plan section 8.3, the R3
-//! replan of #658): a completed run records every phase with its memory; a
+//! The run summary for each way a run ends (#658): a completed run
+//! records every phase with its memory; a
 //! run that fails records the phase that failed last, between its cycles,
 //! while publishing or before, with what it did and published until then;
 //! and a cancelled run is recorded as cancelled.
@@ -316,6 +316,31 @@ fn a_preparation_failure_records_the_device_the_request_resolved_to() {
     assert_the_last_phase_failed(&summary);
     assert_eq!(phase_names(&summary), vec!["preparation"]);
     assert_eq!(summary["backend"], "metal");
+}
+
+#[test]
+fn an_unreadable_outlier_file_still_records_a_failed_preparation() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let mut imaging = request(
+        &measurement_set,
+        &root.path().join("new"),
+        json!({ "niter": 0 }),
+    );
+    imaging.outlierfile = Some(root.path().join("absent.outliers"));
+    let path = root.path().join("failed.summary.json");
+    let error =
+        casa_imaging_application::execute(&imaging, summarised(&path, ResourcePolicy::Balanced))
+            .err()
+            .expect("missing outlier file");
+    assert!(
+        matches!(error, ApplicationDispatchError::Preparation(_)),
+        "{error}"
+    );
+    assert_the_last_phase_failed(&read_summary(&path));
+    assert!(error.to_string().contains("outlier file"), "{error}");
+    assert!(!root.path().join("new.model").exists());
 }
 
 #[test]

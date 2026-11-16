@@ -14,6 +14,7 @@ use casa_types::measures::position_to_record;
 use casa_types::measures::{
     MeasFrame, direction_from_record, epoch_from_record, position_from_record,
 };
+use casa_types::quanta::Unit;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
@@ -22,6 +23,7 @@ use crate::record_utils::{
     get_optional_i32, get_optional_string, get_optional_vec_f64, get_optional_vec_string,
     get_required_f64, get_required_vec_f64,
 };
+use crate::tabular::{TabularEdit, edit_table};
 
 #[derive(Debug, Clone)]
 enum SpectralMapping {
@@ -37,6 +39,26 @@ enum SpectralMapping {
         cdelt: f64,
         crpix: f64,
     },
+}
+
+/// Index of casacore's nearest listed rest frequency (first on ties).
+pub(crate) fn closest_rest_frequency(values: &[f64], target: f64) -> Option<usize> {
+    values
+        .iter()
+        .copied()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (a - target).abs().total_cmp(&(b - target).abs()))
+        .map(|(index, _)| index)
+}
+
+fn frequency_unit_scale(unit: &str) -> Option<f64> {
+    if unit == "Hz" {
+        return Some(1.0);
+    }
+    let unit = Unit::new(unit).ok()?;
+    let hz = Unit::new("Hz").ok()?;
+    let scale = unit.val().factor / hz.val().factor;
+    (unit.conformant(&hz) && scale.is_normal() && scale > 0.0).then_some(scale)
 }
 
 #[derive(Debug, Clone)]
@@ -57,16 +79,25 @@ struct SpectralConversion {
 pub struct SpectralCoordinate {
     /// The velocity reference frame (LSRK, BARY, TOPO, etc.).
     frequency_ref: FrequencyRef,
+    /// Whether the record declares no frame: C++ `MFrequency::Undefined`,
+    /// which CASA writes for a `specmode='cubedata'` image. Its frequencies
+    /// are the data's as observed, and arithmetic treats them as `frequency_ref`.
+    undefined_frame: bool,
     /// Optional CASA conversion-layer state for world-coordinate display.
     conversion: Option<SpectralConversion>,
-    /// The rest frequency in Hz (used for velocity conversions).
+    /// Active rest frequency (Hz for new coordinates, stored unit on restore).
     rest_frequency: f64,
+    /// Every rest frequency the coordinate lists, the active one among them
+    /// (C++ `restFrequencies()`).
+    rest_frequencies: Vec<f64>,
     /// Pixel-to-world mapping state.
     mapping: SpectralMapping,
     /// The world axis name.
     name: String,
     /// The world axis unit string.
     unit: String,
+    /// The stored unit's scale to Hz, if it is a supported frequency unit.
+    unit_scale_hz: Option<f64>,
 }
 
 impl SpectralCoordinate {
@@ -86,8 +117,10 @@ impl SpectralCoordinate {
     ) -> Self {
         Self {
             frequency_ref,
+            undefined_frame: frequency_ref == FrequencyRef::Undefined,
             conversion: None,
             rest_frequency,
+            rest_frequencies: vec![rest_frequency],
             mapping: SpectralMapping::Linear {
                 crval,
                 cdelt,
@@ -95,6 +128,7 @@ impl SpectralCoordinate {
             },
             name: "Frequency".into(),
             unit: "Hz".into(),
+            unit_scale_hz: Some(1.0),
         }
     }
 
@@ -112,16 +146,18 @@ impl SpectralCoordinate {
         crpix: f64,
         rest_frequency: f64,
     ) -> Result<Self, CoordinateError> {
-        if pixel_values.len() != world_values.len() || pixel_values.len() < 2 {
+        if pixel_values.len() != world_values.len() || pixel_values.is_empty() {
             return Err(CoordinateError::InvalidRecord(
-                "tabular spectral coordinates require matching pixel/world tables with at least 2 entries"
+                "tabular spectral coordinates require matching pixel/world tables with at least one entry"
                     .into(),
             ));
         }
         Ok(Self {
             frequency_ref,
+            undefined_frame: frequency_ref == FrequencyRef::Undefined,
             conversion: None,
             rest_frequency,
+            rest_frequencies: vec![rest_frequency],
             mapping: SpectralMapping::Tabular {
                 pixel_values,
                 world_values,
@@ -131,13 +167,196 @@ impl SpectralCoordinate {
             },
             name: "Frequency".into(),
             unit: "Hz".into(),
+            unit_scale_hz: Some(1.0),
         })
     }
 
     /// Sets the world axis unit string. Returns `self` for chaining.
     pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
-        self.unit = unit.into();
+        let unit = unit.into();
+        self.unit_scale_hz = frequency_unit_scale(&unit);
+        self.unit = unit;
         self
+    }
+
+    /// Convert a value in the coordinate's stored frequency unit to Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored unit is not a supported frequency unit.
+    pub fn value_in_hz(&self, value: f64) -> Result<f64, CoordinateError> {
+        let scale = self.unit_scale_hz.ok_or_else(|| {
+            CoordinateError::InvalidRecord(format!(
+                "invalid spectral frequency unit {:?}",
+                self.unit
+            ))
+        })?;
+        Ok(value * scale)
+    }
+
+    /// Convert a frequency in Hz to the coordinate's stored unit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored unit is not a supported frequency unit.
+    pub fn value_from_hz(&self, value: f64) -> Result<f64, CoordinateError> {
+        let scale = self.unit_scale_hz.ok_or_else(|| {
+            CoordinateError::InvalidRecord(format!(
+                "invalid spectral frequency unit {:?}",
+                self.unit
+            ))
+        })?;
+        Ok(value / scale)
+    }
+
+    /// Return the active rest frequency in Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored unit is not a supported frequency unit.
+    pub fn rest_frequency_hz(&self) -> Result<f64, CoordinateError> {
+        self.value_in_hz(self.rest_frequency)
+    }
+
+    /// Return the world-frame frequency at a pixel, in Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the unit or pixel-to-world conversion is invalid.
+    pub fn world_frequency_hz(&self, pixel: f64) -> Result<f64, CoordinateError> {
+        self.value_in_hz(self.to_world(&[pixel])?[0])
+    }
+
+    /// Rebuild a tabular spectral record for a unit-stride image section.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored coordinate or lookup table is invalid.
+    pub fn subimage_tabular_record(
+        record: &mut RecordValue,
+        start: usize,
+        length: usize,
+    ) -> Result<bool, CoordinateError> {
+        let Some(Value::Record(table)) = record.get("tabular") else {
+            return Ok(false);
+        };
+        let table_unit = get_optional_vec_string(table, "units")
+            .and_then(|units| units.into_iter().next())
+            .unwrap_or_else(|| "Hz".into());
+        let coordinate = Self::from_record(record)?;
+        let SpectralMapping::Tabular {
+            pixel_values,
+            world_values,
+            ..
+        } = &coordinate.mapping
+        else {
+            return Ok(false);
+        };
+        let factor = coordinate
+            .unit_scale_hz
+            .ok_or_else(|| CoordinateError::InvalidRecord("invalid spectral unit".into()))?
+            / frequency_unit_scale(&table_unit).ok_or_else(|| {
+                CoordinateError::InvalidRecord("invalid tabular spectral unit".into())
+            })?;
+        let count = if world_values.len() == 1 {
+            1
+        } else {
+            length.max(2)
+        };
+        let values = (0..count)
+            .map(|pixel| {
+                interpolate(pixel_values, world_values, (start + pixel) as f64)
+                    .map(|world| world * factor)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let increment = (values[count - 1] - values[0]) / (count - 1).max(1) as f64;
+        let Some(Value::Record(table)) = record.get_mut("tabular") else {
+            unreachable!()
+        };
+        table.upsert(
+            "crval",
+            Value::Array(ArrayValue::from_f64_vec(vec![values[0]])),
+        );
+        table.upsert(
+            "cdelt",
+            Value::Array(ArrayValue::from_f64_vec(vec![increment])),
+        );
+        table.upsert("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0])));
+        table.upsert(
+            "pixelvalues",
+            Value::Array(ArrayValue::from_f64_vec(
+                (0..count).map(|i| i as f64).collect(),
+            )),
+        );
+        table.upsert(
+            "worldvalues",
+            Value::Array(ArrayValue::from_f64_vec(values)),
+        );
+        Ok(true)
+    }
+
+    /// Return the spectral increment in the world frame, expressed in Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the unit or reference-frame conversion is invalid.
+    pub fn world_increment_hz(&self) -> Result<f64, CoordinateError> {
+        self.value_in_hz(self.convert_native_to_world(self.increment()[0])?)
+    }
+
+    /// Linear FITS frequency axis `(reference pixel, reference Hz, increment Hz)`.
+    ///
+    /// Casacore represents a non-linear table in FITS by the line through
+    /// its first two sampled frequencies, anchored at the first pixel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the unit or pixel-to-world conversion is invalid.
+    pub fn fits_linearized_axis_hz(&self) -> Result<(f64, f64, f64), CoordinateError> {
+        if let SpectralMapping::Tabular { pixel_values, .. } = &self.mapping {
+            let first = self.world_frequency_hz(pixel_values[0])?;
+            let second = self.world_frequency_hz(pixel_values[1])?;
+            Ok((pixel_values[0], first, second - first))
+        } else {
+            let pixel = self.reference_pixel()[0];
+            Ok((
+                pixel,
+                self.world_frequency_hz(pixel)?,
+                self.world_increment_hz()?,
+            ))
+        }
+    }
+
+    /// Apply a tabular coordinate edit and canonicalize the resulting table
+    /// as casacore does when it saves and restores a spectral coordinate.
+    pub(crate) fn edit_tabular(&mut self, edit: TabularEdit) -> Result<f64, CoordinateError> {
+        let SpectralMapping::Tabular {
+            pixel_values,
+            world_values,
+            crval,
+            cdelt,
+            crpix,
+        } = &mut self.mapping
+        else {
+            return Err(CoordinateError::InvalidRecord(
+                "spectral coordinate is not tabular".into(),
+            ));
+        };
+        let updated = edit_table(pixel_values, world_values, *crval, *cdelt, *crpix, edit)?;
+        *crval = updated.values[0];
+        *cdelt = updated.increment;
+        *crpix = pixel_values[0];
+        *world_values = updated.values;
+        Ok(updated.old)
+    }
+
+    /// Return the pixel for a world-frame frequency expressed in Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the unit or world-to-pixel conversion is invalid.
+    pub fn pixel_at_frequency_hz(&self, frequency_hz: f64) -> Result<f64, CoordinateError> {
+        Ok(self.to_pixel(&[self.value_from_hz(frequency_hz)?])?[0])
     }
 
     /// Sets the CASA conversion-layer frame used for displayed world coordinates.
@@ -149,6 +368,21 @@ impl SpectralCoordinate {
         self
     }
 
+    /// Declares no frame for the axis, as CASA's `MFrequency::Undefined`
+    /// does for a `specmode='cubedata'` image: the record's `system` reads
+    /// `"Undefined"`, while frequencies keep meaning those of
+    /// [`Self::frequency_ref`]. Returns `self` for chaining.
+    pub fn with_undefined_frame(mut self) -> Self {
+        self.undefined_frame = true;
+        self
+    }
+
+    /// Whether the axis declares no frame (C++ `MFrequency::Undefined`); see
+    /// [`Self::with_undefined_frame`].
+    pub fn has_undefined_frame(&self) -> bool {
+        self.undefined_frame
+    }
+
     /// Sets the world axis name. Returns `self` for chaining.
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -158,6 +392,15 @@ impl SpectralCoordinate {
     /// Returns the velocity reference frame.
     pub fn frequency_ref(&self) -> FrequencyRef {
         self.frequency_ref
+    }
+
+    /// Whether the native pixel-to-frequency mapping uses FITS linear parameters.
+    ///
+    /// Returns `false` for an explicit spectral lookup table, even when its
+    /// reference value, pixel and increment equal those of a linear coordinate.
+    /// This describes the native mapping before optional reference-frame conversion.
+    pub fn has_linear_mapping(&self) -> bool {
+        matches!(self.mapping, SpectralMapping::Linear { .. })
     }
 
     /// Returns the CASA conversion-layer frequency frame, if configured.
@@ -179,20 +422,42 @@ impl SpectralCoordinate {
             .unwrap_or(self.frequency_ref)
     }
 
-    /// Returns the rest frequency in Hz.
+    /// Returns the active rest frequency. New coordinates take this value in
+    /// Hz; a coordinate restored from a CASA record retains its stored world
+    /// unit, which may differ from Hz (#977).
     pub fn rest_frequency(&self) -> f64 {
         self.rest_frequency
     }
 
+    /// Sets the rest frequencies the coordinate lists, the first active,
+    /// as C++ `setRestFrequencies(frequencies, 0)` does. An empty list
+    /// leaves the coordinate as it is. Returns `self` for chaining.
+    pub fn with_rest_frequencies(mut self, frequencies: Vec<f64>) -> Self {
+        if let Some(&active) = frequencies.first() {
+            self.rest_frequency = active;
+            self.rest_frequencies = frequencies;
+        }
+        self
+    }
+
+    /// Returns every listed rest frequency in the same unit as
+    /// [`Self::rest_frequency`] (C++ `restFrequencies()`).
+    pub fn rest_frequencies(&self) -> &[f64] {
+        &self.rest_frequencies
+    }
+
     /// Reconstructs a spectral coordinate from a serialized record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        let undefined_frame;
         let frequency_ref = if let Some(name) =
             get_optional_string(rec, "frequency_ref").or_else(|| get_optional_string(rec, "system"))
         {
+            undefined_frame = name.eq_ignore_ascii_case("Undefined");
             parse_frequency_ref_name(&name).ok_or_else(|| {
                 CoordinateError::InvalidRecord(format!("invalid spectral frequency_ref: {name}"))
             })?
         } else if let Some(code) = get_optional_i32(rec, "frequency_ref") {
+            undefined_frame = code == FrequencyRef::Undefined.casacore_code();
             FrequencyRef::from_casacore_code(code).ok_or_else(|| {
                 CoordinateError::InvalidRecord(format!(
                     "invalid spectral frequency_ref code {code}"
@@ -217,9 +482,9 @@ impl SpectralCoordinate {
             parameter_record = tabular;
         }
 
-        let crval = get_required_vec_f64(parameter_record, "crval")?;
-        let cdelt = get_required_vec_f64(parameter_record, "cdelt")?;
-        let crpix = get_required_vec_f64(parameter_record, "crpix")?;
+        let mut crval = get_required_vec_f64(parameter_record, "crval")?;
+        let mut cdelt = get_required_vec_f64(parameter_record, "cdelt")?;
+        let mut crpix = get_required_vec_f64(parameter_record, "crpix")?;
         if crval.len() != 1 || cdelt.len() != 1 || crpix.len() != 1 {
             return Err(CoordinateError::InvalidRecord(
                 "spectral coordinate expects single-valued crval/cdelt/crpix".into(),
@@ -227,7 +492,54 @@ impl SpectralCoordinate {
         }
 
         let rest_frequency = get_required_f64(rec, "restfreq")?;
-        let mut coord = if let Some((pixel_values, world_values)) = lookup_tables {
+        if !rest_frequency.is_finite() || rest_frequency < 0.0 {
+            return Err(CoordinateError::InvalidRecord(
+                "invalid rest frequency".into(),
+            ));
+        }
+        let axis_unit = get_optional_string(rec, "unit").or_else(|| {
+            get_optional_vec_string(parameter_record, "units")
+                .and_then(|units| units.into_iter().next())
+        });
+        let mut coord = if let Some((mut pixel_values, mut world_values)) = lookup_tables {
+            // Casacore's nested tabular coordinate is in Hz, while the
+            // surrounding spectral coordinate may display another unit.
+            let table_unit = get_optional_vec_string(parameter_record, "units")
+                .and_then(|units| units.into_iter().next())
+                .unwrap_or_else(|| "Hz".into());
+            let from = frequency_unit_scale(&table_unit).ok_or_else(|| {
+                CoordinateError::InvalidRecord(format!(
+                    "invalid tabular spectral unit {table_unit:?}"
+                ))
+            })?;
+            let to = frequency_unit_scale(axis_unit.as_deref().unwrap_or("Hz"))
+                .ok_or_else(|| CoordinateError::InvalidRecord("invalid spectral unit".into()))?;
+            let factor = from / to;
+            crval[0] *= factor;
+            cdelt[0] *= factor;
+            for value in &mut world_values {
+                *value *= factor;
+            }
+            if pixel_values.len() >= 2 && world_values.len() == pixel_values.len() {
+                let last = pixel_values.len() - 1;
+                if pixel_values[last] == pixel_values[0] {
+                    return Err(CoordinateError::InvalidRecord(
+                        "tabular spectral pixel endpoints coincide".into(),
+                    ));
+                }
+                // Casacore rebuilds a spectral lookup with consecutive
+                // channel indices, then restores the table's reference pixel.
+                let original_reference_pixel = pixel_values[0];
+                crval[0] = world_values[0];
+                cdelt[0] = (world_values[last] - world_values[0]) / last as f64;
+                crpix[0] = original_reference_pixel;
+                for (index, (pixel, world)) in
+                    pixel_values.iter_mut().zip(&mut world_values).enumerate()
+                {
+                    *pixel = index as f64;
+                    *world -= cdelt[0] * original_reference_pixel;
+                }
+            }
             Self::from_tabular(
                 frequency_ref,
                 pixel_values,
@@ -246,31 +558,46 @@ impl SpectralCoordinate {
         }) {
             coord = coord.with_name(name);
         }
-        if let Some(unit) = get_optional_string(rec, "unit").or_else(|| {
-            get_optional_vec_string(parameter_record, "units")
-                .and_then(|units| units.into_iter().next())
-        }) {
+        if let Some(unit) = axis_unit {
             coord = coord.with_unit(unit);
         }
         if let Some(conversion) = parse_conversion(rec) {
             coord = coord.with_conversion(conversion.frequency_ref, conversion.frame);
+        }
+        coord.undefined_frame = undefined_frame;
+        // C++ `restoreRestFrequencies` clamps the optional list and selects
+        // the listed frequency nearest the saved `restfreq` selector.
+        if let Some(field) = rec.get("restfreqs") {
+            if matches!(field, Value::Array(array) if array.shape().len() != 1) {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid rest frequency list".into(),
+                ));
+            }
+            let list = get_optional_vec_f64(rec, "restfreqs").ok_or_else(|| {
+                CoordinateError::InvalidRecord("invalid rest frequency list".into())
+            })?;
+            if list.is_empty() || list.iter().any(|value| !value.is_finite()) {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid rest frequency list".into(),
+                ));
+            }
+            coord.rest_frequencies = list.into_iter().map(|value| value.max(0.0)).collect();
+            if let Some(index) = closest_rest_frequency(&coord.rest_frequencies, rest_frequency) {
+                coord.rest_frequency = coord.rest_frequencies[index];
+            }
         }
         Ok(coord)
     }
 }
 
 fn parse_frequency_ref_name(name: &str) -> Option<FrequencyRef> {
-    FrequencyRef::from_str(name).ok().or_else(|| {
-        if name.eq_ignore_ascii_case("Undefined") {
-            // CASA `specmode='cubedata'` serializes the spectral coordinate with
-            // `system="Undefined"` while still writing a valid frequency axis.
-            // Treat that form as a native-frequency axis so the coordinate is
-            // preserved on reopen instead of being dropped entirely.
-            Some(FrequencyRef::TOPO)
-        } else {
-            None
-        }
-    })
+    if name.eq_ignore_ascii_case("Undefined") {
+        // CASA `specmode='cubedata'` serializes a valid native-frequency
+        // axis with `system="Undefined"`; retain its established handling.
+        Some(FrequencyRef::TOPO)
+    } else {
+        FrequencyRef::from_str(name).ok()
+    }
 }
 
 impl Coordinate for SpectralCoordinate {
@@ -372,12 +699,22 @@ impl Coordinate for SpectralCoordinate {
 }
 
 impl SpectralCoordinate {
+    /// The record's `system`: the frame, or `"Undefined"` for an axis that
+    /// declares none.
+    fn system_name(&self) -> &'static str {
+        if self.undefined_frame {
+            "Undefined"
+        } else {
+            self.frequency_ref.as_str()
+        }
+    }
+
     pub(crate) fn to_record(&self) -> RecordValue {
         let mut rec = RecordValue::default();
         rec.upsert("version", Value::Scalar(ScalarValue::Int32(2)));
         rec.upsert(
             "system",
-            Value::Scalar(ScalarValue::String(self.frequency_ref.as_str().into())),
+            Value::Scalar(ScalarValue::String(self.system_name().into())),
         );
         rec.upsert(
             "restfreq",
@@ -385,7 +722,7 @@ impl SpectralCoordinate {
         );
         rec.upsert(
             "restfreqs",
-            Value::Array(ArrayValue::from_f64_vec(vec![self.rest_frequency])),
+            Value::Array(ArrayValue::from_f64_vec(self.rest_frequencies.clone())),
         );
         rec.upsert("velType", Value::Scalar(ScalarValue::Int32(0)));
         rec.upsert("nativeType", Value::Scalar(ScalarValue::Int32(0)));
@@ -425,14 +762,15 @@ impl SpectralCoordinate {
                 cdelt,
                 crpix,
             } => {
+                let to_hz = self.unit_scale_hz.unwrap_or(1.0);
                 let mut tabular = RecordValue::default();
                 tabular.upsert(
                     "crval",
-                    Value::Array(ArrayValue::from_f64_vec(vec![*crval])),
+                    Value::Array(ArrayValue::from_f64_vec(vec![*crval * to_hz])),
                 );
                 tabular.upsert(
                     "cdelt",
-                    Value::Array(ArrayValue::from_f64_vec(vec![*cdelt])),
+                    Value::Array(ArrayValue::from_f64_vec(vec![*cdelt * to_hz])),
                 );
                 tabular.upsert(
                     "crpix",
@@ -445,7 +783,7 @@ impl SpectralCoordinate {
                 );
                 tabular.upsert(
                     "units",
-                    Value::Array(ArrayValue::from_string_vec(vec![self.unit.clone()])),
+                    Value::Array(ArrayValue::from_string_vec(vec!["Hz".into()])),
                 );
                 tabular.upsert(
                     "pixelvalues",
@@ -453,7 +791,9 @@ impl SpectralCoordinate {
                 );
                 tabular.upsert(
                     "worldvalues",
-                    Value::Array(ArrayValue::from_f64_vec(world_values.clone())),
+                    Value::Array(ArrayValue::from_f64_vec(
+                        world_values.iter().map(|value| value * to_hz).collect(),
+                    )),
                 );
                 rec.upsert("tabular", Value::Record(tabular));
             }
@@ -484,11 +824,12 @@ impl SpectralCoordinate {
 }
 
 impl SpectralCoordinate {
-    fn convert_native_to_world(&self, native_hz: f64) -> Result<f64, CoordinateError> {
+    fn convert_native_to_world(&self, native: f64) -> Result<f64, CoordinateError> {
         let Some(conversion) = &self.conversion else {
-            return Ok(native_hz);
+            return Ok(native);
         };
-        MFrequency::new(native_hz, self.frequency_ref)
+        let native_hz = self.value_in_hz(native)?;
+        let converted_hz = MFrequency::new(native_hz, self.frequency_ref)
             .convert_to(conversion.frequency_ref, &conversion.frame)
             .map(|frequency| frequency.hz())
             .map_err(|err| {
@@ -496,14 +837,16 @@ impl SpectralCoordinate {
                     "spectral frame conversion {} -> {} failed: {err}",
                     self.frequency_ref, conversion.frequency_ref
                 ))
-            })
+            })?;
+        self.value_from_hz(converted_hz)
     }
 
-    fn convert_world_to_native(&self, world_hz: f64) -> Result<f64, CoordinateError> {
+    fn convert_world_to_native(&self, world: f64) -> Result<f64, CoordinateError> {
         let Some(conversion) = &self.conversion else {
-            return Ok(world_hz);
+            return Ok(world);
         };
-        MFrequency::new(world_hz, conversion.frequency_ref)
+        let world_hz = self.value_in_hz(world)?;
+        let converted_hz = MFrequency::new(world_hz, conversion.frequency_ref)
             .convert_to(self.frequency_ref, &conversion.frame)
             .map(|frequency| frequency.hz())
             .map_err(|err| {
@@ -511,7 +854,8 @@ impl SpectralCoordinate {
                     "spectral frame conversion {} -> {} failed: {err}",
                     conversion.frequency_ref, self.frequency_ref
                 ))
-            })
+            })?;
+        self.value_from_hz(converted_hz)
     }
 }
 
@@ -520,6 +864,12 @@ fn parse_conversion(rec: &RecordValue) -> Option<SpectralConversion> {
         return None;
     };
     let target = FrequencyRef::from_str(&get_optional_string(conversion, "system")?).ok()?;
+    // An undefined conversion frame is a declaration, not a physical
+    // conversion. It was ignored before Undefined became a FrequencyRef;
+    // preserve the native coordinate rather than routing TOPO to Undefined.
+    if target == FrequencyRef::Undefined {
+        return None;
+    }
     let Value::Record(direction_rec) = conversion.get("direction")? else {
         return None;
     };
@@ -543,12 +893,16 @@ fn parse_conversion(rec: &RecordValue) -> Option<SpectralConversion> {
 
 fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> Result<f64, CoordinateError> {
     let n = xs.len();
-    if n < 2 || ys.len() != n {
+    if n == 0 || ys.len() != n {
         return Err(CoordinateError::ConversionFailed(
-            "tabular interpolation requires matching lookup tables with at least 2 entries".into(),
+            "tabular interpolation requires matching lookup tables with at least one entry".into(),
         ));
     }
 
+    if n == 1 {
+        // Casacore uses a constant nearest-neighbour table in both directions.
+        return Ok(ys[0]);
+    }
     let increasing = xs[n - 1] > xs[0];
     let idx = if increasing {
         match xs.binary_search_by(|probe| probe.partial_cmp(&x).unwrap()) {
@@ -650,6 +1004,29 @@ mod tests {
         assert_eq!(coord.axis_names(), vec!["Velocity"]);
     }
 
+    /// C++ `setRestFrequencies(list, 0)` makes the first active, and the
+    /// record keeps the list (`restfreqs`) beside it (`restfreq`).
+    #[test]
+    fn rest_frequency_lists_keep_the_first_active_through_the_record() {
+        let coord = SpectralCoordinate::new(FrequencyRef::BARY, 1e9, 1e6, 0.0, 1.0e9)
+            .with_rest_frequencies(vec![1.42e9, 1.6e9, 1.7e9]);
+        assert_eq!(coord.rest_frequency(), 1.42e9);
+        assert_eq!(coord.rest_frequencies(), [1.42e9, 1.6e9, 1.7e9]);
+        let record = coord.to_record();
+        let restored = SpectralCoordinate::from_record(&record).expect("restored");
+        assert_eq!(restored.rest_frequency(), 1.42e9);
+        assert_eq!(restored.rest_frequencies(), [1.42e9, 1.6e9, 1.7e9]);
+        let single = SpectralCoordinate::new(FrequencyRef::LSRK, 1e9, 1e6, 0.0, 1.42e9);
+        assert_eq!(single.rest_frequencies(), [1.42e9]);
+        assert_eq!(
+            single
+                .clone()
+                .with_rest_frequencies(Vec::new())
+                .rest_frequencies(),
+            [1.42e9]
+        );
+    }
+
     #[test]
     fn with_conversion_changes_world_frame() {
         let coord = SpectralCoordinate::new(FrequencyRef::LSRD, 1.15022e11, 6.25005e6, 0.0, 1.0)
@@ -657,6 +1034,17 @@ mod tests {
         assert_eq!(coord.frequency_ref(), FrequencyRef::LSRD);
         assert_eq!(coord.conversion_frequency_ref(), Some(FrequencyRef::LSRK));
         assert_eq!(coord.world_frequency_ref(), FrequencyRef::LSRK);
+    }
+
+    #[test]
+    fn undefined_conversion_record_preserves_native_pixel_world_mapping() {
+        let coordinate = SpectralCoordinate::new(FrequencyRef::TOPO, 1.4e9, 1000.0, 1.0, 1.4e9)
+            .with_conversion(FrequencyRef::Undefined, conversion_frame());
+        let restored = SpectralCoordinate::from_record(&coordinate.to_record()).unwrap();
+        assert_eq!(restored.conversion_frequency_ref(), None);
+        let world = restored.to_world(&[2.0]).unwrap();
+        assert_eq!(world, vec![1_400_001_000.0]);
+        assert_eq!(restored.to_pixel(&world).unwrap(), vec![2.0]);
     }
 
     #[test]
@@ -709,9 +1097,10 @@ mod tests {
         assert_eq!(restored.axis_units(), vec!["Hz"]);
         assert_eq!(restored.reference_value(), vec![1.41e9]);
         assert_eq!(restored.reference_pixel(), vec![0.0]);
-        assert_eq!(restored.increment(), vec![5.0e5]);
+        // Casacore rebuilds spectral tables on consecutive channels.
+        assert_eq!(restored.increment(), vec![1.0e6]);
         let restored_world = restored.to_world(&[2.0]).unwrap();
-        assert!((restored_world[0] - 1.41125e9).abs() < 1.0);
+        assert!((restored_world[0] - 1.412e9).abs() < 1.0);
     }
 
     #[test]
@@ -795,11 +1184,29 @@ mod tests {
         assert_eq!(coord.axis_units(), vec!["Hz"]);
         assert_eq!(coord.reference_value(), vec![1.41e9]);
         assert_eq!(coord.reference_pixel(), vec![0.0]);
-        assert_eq!(coord.increment(), vec![5.0e5]);
+        assert_eq!(coord.increment(), vec![1.0e6]);
         let world = coord.to_world(&[2.0]).unwrap();
-        assert!((world[0] - 1.41125e9).abs() < 1.0);
-        let pixel = coord.to_pixel(&[1.41125e9]).unwrap();
+        assert!((world[0] - 1.412e9).abs() < 1.0);
+        let pixel = coord.to_pixel(&[1.412e9]).unwrap();
         assert!((pixel[0] - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn one_entry_casa_tabular_coordinate_round_trips_as_constant() {
+        let axis = SpectralCoordinate::from_tabular(
+            FrequencyRef::LSRK,
+            vec![0.0],
+            vec![1.25e9],
+            1.25e9,
+            0.0,
+            0.0,
+            1.4e9,
+        )
+        .unwrap();
+        let read = SpectralCoordinate::from_record(&axis.to_record()).unwrap();
+        assert_eq!(read.increment(), [0.0]);
+        assert_eq!(read.to_world(&[-7.0]).unwrap(), [1.25e9]);
+        assert_eq!(read.to_pixel(&[1.4e9]).unwrap(), [0.0]);
     }
 
     #[test]
@@ -842,5 +1249,40 @@ mod tests {
         let coord = SpectralCoordinate::from_record(&record).unwrap();
         assert_eq!(coord.frequency_ref(), FrequencyRef::TOPO);
         assert_eq!(coord.axis_names(), vec!["Frequency"]);
+        // The axis keeps declaring no frame when written back.
+        assert!(coord.has_undefined_frame());
+        assert!(matches!(
+            coord.to_record().get("system"),
+            Some(Value::Scalar(ScalarValue::String(system))) if system == "Undefined"
+        ));
+        let mut numeric = record.clone();
+        numeric.remove("system");
+        numeric.upsert("frequency_ref", Value::Scalar(ScalarValue::Int32(64)));
+        let numeric = SpectralCoordinate::from_record(&numeric).unwrap();
+        assert_eq!(numeric.frequency_ref(), FrequencyRef::Undefined);
+        assert!(numeric.has_undefined_frame());
+        assert!(matches!(
+            numeric.to_record().get("system"),
+            Some(Value::Scalar(ScalarValue::String(system))) if system == "Undefined"
+        ));
+        let explicit = SpectralCoordinate::new(FrequencyRef::Undefined, 1.0e9, 1.0e6, 0.0, 0.0);
+        assert!(explicit.has_undefined_frame());
+        let tabulated = SpectralCoordinate::from_tabular(
+            FrequencyRef::Undefined,
+            vec![0.0, 1.0],
+            vec![1.0e9, 1.1e9],
+            1.0e9,
+            1.0e6,
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        assert!(tabulated.has_undefined_frame());
+        let declared = SpectralCoordinate::new(FrequencyRef::TOPO, 1.0e9, 1.0e6, 0.0, 0.0);
+        assert!(!declared.has_undefined_frame());
+        assert!(matches!(
+            declared.with_undefined_frame().to_record().get("system"),
+            Some(Value::Scalar(ScalarValue::String(system))) if system == "Undefined"
+        ));
     }
 }

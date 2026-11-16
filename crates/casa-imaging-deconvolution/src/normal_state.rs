@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Normal-state primitives: the unnormalised dirty, PSF, sensitivity and
-//! sum-weight families a major-cycle pass produces for the minor cycle and
-//! products, with their spectral basis, channel slab and validity.
+//! Normal-state primitives for the minor cycle and products, with their
+//! spectral basis, channel slab and validity. Gridding supplies raw planes.
+//! A single-term restart can reuse a PSF in the saved image's units.
 
 mod pass_state;
 pub(crate) mod storage;
@@ -31,10 +31,14 @@ pub enum NormalBasis {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SpectralBasisPlan {
     ChannelLocal,
-    /// A constant (one term) or Taylor basis: `terms` residual terms and
-    /// the `2·terms − 1` moments of its Hankel block normal. `2·terms`
-    /// fits in `usize` (checked where the plan is made).
-    Polynomial {
+    /// The constant basis: one residual term and one PSF moment.
+    Constant,
+    /// A Taylor basis of `terms ≥ 1` coefficients: `terms` residual terms
+    /// and the `2·terms − 1` moments of its Hankel block normal. One term is
+    /// CASA's `mtmfs` with `nterms=1`, a Taylor family like any other
+    /// (`SIImageStoreMultiTerm`). `2·terms` fits in `usize` (checked where
+    /// the plan is made).
+    Taylor {
         terms: usize,
     },
 }
@@ -43,22 +47,24 @@ impl SpectralBasisPlan {
     const fn basis(self) -> NormalBasis {
         match self {
             Self::ChannelLocal => NormalBasis::ChannelLocal,
-            Self::Polynomial { terms } if terms > 1 => NormalBasis::Taylor,
-            Self::Polynomial { .. } => NormalBasis::Constant,
+            Self::Constant => NormalBasis::Constant,
+            Self::Taylor { .. } => NormalBasis::Taylor,
         }
     }
 
     const fn coefficient_terms(self, slab: SpectralSlabPlan) -> usize {
         match self {
             Self::ChannelLocal => slab.core_depth(),
-            Self::Polynomial { terms } => terms,
+            Self::Constant => 1,
+            Self::Taylor { terms } => terms,
         }
     }
 
     const fn normal_moments(self, slab: SpectralSlabPlan) -> usize {
         match self {
             Self::ChannelLocal => slab.core_depth(),
-            Self::Polynomial { terms } => 2 * terms - 1,
+            Self::Constant => 1,
+            Self::Taylor { terms } => 2 * terms - 1,
         }
     }
 }
@@ -94,7 +100,7 @@ impl SpectralSlabPlan {
     }
 }
 
-/// A channel-local pass's planes as it gridded them, in `f32`.
+/// A channel-local pass's planes, in `f32`.
 #[derive(Debug)]
 pub(crate) struct CubeRealFields {
     pub(crate) dirty: Box<[f32]>,
@@ -106,7 +112,7 @@ pub(crate) struct CubeRealFields {
     pub(crate) sensitivity: Option<Box<[f32]>>,
 }
 
-/// One image domain's unnormalised residual, PSF moments, sensitivity and
+/// One image domain's residual, PSF moments, sensitivity and
 /// sum weights over a channel slab; products are formed from them.
 #[derive(Debug)]
 pub(crate) struct NormalPrimitives {
@@ -196,7 +202,7 @@ impl NormalPrimitives {
             })
     }
 
-    /// Return the unnormalized point-spread-function plane.
+    /// Return the gridded PSF planes or the saved single-term PSF planes.
     #[must_use]
     pub fn psf(&self) -> crate::NormalValues<'_> {
         self.cube_real
@@ -252,13 +258,31 @@ impl NormalPrimitives {
     }
 }
 
+/// CASA's empty-plane bound on a plane's published `.sumwt`:
+/// `SIImageStore::divideImageByWeightVal` divides a plane by its `Float`
+/// `.sumwt` only when it exceeds `1e-07`, and otherwise sets the plane to
+/// zero, so a plane at or below it is as empty as one no sample reached.
+pub const EMPTY_PLANE_SUM_WEIGHT: f64 = 1e-7;
+
+/// Whether CASA divides a plane whose published `.sumwt` is
+/// `published_sum_weight` rather than zero it ([`EMPTY_PLANE_SUM_WEIGHT`]),
+/// comparing the `Float` value CASA stores.
+#[must_use]
+pub fn casa_divides_plane(published_sum_weight: f64) -> bool {
+    f64::from(published_sum_weight as f32) > EMPTY_PLANE_SUM_WEIGHT
+}
+
 /// Normal-state validity for one output channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpectralChannelValidity {
-    /// At least one mapped sample contributed positive finite weight.
+    /// At least one mapped sample contributed positive finite weight, and
+    /// the published `.sumwt` exceeds CASA's empty-plane bound
+    /// ([`EMPTY_PLANE_SUM_WEIGHT`]).
     Valid,
     /// No sample contributed positive weight to the output channel, whether
-    /// none mapped to it or all that did carried zero effective weight.
+    /// none mapped to it or all that did carried zero effective weight; or
+    /// the weight it holds is at most CASA's empty-plane bound, below which
+    /// CASA zeroes the plane.
     Unmapped,
 }
 
@@ -268,6 +292,7 @@ pub(crate) struct SpectralDomainPrimitives {
     domain_ordinal: usize,
     domain_role: ImageDomainRole,
     primitives: NormalPrimitives,
+    refilled_sum_weight: bool,
 }
 
 impl SpectralDomainPrimitives {
@@ -280,7 +305,12 @@ impl SpectralDomainPrimitives {
             domain_ordinal,
             domain_role,
             primitives,
+            refilled_sum_weight: false,
         }
+    }
+
+    pub(crate) const fn refilled_sum_weight(&self) -> bool {
+        self.refilled_sum_weight
     }
 
     pub(crate) const fn domain_ordinal(&self) -> usize {
@@ -392,4 +422,23 @@ pub enum NormalStateError {
     /// state it refreshed.
     #[error("the residual refresh placed a different number of samples than its normal state")]
     ReusableNormalStateMismatch,
+}
+
+#[cfg(test)]
+mod empty_plane_tests {
+    use super::{EMPTY_PLANE_SUM_WEIGHT, casa_divides_plane};
+
+    /// CASA compares its `Float` `.sumwt` with the double `1e-07`: a stored
+    /// 1e-7 rounds up in single precision and is divided, while the
+    /// probe's 1.194e-8 and an exact zero are zeroed.
+    #[test]
+    fn casa_divides_only_float_sum_weights_above_the_bound() {
+        assert!(f64::from(EMPTY_PLANE_SUM_WEIGHT as f32) > EMPTY_PLANE_SUM_WEIGHT);
+        assert!(casa_divides_plane(EMPTY_PLANE_SUM_WEIGHT));
+        assert!(casa_divides_plane(9.55e-7));
+        assert!(!casa_divides_plane(1.194e-8));
+        assert!(!casa_divides_plane(9.9e-8));
+        assert!(!casa_divides_plane(0.0));
+        assert!(!casa_divides_plane(-1.0));
+    }
 }

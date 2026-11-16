@@ -1,0 +1,181 @@
+{
+  "source": {
+    "purpose": "Polarized Taylor imaging with tclean (#1065 and #1112)",
+    "casa_version": "6.7.6.14",
+    "tool": "tools/casa-compat/tclean_case_matrix.py"
+  },
+  "format": "tclean_case_matrix.py's case matrix (resources/casa-compat/tclean-casa-test-cases.json documents it)",
+  "inputs": {
+    "refim_point_linRL.ms": "unittest/tclean/refim_point_linRL.ms",
+    "refim_mawproject.ms": "unittest/tclean/refim_mawproject.ms"
+  },
+  "common": {},
+  "cases": {
+    "mtmfs_polarized.point_IQUV": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "tst",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "parallel": false,
+        "stokes": "IQUV"
+      },
+      "note": "refim_point_linRL.ms's polarized point (test_stokes) imaged as test_stokes_mtmfs_Q images it, in IQUV: test_stokes_mtmfs_IQUV without its pbmask (#1061)",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.point_IV": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "tst",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "parallel": false,
+        "stokes": "IV"
+      },
+      "note": "refim_point_linRL.ms's polarized point (test_stokes) imaged as test_stokes_mtmfs_Q images it, in IV: V's family on the second plane",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.point_IQUV_common": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "tst",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "parallel": false,
+        "stokes": "IQUV",
+        "restoringbeam": "common"
+      },
+      "note": "refim_point_linRL.ms's polarized point (test_stokes) imaged as test_stokes_mtmfs_Q images it, in IQUV with restoringbeam='common': one beam for every plane",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.mosaic_IQUV": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tst",
+      "params": {
+        "spw": "1",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "pblimit": 0.3,
+        "parallel": false,
+        "stokes": "IQUV"
+      },
+      "note": "RR/LL only, exact narrow mosaic case. CASA 6.7.6.14 drops the odd PSF and residual terms with empty cross-hands (see CASA (C++) bugs.md). Test the retained I and V terms against mosaic_IV on the same data.",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.mosaic_IV": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tst",
+      "params": {
+        "spw": "1",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "pblimit": 0.3,
+        "parallel": false,
+        "stokes": "IV"
+      },
+      "note": "The same narrow mosaic in IV. CASA retains signed odd moments and inverts the tiny positive Taylor pivot.",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.mosaic_full_band_IV": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tst",
+      "params": {
+        "spw": "0,1,2",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "pblimit": 0.3,
+        "parallel": false,
+        "stokes": "IV"
+      },
+      "note": "A three-window mosaic in IV with negative odd PSF and residual moments and measurable spectral coverage.",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.mosaic_full_band_IQUV_positive": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tst",
+      "params": {
+        "spw": "0,1,2",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "pblimit": 0.3,
+        "parallel": false,
+        "stokes": "IQUV",
+        "reffreq": "1.4GHz"
+      },
+      "note": "A three-window mosaic in IQUV with a positive odd-moment weight. CASA retains all Taylor moments despite empty cross-hands.",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.wproject_IQUV": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "tst",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "parallel": false,
+        "stokes": "IQUV",
+        "gridder": "wproject",
+        "wprojplanes": 16,
+        "reffreq": "1.4GHz"
+      },
+      "note": "W-projection Taylor imaging with all four observed correlations. The offset reference keeps the signed first sum-of-weights moment away from cancellation.",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.wproject_IV": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tst",
+      "params": {
+        "spw": "1",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "wproject",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "pblimit": 0.3,
+        "parallel": false,
+        "stokes": "IV",
+        "wprojplanes": 16
+      },
+      "note": "W projection of RR and LL. CASA retains signed odd terms in IV and drops them with empty cross-hands in IQUV (CASA (C++) bugs.md).",
+      "skip_scalars": false
+    }
+  }
+}

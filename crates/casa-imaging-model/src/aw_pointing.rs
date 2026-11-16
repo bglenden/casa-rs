@@ -7,20 +7,14 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use casa_coordinates::{
-    Coordinate, DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
-};
-use ndarray::arr2;
+use casa_coordinates::{Coordinate, DirectionCoordinate};
 
 use crate::compiled_problem::CompiledProblem;
-use crate::geometry::{DirectionCoordinateSpec, PointingCentreLaw, Projection, SkyDirection};
+use crate::geometry::{PointingCentreLaw, SkyDirection};
 
 /// Why AW pointing pixels cannot be formed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AwPointingError {
-    /// A chart is not a SIN projection.
-    #[error("an AW-projection chart is not a SIN projection")]
-    UnsupportedProjection,
     /// A pointing does not land on a chart's pixels.
     #[error("an antenna's pointing has no finite pixel on a chart")]
     NonFinitePixel,
@@ -53,8 +47,7 @@ impl AwPointingGrouping {
     ///
     /// # Errors
     ///
-    /// [`AwPointingError::UnsupportedProjection`] for a chart that is not
-    /// a SIN projection.
+    /// [`AwPointingError::EmptyGroup`] for a problem with no image domain.
     pub fn new(problem: &CompiledProblem) -> Result<Option<Self>, AwPointingError> {
         let Some(contract) = problem
             .science()
@@ -74,8 +67,8 @@ impl AwPointingGrouping {
         let charts = domains
             .iter()
             .flat_map(|domain| domain.facets().iter().map(|facet| facet.direction()))
-            .map(|spec| Ok((chart(spec)?, spec.increment_rad())))
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|spec| (spec.coordinate(), spec.increment_rad()))
+            .collect::<Vec<_>>();
         let [grouping_arcsec, refresh_arcsec] = contract.pointing_offset_sigdev_arcsec();
         let primary_increment = domains
             .first()
@@ -124,23 +117,6 @@ impl AwPointingGrouping {
             })
             .collect()
     }
-}
-
-fn chart(spec: DirectionCoordinateSpec) -> Result<DirectionCoordinate, AwPointingError> {
-    if spec.projection() != Projection::Sin {
-        return Err(AwPointingError::UnsupportedProjection);
-    }
-    let reference = spec.reference_direction();
-    Ok(DirectionCoordinate::new(
-        reference.frame().direction_ref(),
-        CoordinateProjection::new(ProjectionType::SIN),
-        [reference.longitude_rad(), reference.latitude_rad()],
-        spec.increment_rad(),
-        spec.reference_pixel(),
-    )
-    .with_pc_matrix(arr2(&spec.pc()))
-    .with_longpole(spec.pole_deg()[0].to_radians())
-    .with_latpole(spec.pole_deg()[1].to_radians()))
 }
 
 /// The grouped pixels of consecutive AW pointing epochs: an epoch keeps the

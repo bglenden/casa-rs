@@ -261,8 +261,8 @@ pub enum Work<'a> {
     },
 }
 
-/// A gridding backend: CPU or device. One implementation of the kernel
-/// contract in plan section 5.3, selected by the runtime.
+/// A gridding backend: CPU or device. One implementation of the operator's
+/// kernel contract, selected by the runtime.
 pub trait GridBackend: Send {
     /// Apply `work` to one block with kernel set `cf`; the work is complete
     /// when this returns, except that a device backend may leave grid-only

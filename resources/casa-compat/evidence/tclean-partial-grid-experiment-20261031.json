@@ -1,0 +1,542 @@
+{
+  "casa_tasks": "6.7.6.14",
+  "casa_tools": "6.7.6-14",
+  "casars_revision": "fe9303b46be3bced29d8ebd8d8de961a0547dc6d",
+  "command": "CASA Python -I /private/tmp/probe-tclean-partial-grids.py",
+  "build_control": "cargo build --release -p casars-imager",
+  "build_prototype": "cargo build --release -p casars-imager -p casa-imaging-metal --features casa-imaging-metal/partial-f32-prototype",
+  "prototype": "256-sample f32 grid partials merged in host f64 within each apply, cast f32 between applies; master charged16G beside8G grid; not full-pass f64",
+  "scope": "Two small standard-MFS niter0 cases, one worker; single control/prototype timing observation per case, not T2 or a statistical performance claim",
+  "cases": {
+    "compact": {
+      "parameters": {
+        "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/accuracy-fixture/alma_ephemobj_icrs.ms",
+        "field": "J0006-0623",
+        "spw": "0",
+        "datacolumn": "data",
+        "imsize": [
+          64
+        ],
+        "cell": "0.1arcsec",
+        "niter": 0,
+        "weighting": "natural",
+        "pblimit": -0.1
+      },
+      "casa_reference": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/accuracy-991-current/casa",
+      "runs": {
+        "control": {
+          "wall_seconds": 0.8571181250008522,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.044007833,
+              "process_peak_rss_bytes": 40812544,
+              "peak_reserved_bytes": 417019053,
+              "reserved_bytes": 417019053
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.002294209,
+              "process_peak_rss_bytes": 41189376,
+              "peak_reserved_bytes": 417024953,
+              "reserved_bytes": 417024953
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 0.307545459,
+              "process_peak_rss_bytes": 250576896,
+              "peak_reserved_bytes": 477556069,
+              "reserved_bytes": 429419706
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.047076542,
+              "process_peak_rss_bytes": 250576896,
+              "peak_reserved_bytes": 429419706,
+              "reserved_bytes": 100892929
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 0.0002105039706018072,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.845535,
+                  4.392314,
+                  -89.132301
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 0.018836141161120357,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.845535,
+                  4.392314,
+                  -89.132301
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": false,
+              "nrms_within_1e_3": false
+            },
+            "image.residual": {
+              "nrms": 0.0002105039706018072,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                1384922880.0,
+                1384922880.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        },
+        "partial-f32": {
+          "wall_seconds": 9.426722667005379,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.030111542,
+              "process_peak_rss_bytes": 41123840,
+              "peak_reserved_bytes": 417019053,
+              "reserved_bytes": 417019053
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.002386333,
+              "process_peak_rss_bytes": 41500672,
+              "peak_reserved_bytes": 417024953,
+              "reserved_bytes": 417024953
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 8.9028505,
+              "process_peak_rss_bytes": 251625472,
+              "peak_reserved_bytes": 477556069,
+              "reserved_bytes": 429419706
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.136092166,
+              "process_peak_rss_bytes": 251625472,
+              "peak_reserved_bytes": 429419706,
+              "reserved_bytes": 100892929
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 6.98800928759685e-07,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.748323,
+                  4.386523,
+                  -89.166847
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 4.4328146287859045e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  7.748323,
+                  4.386523,
+                  -89.166847
+                ],
+                [
+                  7.748331,
+                  4.386522,
+                  -89.166939
+                ]
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.residual": {
+              "nrms": 6.98800928759685e-07,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                1384922880.0,
+                1384922880.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        }
+      }
+    },
+    "ordinary": {
+      "parameters": {
+        "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/point.ms",
+        "datacolumn": "data",
+        "imsize": [
+          64
+        ],
+        "cell": "2arcsec",
+        "weighting": "natural",
+        "niter": 0,
+        "gain": 0.1,
+        "threshold": "0Jy",
+        "pblimit": -0.1
+      },
+      "casa_reference": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/partial-grid-experiment/casa-ordinary",
+      "runs": {
+        "control": {
+          "wall_seconds": 0.1404394170094747,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.022018875,
+              "process_peak_rss_bytes": 39616512,
+              "peak_reserved_bytes": 104242649,
+              "reserved_bytes": 104242649
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.001231625,
+              "process_peak_rss_bytes": 39976960,
+              "peak_reserved_bytes": 104248549,
+              "reserved_bytes": 104248549
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 0.004900333,
+              "process_peak_rss_bytes": 43417600,
+              "peak_reserved_bytes": 128535185,
+              "reserved_bytes": 104479334
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.062487417,
+              "process_peak_rss_bytes": 43417600,
+              "peak_reserved_bytes": 104479334,
+              "reserved_bytes": 100892929
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 3.673633357629465e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  8.909092,
+                  8.801559,
+                  1.077425
+                ],
+                [
+                  8.909093,
+                  8.801561,
+                  1.077484
+                ]
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0001779000758937712,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 3.825428726004297e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  8.909092,
+                  8.801559,
+                  1.077425
+                ],
+                [
+                  8.909093,
+                  8.801561,
+                  1.077484
+                ]
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.residual": {
+              "nrms": 3.673633357629465e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                576.0,
+                576.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        },
+        "partial-f32": {
+          "wall_seconds": 0.10063491600158159,
+          "backend": "metal",
+          "precision": "f32",
+          "workers": 1,
+          "phases": [
+            {
+              "name": "preparation",
+              "completed": true,
+              "seconds": 0.0220615,
+              "process_peak_rss_bytes": 39649280,
+              "peak_reserved_bytes": 104242649,
+              "reserved_bytes": 104242649
+            },
+            {
+              "name": "setup",
+              "completed": true,
+              "seconds": 0.001279959,
+              "process_peak_rss_bytes": 40042496,
+              "peak_reserved_bytes": 104248549,
+              "reserved_bytes": 104248549
+            },
+            {
+              "name": "major cycle 1",
+              "completed": true,
+              "seconds": 0.006803791,
+              "process_peak_rss_bytes": 43565056,
+              "peak_reserved_bytes": 128535185,
+              "reserved_bytes": 104479334
+            },
+            {
+              "name": "products",
+              "completed": true,
+              "seconds": 0.023802833,
+              "process_peak_rss_bytes": 43565056,
+              "peak_reserved_bytes": 104479334,
+              "reserved_bytes": 100892929
+            }
+          ],
+          "products": {
+            "image.image": {
+              "nrms": 3.156242223493851e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  8.909093,
+                  8.801559,
+                  1.077386
+                ],
+                [
+                  8.909093,
+                  8.801561,
+                  1.077484
+                ]
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.model": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.pb": {
+              "nrms": 0.0001779000758937712,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.psf": {
+              "nrms": 2.3372548698566312e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                [
+                  8.909093,
+                  8.801559,
+                  1.077386
+                ],
+                [
+                  8.909093,
+                  8.801561,
+                  1.077484
+                ]
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.residual": {
+              "nrms": 3.156242223493851e-06,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true
+            },
+            "image.sumwt": {
+              "nrms": 0.0,
+              "mask_mismatch": 0,
+              "beam": [
+                null,
+                null
+              ],
+              "beam_within_limits": true,
+              "nrms_within_1e_3": true,
+              "sumwt": [
+                576.0,
+                576.0
+              ],
+              "sumwt_within_5e_5": true
+            }
+          }
+        }
+      }
+    }
+  },
+  "outcome": "Retired: compact major-cycle cost regression; do not promote",
+  "interpretation": "Both small prototype cases meet recorded product NRMS/mask/beam/sumwt checks. Compact control major0.307545459s versus prototype8.9028505s; single paired observations, about29x major-cycle cost. No memory counting-law pass or representative acceptance is claimed."
+}

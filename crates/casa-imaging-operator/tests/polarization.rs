@@ -2,7 +2,7 @@
 //! CASA correlation representation, polarization map and Stokes basis.
 
 use casa_imaging_model::PolarizationCoordinate as P;
-use casa_imaging_operator::{GridPolarization, OperatorError, PolarizationRouting};
+use casa_imaging_operator::{GridPolarization, OperatorError, PolarizationRouting, SumwtSource};
 use casa_types::Correlation as C;
 use num_complex::Complex64;
 
@@ -17,7 +17,7 @@ fn stokes_i_from_parallel_hands_sums_both_into_one_plane() {
     assert_eq!(routing.pol_map(), &[Some(0), Some(0)]);
     assert_eq!(routing.to_requested(0, 0), c(1.0, 0.0));
     assert_eq!(routing.from_requested(0, 0), c(1.0, 0.0));
-    assert_eq!(routing.sumwt_source(0), 0);
+    assert_eq!(routing.sumwt_source(0), SumwtSource::Plane(0));
     let full = PolarizationRouting::compile(&[C::RR, C::RL, C::LR, C::LL], &[P::StokesI])
         .expect("routing");
     assert_eq!(full.pol_map(), &[Some(0), None, None, Some(0)]);
@@ -72,8 +72,18 @@ fn full_stokes_from_linear_feeds_uses_the_casacore_matrices() {
             assert!((product - expected).norm() < 1e-12, "({r},{s}) = {product}");
         }
     }
-    for r in 0..4 {
-        assert_eq!(routing.sumwt_source(r), 0);
+    // `ToStokesSumWt` on linear feeds: I and Q from min(XX, YY), U and V
+    // from min(XY, YX).
+    for (r, source) in [
+        SumwtSource::Min(0, 3),
+        SumwtSource::Min(0, 3),
+        SumwtSource::Min(1, 2),
+        SumwtSource::Min(1, 2),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(routing.sumwt_source(r), source, "{r}");
     }
     // CASA `ToStokesPSF` with several correlations and more than two Stokes
     // parameters gives every plane the first parameter's PSF (Stokes I),
@@ -129,7 +139,38 @@ fn requested_correlations_route_themselves_and_drop_the_rest() {
     assert_eq!(routing.pol_map(), &[Some(0), None, None, Some(1)]);
     assert_eq!(routing.to_requested(0, 0), c(1.0, 0.0));
     assert_eq!(routing.to_requested(0, 1), c(0.0, 0.0));
-    assert_eq!(routing.sumwt_source(1), 1);
+    assert_eq!(routing.sumwt_source(1), SumwtSource::Plane(1));
+}
+
+/// CASA images Stokes IQUV of parallel-hand data: the cross-hand grid
+/// planes stay empty, so Q and U are zero planes whose `sumwt`,
+/// `min(RL, LR)`, is zero, while I and V take `min(RR, LL)`
+/// (`StokesImageUtil::ToStokesSumWt`).
+#[test]
+fn full_stokes_of_parallel_hands_leaves_the_cross_hand_planes_empty() {
+    let routing = PolarizationRouting::compile(
+        &[C::RR, C::LL],
+        &[P::StokesI, P::StokesQ, P::StokesU, P::StokesV],
+    )
+    .expect("routing");
+    assert_eq!(routing.grid_pols(), 4);
+    assert_eq!(routing.pol_map(), &[Some(0), Some(3)]);
+    let sumwt = |r: usize| {
+        routing
+            .sumwt_source(r)
+            .sumwt(|gpol| [5.0, 0.0, 0.0, 7.0][gpol])
+    };
+    assert_eq!(
+        [sumwt(0), sumwt(1), sumwt(2), sumwt(3)],
+        [5.0, 0.0, 0.0, 5.0]
+    );
+    // Two Stokes parameters from two planes: CASA pairs min(c0, c1) and c1.
+    let iv =
+        PolarizationRouting::compile(&[C::RR, C::LL], &[P::StokesI, P::StokesV]).expect("routing");
+    assert_eq!(
+        (iv.sumwt_source(0), iv.sumwt_source(1)),
+        (SumwtSource::Min(0, 1), SumwtSource::Plane(1))
+    );
 }
 
 #[test]

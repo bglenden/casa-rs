@@ -1,4 +1,4 @@
-"""`casars.tools.componentlist`: CASA's `cl` tool (ADR-0019, #841 Phase 2).
+"""`casars.tools.componentlist`: CASA's `cl` tool (ADR-0017, #841 Phase 2).
 
 Signatures are compared with CASA 6.7.6's installed binding
 (`data/casa_componentlist_signatures.json`, and a live CASA when importable)
@@ -58,11 +58,78 @@ CASA = casa_signatures("componentlist")
 TOOL = json.loads((DATA / "casa_componentlist_tool.json").read_text(encoding="utf-8"))
 
 IMPLEMENTED = {
-    "addcomponent", "close", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
-    "getrefdir", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
-    "torecord",
+    "addcomponent", "asciitocomponentlist", "close", "concatenate", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
+    "getfluxerror", "getfluxpol", "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
+    "indices", "getkeyword", "haskeyword", "getrefdir", "getrefdirra", "getrefdirdec", "getrefdirframe", "getshape", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
+    "select", "deselect", "selected", "setlabel", "setflux", "setfreq", "setfreqframe", "setrefdir", "setrefdirframe", "setshape", "setspectrum", "setstokesspectrum", "simulate", "remove", "recover", "purge", "putkeyword", "sample", "convertfluxpol", "convertfluxunit", "convertfrequnit", "convertrefdir", "convertshape", "edit", "replace", "torecord", "isphysical", "iscomponentlist",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
+
+
+@pytest.mark.parametrize("fixture_name", ["casa_componentlist_frequency.json", "casa_componentlist_fluxpol.json"])
+def test_getter_placeholders_match_casa(fixture_name: str, caplog: pytest.LogCaptureFixture) -> None:
+    fixture = json.loads((DATA / fixture_name).read_text())
+    cl = componentlist()
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        for case in fixture["cases"]:
+            caplog.clear()
+            method = getattr(cl, case["method"])
+            if "error" in case:
+                expected = case["error"]
+                error_type = {"TypeError": TypeError, "SystemError": SystemError}[expected["type"]]
+                with pytest.raises(error_type) as error:
+                    method(case["input"])
+                assert str(error.value) == expected["message"]
+            else:
+                result = method(case["input"])
+                assert result == case["result"] and type(result) is type(case["result"])
+            expected_warning = "error" not in case or case["error"]["type"] == "SystemError"
+            assert caplog.messages == ([f"{case['method']} not implemented yet"] if expected_warning else [])
+
+        # CASA also accepts NumPy integer scalars and zero-dimensional arrays.
+        for value in (np.int32(2), np.int64(2), np.array(2)):
+            assert cl.getfreq(value) == {}
+
+
+def test_refdir_string_placeholders_match_casa(caplog: pytest.LogCaptureFixture) -> None:
+    fixture = json.loads((DATA / "casa_componentlist_refdir_placeholders.json").read_text())
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        for populated in (False, True):
+            cl = componentlist()
+            if populated:
+                assert cl.addcomponent(flux=1, freq="1.4 GHz")
+            for case in fixture["cases"]:
+                if case["populated"] != populated:
+                    continue
+                caplog.clear()
+                method = getattr(cl, case["method"])
+                if "error" in case:
+                    expected = case["error"]
+                    error_type = {"TypeError": TypeError, "SystemError": SystemError}[expected["type"]]
+                    with pytest.raises(error_type) as error:
+                        method(*case["args"], **case["kwargs"])
+                    assert str(error.value) == expected["message"]
+                else:
+                    result = method(*case["args"], **case["kwargs"])
+                    assert result == case["result"] and type(result) is str
+                expected_warning = "error" not in case or case["error"]["type"] == "SystemError"
+                assert caplog.messages == ([f"{case['method']} not implemented yet"] if expected_warning else [])
+
+
+def test_refdirframe_matches_casa() -> None:
+    fixture = json.loads((DATA / "casa_componentlist_refdirframe.json").read_text())
+    for case in fixture["cases"]:
+        cl = componentlist()
+        for direction in case["directions"]:
+            assert cl.addcomponent(flux=1, dir=direction, freq="1GHz")
+        if "error" in case:
+            expected = case["error"]
+            error_type = {"TypeError": TypeError, "RuntimeError": RuntimeError}[expected["type"]]
+            with pytest.raises(error_type) as error:
+                cl.getrefdirframe(case["which"])
+            assert str(error.value) == expected["message"]
+        else:
+            assert cl.getrefdirframe(case["which"]) == case["result"]
 
 #: Radians, hertz or janskys in each unit the records use.
 SI = {
@@ -97,8 +164,6 @@ def test_the_bundle_describes_the_class() -> None:
 
 def test_methods_casa_rs_does_not_implement_yet_raise() -> None:
     cl = componentlist()
-    with pytest.raises(NotImplementedError, match="componentlist.setflux is not yet implemented"):
-        cl.setflux(0, value=1.0)
     with pytest.raises(NotImplementedError, match="componentlist.fromrecord"):
         cl.fromrecord({})
 
@@ -372,7 +437,7 @@ time.sleep(float(sys.argv[2]))
 
 
 def test_a_dropped_tool_waits_for_the_write_lock_without_the_gil(tmp_path: Path) -> None:
-    # ADR-0019: the deletion writes the list with the GIL released, so other
+    # ADR-0017: the deletion writes the list with the GIL released, so other
     # threads run while it waits for a lock another process holds.
     path = tmp_path / "list.cl"
     cl = componentlist()

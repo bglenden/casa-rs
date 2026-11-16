@@ -6,8 +6,8 @@
 //! root of the summed beam powers at the pointings, the flat-noise image
 //! carries it, and the PB-corrected image recovers the sky (IF-3, #652).
 
-use casa_ms::SyntheticAntenna;
 use casa_numerics::AnnularApertureVoltageTable;
+use casa_simulation::synthetic::Antenna;
 use ndarray::{Array2, ShapeBuilder};
 use serde_json::json;
 
@@ -60,7 +60,7 @@ const ALMA_TABLE_RADIUS_ARCMIN_GHZ: f64 = 150.0 / 60.0 * 100.0;
 
 /// Ten 12 m dishes on a golden-angle spiral of 20 m to 146 m around the
 /// ALMA site (`Observatories` WGS84 position), in ITRF.
-fn alma_antennas() -> Vec<SyntheticAntenna> {
+fn alma_antennas() -> Vec<Antenna> {
     let longitude = (-67.754_929_f64).to_radians();
     let latitude = (-23.022_886_f64).to_radians();
     let height_m = 5056.8;
@@ -89,7 +89,7 @@ fn alma_antennas() -> Vec<SyntheticAntenna> {
                 centre[1] + e * east[1] + nn * north[1],
                 centre[2] + e * east[2] + nn * north[2],
             ];
-            SyntheticAntenna {
+            Antenna {
                 name: format!("DA{:02}", 41 + index),
                 station: format!("A{index:03}"),
                 position_m,
@@ -100,7 +100,7 @@ fn alma_antennas() -> Vec<SyntheticAntenna> {
 }
 
 /// West, centre and east pointings [`SPACING_PX`] cells apart along `l`.
-fn setup() -> Setup {
+pub(super) fn setup() -> Setup {
     let spacing_rad = f64::from(SPACING_PX) * GEOMETRY.cell_rad()[0];
     Setup {
         telescope: "ALMA".to_string(),
@@ -110,7 +110,7 @@ fn setup() -> Setup {
             Setup::pointing([0.0, 0.0]),
             Setup::pointing([spacing_rad, 0.0]),
         ],
-        spectral_windows: vec![casa_ms::SyntheticSpectralSetup {
+        spectral_windows: vec![casa_simulation::synthetic::SpectralSetup {
             name: "t1-50ghz".to_string(),
             start_frequency_hz: FREQUENCY_HZ,
             channel_width_hz: 2.0e9,
@@ -165,7 +165,7 @@ fn local_peak(
 pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
     let mut setup = setup();
     if cube {
-        setup.spectral_windows = vec![casa_ms::SyntheticSpectralSetup {
+        setup.spectral_windows = vec![casa_simulation::synthetic::SpectralSetup {
             name: "t1-50-75ghz".to_string(),
             start_frequency_hz: FREQUENCY_HZ,
             channel_width_hz: 25.0e9,
@@ -190,15 +190,264 @@ pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
     (observation, controls)
 }
 
-/// Imaging port step 3b (#932): under `usepointing` each row's pointing
-/// comes from the POINTING table; the batch geometry equals the selected
-/// rows', and so do the products of the batch route (step 4).
+/// A rebuilt PSF still cleans the saved, normalized residual and uses the
+/// same physical model in prediction as a continuation with the saved PSF.
 #[test]
-fn mosaic_pointing_geometry_of_batches_is_the_selected_rows() {
+fn a_mosaic_cube_rebuilds_the_psf_and_cleans_the_saved_residual() {
+    use casa_images::PagedImage;
+
+    let (observation, mut controls) = mosaic_run(true);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    let (_, seed) = observation.image("saved-psf", controls.clone());
+    observation.image("rebuilt-psf", controls.clone());
+    let psf_path = observation.scratch("rebuilt-psf.psf");
+    let mut psf = PagedImage::<f32>::open(&psf_path).unwrap();
+    let [x, y] = observation.geometry().centre();
+    let altered = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[1; 4]), 0.125);
+    psf.put_slice(&altered, &[x, y, 0, 1]).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+
+    controls["calcres"] = json!(false);
+    controls["calcpsf"] = json!(true);
+    let path = observation.scratch("rebuilt-psf.residual");
+    let mut residual = PagedImage::<f32>::open(&path).unwrap();
+    let mut mask = residual.get_mask().unwrap().unwrap();
+    let hidden = [x, y, 0, 1];
+    assert!(mask[hidden]);
+    mask[hidden] = false;
+    let saved = residual.get().unwrap();
+    let mut peak = saved.clone();
+    peak[hidden] = 50.0;
+    residual.put_slice(&peak, &[0; 4]).unwrap();
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let before = super::restart::snapshot(&path);
+    controls["threshold"] = json!("2Jy");
+    let (stop, products) = observation.image("rebuilt-psf", controls.clone());
+    assert_eq!((stop.minor_iterations, stop.major_cycles), (0, 0));
+    assert_eq!(products.get(".image").mask().as_ref(), Some(&mask));
+    assert_eq!(products.get(".psf").values(), seed.get(".psf").values());
+    super::restart::assert_unchanged(&before, &super::restart::snapshot(&path));
+
+    // Use identical saved inputs to compare prediction after actual CLEAN.
+    let mut residual = PagedImage::<f32>::open(&path).unwrap();
+    residual.put_slice(&saved, &[0; 4]).unwrap();
+    mask[hidden] = true;
+    residual.put_mask_slice("mask0", &mask, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    controls["threshold"] = json!("0Jy");
+    controls["niter"] = json!(12);
+    let (rebuilt_run, rebuilt) = observation.image("rebuilt-psf", controls.clone());
+    controls["calcpsf"] = json!(false);
+    let (saved_run, saved) = observation.image("saved-psf", controls);
+    assert!(rebuilt_run.major_cycles > 0);
+    assert_eq!(
+        (rebuilt_run.minor_iterations, rebuilt_run.major_cycles),
+        (saved_run.minor_iterations, saved_run.major_cycles)
+    );
+    for suffix in [".model", ".residual", ".image", ".image.pbcor"] {
+        let peak = saved
+            .get(suffix)
+            .values()
+            .iter()
+            .map(|x| x.abs())
+            .fold(0.0, f32::max);
+        let difference = rebuilt.get(suffix).values() - saved.get(suffix).values();
+        assert!(
+            difference.iter().all(|value| value.abs() <= 1e-5 * peak),
+            "{suffix} diverges when rebuilding the PSF"
+        );
+    }
+}
+
+/// Before gridding both signs use the saved mask. After a major cycle
+/// positive pblimit copies the rebuilt PB's mask and negative keeps it.
+#[test]
+fn a_rebuilt_mosaic_cube_psf_refreshes_the_residual_mask_only_for_positive_cutoff() {
+    use casa_images::PagedImage;
+    let (observation, mut controls) = mosaic_run(true);
+    controls["niter"] = json!(8);
+    controls["threshold"] = json!("0Jy");
+    controls["pblimit"] = json!(0.2);
+    let (_, seed) = observation.image("positive-cutoff", controls.clone());
+    observation.image("negative-cutoff", controls.clone());
+    let pb = seed.get(".pb").mask().unwrap();
+    let [x, y] = observation.geometry().centre();
+    let hidden = [x, y, 0, 1];
+    assert!(pb[hidden]);
+    let mut saved_mask = pb.clone();
+    saved_mask[hidden] = false;
+    let off_axis = pb
+        .indexed_iter()
+        .find_map(|(index, &inside)| (index[3] == 1 && !inside).then_some(index))
+        .expect("the PB rejects part of channel two");
+    saved_mask[off_axis] = true;
+    controls["calcres"] = json!(false);
+    controls["cycleniter"] = json!(2);
+    controls["niter"] = json!(12);
+    for (prefix, cutoff, expected) in [
+        ("positive-cutoff", 0.2, &pb),
+        ("negative-cutoff", -0.2, &saved_mask),
+    ] {
+        let path = observation.scratch(&format!("{prefix}.residual"));
+        let mut residual = PagedImage::<f32>::open(path).unwrap();
+        residual
+            .put_mask_slice("mask0", &saved_mask, &[0; 4])
+            .unwrap();
+        residual.save().unwrap();
+        drop(residual);
+        controls["pblimit"] = json!(cutoff);
+        let (resumed, products) = observation.image(prefix, controls.clone());
+        assert!(resumed.major_cycles > 1, "exercise a second CLEAN boundary");
+        for suffix in [".residual", ".image"] {
+            assert_eq!(
+                products.get(suffix).mask().as_ref(),
+                Some(expected),
+                "{suffix} follows the signed cutoff after gridding"
+            );
+        }
+        assert_eq!(products.get(".image.pbcor").mask().as_ref(), Some(&pb));
+    }
+}
+
+/// A mosaic's start model on a channel no sample reaches stays as it is:
+/// `SIImageStore::divideModelByWeight` skips a plane whose PB's peak is zero
+/// (#1067). The channel with data is converted as ever.
+#[test]
+fn a_mosaic_start_model_on_a_blank_channel_is_kept_as_it_is() {
+    let (observation, mut controls) = mosaic_run(true);
+    let (_, deep) = observation.image("mosaic-blank-deep", controls.clone());
+    controls["niter"] = json!(0);
+    controls["pbcor"] = json!(true);
+    controls["spw"] = json!("0:1");
+    controls["start"] = json!(0);
+    controls["nchan"] = json!(2);
+    controls["startmodel"] = json!(observation.scratch("mosaic-blank-deep.model"));
+    let (_, started) = observation.image("mosaic-blank-started", controls);
+    assert_eq!(started.get(".sumwt").channel_values()[0], 0.0);
+    let (model, seeded) = (deep.get(".model").plane(0), started.get(".model").plane(0));
+    assert!(model.iter().any(|value| *value != 0.0));
+    assert_eq!(
+        seeded, model,
+        "the blank channel's model is the start model"
+    );
+    let restored = started.get(".image").plane(0);
+    assert!(restored.iter().any(|value| *value != 0.0));
+}
+
+/// Under `usepointing` each row's pointing comes from the POINTING table
+/// (#932 step 3b).
+#[test]
+fn a_mosaic_images_on_its_pointing_table() {
     let (observation, mut controls) = mosaic_run(false);
     controls["usepointing"] = json!(true);
-    observation.assert_geometry("mosaic-pointing", controls.clone());
     observation.image("mosaic-pointing-image", controls);
+}
+
+/// A MeasurementSet without pointing samples images under `usepointing`
+/// at each field's direction, as CASA's mosaic does
+/// (`SimplePBConvFunc::pointingDirAnt1` takes the phase centre unless the
+/// POINTING table is readable and has rows): the run is the one without
+/// `usepointing`.
+#[test]
+fn a_mosaic_without_pointing_samples_points_at_its_fields() {
+    use casa_ms::{MeasurementSet, SubtableId};
+    let (observation, mut controls) = mosaic_run(false);
+    {
+        let mut ms = MeasurementSet::open(observation.measurement_set()).expect("ms");
+        let pointing = ms.subtable_mut(SubtableId::Pointing).expect("POINTING");
+        let rows: Vec<usize> = (0..pointing.row_count()).collect();
+        pointing.remove_rows(&rows).expect("empty POINTING");
+        ms.save().expect("save");
+    }
+    controls["niter"] = json!(0);
+    let (_, fields) = observation.image("mosaic-fields", controls.clone());
+    controls["usepointing"] = json!(true);
+    let (_, pointed) = observation.image("mosaic-no-pointing", controls);
+    for suffix in [".pb", ".residual"] {
+        let [fields, pointed] = [&fields, &pointed].map(|products| &products.get(suffix).pixels);
+        let scale = fields
+            .iter()
+            .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+        let largest = fields
+            .iter()
+            .zip(pointed)
+            .fold(0.0_f32, |largest, (a, b)| largest.max((a - b).abs()));
+        assert!(
+            scale > 0.0 && largest <= 1.0e-5 * scale,
+            "{suffix}: {largest} against a peak of {scale}"
+        );
+    }
+}
+
+/// On a chart centred on field 0, field 2's pointing is 160 pixels
+/// away and outside a 256-pixel image. Field 1 stays inside. Selecting
+/// field 2 must change neither the normal images nor the model prediction.
+#[test]
+fn a_mosaic_excludes_pointings_outside_the_image_from_gridding_and_prediction() {
+    use casa_ms::{MeasurementSet, VisibilityDataColumn};
+    use casa_types::{ArrayValue, ScalarValue};
+
+    let (observation, mut controls) = mosaic_run(false);
+    controls["imsize"] = json!(256);
+    controls["phasecenter"] = json!("0");
+    controls["niter"] = json!(5);
+    controls["threshold"] = json!("0Jy");
+    controls["field"] = json!("0,1");
+    let (_, inside) = observation.image("mosaic-inside-pointings", controls.clone());
+    controls["field"] = json!("0,1,2");
+    controls["savemodel"] = json!("modelcolumn");
+    let (_, all) = observation.image("mosaic-with-outside-pointing", controls);
+    let sum_weights = inside.get(".sumwt").channel_values();
+    assert!(sum_weights[0] > 0.0);
+    assert_eq!(all.get(".sumwt").channel_values(), sum_weights, ".sumwt");
+    // Separate runs can differ in their floating-point FFT and reduction order.
+    for suffix in [".psf", ".residual", ".pb", ".weight"] {
+        let expected = inside.get(suffix);
+        let actual = all.get(suffix);
+        assert_eq!(actual.pixels.shape(), expected.pixels.shape(), "{suffix}");
+        assert_eq!(actual.mask(), expected.mask(), "{suffix} mask");
+        let mut error_squared = 0.0;
+        let mut reference_squared = 0.0;
+        for (&actual, &expected) in actual.pixels.iter().zip(&expected.pixels) {
+            let expected = f64::from(expected);
+            error_squared += (f64::from(actual) - expected).powi(2);
+            reference_squared += expected.powi(2);
+        }
+        let nrms = (error_squared / reference_squared).sqrt();
+        assert!(nrms < 1e-5, "{suffix} normalized RMS {nrms:.3e}");
+    }
+
+    let ms = MeasurementSet::open(observation.measurement_set()).expect("imaged MS");
+    let model = ms
+        .data_column(VisibilityDataColumn::ModelData)
+        .expect("MODEL_DATA");
+    let mut outside_rows = 0;
+    let mut inside_nonzero = false;
+    for row in 0..ms.row_count() {
+        let field = ms
+            .main_table()
+            .cell_accessor(row, "FIELD_ID")
+            .expect("field cell");
+        let ArrayValue::Complex32(values) = model.get(row).expect("model row") else {
+            panic!("MODEL_DATA must be complex");
+        };
+        let nonzero = values.iter().any(|value| value.norm_sqr() > 0.0);
+        if matches!(field.scalar().expect("field id"), ScalarValue::Int32(2)) {
+            outside_rows += 1;
+            assert!(
+                !nonzero,
+                "outside pointing predicted MODEL_DATA at row {row}"
+            );
+        } else {
+            inside_nonzero |= nonzero;
+        }
+    }
+    assert!(outside_rows > 0 && inside_nonzero);
 }
 
 #[test]
@@ -363,7 +612,86 @@ fn a_mosaic_cube_keeps_each_channels_weight_image() {
     );
 }
 
-/// Plan section 5.7's flat-noise and flat-sky rows: a dirty flat-noise
+/// `mosweight` on a cube's per-channel density (`BriggsCubeWeightor`'s
+/// `multiField`, #818): each field's samples are weighed by the padded
+/// density cube of its own rows, with Briggs factors of its own per
+/// channel, so a field weighs as it does imaged alone, and each channel's
+/// sum of weights over the three pointings is the sum of the three imaged
+/// one at a time, under uniform and Briggs weighting alike. One density
+/// over all three (`mosweight=False`) has every cell's samples from the
+/// three round-robin pointings, and a third of their uniform weights.
+#[test]
+fn a_mosweight_cube_weighs_each_field_by_its_own_density() {
+    let (observation, mut controls) = mosaic_run(true);
+    controls["niter"] = json!(0);
+    controls["pbcor"] = json!(false);
+    // The centre pointing's direction, which every field's run images at.
+    controls["phasecenter"] = json!(format!(
+        "J2000 {}rad {}rad",
+        PHASE_CENTER_RAD[0], PHASE_CENTER_RAD[1]
+    ));
+    let sumwt = |name: &str, controls: &serde_json::Value| -> Vec<f64> {
+        let (_, products) = observation.image(name, controls.clone());
+        let sums = products.get(".sumwt").channel_values();
+        assert_eq!(sums.len(), 2, "{name}: two channels");
+        sums.into_iter().map(f64::from).collect()
+    };
+    let mut alone_uniform = Vec::new();
+    for weighting in ["uniform", "briggs"] {
+        controls["weighting"] = json!(weighting);
+        controls["mosweight"] = json!(true);
+        let together = sumwt(&format!("mosweight-{weighting}"), &controls);
+        let mut alone = vec![0.0; together.len()];
+        let mut each = Vec::new();
+        for field in ["0", "1", "2"] {
+            controls["field"] = json!(field);
+            let one = sumwt(&format!("mosweight-{weighting}-{field}"), &controls);
+            assert!(
+                one.iter().all(|sum| *sum > 0.0),
+                "{weighting}, field {field}"
+            );
+            for (sum, value) in alone.iter_mut().zip(&one) {
+                *sum += value;
+            }
+            each.push(one);
+        }
+        // Fields with a gap between them take their own densities too (#1072).
+        controls["field"] = json!("0,2");
+        let gap = sumwt(&format!("mosweight-{weighting}-gap"), &controls);
+        for channel in 0..gap.len() {
+            let alone = each[0][channel] + each[2][channel];
+            assert!(
+                (gap[channel] - alone).abs() <= 1.0e-5 * alone,
+                "{weighting}, channel {channel}: sumwt {} over fields 0 and 2, {alone} alone",
+                gap[channel]
+            );
+        }
+        controls["field"] = json!("0,1,2");
+        eprintln!("T1 mosweight cube {weighting}: sumwt {together:?}, fields alone {alone:?}");
+        for (channel, (together, alone)) in together.iter().zip(&alone).enumerate() {
+            assert!(
+                (together - alone).abs() <= 1.0e-5 * alone,
+                "{weighting}, channel {channel}: sumwt {together} over the mosaic, {alone} over \
+                 its fields alone"
+            );
+        }
+        if weighting == "uniform" {
+            alone_uniform = alone;
+        }
+    }
+    controls["weighting"] = json!("uniform");
+    controls["mosweight"] = json!(false);
+    let joint = sumwt("joint-uniform", &controls);
+    eprintln!("T1 joint uniform cube: sumwt {joint:?}");
+    for (channel, (joint, alone)) in joint.iter().zip(&alone_uniform).enumerate() {
+        assert!(
+            *joint < 0.6 * alone,
+            "channel {channel}: one density's sumwt {joint}, the fields' alone {alone}"
+        );
+    }
+}
+
+/// CASA's flat-noise and flat-sky normalizations: a dirty flat-noise
 /// residual divides by `pbmax·√weight`, a flat-sky one by the weight, so
 /// flat noise is flat sky times the PB inside the PB's support, and both
 /// are zero outside it. A negative pblimit keeps that support and leaves
@@ -559,12 +887,15 @@ fn an_analytic_pb_refuses_a_time_varying_field_direction() {
         let mut ms = casa_ms::MeasurementSet::open(observation.measurement_set()).expect("reopen");
         let pointing = Setup::pointing([0.0, 0.0]);
         // [2, NUM_POLY + 1] in Fortran order: the constant pointing, then
-        // a right-ascension rate of 1e-9 rad/s.
-        let polynomial = ndarray::ArrayD::from_shape_vec(
-            ndarray::IxDyn(&[2, 2]).f(),
-            vec![pointing[0], pointing[1], 1.0e-9, 0.0],
-        )
-        .expect("PHASE_DIR shape");
+        // a right-ascension rate. `NUM_POLY` orders every direction column,
+        // so the delay and reference centres take the shape too, at rest.
+        let polynomial = |rate: f64| {
+            ndarray::ArrayD::from_shape_vec(
+                ndarray::IxDyn(&[2, 2]).f(),
+                vec![pointing[0], pointing[1], rate, 0.0],
+            )
+            .expect("direction polynomial shape")
+        };
         let mut field = ms
             .subtable_mut(casa_ms::SubtableId::Field)
             .expect("FIELD")
@@ -576,13 +907,19 @@ fn an_analytic_pb_refuses_a_time_varying_field_direction() {
                 casa_types::Value::Scalar(casa_types::ScalarValue::Int32(1)),
             )
             .expect("NUM_POLY");
-        field
-            .set_cell(
-                1,
-                "PHASE_DIR",
-                casa_types::Value::Array(casa_types::ArrayValue::Float64(polynomial)),
-            )
-            .expect("PHASE_DIR");
+        for (column, rate) in [
+            ("DELAY_DIR", 0.0),
+            ("PHASE_DIR", 1.0e-9),
+            ("REFERENCE_DIR", 0.0),
+        ] {
+            field
+                .set_cell(
+                    1,
+                    column,
+                    casa_types::Value::Array(casa_types::ArrayValue::Float64(polynomial(rate))),
+                )
+                .expect(column);
+        }
         ms.save().expect("save");
     }
     let Err(error) = observation.try_image(

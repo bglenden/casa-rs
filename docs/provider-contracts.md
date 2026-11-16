@@ -71,13 +71,10 @@ idiomatic Rust request.
 Object surfaces expose stateful handles with constructors, properties, methods,
 and lifecycle operations.
 
-The object surfaces are:
-
-- `casars.data.Image`
-- `casars.data.Table`
-- `casars.tools.simulator`, CASA's `sm` tool (ADR-0019)
-- `casars.tools.measures`, CASA's `me` tool
-- `casars.tools.quanta`, CASA's `qa` tool
+The object surfaces are `casars.data.Image` and `casars.data.Table`, and the
+CASA tool classes of `casars.tools` (ADR-0017): `simulator` (CASA's `sm`),
+`measures` (`me`), `quanta` (`qa`), `componentlist` (`cl`), `image` (`ia`),
+`coordsys` (`cs`), `table` (`tb`), `msmetadata` (`msmd`) and `ms`.
 
 The `casars.data` classes are persistent data access APIs; the `casars.tools`
 classes are CASA tools with CASA's method names, parameter order and
@@ -128,7 +125,7 @@ at least:
 3. parameter contract where the surface is parameterized
    - shared `ParameterCatalog` concepts
    - the task `SurfaceDefinition`
-   - parameter bindings, defaults, roles, validation, migrations, and aliases
+   - parameter bindings, defaults, roles and validation
 4. shared component schemas
    - reusable logical value definitions referenced across operations
 5. annotations
@@ -154,15 +151,13 @@ metadata errors, and semantic/flattened schema drift.
 
 `casa-provider-contracts` also owns the single `ApplicationCatalog`. Every
 parameter surface has exactly one task-application entry that references the
-surface by stable ID, and every application is a task: the catalog's 26
-entries are its 26 task surfaces. Display name, category, and protocol
+surface by stable ID, and every application is a task: each catalog entry is
+one task surface. Display name, category, and protocol
 family are projected from the referenced surface rather than copied into
 another inventory. Each application adds only executable/package identity
 (`launch`), its explicit override variable, the kinds of dataset it reads,
-and packaging visibility (`include_in_suite`). Catalog schema 2 (#972)
-dropped the presentation fields only the retired terminal and Swift
-frontends read (`kind`, `shell_kind`, `interaction`, `show_in_tui`,
-`show_in_swift`), and an entry carrying any other field is refused. Several
+and packaging visibility (`include_in_suite`); an entry carrying any other
+field is refused. Several
 surfaces may share one executable, a family whose first word
 names the surface: `imhead` and `imstat` run `imexplore`; `plotms` runs
 `msexplore`; `split` runs `mstransform`; and `gaincal`, `bandpass`,
@@ -193,8 +188,7 @@ inventory all project from this catalog.
 
 ## Parameter Catalog and Surface Definitions
 
-ADR-0006 defines the common parameter model. ADR-0012 defines the optional
-current-only profile contract used by simobserve.
+ADR-0006 defines the common parameter model and current-only profiles.
 
 `ParameterCatalog` entries describe reusable concepts:
 
@@ -212,18 +206,14 @@ a catalog concept even when a legacy CLI happens to spell them alike.
 
 - absent, literal, or pure conditional default
 - required and activation predicates
-- provably narrowing refinements, aliases, and projection metadata
+- provably narrowing refinements and projection metadata
 - an optional context role consistent with the concept's semantic role
-
-Aliases are unique within a surface and cannot shadow any canonical parameter
-name on that surface.
 
 Concept roles are part of the contract. A path that is safe as an input does not become
 an output merely because both serialize as strings. Runtime-only controls such
 as executable overrides, progress paths, telemetry, and Last controls are
 explicitly non-persistable. There are no run-time confirmations: CASA's own
-parameters, such as `overwrite`, are the consent to replace or change data
-(#931).
+parameters, such as `overwrite`, are the consent to replace or change data.
 
 A task `SurfaceDefinition` maps the resolved CASA-named parameter set into a
 one-shot provider invocation.
@@ -232,31 +222,22 @@ Every optional parameter has an explicit default. Conditional defaults depend
 only on other parameters and form an acyclic graph. Dataset-derived context is
 an explicit suggestion or override, never an undeclared default.
 
-Semantic evolution is guarded by the append-only fingerprints in
-`resources/parameter-contract-history.json`. Changing a concept's type,
-normalization, constraints, units, role, or persistence requires a new semantic
-revision. Changing a surface's bindings, defaults, predicates, provider
-projections, or migrations requires a new surface contract version.
-Run `scripts/check-parameter-contract-history.py --update` only after making and
-reviewing those version bumps; the normal architecture gate is check-only.
-
 ## Sparse Parameter Documents
 
 The human interchange format is versioned sparse TOML. The `[casars]` table
 identifies format version, surface ID, surface kind (always `task`), and
 contract version. The `[parameters]` table contains required values and
 normalized semantic differences from current defaults.
+Values containing non-finite floats, complex or NumPy scalars, explicitly typed
+empty arrays, or zero-dimensional arrays are instead stored in an optional
+`[typed_parameters]` table, as JSON strings containing recursively tagged
+parameter values. This keeps complex values distinct from ordinary records
+and allows profiles to round-trip them without reserving any record key.
 
-This makes additive evolution cheap: a newly added optional parameter receives
-its current default without adding an override to a saved file. A surface may
-publish explicit ordered migrations for older contracts, including warnings for
-changed defaults. An empty migration set declares a current-only surface: only
-the exact current contract and canonical parameter names are accepted. The
-simobserve surface is current-only. A chain may start after contract 1:
-`tclean`, the imager's surface since contract 29 (#931), migrates profiles
-from contract 28, the `imager` surface's last, and answers to that former
-id. Future, stale, and otherwise
-unmigratable contracts are errors.
+A saved profile must match the current task, format, and profile version.
+Recreate stale profiles using the current parameters. Adding an optional
+parameter can leave the version alone: a saved file uses its current default.
+Change the marker when a file can no longer be read with its intended meaning.
 
 Parameter documents do not support includes, environment or shell expansion,
 remote URLs, or executable expressions. Relative task paths resolve against the
@@ -281,11 +262,7 @@ A binary keeps only its typed execution callback.
 ## The shared task front end and typed replies
 
 `casa-task-runtime::TaskFrontEnd` is the one entry every task binary's `main`
-calls (#931): the image binaries and `imexplore`; the MeasurementSet binaries
-(`msexplore` with `plotms`, `mstransform` with `split`, `flagdata`,
-`flagmanager` and `importvla`); `calibrate`, which hosts `calibrate`,
-`applycal`, `gaincal`, `bandpass`, `fluxscale` and `gencal`;
-`casars-imager`; and `simobserve`. A
+calls, including the family binaries that host several surfaces. A
 surface's choices take their canonical names (`--preset amplitude_vs_time`),
 and every flag it declares, short ones such as msexplore's `-o` included,
 reaches its parameter. The front end is generic over the
@@ -328,7 +305,12 @@ started it.
 
 `--json-run SOURCE` takes a `TaskRunRequest`, `{"surface": ..., "values":
 {...}}` with the CASA-named values the caller set, and resolves it against the
-surface's contract inside the binary. It writes one `TaskReply` to stdout:
+surface's contract inside the binary. For values JSON cannot express directly,
+the request may also contain a
+`typed_values` map of recursively tagged parameter values. A parameter may
+occur in only one of `values` and `typed_values`; typed inputs are accepted
+only for variant parameters and pass the same validation as plain inputs.
+The binary writes one `TaskReply` to stdout:
 
 - `{"status": "succeeded", "surface", "value", "result"}`, where `value` is
   what CASA's task returns (`null` for `None`), kept ahead of the provider's
@@ -368,9 +350,10 @@ before anything starts, or `TypeError` for a value of the wrong type.
 
 A succeeded reply's `value` is CASA's return value as a tagged `CasaValue`
 (`casa-provider-contracts`): `none`, `bool`, `int`, `float` (non-finite
-values as `"nan"`, `"inf"` and `"-inf"`), `string`, `list`, an ordered
+values as `"nan"`, `"-nan"`, `"inf"` and `"-inf"`), `complex` (with real and imaginary
+components in the same float representation), `string`, `list`, an ordered
 `dict` whose keys are strings or integers, and typed arrays (`bool_array`,
-`int_array` with dtype `int32` or `int64`, `float_array` with `float32` or
+`int_array` with dtype `int32` or `int64`, `uint64_array`, `float_array` with `float32` or
 `float64`, `complex_array`, `str_array`) that carry their shape and their
 data in column-major (Fortran) order. `casars._core` rebuilds Python's
 types and NumPy arrays from it, so a CASA-signature wrapper returns what
@@ -449,23 +432,13 @@ in-process.
 
 `casars.parameters` exposes the common typed task profile, while generated
 task-specific wrappers delegate through the same runtime. Python must not keep
-a second default or migration implementation.
+a second implementation of defaults.
 
-## Current Repo Mapping
+## Surface inventory
 
-- `calibrate`: task surface
-- `casars-imager` (surface `tclean`): task surface
-- `msexplore` and `plotms`: task surfaces served by `msexplore`
-- `imhead` and `imstat`: task surfaces served by `imexplore`
-- `casars.data.Image`: object surface
-- `casars.data.Table`: object surface
-- `casars.tools.simulator`: object surface
-- `casars.tools.measures`: object surface
-- `casars.tools.quanta`: object surface
-
-All 26 catalog surfaces have task definitions; the
-[generated parameter reference](reference/task-parameters.md) lists them. The
-five object surfaces are not parameter-profile surfaces.
+Every catalog surface is a task surface; the
+[generated parameter reference](reference/task-parameters.md) lists them.
+The object surfaces above are not parameter-profile surfaces.
 
 ## Implementation Guidance
 

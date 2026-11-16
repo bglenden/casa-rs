@@ -13,7 +13,8 @@ fn record(fields: &[(&str, Variant)]) -> Variant {
         fields
             .iter()
             .map(|(key, value)| ((*key).to_string(), value.clone()))
-            .collect(),
+            .collect::<BTreeMap<_, _>>()
+            .into(),
     )
 }
 
@@ -32,6 +33,19 @@ fn empty_and_unhandled_values_are_zero() {
         assert_eq!((quantity.value(), quantity.unit().name()), (0.0, ""));
     }
     assert_eq!(quantity_value(&Variant::Empty, "s").unwrap(), 0.0);
+}
+
+#[test]
+fn empty_complex_vector_retains_measure_defaults() {
+    let value = Variant::ComplexArray {
+        shape: vec![0],
+        values: vec![],
+    };
+    assert_eq!(
+        measures::epoch(&value).unwrap().unwrap().value().as_mjd(),
+        0.0
+    );
+    assert_eq!(measures::frequency(&value).unwrap().0.unwrap().hz(), 0.0);
 }
 
 #[test]
@@ -149,4 +163,106 @@ fn numbers_read_as_complex_vectors_and_a_complex_is_no_quantity() {
     );
     let vector = quantity(&Variant::Complexes(vec![complex(0.0, 1.0)])).unwrap();
     assert_eq!((vector.value(), vector.unit().name()), (0.0, ""));
+}
+
+#[test]
+fn record_scalar_metadata_changes_only_quantity_interpretation() {
+    let fields = BTreeMap::from([
+        ("value".to_string(), Variant::Number(i64::MAX as f64)),
+        ("unit".to_string(), Variant::Text("m".to_string())),
+    ]);
+    let ordinary = Variant::Record(fields.clone().into());
+    let typed = Variant::Record(VariantRecord {
+        fields,
+        scalar_kind: Some(RecordScalarKind::NativeInteger(i64::MAX)),
+    });
+    assert_eq!(
+        value::CasaValue::from_variant(&ordinary),
+        value::CasaValue::from_variant(&typed)
+    );
+    assert_eq!(quantity(&typed).unwrap().value(), -1.0);
+}
+
+#[test]
+fn zero_dimensional_float_arrays_survive_in_ordinary_records() {
+    Python::initialize();
+    Python::attach(|py| {
+        let array = py
+            .eval(
+                c"__import__('numpy').array(1.25, dtype='float32')",
+                None,
+                None,
+            )
+            .unwrap();
+        let input = pyo3::types::PyDict::new(py);
+        input.set_item("value", array).unwrap();
+        input.set_item("unit", "m").unwrap();
+        let record = variant_from_python(input.as_any()).unwrap();
+        let value::CasaValue::Record(fields) = value::CasaValue::from_variant(&record) else {
+            panic!("expected an ordinary record");
+        };
+        assert_eq!(
+            fields[1].1,
+            value::CasaValue::Floats {
+                shape: vec![],
+                values: vec![1.25],
+            }
+        );
+    });
+}
+
+#[test]
+fn complex_numpy_arrays_keep_values_and_shapes_in_ordinary_records() {
+    Python::initialize();
+    Python::attach(|py| {
+        let array = py
+            .eval(
+                c"__import__('numpy').array([[1+2j, 3+4j], [5+6j, 7+8j]], dtype='complex64')",
+                None,
+                None,
+            )
+            .unwrap();
+        let input = pyo3::types::PyDict::new(py);
+        input.set_item("payload", array).unwrap();
+        let record = variant_from_python(input.as_any()).unwrap();
+        let value::CasaValue::Record(fields) = value::CasaValue::from_variant(&record) else {
+            panic!("expected an ordinary record");
+        };
+        assert_eq!(
+            fields[0].1,
+            value::CasaValue::Complexes {
+                shape: vec![2, 2],
+                values: vec![
+                    Complex64::new(1.0, 2.0),
+                    Complex64::new(5.0, 6.0),
+                    Complex64::new(3.0, 4.0),
+                    Complex64::new(7.0, 8.0),
+                ],
+            }
+        );
+    });
+}
+
+#[test]
+fn bare_numpy_complex64_keeps_both_parts() {
+    Python::initialize();
+    Python::attach(|py| {
+        let scalar = py
+            .eval(c"__import__('numpy').complex64(1+2j)", None, None)
+            .unwrap();
+        assert_eq!(
+            variant_from_python(&scalar).unwrap(),
+            Variant::Complex(Complex64::new(1.0, 2.0))
+        );
+        let input = pyo3::types::PyDict::new(py);
+        input.set_item("value", scalar).unwrap();
+        let record = variant_from_python(input.as_any()).unwrap();
+        let value::CasaValue::Record(fields) = value::CasaValue::from_variant(&record) else {
+            panic!("expected an ordinary record");
+        };
+        assert_eq!(
+            fields[0].1,
+            value::CasaValue::Complex(Complex64::new(1.0, 2.0))
+        );
+    });
 }

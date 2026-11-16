@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use super::PassError;
 
 /// Stack of each team worker. Kernels keep their scratch on the heap; per-plane
-/// FFTs are single-threaded inside a worker (plan section 5.9), but a minor
+/// FFTs are single-threaded inside a worker, but a minor
 /// cycle's lone plane transforms on FFTW's own threads, which keep their
 /// own stacks (#780).
 pub const WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;

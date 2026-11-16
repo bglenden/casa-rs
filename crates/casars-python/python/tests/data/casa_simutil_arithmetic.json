@@ -1,0 +1,314 @@
+[
+  {
+    "method": "isEven",
+    "args": [
+      -3
+    ],
+    "result": {
+      "type": "bool",
+      "value": false
+    }
+  },
+  {
+    "method": "isEven",
+    "args": [
+      0
+    ],
+    "result": {
+      "type": "bool",
+      "value": true
+    }
+  },
+  {
+    "method": "isEven",
+    "args": [
+      9007199254740993
+    ],
+    "result": {
+      "type": "bool",
+      "value": false
+    }
+  },
+  {
+    "method": "isEven",
+    "args": [
+      1267650600228229401496703205376
+    ],
+    "result": {
+      "type": "bool",
+      "value": true
+    }
+  },
+  {
+    "method": "isEven",
+    "args": [
+      -2.0
+    ],
+    "result": {
+      "type": "bool",
+      "value": true
+    }
+  },
+  {
+    "method": "isEven",
+    "args": [
+      1.5
+    ],
+    "result": {
+      "type": "bool",
+      "value": false
+    }
+  },
+  {
+    "method": "isEven",
+    "args": [
+      {
+        "array": [
+          -3,
+          0,
+          2,
+          9007199254740993
+        ],
+        "dtype": "int64"
+      }
+    ],
+    "result": {
+      "type": "ndarray",
+      "dtype": "bool",
+      "value": [
+        false,
+        true,
+        true,
+        false
+      ]
+    }
+  },
+  {
+    "method": "isEven",
+    "args": [
+      {
+        "array": [
+          [
+            -2,
+            -1
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        "dtype": "int32"
+      }
+    ],
+    "result": {
+      "type": "ndarray",
+      "dtype": "bool",
+      "value": [
+        [
+          true,
+          false
+        ],
+        [
+          true,
+          false
+        ]
+      ]
+    }
+  },
+  {
+    "method": "isEven",
+    "args": [
+      {
+        "scalar": 7,
+        "dtype": "int64"
+      }
+    ],
+    "result": {
+      "type": "bool",
+      "value": false
+    }
+  },
+  {
+    "method": "isEven",
+    "args": [
+      [
+        1,
+        2
+      ]
+    ],
+    "error": {
+      "type": "TypeError",
+      "message": "unsupported operand type(s) for %: 'list' and 'int'"
+    }
+  },
+  {
+    "method": "applyRotate",
+    "args": [
+      3,
+      4,
+      1,
+      0
+    ],
+    "result": {
+      "type": "tuple",
+      "items": [
+        {
+          "type": "int",
+          "value": 3
+        },
+        {
+          "type": "int",
+          "value": 4
+        }
+      ]
+    }
+  },
+  {
+    "method": "applyRotate",
+    "args": [
+      1.5,
+      -2,
+      0.6,
+      0.8
+    ],
+    "result": {
+      "type": "tuple",
+      "items": [
+        {
+          "type": "float",
+          "value": 2.5
+        },
+        {
+          "type": "float",
+          "value": 2.220446049250313e-16
+        }
+      ]
+    }
+  },
+  {
+    "method": "applyRotate",
+    "args": [
+      {
+        "array": [
+          1.0,
+          2.0
+        ],
+        "dtype": "float64"
+      },
+      {
+        "array": [
+          3.0,
+          4.0
+        ],
+        "dtype": "float64"
+      },
+      0.6,
+      0.8
+    ],
+    "result": {
+      "type": "tuple",
+      "items": [
+        {
+          "type": "ndarray",
+          "dtype": "float64",
+          "value": [
+            -1.8000000000000003,
+            -2.0
+          ]
+        },
+        {
+          "type": "ndarray",
+          "dtype": "float64",
+          "value": [
+            2.5999999999999996,
+            4.0
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "method": "applyRotate",
+    "args": [
+      1,
+      2,
+      null,
+      0
+    ],
+    "error": {
+      "type": "TypeError",
+      "message": "unsupported operand type(s) for *: 'NoneType' and 'int'"
+    }
+  },
+  {
+    "method": "needsFiller",
+    "args": [
+      4,
+      1,
+      1,
+      4
+    ],
+    "result": {
+      "type": "int",
+      "value": 0
+    }
+  },
+  {
+    "method": "needsFiller",
+    "args": [
+      4.01,
+      1,
+      1,
+      4
+    ],
+    "result": {
+      "type": "int",
+      "value": 1
+    }
+  },
+  {
+    "method": "needsFiller",
+    "args": [
+      3.99,
+      1,
+      1,
+      4
+    ],
+    "result": {
+      "type": "int",
+      "value": 0
+    }
+  },
+  {
+    "method": "needsFiller",
+    "args": [
+      0,
+      1,
+      0,
+      0
+    ],
+    "result": {
+      "type": "int",
+      "value": 1
+    }
+  },
+  {
+    "method": "needsFiller",
+    "args": [
+      {
+        "array": [
+          0,
+          4
+        ],
+        "dtype": "int64"
+      },
+      1,
+      1,
+      4
+    ],
+    "error": {
+      "type": "ValueError",
+      "message": "The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()"
+    }
+  }
+]

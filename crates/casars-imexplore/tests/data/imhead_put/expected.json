@@ -1,0 +1,480 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified object from \"\" to \"  Galaxy  \"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"object\", hdvalue=\"  Galaxy  \", verbose=False)"
+      ],
+      "key": "object",
+      "readback": "  Galaxy  ",
+      "return": null,
+      "value": "  Galaxy  "
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified object from \"\" to \"none\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"object\", hdvalue=\"none\", verbose=False)"
+      ],
+      "key": "object",
+      "readback": "none",
+      "return": null,
+      "value": "none"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified object from \"\" to \"auto\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"object\", hdvalue=\"auto\", verbose=False)"
+      ],
+      "key": "object",
+      "readback": "auto",
+      "return": null,
+      "value": "auto"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified object from \"\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"object\", hdvalue=\"\", verbose=False)"
+      ],
+      "key": "object",
+      "readback": "",
+      "return": null,
+      "value": ""
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified observer from \"Karl Jansky\" to \"  Somebody  \"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"observer\", hdvalue=\"  Somebody  \", verbose=False)"
+      ],
+      "key": "observer",
+      "readback": "  Somebody  ",
+      "return": null,
+      "value": "  Somebody  "
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified telescope from \"ALMA\" to \"none\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"telescope\", hdvalue=\"none\", verbose=False)"
+      ],
+      "key": "telescope",
+      "readback": "none",
+      "return": null,
+      "value": "none"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified imtype from \"Intensity\" to \"Beam\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"imtype\", hdvalue=\"Beam\", verbose=False)"
+      ],
+      "key": "imtype",
+      "readback": "Beam",
+      "return": null,
+      "value": "Beam"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified imtype from \"Intensity\" to \"unknown\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"imtype\", hdvalue=\"unknown\", verbose=False)"
+      ],
+      "key": "imtype",
+      "readback": "Intensity",
+      "return": null,
+      "value": "unknown"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified bunit from \"Jy/beam\" to \"K\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bunit\", hdvalue=\"K\", verbose=False)"
+      ],
+      "key": "bunit",
+      "readback": "K",
+      "return": null,
+      "value": "K"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified bunit from \"Jy/beam\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bunit\", hdvalue=\"\", verbose=False)"
+      ],
+      "key": "bunit",
+      "readback": "",
+      "return": null,
+      "value": ""
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "error": "Unit::check Illegal unit string 'none'",
+      "key": "bunit",
+      "readback": "Jy/beam",
+      "value": "none"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified bunit from \"Jy/beam\" to \"Jy / beam\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bunit\", hdvalue=\"Jy / beam\", verbose=False)"
+      ],
+      "key": "bunit",
+      "readback": "Jy/beam",
+      "return": null,
+      "value": "Jy / beam"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified bunit from \"Jy/beam\" to \"Jy beam-1\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bunit\", hdvalue=\"Jy beam-1\", verbose=False)"
+      ],
+      "key": "bunit",
+      "readback": "Jy.beam-1",
+      "return": null,
+      "value": "Jy beam-1"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified bunit from \"Jy/beam\" to \"Jy**2\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bunit\", hdvalue=\"Jy**2\", verbose=False)"
+      ],
+      "key": "bunit",
+      "readback": "Jy2",
+      "return": null,
+      "value": "Jy**2"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified bunit from \"Jy/beam\" to \"Jy^2\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bunit\", hdvalue=\"Jy^2\", verbose=False)"
+      ],
+      "key": "bunit",
+      "readback": "Jy2",
+      "return": null,
+      "value": "Jy^2"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified bunit from \"Jy/beam\" to \"   K  \"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bunit\", hdvalue=\"   K  \", verbose=False)"
+      ],
+      "key": "bunit",
+      "readback": "K",
+      "return": null,
+      "value": "   K  "
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified bunit from \"Jy/beam\" to \" \"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bunit\", hdvalue=\" \", verbose=False)"
+      ],
+      "key": "bunit",
+      "readback": "",
+      "return": null,
+      "value": " "
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified bunit from \"Jy/beam\" to \"Jy/beam \"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bunit\", hdvalue=\"Jy/beam \", verbose=False)"
+      ],
+      "key": "bunit",
+      "readback": "Jy/beam",
+      "return": null,
+      "value": "Jy/beam "
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "history": [
+        "Modified object from \"\" to \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"object\", hdvalue=..., verbose=False)"
+      ],
+      "key": "object",
+      "readback": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "return": null,
+      "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  ],
+  "missing_imageinfo": {
+    "history": "Modified imtype from \"Intensity\" to \"Beam\"",
+    "initial_imtype": "Intensity"
+  },
+  "unusual_imtype": "Intensity"
+}

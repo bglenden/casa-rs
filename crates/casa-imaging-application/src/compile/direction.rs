@@ -7,17 +7,17 @@
 use std::path::Path;
 
 use casa_coordinates::{
-    CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
-    Projection as CoordinateProjection, ProjectionType, SpectralCoordinate, StokesCoordinate,
-    StokesType,
+    CoordinateSystem, CoordinateType, ObsInfo, SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, PhaseCentreLaw, PolarizationCoordinate, Projection,
     SkyDirection,
 };
 use casa_imaging_products::PrimaryBeamCentres;
-use casa_ms::{MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris};
+use casa_ms::{EphemerisBudget, PhaseCentreEphemeris};
+use casa_observation::Catalogue;
 use casa_types::measures::{
+    MeasFrame,
     direction::{DirectionRef, MDirection},
     epoch::MEpoch,
     frequency::FrequencyRef,
@@ -25,13 +25,19 @@ use casa_types::measures::{
 
 use super::PrepareError;
 use super::domains::PreparedImageDomain;
-use super::selection::Survey;
+use super::opening::OpenedStore;
+use super::survey::Survey;
 use crate::ImagingRequest;
+
+/// The bytes a phase-centre ephemeris may hold, within the run's fixed
+/// charges.
+const EPHEMERIS_BUDGET: EphemerisBudget =
+    EphemerisBudget::new(casa_imaging_runtime::BOOTSTRAP_SOURCE_BYTES);
 
 /// The resolved image centre.
 pub(super) struct Centre {
     pub(super) law: PhaseCentreLaw,
-    pub(super) ephemeris: Option<SelectedObservationEphemeris>,
+    pub(super) ephemeris: Option<PhaseCentreEphemeris>,
     /// The J2000 phase centre frame conversions are evaluated at.
     pub(super) phase: MDirection,
     /// The image's reference direction, in the frame the image records.
@@ -44,10 +50,9 @@ pub(super) struct Centre {
 /// Resolve the request's image centre over the surveyed fields.
 pub(super) fn resolve_centre(
     request: &ImagingRequest,
-    ms: &MeasurementSet,
+    catalogue: &Catalogue,
     survey: &Survey,
     engine: &casa_ms::derived::engine::MsCalEngine,
-    budget: SelectedObservationContentBudget,
 ) -> Result<Centre, PrepareError> {
     let selected_field = request
         .phasecenter_field
@@ -58,13 +63,10 @@ pub(super) fn resolve_centre(
             selected: survey.fields.clone(),
         });
     }
-    let field_id = usize::try_from(selected_field).map_err(|_| PrepareError::NegativeMainId {
-        column: "FIELD_ID",
-        value: selected_field,
-    })?;
-    let mut stored_phase = casa_ms::derived::engine::raw_field_phase_direction(ms, field_id)?;
-    let anchor_time = survey.first_time_mjd_seconds;
-    let ephemeris_direction = |name: &str, ephemeris: &SelectedObservationEphemeris| {
+    let field_id = usize::try_from(selected_field).expect("a surveyed field is a FIELD row");
+    let mut stored_phase = catalogue.fields[field_id].phase_centre.clone();
+    let anchor_time = survey.image_time_mjd_seconds;
+    let ephemeris_direction = |name: &str, ephemeris: &PhaseCentreEphemeris| {
         let direction = engine.ephemeris_direction_j2000(anchor_time, field_id, name, ephemeris)?;
         let (longitude, latitude) = direction.as_angles();
         Ok::<_, PrepareError>(SkyDirection::new(
@@ -73,28 +75,42 @@ pub(super) fn resolve_centre(
             latitude,
         ))
     };
-    let (law, ephemeris, main_direction) = match request.phasecenter.as_deref() {
-        None => {
-            let field_direction =
-                field_reference_direction(ms, field_id, engine, anchor_time, &mut stored_phase)?;
+    let (law, ephemeris, main_direction) = match (
+        request.phasecenter.as_deref(),
+        request
+            .phasecenter
+            .as_deref()
+            .and_then(main_phase_center_reference),
+    ) {
+        (None, _) => {
+            let field_direction = field_reference_direction(
+                survey,
+                field_id,
+                engine,
+                anchor_time,
+                &mut stored_phase,
+            )?;
             (
                 PhaseCentreLaw::Fixed(field_direction),
                 None,
                 field_direction,
             )
         }
-        Some(text) if text.split_ascii_whitespace().next() == Some("J2000") => {
-            let direction = parse_phase_center_direction(text)?;
+        (Some(text), Some(reference)) => {
+            let [longitude, latitude] = parse_phase_center_angles(text)?;
+            stored_phase = MDirection::from_angles(longitude, latitude, reference);
+            let frame =
+                engine.spectral_frame_observatory_direction(anchor_time, stored_phase.clone())?;
+            let direction = j2000_phase_direction(&stored_phase, &frame)?;
             (PhaseCentreLaw::Fixed(direction), None, direction)
         }
-        Some("TRACKFIELD") => {
-            let ephemeris = SelectedObservationEphemeris::tracked_fields(
-                ms,
+        (Some("TRACKFIELD"), None) => {
+            let ephemeris = PhaseCentreEphemeris::tracked_fields(
+                catalogue,
                 survey
                     .fields
                     .iter()
-                    .map(|field| usize::try_from(*field).expect("validated FIELD_ID")),
-                budget.reference_data_budget(),
+                    .map(|field| usize::try_from(*field).expect("a surveyed field is a FIELD row")),
             )?;
             let direction = ephemeris_direction("TRACKFIELD", &ephemeris)?;
             (
@@ -103,8 +119,8 @@ pub(super) fn resolve_centre(
                 direction,
             )
         }
-        Some(text) => {
-            let ephemeris = named_ephemeris(text, survey, engine, budget)?;
+        (Some(text), None) => {
+            let ephemeris = named_ephemeris(text, survey, engine)?;
             let direction = ephemeris_direction(text, &ephemeris)?;
             (
                 PhaseCentreLaw::Ephemeris(text.to_string()),
@@ -127,11 +143,18 @@ pub(super) fn resolve_centre(
         ephemeris.is_some(),
     )?;
     let (longitude, latitude) = image_centre.as_angles();
+    refuse_ncp_at_equator(request.projection, latitude)?;
     Ok(Centre {
         law,
         ephemeris,
         phase,
-        direction: direction_spec(request.imsize, request.cell, frame, longitude, latitude),
+        direction: direction_spec(
+            request.imsize,
+            request.cell,
+            request.projection,
+            frame,
+            [longitude, latitude],
+        ),
         image_centre,
         field_id,
     })
@@ -146,39 +169,29 @@ pub(super) fn resolve_centre(
 /// from a domain's centre adds nothing there; CASA's `toPixel` fails for it
 /// and `PBMath1D::apply` uses whatever pixel the failed call left.
 ///
+/// Under a moving phase centre CASA shifts each field's beam with the source
+/// ([`moving_pointings`]).
+///
 /// # Errors
 ///
-/// A moving phase centre or a selected field that follows an ephemeris,
-/// whose beams CASA shifts with the source
-/// (`SynthesisImagerVi2::getMovingDirection`); a selected field whose
-/// `PHASE_DIR` polynomial has a nonzero rate, which CASA evaluates at the
-/// field's first selected time; unreadable field directions, frame
-/// conversions or projections.
+/// A selected field that follows an ephemeris under a fixed phase centre;
+/// a selected field whose `PHASE_DIR` polynomial has a nonzero rate, which
+/// CASA evaluates at the field's first selected time; unreadable field
+/// directions or ephemerides, frame conversions or projections.
 pub(super) fn primary_beam_centres(
     domains: &[PreparedImageDomain],
-    ms: &MeasurementSet,
+    store: &OpenedStore,
     survey: &Survey,
     centre: &Centre,
     engine: &casa_ms::derived::engine::MsCalEngine,
 ) -> Result<PrimaryBeamCentres, PrepareError> {
-    if centre.ephemeris.is_some() {
-        return Err(PrepareError::MovingAnalyticPrimaryBeam);
-    }
-    let field = ms.field()?;
-    let pointings = survey
-        .fields
-        .iter()
-        .map(|field_id| {
-            let field_id = usize::try_from(*field_id).expect("selected FIELD_IDs are nonnegative");
-            if engine.field_moves(field_id) {
-                return Err(PrepareError::MovingAnalyticPrimaryBeam);
-            }
-            if phase_direction_varies(field.phase_dir(field_id)?) {
-                return Err(PrepareError::PolynomialFieldPrimaryBeam { field_id });
-            }
-            Ok((field_id, engine.field_direction_j2000(field_id)?.clone()))
-        })
-        .collect::<Result<Vec<(usize, MDirection)>, PrepareError>>()?;
+    let pointings = match (&centre.ephemeris, &centre.law) {
+        (Some(ephemeris), PhaseCentreLaw::Ephemeris(name)) => {
+            moving_pointings(survey, centre, (name, ephemeris), engine)?
+        }
+        (Some(_), _) => return Err(PrepareError::MovingAnalyticPrimaryBeam),
+        (None, _) => fixed_pointings(store, survey, engine)?,
+    };
     domains
         .iter()
         .map(|domain| {
@@ -199,7 +212,7 @@ pub(super) fn primary_beam_centres(
                     pointing.clone()
                 } else {
                     let measures = engine.spectral_frame_observatory_direction(
-                        survey.first_time_mjd_seconds,
+                        survey.image_time_mjd_seconds,
                         pointing.clone(),
                     )?;
                     pointing.convert_to(frame, &measures)?
@@ -217,6 +230,97 @@ pub(super) fn primary_beam_centres(
             Ok((domain.role.clone(), centres))
         })
         .collect()
+}
+
+/// Each selected field's fixed phase direction, in J2000.
+fn fixed_pointings(
+    store: &OpenedStore,
+    survey: &Survey,
+    engine: &casa_ms::derived::engine::MsCalEngine,
+) -> Result<Vec<(usize, MDirection)>, PrepareError> {
+    // Only an MSv2 states a field's direction as a polynomial in time; the
+    // catalogue keeps its constant term.
+    let field = store
+        .msv2()
+        .map(|observation| observation.measurement_set().field())
+        .transpose()?;
+    survey
+        .fields
+        .iter()
+        .map(|field_id| {
+            let field_id = usize::try_from(*field_id).expect("selected FIELD_IDs are nonnegative");
+            if engine.field_moves(field_id) {
+                return Err(PrepareError::MovingAnalyticPrimaryBeam);
+            }
+            if let Some(field) = &field
+                && phase_direction_varies(field.phase_dir(field_id)?)
+            {
+                return Err(PrepareError::PolynomialFieldPrimaryBeam { field_id });
+            }
+            Ok((field_id, engine.field_direction_j2000(field_id)?.clone()))
+        })
+        .collect()
+}
+
+/// Each selected field's beam centre under a moving phase centre, as
+/// `SynthesisImagerVi2::makePrimaryBeam` places it: the field's phase
+/// centre at its first selected time, shifted by the source's motion
+/// between then and the image epoch (`getMovingDirection` at both, their
+/// difference of longitude and latitude added as `MDirection::shift` with
+/// `trueAngle=False` adds it). For a field that tracks the source this is
+/// the source at the image epoch, plus the field's offset from it.
+fn moving_pointings(
+    survey: &Survey,
+    centre: &Centre,
+    (name, ephemeris): (&str, &PhaseCentreEphemeris),
+    engine: &casa_ms::derived::engine::MsCalEngine,
+) -> Result<Vec<(usize, MDirection)>, PrepareError> {
+    let image_epoch = survey.image_time_mjd_seconds;
+    let (origin_longitude, origin_latitude) = engine
+        .ephemeris_direction_j2000(image_epoch, centre.field_id, name, ephemeris)?
+        .as_angles();
+    survey
+        .fields
+        .iter()
+        .map(|field_id| {
+            let time = survey.first_time_of(*field_id).unwrap_or(image_epoch);
+            let field_id = usize::try_from(*field_id).expect("selected FIELD_IDs are nonnegative");
+            let (longitude, latitude) = engine
+                .observation_direction_j2000(time, field_id)?
+                .as_angles();
+            let (moved_longitude, moved_latitude) = engine
+                .ephemeris_direction_j2000(time, field_id, name, ephemeris)?
+                .as_angles();
+            let [longitude, latitude] = shifted_angles(
+                [longitude, latitude],
+                [
+                    origin_longitude - moved_longitude,
+                    origin_latitude - moved_latitude,
+                ],
+            );
+            Ok((
+                field_id,
+                MDirection::from_angles(longitude, latitude, DirectionRef::J2000),
+            ))
+        })
+        .collect()
+}
+
+/// casacore's `MVDirection::shift(lng, lat, False)`: the offsets added to
+/// longitude and latitude, a latitude past a pole folded back over it.
+fn shifted_angles(
+    [longitude, latitude]: [f64; 2],
+    [d_longitude, d_latitude]: [f64; 2],
+) -> [f64; 2] {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let (longitude, latitude) = (longitude + d_longitude, latitude + d_latitude);
+    if latitude > FRAC_PI_2 {
+        [longitude + PI, PI - latitude]
+    } else if latitude < -FRAC_PI_2 {
+        [longitude + PI, -PI - latitude]
+    } else {
+        [longitude, latitude]
+    }
 }
 
 /// Whether a `PHASE_DIR` polynomial, shaped `[2, NUM_POLY + 1]`, has a
@@ -250,19 +354,23 @@ fn pointing_pixel(
 
 /// casacore's `phaseDirMeas(field_id)` asked at no time, in J2000: the
 /// field's `PHASE_DIR`, or, for a field that follows an ephemeris, the
-/// body's direction at its FIELD row's `TIME` offset by `PHASE_DIR`
+/// body's direction at its FIELD row's `TIME` (an MSv4's: the field's first
+/// selected time) offset by `PHASE_DIR`
 /// (`MsCalEngine::moving_field_reference_direction`), which then also
 /// replaces `stored`, the direction the image records. CASA's `tclean`
 /// centres an image without a phase centre there and holds it fixed, also
 /// over a field that moves (#987).
 fn field_reference_direction(
-    ms: &MeasurementSet,
+    survey: &Survey,
     field_id: usize,
     engine: &casa_ms::derived::engine::MsCalEngine,
     anchor_time: f64,
     stored: &mut MDirection,
 ) -> Result<SkyDirection, PrepareError> {
-    let j2000 = match engine.moving_field_reference_direction(ms, field_id)? {
+    let first_time = survey
+        .first_time_of(i32::try_from(field_id).expect("a FIELD row is an i32 id"))
+        .unwrap_or(anchor_time);
+    let j2000 = match engine.moving_field_reference_direction(field_id, first_time)? {
         Some(reference) => {
             let frame =
                 engine.spectral_frame_observatory_direction(anchor_time, reference.clone())?;
@@ -281,9 +389,8 @@ fn field_reference_direction(
 }
 
 /// The image's reference direction and the frame it records: ICRS at the
-/// anchor time for a moving source, the field's stored direction in its
-/// own frame when the request names no centre, else the J2000 phase
-/// centre.
+/// anchor time for a moving source, or the original frame of an admitted
+/// literal or the selected field's stored direction for a fixed source.
 fn image_centre(
     request: &ImagingRequest,
     engine: &casa_ms::derived::engine::MsCalEngine,
@@ -299,7 +406,12 @@ fn image_centre(
             DirectionFrame::Icrs,
         ));
     }
-    let centre = if request.phasecenter.is_none()
+    let fixed_literal = request
+        .phasecenter
+        .as_deref()
+        .and_then(main_phase_center_reference)
+        .is_some();
+    let centre = if (request.phasecenter.is_none() || fixed_literal)
         && matches!(
             stored_phase.refer(),
             DirectionRef::J2000 | DirectionRef::ICRS | DirectionRef::B1950 | DirectionRef::GALACTIC
@@ -322,23 +434,18 @@ fn named_ephemeris(
     text: &str,
     survey: &Survey,
     engine: &casa_ms::derived::engine::MsCalEngine,
-    budget: SelectedObservationContentBudget,
-) -> Result<SelectedObservationEphemeris, PrepareError> {
-    let budget = budget.reference_data_budget();
+) -> Result<PhaseCentreEphemeris, PrepareError> {
     let ephemeris = if Path::new(text).is_dir() {
-        SelectedObservationEphemeris::external(text, budget)?
+        PhaseCentreEphemeris::external(text, EPHEMERIS_BUDGET)?
     } else {
-        SelectedObservationEphemeris::named(text, budget)?
+        PhaseCentreEphemeris::named(text, EPHEMERIS_BUDGET)?
     };
     // The engine observes each attached field towards its own body
     // (`MsCalEngine::with_field_ephemerides`); a body followed over fields
     // of which only some move is refused.
     let mut moving = 0;
     for field_id in &survey.fields {
-        let field_id = usize::try_from(*field_id).map_err(|_| PrepareError::NegativeMainId {
-            column: "FIELD_ID",
-            value: *field_id,
-        })?;
+        let field_id = usize::try_from(*field_id).expect("a surveyed field is a FIELD row");
         moving += usize::from(engine.field_moves(field_id));
     }
     if moving != 0 && moving != survey.fields.len() {
@@ -348,37 +455,54 @@ fn named_ephemeris(
 }
 
 /// The image's observation record: telescope and observer of the selected
-/// observations, which must agree, the first selected time and the image
-/// centre.
+/// observations, the first selected time and the image centre. ALMA/ACA
+/// combinations keep the first selected observation's label, as CASA does;
+/// their heterogeneous dish response is planned separately.
 pub(super) fn observation_info(
-    ms: &MeasurementSet,
+    catalogue: &Catalogue,
     survey: &Survey,
     centre: &Centre,
     engine: &casa_ms::derived::engine::MsCalEngine,
 ) -> Result<ObsInfo, PrepareError> {
-    let observation = ms.observation()?;
     let mut labels = std::collections::BTreeSet::new();
     for id in &survey.observation_ids {
-        let id = usize::try_from(*id).map_err(|_| PrepareError::NegativeMainId {
-            column: "OBSERVATION_ID",
-            value: *id,
-        })?;
-        labels.insert(if id < observation.row_count() {
-            (
-                observation.string(id, "TELESCOPE_NAME")?,
-                observation.string(id, "OBSERVER")?,
-            )
-        } else {
-            (String::new(), String::new())
+        let id = usize::try_from(*id).expect("a surveyed observation is an OBSERVATION row");
+        labels.insert(match catalogue.observations.get(id) {
+            Some(observation) => (
+                observation.telescope.clone(),
+                observation.observers.join(", "),
+            ),
+            None => (String::new(), String::new()),
         });
     }
-    if labels.len() != 1 {
+    let alma_aca = labels
+        .iter()
+        .all(|(telescope, _)| matches!(telescope.as_str(), "ALMA" | "ACA"))
+        && labels
+            .iter()
+            .map(|(_, observer)| observer)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == 1;
+    if labels.len() != 1 && !alma_aca {
         return Err(PrepareError::ObservationLabels {
             observation_ids: survey.observation_ids.clone(),
             labels,
         });
     }
-    let (telescope_name, observer) = labels.pop_first().expect("one label pair");
+    let (telescope_name, observer) = if labels.len() == 1 {
+        labels.pop_first().expect("one label pair")
+    } else {
+        let id = *survey
+            .observation_ids
+            .first()
+            .expect("selected observations") as usize;
+        let observation = &catalogue.observations[id];
+        (
+            observation.telescope.clone(),
+            observation.observers.join(", "),
+        )
+    };
     // ObsInfo::toRecord uses MVDirection::get, preserving the signed atan2
     // endpoint rather than mapping an exactly positive pi to negative pi.
     let [pointing_x, pointing_y, _] = centre.image_centre.cosines();
@@ -390,40 +514,114 @@ pub(super) fn observation_info(
     Ok(ObsInfo::new(telescope_name)
         .with_observer(observer)
         .with_date(MEpoch::from_mjd(
-            survey.first_time_mjd_seconds / 86_400.0,
+            survey.image_time_mjd_seconds / 86_400.0,
             engine.time_reference(),
         ))
         .with_telescope_position(engine.observatory_position().clone())
         .with_pointing_center(pointing_longitude, centre.image_centre.as_angles().1))
 }
 
-/// A SIN direction coordinate of `image_size` (x, y) cells of `cell_arcsec`
-/// (x, y), centred on `(longitude, latitude)` in `frame`.
+/// Refuse `projection='NCP'` for an image centred on the celestial
+/// equator, where its slant `cot δ₀` is infinite.
+pub(super) fn refuse_ncp_at_equator(
+    projection: Projection,
+    latitude_rad: f64,
+) -> Result<(), PrepareError> {
+    if projection == Projection::Ncp && !(1.0 / latitude_rad.tan()).is_finite() {
+        return Err(PrepareError::NcpAtEquator);
+    }
+    Ok(())
+}
+
+/// The direction coordinate of `image_size` (x, y) cells of `cell_arcsec`
+/// (x, y) in `projection`, centred on `[longitude, latitude]` in `frame`,
+/// as CASA's `buildCoordinateSystem` makes it. Its poles are WCSLIB's
+/// defaults, which casacore takes when given none: the native pole's
+/// longitude is 180° for a zenithal projection, whose latitude it fixes,
+/// and for one that puts the reference on the native equator (`CAR`,
+/// `SFL`, `MER`, `AIT`) 0°, or 180° for a reference south of the celestial
+/// equator, with the celestial pole sought nearest +90°.
 pub(super) fn direction_spec(
     image_size: [usize; 2],
     cell_arcsec: [f64; 2],
+    projection: Projection,
     frame: DirectionFrame,
-    longitude: f64,
-    latitude: f64,
+    [longitude, latitude]: [f64; 2],
 ) -> DirectionCoordinateSpec {
     let [cell_x, cell_y] = cell_arcsec.map(|cell| cell * std::f64::consts::PI / (180.0 * 3600.0));
+    let poles = if projection.zenithal() {
+        [180.0, 90.0]
+    } else if latitude >= 0.0 {
+        [0.0, 90.0]
+    } else {
+        [180.0, 90.0]
+    };
     DirectionCoordinateSpec::new(
-        Projection::Sin,
+        projection,
         SkyDirection::new(frame, longitude, latitude),
         image_reference_pixel(image_size),
         [-cell_x, cell_y],
         [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
+        poles,
     )
 }
 
 /// The spectral axis an image header records.
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct ImageSpectralCoordinate {
     pub(super) frequency_reference: FrequencyRef,
     pub(super) reference_frequency_hz: f64,
     pub(super) increment_hz: f64,
+    pub(super) channel_table_hz: Option<Vec<f64>>,
     pub(super) rest_frequency_hz: f64,
+    /// The rest frequencies CASA lists after the active one: tclean's
+    /// `restfreq` entries after its first (`buildCoordinateSystemCore`'s
+    /// `setRestFrequencies(..., 0, true)`).
+    pub(super) additional_rest_frequencies_hz: Vec<f64>,
+    /// Whether the axis declares no frame (`MFrequency::Undefined`), as
+    /// CASA's `buildCoordinateSystemCore` writes a `cubedata` cube's axis
+    /// unless it is in the rest frame: the data's frequencies, uncorrected.
+    pub(super) undefined_frame: bool,
+}
+
+impl ImageSpectralCoordinate {
+    /// CASA's nominal increment is the mean of the stored table intervals.
+    pub(super) fn tabular_increment_hz(table: &[f64]) -> f64 {
+        let last = table.len() - 1;
+        (table[last] - table[0]) / last.max(1) as f64
+    }
+
+    /// The native and CASA product-header coordinate use the same table.
+    pub(super) fn coordinate(&self) -> SpectralCoordinate {
+        let axis = match &self.channel_table_hz {
+            Some(table) => SpectralCoordinate::from_tabular(
+                self.frequency_reference,
+                (0..table.len()).map(|pixel| pixel as f64).collect(),
+                table.clone(),
+                table[0],
+                ImageSpectralCoordinate::tabular_increment_hz(table),
+                0.0,
+                self.rest_frequency_hz,
+            )
+            .expect("the compiled optical spectral table is nonempty"),
+            None => SpectralCoordinate::new(
+                self.frequency_reference,
+                self.reference_frequency_hz,
+                self.increment_hz,
+                0.0,
+                self.rest_frequency_hz,
+            ),
+        };
+        let mut axis = axis.with_rest_frequencies(
+            std::iter::once(self.rest_frequency_hz)
+                .chain(self.additional_rest_frequencies_hz.iter().copied())
+                .collect(),
+        );
+        if self.undefined_frame {
+            axis = axis.with_undefined_frame();
+        }
+        axis
+    }
 }
 
 /// The coordinate system of one image domain's products.
@@ -431,28 +629,21 @@ pub(super) fn image_coordinates(
     direction: DirectionCoordinateSpec,
     image_size: [usize; 2],
     polarizations: &[PolarizationCoordinate],
-    spectral: ImageSpectralCoordinate,
+    spectral: &ImageSpectralCoordinate,
     observation: &ObsInfo,
 ) -> CoordinateSystem {
-    let reference = direction.reference_direction();
     let mut coordinates = CoordinateSystem::new();
-    coordinates.add_coordinate(DirectionCoordinate::new(
-        reference.frame().direction_ref(),
-        CoordinateProjection::new(ProjectionType::SIN),
-        [reference.longitude_rad(), reference.latitude_rad()],
-        direction.increment_rad(),
-        image_reference_pixel(image_size),
-    ));
+    // The specification's coordinate, with the poles `direction_spec`
+    // states (WCSLIB's defaults).
+    debug_assert_eq!(
+        direction.reference_pixel(),
+        image_reference_pixel(image_size)
+    );
+    coordinates.add_coordinate(direction.coordinate());
     coordinates.add_coordinate(StokesCoordinate::new(
         polarizations.iter().copied().map(stokes_type).collect(),
     ));
-    coordinates.add_coordinate(SpectralCoordinate::new(
-        spectral.frequency_reference,
-        spectral.reference_frequency_hz,
-        spectral.increment_hz,
-        0.0,
-        spectral.rest_frequency_hz,
-    ));
+    coordinates.add_coordinate(spectral.coordinate());
     *coordinates.obs_info_mut() = observation.clone();
     coordinates
 }
@@ -479,20 +670,61 @@ const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
     }
 }
 
-/// A CASA phase-centre literal `J2000 <lon> <lat>`, with sexagesimal,
-/// degree or radian angles.
+/// Express the fixed tracking direction in the planner's J2000 frame.
+fn j2000_phase_direction(
+    direction: &MDirection,
+    frame: &MeasFrame,
+) -> Result<SkyDirection, PrepareError> {
+    let converted = direction.convert_to(DirectionRef::J2000, frame)?;
+    let (longitude, latitude) = converted.as_angles();
+    Ok(SkyDirection::new(
+        DirectionFrame::J2000,
+        longitude,
+        latitude,
+    ))
+}
+
+/// The frame of a fixed literal in the main image's phasecenter. A bare
+/// ICRS token takes CASA's source-name route and is refused there.
+fn main_phase_center_reference(text: &str) -> Option<DirectionRef> {
+    let mut pieces = text.split_ascii_whitespace();
+    match pieces.next()? {
+        "J2000" => Some(DirectionRef::J2000),
+        "B1950" => Some(DirectionRef::B1950),
+        "ICRS" if pieces.next().is_some() => Some(DirectionRef::ICRS),
+        _ => None,
+    }
+}
+
+/// A fixed `J2000/B1950 <lon> <lat>` literal used by the existing alternate
+/// PSF and outlier paths, with sexagesimal, degree or radian angles.
 pub(super) fn parse_phase_center_direction(text: &str) -> Result<SkyDirection, PrepareError> {
-    let parts = text.split_whitespace().collect::<Vec<_>>();
-    if parts.len() != 3 || !parts[0].eq_ignore_ascii_case("J2000") {
+    let frame = match text.split_whitespace().next() {
+        Some(frame) if frame.eq_ignore_ascii_case("J2000") => DirectionFrame::J2000,
+        Some(frame) if frame.eq_ignore_ascii_case("B1950") => DirectionFrame::B1950,
+        _ => {
+            return Err(PrepareError::PhaseCentreSyntax {
+                text: text.to_string(),
+            });
+        }
+    };
+    let [longitude, latitude] = parse_phase_center_angles(text)?;
+    Ok(SkyDirection::new(frame, longitude, latitude))
+}
+
+fn parse_phase_center_angles(text: &str) -> Result<[f64; 2], PrepareError> {
+    let mut parts = text.split_whitespace();
+    let (Some(_), Some(longitude), Some(latitude), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
         return Err(PrepareError::PhaseCentreSyntax {
             text: text.to_string(),
         });
-    }
-    Ok(SkyDirection::new(
-        DirectionFrame::J2000,
-        parse_phase_center_angle(parts[1], true)?,
-        parse_phase_center_angle(parts[2], false)?,
-    ))
+    };
+    Ok([
+        parse_phase_center_angle(longitude, true)?,
+        parse_phase_center_angle(latitude, false)?,
+    ])
 }
 
 fn parse_phase_center_angle(text: &str, longitude: bool) -> Result<f64, PrepareError> {
@@ -550,9 +782,26 @@ fn parse_sexagesimal(text: &str, hours: bool) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use casa_coordinates::{CoordinateModel, CoordinateType};
+    use casa_coordinates::{
+        CoordinateModel, CoordinateType, DirectionCoordinate, Projection as CoordinateProjection,
+        ProjectionType,
+    };
 
     use super::*;
+
+    /// `MVDirection::shift(lng, lat, False)` adds the offsets and folds a
+    /// latitude past a pole back over it, half a turn round.
+    #[test]
+    fn a_shift_adds_the_offsets_and_folds_over_a_pole() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        assert_eq!(shifted_angles([1.0, 0.5], [0.25, -0.125]), [1.25, 0.375]);
+        let [longitude, latitude] = shifted_angles([1.0, FRAC_PI_2 - 0.1], [0.0, 0.3]);
+        assert!((longitude - (1.0 + PI)).abs() < 1e-15);
+        assert!((latitude - (FRAC_PI_2 - 0.2)).abs() < 1e-15);
+        let [longitude, latitude] = shifted_angles([0.0, -FRAC_PI_2 + 0.1], [0.0, -0.3]);
+        assert!((longitude - PI).abs() < 1e-15);
+        assert!((latitude - (-FRAC_PI_2 + 0.2)).abs() < 1e-15);
+    }
 
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
@@ -563,7 +812,13 @@ mod tests {
 
     #[test]
     fn a_direction_coordinate_takes_each_axis_size_and_cell() {
-        let spec = direction_spec([120, 80], [8.0, 6.0], DirectionFrame::J2000, 0.0, 0.0);
+        let spec = direction_spec(
+            [120, 80],
+            [8.0, 6.0],
+            Projection::Sin,
+            DirectionFrame::J2000,
+            [0.0, 0.0],
+        );
         let arcsec = std::f64::consts::PI / (180.0 * 3600.0);
         assert_eq!(spec.reference_pixel(), [60.0, 40.0]);
         let [x, y] = spec.increment_rad();
@@ -581,8 +836,41 @@ mod tests {
     }
 
     #[test]
-    fn a_phase_centre_other_than_j2000_lon_lat_is_refused() {
-        for text in ["B1950 0rad 0rad", "J2000 0rad"] {
+    fn an_explicit_icrs_phase_centre_is_a_fixed_main_direction() {
+        let text = "ICRS -1.0494884409453524rad 0.7108217103529783rad";
+        assert_eq!(main_phase_center_reference(text), Some(DirectionRef::ICRS));
+        assert_eq!(
+            parse_phase_center_angles(text).unwrap(),
+            [-1.0494884409453524, 0.7108217103529783],
+        );
+        let [longitude, latitude] = parse_phase_center_angles(text).unwrap();
+        let raw = MDirection::from_angles(longitude, latitude, DirectionRef::ICRS);
+        let tracking = j2000_phase_direction(&raw, &MeasFrame::new()).unwrap();
+        assert_eq!(tracking.frame(), DirectionFrame::J2000);
+        // CASA's J2000 direction that was converted to the ICRS literal.
+        let ra_error = (tracking.longitude_rad() + 1.0494882958398402 + std::f64::consts::PI)
+            .rem_euclid(std::f64::consts::TAU)
+            - std::f64::consts::PI;
+        assert!(ra_error.abs() < 1e-12);
+        assert!((tracking.latitude_rad() - 0.7108216989007741).abs() < 1e-12);
+        assert_eq!(main_phase_center_reference("ICRS"), None);
+        assert_eq!(main_phase_center_reference("ICRS "), None);
+        assert!(matches!(
+            parse_phase_center_angles("ICRS 19:59:28.500"),
+            Err(PrepareError::PhaseCentreSyntax { .. })
+        ));
+        assert!(parse_phase_center_direction(text).is_err());
+    }
+
+    #[test]
+    fn a_missing_or_unknown_phase_centre_frame_is_refused() {
+        assert_eq!(
+            parse_phase_center_direction("B1950 0rad 0rad")
+                .unwrap()
+                .frame(),
+            DirectionFrame::B1950
+        );
+        for text in ["UNKNOWN 0rad 0rad", "J2000 0rad"] {
             assert!(
                 matches!(
                     parse_phase_center_direction(text),
@@ -596,14 +884,23 @@ mod tests {
     #[test]
     fn the_stokes_axis_lists_the_imaged_coordinate() {
         let coordinates = image_coordinates(
-            direction_spec([64, 64], [8.0, 8.0], DirectionFrame::J2000, 0.0, 0.0),
+            direction_spec(
+                [64, 64],
+                [8.0, 8.0],
+                Projection::Sin,
+                DirectionFrame::J2000,
+                [0.0, 0.0],
+            ),
             [64, 64],
             &[PolarizationCoordinate::StokesQ],
-            ImageSpectralCoordinate {
+            &ImageSpectralCoordinate {
                 frequency_reference: FrequencyRef::LSRK,
                 reference_frequency_hz: 1.0e9,
                 increment_hz: 1.0,
                 rest_frequency_hz: 1.0e9,
+                channel_table_hz: None,
+                additional_rest_frequencies_hz: Vec::new(),
+                undefined_frame: false,
             },
             &ObsInfo::default(),
         );
@@ -669,5 +966,140 @@ mod tests {
         assert!(phase_direction_varies(&polynomial(&[
             1.0, 0.4, 0.0, -1.0e-9
         ])));
+    }
+
+    /// Each projection's direction coordinate, as `direction_spec` states
+    /// it for tclean's image, places pixels as CASA 6.7.6.14 does: the world
+    /// directions of six pixels of the 100 × 100 image of 8″ cells tclean
+    /// makes of refim_twochan.ms in each projection, read with casatools
+    /// (`tests/data/projections-casa-6.7.6.14.json`, written by
+    /// `tools/casa-compat/probe_tclean_projections.py`), and of the same
+    /// images centred at declination −40.7°, where a projection whose
+    /// reference is on its native equator takes the native pole at 180°,
+    /// and at 0°, where that native pole is the celestial north pole.
+    /// CASA writes every projection with the parameters `[0, 0]` and NCP as
+    /// a slanted SIN.
+    /// NCP is undefined for an image centred on the celestial equator,
+    /// where its slant `cot δ₀` is infinite: casa-rs refuses it where CASA
+    /// writes `[0, inf]` and places every pixel at NaN.
+    #[test]
+    fn ncp_on_the_celestial_equator_is_refused() {
+        assert!(matches!(
+            refuse_ncp_at_equator(Projection::Ncp, 0.0),
+            Err(PrepareError::NcpAtEquator)
+        ));
+        assert!(refuse_ncp_at_equator(Projection::Ncp, 1e-6).is_ok());
+        assert!(refuse_ncp_at_equator(Projection::Sin, 0.0).is_ok());
+        assert!(refuse_ncp_at_equator(Projection::Car, 0.0).is_ok());
+    }
+
+    #[test]
+    fn each_projection_places_pixels_as_casa_does() {
+        let casa: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/data/projections-casa-6.7.6.14.json"
+        ))
+        .expect("CASA's projections");
+        let numbers = |value: &serde_json::Value| -> Vec<f64> {
+            value
+                .as_array()
+                .expect("an array")
+                .iter()
+                .map(|value| value.as_f64().expect("a number"))
+                .collect()
+        };
+        let native_equator = [
+            ("CAR", Projection::Car),
+            ("SFL", Projection::Sfl),
+            ("PAR", Projection::Par),
+            ("MOL", Projection::Mol),
+            ("PCO", Projection::Pco),
+            ("TSC", Projection::Tsc),
+            ("CSC", Projection::Csc),
+            ("QSC", Projection::Qsc),
+            ("MER", Projection::Mer),
+            ("AIT", Projection::Ait),
+        ];
+        let north = [
+            ("AZP", Projection::Azp),
+            ("SZP", Projection::Szp),
+            ("AIR", Projection::Air),
+            ("SIN", Projection::Sin),
+            ("NCP", Projection::Ncp),
+            ("TAN", Projection::Tan),
+            ("ARC", Projection::Arc),
+            ("STG", Projection::Stg),
+            ("ZEA", Projection::Zea),
+        ];
+        let south = [
+            ("AZP", Projection::Azp),
+            ("SZP", Projection::Szp),
+            ("AIR", Projection::Air),
+            ("SIN", Projection::Sin),
+            ("NCP", Projection::Ncp),
+            ("TAN", Projection::Tan),
+        ];
+        let equator = [("SIN", Projection::Sin), ("TAN", Projection::Tan)];
+        let cases = [
+            (&casa["projections"], north.as_slice()),
+            (&casa["south"]["projections"], south.as_slice()),
+            (&casa["equator"]["projections"], equator.as_slice()),
+        ]
+        .into_iter()
+        .flat_map(|(images, additional)| {
+            additional
+                .iter()
+                .copied()
+                .chain(native_equator)
+                .map(move |kind| (images, kind))
+        });
+        for (images, (name, projection)) in cases {
+            let entry = &images[name];
+            let reference = numbers(&entry["crval_rad"]);
+            let spec = direction_spec(
+                [100, 100],
+                [8.0, 8.0],
+                projection,
+                DirectionFrame::J2000,
+                [reference[0], reference[1]],
+            );
+            let coordinate = spec.coordinate();
+            assert_eq!(
+                coordinate.projection().name(),
+                entry["projection"].as_str().expect("a name"),
+                "{name}"
+            );
+            assert_eq!(
+                coordinate.projection().parameters(),
+                numbers(&entry["projection_parameters"]),
+                "{name}"
+            );
+            let pixels = entry["pixels"].as_array().expect("pixels");
+            let worlds = entry["worlds_rad"].as_array().expect("worlds");
+            let back_pixels = entry["pixels_from_world"].as_array().unwrap_or(pixels);
+            assert_eq!(pixels.len(), worlds.len());
+            assert_eq!(pixels.len(), back_pixels.len());
+            for ((pixel, world), back_pixel) in pixels.iter().zip(worlds).zip(back_pixels) {
+                let pixel = numbers(pixel);
+                let world = numbers(world);
+                let ours = coordinate
+                    .pixel_to_world([pixel[0], pixel[1]])
+                    .expect("a direction");
+                let longitude = (ours[0] - world[0] + std::f64::consts::PI)
+                    .rem_euclid(std::f64::consts::TAU)
+                    - std::f64::consts::PI;
+                assert!(
+                    longitude.abs() < 1e-12 && (ours[1] - world[1]).abs() < 1e-12,
+                    "{name} {pixel:?}: {ours:?}, CASA {world:?}"
+                );
+                let back = coordinate
+                    .world_to_pixel([world[0], world[1]])
+                    .expect("a pixel");
+                let expected = numbers(back_pixel);
+                assert!(
+                    (back[0] - expected[0]).abs() < 1e-7 && (back[1] - expected[1]).abs() < 1e-7,
+                    "{name} {world:?}: {back:?}, CASA's {expected:?}"
+                );
+            }
+        }
     }
 }

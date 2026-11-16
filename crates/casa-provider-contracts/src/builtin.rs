@@ -3,9 +3,7 @@
 
 use std::sync::OnceLock;
 
-use serde::Deserialize;
-
-use crate::{ParameterCatalog, SurfaceCatalogBundle, SurfaceContractBundle, SurfaceDefinition};
+use crate::{SurfaceCatalogBundle, SurfaceContractBundle};
 
 const PARAMETER_CATALOG_JSON: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -16,10 +14,20 @@ const PARAMETER_SURFACES_JSON: &str = include_str!(concat!(
     "/resources/parameter-surfaces.json"
 ));
 
-#[derive(Deserialize)]
-struct SurfaceIndex {
-    schema_version: u32,
-    surfaces: Vec<SurfaceDefinition>,
+#[cfg(casa_generated_surfaces)]
+struct GeneratedSurface {
+    id: &'static str,
+    json: &'static str,
+    parsed: OnceLock<Result<SurfaceContractBundle, String>>,
+}
+
+#[cfg(casa_generated_surfaces)]
+include!(concat!(env!("OUT_DIR"), "/embedded_surfaces.rs"));
+
+#[cfg(casa_generated_surfaces)]
+fn generated_catalog_matches_parser() -> bool {
+    static MATCHES: OnceLock<bool> = OnceLock::new();
+    *MATCHES.get_or_init(|| crate::catalog_number_probe::matches(GENERATED_NUMBER_PROBES))
 }
 
 /// Return the validated aggregate built into this library.
@@ -27,47 +35,66 @@ pub fn builtin_surface_catalog() -> Result<&'static SurfaceCatalogBundle, String
     static BUILTIN: OnceLock<Result<SurfaceCatalogBundle, String>> = OnceLock::new();
     BUILTIN
         .get_or_init(|| {
-            let catalog = serde_json::from_str::<ParameterCatalog>(PARAMETER_CATALOG_JSON)
-                .map_err(|error| format!("parse provider parameter-catalog.json: {error}"))?;
-            let index = serde_json::from_str::<SurfaceIndex>(PARAMETER_SURFACES_JSON)
-                .map_err(|error| format!("parse provider parameter-surfaces.json: {error}"))?;
-            let bundle = SurfaceCatalogBundle {
-                schema_version: index.schema_version,
-                catalog,
-                surfaces: index.surfaces,
-            };
-            bundle.validate().map_err(|errors| {
-                errors
-                    .into_iter()
-                    .map(|error| {
-                        format!(
-                            "{}{}{}: {}",
-                            error.code,
-                            error
-                                .surface
-                                .as_deref()
-                                .map_or_else(String::new, |surface| format!(" [{surface}]")),
-                            error
-                                .parameter
-                                .as_deref()
-                                .map_or_else(String::new, |parameter| format!(".{parameter}")),
-                            error.message
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })?;
-            Ok(bundle)
+            #[cfg(casa_generated_surfaces)]
+            {
+                if generated_catalog_matches_parser() {
+                    crate::catalog_parse::parse(PARAMETER_CATALOG_JSON, PARAMETER_SURFACES_JSON)
+                } else {
+                    crate::build_catalog::parse_and_validate(
+                        PARAMETER_CATALOG_JSON,
+                        PARAMETER_SURFACES_JSON,
+                    )
+                }
+            }
+            #[cfg(not(casa_generated_surfaces))]
+            {
+                crate::build_catalog::parse_and_validate(
+                    PARAMETER_CATALOG_JSON,
+                    PARAMETER_SURFACES_JSON,
+                )
+            }
         })
         .as_ref()
         .map_err(Clone::clone)
 }
 
 /// Return one self-contained surface bundle with only its referenced concepts.
+///
+/// When build-time validation succeeds and the target's numeric parser
+/// agrees with the build host, the generated bundle is parsed once per
+/// process. Other builds retain the original target-side validation.
 pub fn builtin_surface_bundle(id: &str) -> Result<SurfaceContractBundle, String> {
-    builtin_surface_catalog()?
-        .embedded_surface(id)
-        .ok_or_else(|| format!("unknown configurable surface {id:?}"))
+    #[cfg(casa_generated_surfaces)]
+    {
+        if !generated_catalog_matches_parser() {
+            return builtin_surface_catalog()?
+                .embedded_surface(id)
+                .ok_or_else(|| format!("unknown configurable surface {id:?}"));
+        }
+        let surface = GENERATED_SURFACES
+            .iter()
+            .find(|surface| surface.id == id)
+            .ok_or_else(|| format!("unknown configurable surface {id:?}"))?;
+        surface
+            .parsed
+            .get_or_init(|| {
+                serde_json::from_str(surface.json).map_err(|error| {
+                    format!(
+                        "parse generated parameter surface {:?}: {error}",
+                        surface.id
+                    )
+                })
+            })
+            .as_ref()
+            .cloned()
+            .map_err(Clone::clone)
+    }
+    #[cfg(not(casa_generated_surfaces))]
+    {
+        builtin_surface_catalog()?
+            .embedded_surface(id)
+            .ok_or_else(|| format!("unknown configurable surface {id:?}"))
+    }
 }
 
 #[cfg(test)]
@@ -75,17 +102,36 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use crate::{
-        CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, MigrationStep, OVERWRITE_CONCEPT_ID, ParameterRole,
-        ParameterType, ParameterValue, Predicate, ResourceKind, RunProductSource, SemanticRevision,
-        SurfaceKind, SurfaceProductContract, ValueAdapter,
+        CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, OVERWRITE_CONCEPT_ID, ParameterRole, ParameterType,
+        ParameterValue, Predicate, ResourceKind, RunProductSource, SemanticRevision, SurfaceKind,
+        SurfaceProductContract, ValueAdapter,
     };
 
     use super::*;
 
     #[test]
+    fn generated_surfaces_match_the_validated_aggregate() {
+        let catalog = builtin_surface_catalog().unwrap();
+        for surface in &catalog.surfaces {
+            let expected = catalog.embedded_surface(surface.id()).unwrap();
+            assert_eq!(
+                builtin_surface_bundle(surface.id()).unwrap(),
+                expected,
+                "{}",
+                surface.id()
+            );
+        }
+        assert!(
+            builtin_surface_bundle("not-a-task")
+                .unwrap_err()
+                .contains("unknown configurable surface")
+        );
+    }
+
+    #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 26);
+        assert_eq!(catalog.surfaces.len(), 31);
         assert!(
             catalog
                 .surfaces
@@ -98,7 +144,9 @@ mod tests {
             .map(|surface| surface.id())
             .collect::<BTreeSet<_>>();
         assert!(ids.contains("msexplore"));
+        assert!(ids.contains("msconvert"));
         assert!(ids.contains("imstat"));
+        assert!(ids.contains("tsdimaging"));
         assert!(!ids.contains("imexplore"));
         assert!(!ids.contains("tablebrowser"));
         assert!(!ids.contains("casars"));
@@ -107,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn imsize_and_cell_have_one_invariant_domain() {
+    fn explicit_and_simulation_geometry_keep_distinct_domains() {
         let catalog = builtin_surface_catalog().unwrap();
         let imsize = catalog
             .catalog
@@ -150,6 +198,32 @@ mod tests {
                 .iter()
                 .filter(|binding| binding.name == "imsize")
             {
+                if surface.id() == "tsdimaging" {
+                    assert_eq!(
+                        binding.concept.id.as_str(),
+                        format!("single_dish.{}", binding.name)
+                    );
+                    assert_eq!(
+                        binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::Array(Vec::new()),
+                        }
+                    );
+                    continue;
+                } else if matches!(surface.id(), "simanalyze" | "simalma") {
+                    assert_eq!(binding.concept.id.as_str(), "simulation.analysis.imsize");
+                    assert_eq!(
+                        binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::Array(if surface.id() == "simalma" {
+                                vec![128_i64.into(), 128_i64.into()]
+                            } else {
+                                vec![0_i64.into(), 0_i64.into()]
+                            }),
+                        }
+                    );
+                    continue;
+                }
                 assert_eq!(binding.concept, imsize.reference());
                 imsize_bindings += 1;
             }
@@ -158,6 +232,35 @@ mod tests {
                 .iter()
                 .filter(|binding| binding.name == "cell")
             {
+                if surface.id() == "tsdimaging" {
+                    assert_eq!(
+                        binding.concept.id.as_str(),
+                        format!("single_dish.{}", binding.name)
+                    );
+                    assert_eq!(
+                        binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::String(String::new()),
+                        }
+                    );
+                    continue;
+                } else if matches!(surface.id(), "simanalyze" | "simalma") {
+                    assert_eq!(
+                        binding.concept.id.as_str(),
+                        if surface.id() == "simalma" {
+                            "simulation.alma.cell"
+                        } else {
+                            "simulation.analysis.cell"
+                        }
+                    );
+                    assert_eq!(
+                        binding.default,
+                        crate::DefaultSpec::Literal {
+                            value: ParameterValue::String(String::new()),
+                        }
+                    );
+                    continue;
+                }
                 assert_eq!(binding.concept, cell.reference());
                 cell_bindings += 1;
             }
@@ -193,7 +296,19 @@ mod tests {
                     .provider
                     .as_ref()
                     .map(|projection| &projection.adapter);
-                if binding.unimplemented.is_none() && default == absence {
+                // A later revision (tclean's selectors, one per
+                // MeasurementSet; its scan and observation keep their exact
+                // text, so `none` is a value the native parser refuses)
+                // passes its value as it is.
+                if binding.concept.semantic_revision.0 > 1 {
+                    assert_eq!(
+                        adapter,
+                        Some(&crate::ValueAdapter::Identity),
+                        "{}.{}",
+                        surface.id(),
+                        binding.name
+                    );
+                } else if binding.unimplemented.is_none() && default == absence {
                     assert_eq!(
                         adapter,
                         Some(&crate::ValueAdapter::OmitNone),
@@ -224,6 +339,9 @@ mod tests {
             ("imregrid", false),
             ("imsubimage", false),
             ("simobserve", true),
+            ("simalma", false),
+            ("tsdimaging", false),
+            ("simanalyze", true),
         ]);
         // casa-rs's own `overwrite` on CASA tasks that have none, and on the
         // casa-rs tasks; CASA's tasks never replace an output unasked.
@@ -237,6 +355,7 @@ mod tests {
             "gencal",
             "immath",
             "immoments",
+            "msconvert",
             "msexplore",
             "plotms",
         ]);
@@ -331,23 +450,42 @@ mod tests {
                 binding.name
             );
         }
-        // simobserve is current-only (ADR-0012): a profile of any earlier
-        // contract is refused, not migrated. That holds for contract 4's
-        // casa-rs-only profiles and for contract 7's, which differ from 8
-        // only in naming the CASA task (#931 4b).
-        assert!(surface.migrations().is_empty());
     }
 
     #[test]
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("tclean").unwrap();
-        // The imager was re-surfaced as CASA's tclean (#931): its former id
-        // still finds the surface, so an old profile can migrate.
-        assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
+        assert!(catalog.surface("imager").is_none());
+        assert!(builtin_surface_bundle("imager").is_err());
         assert_eq!(surface.casa_task(), Some("tclean"));
-        assert_eq!(surface.contract_version(), 29);
+        assert_eq!(surface.contract_version(), 42);
         assert_eq!(surface.bindings().len(), 114);
+        for name in ["scan", "observation", "antenna", "timerange"] {
+            let binding = surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == name)
+                .unwrap();
+            assert!(binding.unimplemented.is_none(), "{name}");
+            // Revision 3 keeps revision 2's exact text, one per
+            // MeasurementSet of the vis list or one for all.
+            assert_eq!(binding.concept.semantic_revision.0, 3);
+            assert_eq!(
+                binding.default,
+                crate::DefaultSpec::Literal {
+                    value: ParameterValue::String(String::new()),
+                }
+            );
+            assert_eq!(
+                catalog
+                    .catalog
+                    .concept(&binding.concept)
+                    .unwrap()
+                    .normalization,
+                crate::NormalizationRule::Identity
+            );
+        }
         for binding in surface.bindings() {
             let concept = catalog
                 .catalog
@@ -443,23 +581,6 @@ mod tests {
             .find(|binding| binding.name == "stokes")
             .unwrap();
         assert_eq!(stokes.concept.id.as_str(), "image.selection.stokes");
-        assert!(stokes.aliases.is_empty());
-        assert!(
-            surface
-                .bindings()
-                .iter()
-                .all(|binding| binding.aliases.is_empty()),
-            "current imager profiles expose canonical names only"
-        );
-        // A contract-28 imager profile migrates to tclean's names.
-        assert_eq!(
-            surface
-                .migrations()
-                .iter()
-                .map(|migration| (migration.from_contract, migration.to_contract))
-                .collect::<Vec<_>>(),
-            [(28, 29)]
-        );
     }
 
     #[test]
@@ -577,13 +698,6 @@ mod tests {
             archivefiles.projections.provider.as_ref().unwrap().adapter,
             ValueAdapter::StringListCsv
         );
-        assert!(matches!(
-            &surface.migrations()[0].steps[..],
-            [MigrationStep::Transform {
-                parameter,
-                transform: crate::MigrationTransform::ScalarToArray { length: 1 },
-            }] if parameter == "archivefiles"
-        ));
     }
 
     #[test]
@@ -600,17 +714,25 @@ mod tests {
         };
         assert_eq!(
             concept_ids("vis"),
-            ["data.input.vis", "data.output.vis"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
+            [
+                "data.input.vis",
+                "data.output.vis",
+                "simulation.analysis.vis"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
         );
         assert_eq!(
             concept_ids("imagename"),
-            ["image.input.imagename", "image.output.imagename"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
+            [
+                "image.input.imagename",
+                "image.output.imagename",
+                "simulation.analysis.imagename"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
         );
         assert_eq!(
             concept_ids("width"),
@@ -618,7 +740,8 @@ mod tests {
                 "imager.width",
                 "impv.width",
                 "ms.transform.width",
-                "regridms.width"
+                "regridms.width",
+                "single_dish.width"
             ]
             .into_iter()
             .map(str::to_string)
@@ -635,6 +758,7 @@ mod tests {
                 "impbcor.mode",
                 "impv.mode",
                 "regridms.mode",
+                "single_dish.mode",
             ]
             .into_iter()
             .map(str::to_string)
@@ -710,7 +834,10 @@ mod tests {
                     });
                     assert_eq!(
                         decoded,
-                        matches!(surface.id(), "tclean" | "simobserve"),
+                        matches!(
+                            surface.id(),
+                            "tclean" | "simobserve" | "simanalyze" | "simalma" | "tsdimaging"
+                        ),
                         "{} product sources",
                         surface.id()
                     );

@@ -1,0 +1,367 @@
+{
+ "work_issue": 1297,
+ "date": "2026-11-14",
+ "casa_version": "6.7.6.14",
+ "source_revision": "72c3d48ecbf49522c043c7e1c007e9285fc4f43c",
+ "scope": "Primary beams in normal time-dependent direction frames: separate array/FT observers, cached image beam epochs, per-integration component conversion, native squint/Jones axes. JMEAN, APP, HADEC, AZEL, meaningful nonzero controls and context-mismatch zeros.",
+ "commands": {
+  "oracle": "CASAPY tools/simulation/sm_frame_beams_oracle.py --out OUT --fixture crates/casa-simulation/tests/data/sm_frame_beams_casa.json.gz --inputs crates/casa-simulation/tests/data/sm_frame_beams",
+  "native": "CASA_RS_FRAME_BEAM_OUT=EXPORT cargo test -p casa-simulation --test frame_beams -- --nocapture",
+  "cpp": "CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture crates/casa-simulation/tests/data/sm_frame_beams_casa.json.gz",
+  "regression": "cargo test -p casa-simulation --test component_signals --test image_frame_combinations --test image_beams --test default_beams --test telescope_beams --test frequency_beams",
+  "unit": "cargo test -p casa-simulation --lib predict::",
+  "memory": "cargo test -p casa-simulation --test session_memory beam -- --nocapture",
+  "clippy": "cargo clippy -p casa-simulation --all-targets -- -D warnings",
+  "architecture": "bash scripts/arch-check.sh"
+ },
+ "actual_oracle_commands": [
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_component_signals_oracle.py",
+   "--beam",
+   "--beam-observer",
+   "ARRAY",
+   "--only",
+   "frame_jmean",
+   "frame_app",
+   "frame_hadec",
+   "frame_azel",
+   "--out",
+   "/workspace/casa-rs/target/1297-frames-casa/linear-components-array",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-frames-casa/linear-components-array.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_component_signals_oracle.py",
+   "--beam",
+   "--beam-observer",
+   "ARRAY",
+   "--only",
+   "frame_azel",
+   "--refresh-beam",
+   "--out",
+   "/workspace/casa-rs/target/1297-frames-casa/linear-components-refresh",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-frames-casa/linear-components-refresh.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_component_signals_oracle.py",
+   "--beam",
+   "--only",
+   "frame_azel",
+   "--out",
+   "/workspace/casa-rs/target/1297-frames-casa/linear-components-alma",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-frames-casa/linear-components-alma.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--case",
+   "frame_jmean_beam",
+   "--location",
+   "ARRAY",
+   "--out",
+   "/workspace/casa-rs/target/1297-frames-casa/image-jmean",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-frames-casa/image-jmean.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--case",
+   "frame_app_beam",
+   "--location",
+   "ARRAY",
+   "--out",
+   "/workspace/casa-rs/target/1297-frames-casa/image-app",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-frames-casa/image-app.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--case",
+   "frame_hadec_beam",
+   "--location",
+   "ARRAY",
+   "--out",
+   "/workspace/casa-rs/target/1297-frames-casa/image-hadec",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-frames-casa/image-hadec.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--case",
+   "frame_azel_beam",
+   "--location",
+   "ARRAY",
+   "--out",
+   "/workspace/casa-rs/target/1297-frames-casa/image-azel",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-frames-casa/image-azel.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--case",
+   "frame_azel_beam",
+   "--location",
+   "ARRAY",
+   "--refresh-beam",
+   "--out",
+   "/workspace/casa-rs/target/1297-frames-casa/image-refresh",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-frames-casa/image-refresh.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--case",
+   "frame_hadec_beam",
+   "--out",
+   "/workspace/casa-rs/target/1297-frames-casa/image-geocentre",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-frames-casa/image-geocentre.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--case",
+   "frame_hadec_beam",
+   "--location",
+   "ARRAY",
+   "--squint",
+   "--out",
+   "/workspace/casa-rs/target/1297-axes-casa/image-squint",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-axes-casa/image-squint.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_component_signals_oracle.py",
+   "--beam",
+   "--beam-observer",
+   "ARRAY",
+   "--only",
+   "frame_hadec",
+   "--jones-beam",
+   "--out",
+   "/workspace/casa-rs/target/1297-axes-casa/component-jones",
+   "--fixture",
+   "/workspace/casa-rs/target/1297-axes-casa/component-jones.json.gz"
+  ]
+ ],
+ "fixture": "crates/casa-simulation/tests/data/sm_frame_beams_casa.json.gz",
+ "cases": [
+  {
+   "name": "frame_jmean_beam_array",
+   "operation": "component",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 4.4888164188371975e-07,
+    "3": 4.4888164188371975e-07
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 4.89323e-07,
+    "3": 4.89323e-07
+   }
+  },
+  {
+   "name": "frame_app_beam_array",
+   "operation": "component",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 4.543041444842432e-07,
+    "3": 4.543041444842432e-07
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 4.82952e-07,
+    "3": 4.82952e-07
+   }
+  },
+  {
+   "name": "frame_hadec_beam_array",
+   "operation": "component",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 3.378374742259305e-06,
+    "3": 3.378374742259305e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 7.68179e-06,
+    "3": 7.68179e-06
+   }
+  },
+  {
+   "name": "frame_azel_beam_array",
+   "operation": "component",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 3.378634552148674e-06,
+    "3": 3.378634552148674e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 7.68179e-06,
+    "3": 7.68179e-06
+   }
+  },
+  {
+   "name": "frame_azel_beam_array_refresh",
+   "operation": "component",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 3.378634552148674e-06,
+    "3": 3.378634552148674e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 7.68179e-06,
+    "3": 7.68179e-06
+   }
+  },
+  {
+   "name": "frame_azel_beam_alma",
+   "operation": "component",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 0.0,
+    "3": 0.0
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 0.0,
+    "3": 0.0
+   }
+  },
+  {
+   "name": "frame_jmean_beam_at_array",
+   "operation": "image",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 1.9928030617948442e-07,
+    "3": 1.9928030617948442e-07
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 2.60365e-07,
+    "3": 2.60365e-07
+   }
+  },
+  {
+   "name": "frame_app_beam_at_array",
+   "operation": "image",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 1.9946704630777977e-07,
+    "3": 1.9946704630777977e-07
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 2.60365e-07,
+    "3": 2.60365e-07
+   }
+  },
+  {
+   "name": "frame_hadec_beam_at_array",
+   "operation": "image",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 3.0073775031384535e-06,
+    "3": 3.0073775031384535e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 9.44428e-06,
+    "3": 9.44428e-06
+   }
+  },
+  {
+   "name": "frame_azel_beam_at_array",
+   "operation": "image",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 3.5785974413952153e-06,
+    "3": 3.5785974413952153e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 1.05037e-05,
+    "3": 1.05037e-05
+   }
+  },
+  {
+   "name": "frame_azel_beam_at_array_refresh",
+   "operation": "image",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 3.5785974413952034e-06,
+    "3": 3.5785974413952034e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 1.05037e-05,
+    "3": 1.05037e-05
+   }
+  },
+  {
+   "name": "frame_hadec_beam",
+   "operation": "image",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 0.0,
+    "3": 0.0
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 0.0,
+    "3": 0.0
+   }
+  },
+  {
+   "name": "frame_hadec_beam_at_array_squint",
+   "operation": "image",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 3.6114229458881894e-06,
+    "3": 3.6114229458881894e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 9.53753e-06,
+    "3": 9.53753e-06
+   }
+  },
+  {
+   "name": "frame_hadec_beam_array_jones",
+   "operation": "component",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 1.5453009386276406e-05,
+    "3": 1.5453009386276406e-05
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 1.68039e-05,
+    "3": 1.68039e-05
+   }
+  }
+ ],
+ "data_nrms_limit": 0.001,
+ "cpp_row_nrms_limit": 0.001,
+ "maximum_data_nrms": 1.5453009386276406e-05,
+ "maximum_cpp_row_nrms": 1.68039e-05,
+ "cpu_workers": [
+  1,
+  3
+ ],
+ "native_outputs": 28,
+ "cpp_reads_and_reopens": 28,
+ "baseline": "Before implementation, the independent end-to-end test fails on JMEAN with the explicit #1297 observer-context refusal. Two additional review regressions fail before the axis fixes: squinted image NRMS0.2694602 and Jones component0.0117898; after fixes3.6115e-6 and1.5454e-5 at unchanged1e-3.",
+ "review": "One fresh-context Astra xhigh audit. Both P1 native-axis findings fixed with failing-before/passing-after independent CASA cases; no re-review.",
+ "evidence_reuse": {
+  "revision": "8ab32f3d785cd0cdb962823f222c9bdd53e92985",
+  "scope": "The first12 controls and12 existing beam integrations,12 prediction unit tests and6 parent allocation laws passed here. The two axis fixes affect only the added dynamic squinted-image/Jones-component cases; the pixel-conversion extraction preserves its operations. Those unaffected results are retained. Four new C++ outputs add to the earlier24; final strict clippy/fmt/architecture pass after fixes."
+ },
+ "memory": {
+  "parent_tests": 6,
+  "max_transient_excess_bytes": 70495,
+  "allowance_bytes": 524288,
+  "scope": "Existing timed image64/8192orientation and saved/default/SD beam laws, including96/768pixel and8/1024integration cases. Fixes change coordinate axes only, not retained buffers."
+ },
+ "controls": "Flat positive I/Q/U,V=0 components isolate coordinates from CASA full-spectral flux/abs(flux) sign/complex-phase and LSRK-tabulation defects. Native corrections and raw exploratory observations are not used as new goldens. All14 committed references are raw CASA outputs.",
+ "limits": "No new Metal execution on this Linux host. Existing fixed-frame/backend/operator evidence is retained; measurement operators are unchanged. No new throughput claim. Time-dependent-frame mosaic integration remains #1298."
+}

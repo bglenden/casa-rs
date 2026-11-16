@@ -70,9 +70,8 @@ pub(super) fn setoptions(
     request: &OptionsRequest<'_>,
 ) -> PyResult<bool> {
     let result = tool.on_session(py, |session, lines| {
-        if measures::position(&request.location, &session.measures)?.is_none()
-            && request.location != Variant::Empty
-        {
+        let location = measures::position(&request.location, &session.measures)?;
+        if location.is_none() && !request.location.is_empty_sequence() {
             lines.push(LogLine::error(format!(
                 "Could not convert location {} to a Position Measures",
                 request.location.describe()
@@ -83,6 +82,7 @@ pub(super) fn setoptions(
             grid_function: request.grid_function.to_string(),
             padding: request.padding,
             w_planes: request.w_planes,
+            location_itrf_m: location.map_or([0.; 3], |position| position.as_itrf()),
         };
         outcome(session.simulator.set_options(&options), lines)
     })?;
@@ -103,7 +103,7 @@ pub(super) struct VoltagePatternRequest<'a> {
 /// and `[]`, and converts anything else (raising when it cannot).
 fn angle_deg(value: &Variant, default_deg: f64) -> ConvertResult<f64> {
     match value {
-        Variant::Empty => Ok(default_deg),
+        value if value.is_empty_sequence() => Ok(default_deg),
         Variant::Text(text) if text.is_empty() => Ok(default_deg),
         other => value_in(&quantity(other)?, "deg"),
     }

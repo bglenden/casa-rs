@@ -1,0 +1,470 @@
+{
+  "casa_tasks": "6.7.6.14",
+  "casa_tools": "6.7.6-14",
+  "casars_revision": "add245da9ba5d0bb66d0ca45a0e000fd1e27cd94",
+  "command": "CASA Python -I /private/tmp/probe-tclean-default-products.py",
+  "parameters": {
+    "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/point.ms",
+    "datacolumn": "data",
+    "imsize": [
+      64
+    ],
+    "cell": "2arcsec",
+    "weighting": "natural",
+    "niter": 0,
+    "gain": 0.1,
+    "threshold": "0Jy",
+    "pblimit": -0.1,
+    "startmodel": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/q-start.model",
+    "imagename": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/native-contract30/image",
+    "backend": "cpu",
+    "gridprecision": "f64"
+  },
+  "resolved_write_pb": true,
+  "native_members": [
+    "image.image",
+    "image.model",
+    "image.pb",
+    "image.psf",
+    "image.residual",
+    "image.sumwt"
+  ],
+  "casa_members": [
+    "image.image",
+    "image.model",
+    "image.pb",
+    "image.psf",
+    "image.residual",
+    "image.sumwt"
+  ],
+  "backend": "cpu",
+  "precision": "f64",
+  "workers": 1,
+  "products": {
+    "image.image": {
+      "nrms": 2.8400941993559445e-07,
+      "mask_mismatch": 0,
+      "native_metadata": {
+        "unit": "Jy/beam",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "casa_metadata": {
+        "unit": "Jy/beam",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "beam": [
+        [
+          8.909094,
+          8.80156,
+          1.077416
+        ],
+        [
+          8.909093,
+          8.801561,
+          1.077484
+        ]
+      ]
+    },
+    "image.model": {
+      "nrms": 8.65441086637584e-12,
+      "mask_mismatch": 0,
+      "native_metadata": {
+        "unit": "Jy/pixel",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "casa_metadata": {
+        "unit": "Jy/pixel",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "beam": [
+        null,
+        null
+      ]
+    },
+    "image.pb": {
+      "nrms": 0.0001779000758937712,
+      "mask_mismatch": 0,
+      "native_metadata": {
+        "unit": "",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "casa_metadata": {
+        "unit": "",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "beam": [
+        null,
+        null
+      ]
+    },
+    "image.psf": {
+      "nrms": 1.33386098532478e-07,
+      "mask_mismatch": 0,
+      "native_metadata": {
+        "unit": "",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "casa_metadata": {
+        "unit": "",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "beam": [
+        [
+          8.909094,
+          8.80156,
+          1.077416
+        ],
+        [
+          8.909093,
+          8.801561,
+          1.077484
+        ]
+      ]
+    },
+    "image.residual": {
+      "nrms": 4.1139281970916387e-07,
+      "mask_mismatch": 0,
+      "native_metadata": {
+        "unit": "",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "casa_metadata": {
+        "unit": "",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "beam": [
+        null,
+        null
+      ]
+    },
+    "image.sumwt": {
+      "nrms": 0.0,
+      "mask_mismatch": 0,
+      "native_metadata": {
+        "unit": "",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "casa_metadata": {
+        "unit": "",
+        "axis_units": [
+          "rad",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "stokes": [
+          "I"
+        ],
+        "referencepixel": [
+          32.0,
+          32.0,
+          0.0,
+          0.0
+        ],
+        "referencevalue": [
+          0.0,
+          -0.5235987755982988,
+          1.0,
+          100013375130.0163
+        ],
+        "increment": [
+          -9.69627362219072e-06,
+          9.69627362219072e-06,
+          1.0,
+          8001206.589385986
+        ]
+      },
+      "beam": [
+        null,
+        null
+      ]
+    }
+  },
+  "scope": "Small standard-MFS Q-to-I seed with CASA ordinary default artifact inventory; not representative T2."
+}

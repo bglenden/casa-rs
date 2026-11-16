@@ -62,8 +62,8 @@ RUNNABLE_GRIDDER_VALUES = {
     "widefield",
     "wproject",
 }
-SUPPORTED_SPEC_MODES = {"cubedata", "cube", "mfs"}
-RUNNABLE_SPEC_MODES = {"cubedata", "cube", "mfs"}
+SUPPORTED_SPEC_MODES = {"cubedata", "cube", "cubesource", "mfs"}
+RUNNABLE_SPEC_MODES = {"cubedata", "cube", "cubesource", "mfs"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
 SUPPORTED_INTERPOLATION = {"nearest", "linear"}
 SUPPORTED_HOGBOM_ITERATION_MODES = {
@@ -592,7 +592,7 @@ def build_plan(
         "IMAGER_BENCH_PERCHANWEIGHTDENSITY": boolean_env_value(
             imaging,
             "perchanweightdensity",
-            specmode in {"cube", "cubedata"},
+            specmode in {"cube", "cubedata", "cubesource"},
         ),
         "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
         "IMAGER_BENCH_USEMASK": str_value(imaging, "usemask", "user"),
@@ -658,6 +658,8 @@ def build_plan(
     prepared_aw_output_prefix = os.environ.get(
         "CASA_RS_BENCH_PREPARED_AW_OUTPUT_PREFIX"
     )
+    if "conjbeams" in imaging:
+        env["IMAGER_BENCH_CONJBEAMS"] = boolean_env_value(imaging, "conjbeams", False)
     if prepared_aw_casa_cache:
         env["IMAGER_BENCH_PREPARED_AW_CASA_CACHE"] = prepared_aw_casa_cache
     if native_aw_cf_cache:
@@ -683,7 +685,6 @@ def build_plan(
             "aterm": "IMAGER_BENCH_ATERM",
             "psterm": "IMAGER_BENCH_PSTERM",
             "wbawp": "IMAGER_BENCH_WBAWP",
-            "conjbeams": "IMAGER_BENCH_CONJBEAMS",
             "computepastep": "IMAGER_BENCH_COMPUTEPASTEP",
             "rotatepastep": "IMAGER_BENCH_ROTATEPASTEP",
             "pointingoffsetsigdev": "IMAGER_BENCH_POINTINGOFFSETSIGDEV",
@@ -765,7 +766,7 @@ def build_plan(
             "perchanweightdensity": boolean_env_value(
                 imaging,
                 "perchanweightdensity",
-                specmode in {"cube", "cubedata"},
+                specmode in {"cube", "cubedata", "cubesource"},
             ),
             "deconvolver": str_value(imaging, "deconvolver", "hogbom"),
             "standard_mfs_acceleration": str_value(
@@ -2953,7 +2954,7 @@ def planned_correlation_count(plan: dict[str, Any]) -> int:
 def planned_output_planes(mode: dict[str, Any]) -> int:
     if mode.get("deconvolver") == "mtmfs":
         return max(1, int(mode.get("nterms") or 1))
-    if mode.get("specmode") in {"cube", "cubedata"}:
+    if mode.get("specmode") in {"cube", "cubedata", "cubesource"}:
         return max(1, int(mode.get("channel_count") or 1))
     return 1
 

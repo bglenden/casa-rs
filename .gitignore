@@ -23,8 +23,9 @@ autoresearch-results
 # Per-workspace managed Last profiles are runtime state, including when a
 # developer runs a task from a crate directory.
 **/.casa-rs/parameters/
-docs/generated/cargo-metadata.json
 
 # Claude Code session state
 .claude/worktrees/
 .claude/settings.local.json
+# Private build trees, one per worktree (AGENTS.md "Storage").
+/target-*/

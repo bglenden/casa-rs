@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! The imaging request: the provider-contracts catalog's `tclean` surface,
-//! resolved, as one typed record (plan section 5.8, decision D8).
+//! resolved, as one typed record (ADR-0016 decision 8).
 //!
 //! A request is made only from resolved catalog values (every route, the
 //! command line and `--json-run` alike, resolves through the catalog), by
@@ -9,14 +9,16 @@
 //! CASA's modes read them (`crate::tclean`); so nothing here restates a
 //! default and a missing field is an error. Most fields are tclean's
 //! parameters by name; the reader fills the few casa-rs holds in its own
-//! form. An unset optional value is spelled `"none"` or left blank.
+//! form. An unset optional value is spelled `"none"` or left blank, except
+//! for the scan, observation, antenna and timerange selectors, which only
+//! an empty string leaves unset.
 //! Parameters that one gridder reads live in that gridder's variant.
 
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 use casa_imaging_model::{
-    HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
-    UvTaper,
+    HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, Projection,
+    RestoringBeamPolicy, UvTaper,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
@@ -26,12 +28,46 @@ use casa_types::quanta::{Quantity, Unit};
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
 
+use beam::restoring_beam;
+use execution::{grid_precision, hogbom_iteration_mode, major_cycle_limit, normalization};
+use mask::{mask_boxes, mask_images};
+use uv_taper::uv_taper;
+
 /// One imaging run's parameters, as the catalog resolved them.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ImagingRequest {
-    /// The MeasurementSet.
-    #[serde(deserialize_with = "single")]
-    pub vis: PathBuf,
+    /// Task-only continuation, established by output preflight, never a catalog value.
+    #[serde(skip)]
+    pub(crate) tclean_restart: bool,
+    /// Whether the continuation found an earlier model, as it was before the
+    /// run wrote its own; never a catalog value.
+    #[serde(skip)]
+    pub(crate) continued_model: bool,
+    /// Outlier destinations selected with the main image before execution.
+    #[serde(skip)]
+    pub(crate) numbered_outlier_outputs: Option<Vec<(PathBuf, PathBuf)>>,
+    /// A supplied region file with no regions means zero support, not no mask.
+    /// Internal reader provenance only; this is never a catalog parameter.
+    #[serde(default)]
+    pub(crate) explicit_empty_mask: bool,
+    /// Split the CRTF boxes around the image in tclean's ordered mask list.
+    #[serde(default)]
+    pub(crate) mask_regions_before_image: Option<usize>,
+    /// A parsed sky polygon, projected only after the image grid is known.
+    #[serde(default)]
+    pub(crate) mask_polygon: Option<crate::tclean::MaskPolygon>,
+    /// MVC's internally resolved output cube size, separate from the input
+    /// `channel_count` selector. Set after its selected band is surveyed.
+    #[serde(skip)]
+    pub(crate) mvc_output_channels: Option<NonZeroUsize>,
+    /// Ask CASA's MVC bandwidth rule to resolve the output cube depth.
+    #[serde(skip)]
+    pub(crate) mvc_auto_channels: bool,
+    /// The MeasurementSets of tclean's `vis`, in the order it names them,
+    /// each with the selection tclean applies to it: its own selectors, or
+    /// the one each selector gives every MeasurementSet. Compile images them
+    /// in CASA's order (compile's `stores::survey_stores`): by the earliest `TIME` of each.
+    pub vis: Vec<MeasurementSetSelection>,
     /// Prefix of every image product; a relative name is resolved against
     /// the working directory, as CASA's is.
     #[serde(deserialize_with = "absolute")]
@@ -44,47 +80,46 @@ pub struct ImagingRequest {
     /// `cell` does.
     #[serde(deserialize_with = "cell_pair_arcsec")]
     pub cell: [f64; 2],
+    /// The celestial projection of the image's direction axes, CASA's
+    /// `projection` (`SIN` by default).
+    #[serde(deserialize_with = "projection")]
+    pub projection: Projection,
     /// The visibility column imaged; `None` takes `CORRECTED_DATA` when it
     /// exists and `DATA` otherwise. `CORRECTED_DATA` asked for on a
     /// MeasurementSet without it images `DATA`, as CASA's `tclean` does;
     /// casa-rs also logs a warning.
     #[serde(deserialize_with = "optional")]
     pub datacolumn: Option<DataColumn>,
-    /// Whether the final model's prediction is written to `MODEL_DATA`.
+    /// Where the final model is saved in the MeasurementSet: nowhere, its
+    /// prediction in `MODEL_DATA`, or as CASA's virtual model.
     #[serde(deserialize_with = "save_model")]
-    pub savemodel: bool,
+    pub savemodel: SaveModel,
     /// A CASA outlier file naming further image domains.
     #[serde(deserialize_with = "optional")]
     pub outlierfile: Option<PathBuf>,
-    /// Selected `FIELD_ID`s, from identifiers and ranges such as
-    /// `0,3~5`; `None` selects every field.
-    #[serde(deserialize_with = "field_ids")]
-    pub field: Option<Vec<i32>>,
-    /// The `FIELD_ID` whose phase centre is the image centre.
+    /// The `FIELD_ID` whose phase centre is the image centre, a field of the
+    /// first MeasurementSet imaged, as CASA's `defineImage` reads it.
     #[serde(deserialize_with = "optional")]
     pub phasecenter_field: Option<i32>,
-    /// The selected `DATA_DESC_ID`.
+    /// The selected `DATA_DESC_ID` of every MeasurementSet.
     #[serde(deserialize_with = "optional")]
     pub ddid: Option<i32>,
     /// The image centre: `J2000 <lon> <lat>`, `TRACKFIELD`, or an
     /// ephemeris name or table.
     #[serde(deserialize_with = "optional")]
     pub phasecenter: Option<String>,
-    /// CASA spectral-window selection, for example `0:1~30`.
+    /// Fixed direction for a mosaic PSF formed separately from the main image.
+    #[serde(default, deserialize_with = "optional")]
+    pub psfphasecenter: Option<String>,
+    /// CASA VPManager table for the analytic imaging primary beam.
     #[serde(deserialize_with = "optional")]
-    pub spw: Option<String>,
+    pub vptable: Option<PathBuf>,
     /// First selected channel when `spw` names none.
     #[serde(deserialize_with = "optional")]
     pub channel_start: Option<usize>,
     /// Number of selected channels when `spw` names none.
     #[serde(deserialize_with = "optional")]
     pub channel_count: Option<usize>,
-    /// CASA baseline-length selection.
-    #[serde(deserialize_with = "optional")]
-    pub uvrange: Option<String>,
-    /// CASA observing-intent selection.
-    #[serde(deserialize_with = "optional")]
-    pub intent: Option<String>,
     /// The imaged Stokes parameters (`I`, `IQUV`, …) or correlations
     /// (`RR`, `XXYY`, …), in canonical order.
     #[serde(deserialize_with = "stokes")]
@@ -106,12 +141,35 @@ pub struct ImagingRequest {
     /// How a cube resamples source channels onto its output channels.
     #[serde(deserialize_with = "interpolation")]
     pub interpolation: CubeInterpolation,
-    /// Rest frequency of a cube's velocity axis, in Hz.
-    #[serde(deserialize_with = "rest_frequency_hz")]
-    pub restfreq: Option<f64>,
-    /// One restoring beam per plane or one common beam.
+    /// Rest frequencies in Hz, CASA's `restfreq` list. The first is a
+    /// cube's velocity axis's and the image header's; CASA lists the others
+    /// after it in the header's spectral coordinate. Empty takes the
+    /// source's line (`SynthesisParamsImage::buildCoordinateSystemCore`).
+    #[serde(deserialize_with = "rest_frequencies_hz")]
+    pub restfreq: Vec<f64>,
+    /// A continuum image's reference frequency in Hz (`reffreq`): the
+    /// header's spectral reference and an `mtmfs` Taylor expansion's
+    /// reference. `None` (empty or zero) takes the band's midpoint, as
+    /// `SynthesisParamsImage::getImFreq` does; a cube reads but ignores it.
+    #[serde(deserialize_with = "reference_frequency_hz")]
+    pub reffreq: Option<f64>,
+    /// One restoring beam per plane, one common beam, or a beam given by
+    /// its axes and angle.
     #[serde(deserialize_with = "restoring_beam")]
     pub restoringbeam: RestoringBeamPolicy,
+    /// Restore the model with the restoring beam and write `.image` and,
+    /// with `pbcor`, `.image.pbcor` (and the spectral index of `mtmfs`);
+    /// CASA's `restoration=False` writes none of them (`task_tclean.py`).
+    pub restoration: bool,
+    /// CASA's `calcres`: form the residual with a major cycle before any
+    /// minor cycle. `false` takes the residual an earlier run left at
+    /// `imagename` and runs no initial major cycle; with no residual there,
+    /// a run of no iterations makes the PSF alone (`task_tclean.py`).
+    pub calcres: bool,
+    /// CASA's `calcpsf`: grid the PSF, its sums of weights and the primary
+    /// beam. `false` takes the PSF and sums of weights an earlier run left
+    /// at `imagename` (`SIImageStore` opens existing images).
+    pub calcpsf: bool,
     /// Whether a cube's density weighting is per output channel.
     pub perchanweightdensity: bool,
     /// Total minor-cycle iterations; zero writes the dirty products only.
@@ -119,7 +177,8 @@ pub struct ImagingRequest {
     /// Absolute stopping threshold in Jy/beam.
     #[serde(deserialize_with = "threshold_jy")]
     pub threshold: f64,
-    /// Major-cycle limit; `None` is CASA's `nmajor = -1`.
+    /// Major-cycle limit after the initial pass; zero is initial-only,
+    /// and `None` is CASA's `nmajor = -1`.
     #[serde(deserialize_with = "major_cycle_limit")]
     pub nmajor: Option<usize>,
     /// Minor-cycle loop gain.
@@ -148,8 +207,13 @@ pub struct ImagingRequest {
     pub scales: Vec<f64>,
     /// CASA multiscale small-scale bias.
     pub smallscalebias: f64,
-    /// User masks or CASA auto-multithresh.
+    /// User masks, the primary beam's or CASA auto-multithresh.
     pub usemask: UseMask,
+    /// tclean's `pbmask`, in `[0, 1)`: the `.pb` level of `usemask='pb'`'s
+    /// mask, the level a named user mask and auto-multithresh are cut to
+    /// above zero, and the level above which the `nsigma` noise is
+    /// measured.
+    pub pbmask: f64,
     /// Auto-multithresh sidelobe threshold multiplier.
     pub sidelobethreshold: f64,
     /// Auto-multithresh noise threshold multiplier.
@@ -162,20 +226,53 @@ pub struct ImagingRequest {
     pub minbeamfrac: f64,
     /// Auto-multithresh growth iterations.
     pub growiterations: usize,
-    /// Inclusive pixel boxes `[x0, y0, x1, y1]` that may be cleaned.
+    /// Auto-multithresh smoothing of each new mask, in restoring beams.
+    pub smoothfactor: f64,
+    /// Auto-multithresh cut of each smoothed mask, as a fraction of its
+    /// peak.
+    pub cutthreshold: f64,
+    /// Whether auto-multithresh prunes the grown mask as it prunes the
+    /// threshold mask.
+    pub dogrowprune: bool,
+    /// Percent change of an auto-multithresh plane's mask below which it
+    /// stops evolving once the global threshold is reached; negative never
+    /// stops on change.
+    pub minpercentchange: f64,
+    /// Log CASA's automask summary at every auto-multithresh update.
+    pub verbose: bool,
+    /// Estimate the noise of `nsigma` and auto-multithresh from every
+    /// valid pixel (`true`), or robustly, outside the clean mask or by
+    /// Chauvenet's criterion (`false`).
+    pub fastnoise: bool,
+    /// Inclusive signed pixel boxes, clipped to the image, each limited to
+    /// the channels of its CRTF region's spectral `range` when it has one.
     #[serde(deserialize_with = "mask_boxes")]
-    pub mask_box: Vec<[usize; 4]>,
-    /// A CASA image whose non-zero pixels may be cleaned.
-    #[serde(deserialize_with = "optional")]
-    pub mask_image: Option<PathBuf>,
-    /// CASA's `startmodel`: an image in Jy/pixel that the model starts from
-    /// (`SIImageStore::setModelImageOne`).
-    #[serde(deserialize_with = "optional")]
-    pub startmodel: Option<PathBuf>,
+    pub mask_box: Vec<UserMaskBox>,
+    /// CASA mask images in list order. Each adds its signed pixels to the
+    /// current binary support before applying the positive threshold.
+    #[serde(rename = "mask_image", deserialize_with = "mask_images")]
+    pub mask_images: Vec<PathBuf>,
+    /// CASA's `startmodel`: the images in Jy/pixel that the model starts
+    /// from (`SIImageStore::setModelImageOne`), one, or one per Taylor term
+    /// (`SIImageStoreMultiTerm::setModelImage`), `None` for an empty entry,
+    /// whose term starts from zero. Empty without a start model.
+    #[serde(deserialize_with = "start_models")]
+    pub startmodel: Vec<Option<PathBuf>>,
     /// Visibility weighting.
     pub weighting: Weighting,
     /// Briggs robustness.
     pub robust: f64,
+    /// CASA's `npixels` as `SynthesisImagerVi2::weight` reads it for the
+    /// weighting: the side of a continuum uniform or Briggs density grid,
+    /// or the half-width of the box each sample's density spreads over
+    /// (`superuniform`, where CASA's zero or less is 3, and a cube's
+    /// per-channel density); 0 is the image's own cells, and the value of
+    /// a weighting without a density.
+    pub npixels: usize,
+    /// CASA's `noise` in Jy, the visibility noise of `briggsabs`; `None`
+    /// for every other weighting, which does not read it.
+    #[serde(deserialize_with = "optional")]
+    pub noise: Option<f64>,
     /// CASA's `uvtaper`, a Gaussian taper of the imaging weights, read as
     /// `VisImagingWeight::setFilter` reads it: an angle is the image-plane
     /// FWHM and wavelengths are the uv-plane HWHM. `None` when it is empty
@@ -210,40 +307,62 @@ pub struct ImagingRequest {
     /// Where the major-cycle passes grid, resolved against the compiled
     /// problem and the host by [`crate::availability::resolve_backend`].
     pub backend: BackendRequest,
-    /// Grid arithmetic; `None` (`auto`) is plan decision D2's rule.
+    /// Grid arithmetic; `None` (`auto`) is `f64` on the CPU, `f32` on Metal.
     #[serde(deserialize_with = "grid_precision")]
     pub gridprecision: Option<GridPrecision>,
+    /// Legacy quick-PSF padding: only 1.0 in a CPU/f64 PSF-only run is valid.
+    /// Ordinary tclean uses 1.2; this is outside the CASA parameter surface.
+    #[serde(skip)]
+    pub ft_padding: Option<casa_imaging_operator::PaddingFactor>,
     /// The optional diagnostic output: `stage_timing`,
     /// `metal_stage_timing` and `science_trace`.
     #[serde(flatten)]
     pub diagnostics: Diagnostics,
-    /// How the passes read the MeasurementSet: a run option of the imaging
-    /// port (#932), not an imager parameter, so no request names it.
-    #[serde(skip)]
-    pub source_route: SourceRoute,
 }
 
-/// The route the passes read the selected visibilities by, while the
-/// imaging port (#932) holds both: the selected-observation route, which
-/// reads MAIN rows, or the observation's batches through the shared
-/// `casa-observation` boundary. Both image the same samples; the cutover
-/// removes the first.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SourceRoute {
-    /// MAIN rows, through `casa-ms`'s selected-observation layer.
-    #[default]
-    SelectedRows,
-    /// The observation's batches, with geometry over batches; a model or
-    /// corrected column is written back through the observation's update
-    /// sessions (#932, step 5).
-    ObservationBatches,
+/// One MeasurementSet of a request and the selection tclean applies to it
+/// (CASA's `SynthesisParamsSelect`, one per MeasurementSet).
+///
+/// Each selector is resolved against this MeasurementSet's own tables
+/// during compilation. `spw`, `uvrange` and `intent` are unset when blank
+/// or `none`. FIELD, scan, observation, antenna and time selectors keep
+/// their text and are unset when exactly empty.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct MeasurementSetSelection {
+    /// The MeasurementSet.
+    pub vis: PathBuf,
+    /// FIELD IDs, ranges and comparisons, names, patterns or regexes.
+    /// `None` selects every field.
+    #[serde(deserialize_with = "exact_selector")]
+    pub field: Option<String>,
+    /// CASA spectral-window selection, for example `0:1~30`.
+    #[serde(deserialize_with = "optional")]
+    pub spw: Option<String>,
+    /// CASA baseline-length selection.
+    #[serde(deserialize_with = "optional")]
+    pub uvrange: Option<String>,
+    /// CASA numeric scan-number selection, as given.
+    #[serde(deserialize_with = "exact_selector")]
+    pub scan: Option<String>,
+    /// CASA numeric observation-ID selection, as given.
+    #[serde(deserialize_with = "exact_selector")]
+    pub observation: Option<String>,
+    /// CASA baseline selection by antenna (`antenna`), as given.
+    #[serde(deserialize_with = "exact_selector")]
+    pub antenna: Option<String>,
+    /// CASA time selection (`timerange`), as given.
+    #[serde(deserialize_with = "exact_selector")]
+    pub timerange: Option<String>,
+    /// CASA observing-intent selection.
+    #[serde(deserialize_with = "optional")]
+    pub intent: Option<String>,
 }
 
 /// The device a request asks to grid on (`backend`).
 ///
 /// `auto` takes the host's GPU for what it implements and has been checked
 /// on, end to end, against the CPU; everything else grids on the CPU. The
-/// GPU accumulates in `f32` (plan decision D2), so choosing it accepts
+/// GPU accumulates in `f32` (ADR-0016 decision 6), so choosing it accepts
 /// single-precision grids, and an explicit `gridprecision = f64` keeps
 /// `auto` on the CPU.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -256,6 +375,20 @@ pub enum BackendRequest {
     Cpu,
     /// The host's GPU (Metal on macOS); a problem it cannot run is refused.
     Gpu,
+}
+
+/// Where tclean's `savemodel` saves the final model.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SaveModel {
+    /// Nowhere (`'none'`).
+    #[default]
+    None,
+    /// Its prediction, written to `MODEL_DATA` (`'modelcolumn'`).
+    ModelColumn,
+    /// CASA's virtual model, the gridded model and the record of the
+    /// machine that predicts from it, in the MeasurementSet's keywords or
+    /// SOURCE (`'virtual'`, [`mod@casa_ms::virtual_model`]).
+    Virtual,
 }
 
 /// Visibility column imaged.
@@ -301,21 +434,71 @@ pub enum SpecMode {
 pub enum Deconvolver {
     /// Högbom point components.
     Hogbom,
-    /// Clark point components.
+    /// Clark point components, jointly over a channel's polarizations.
     Clark,
+    /// Clark point components on each polarization separately.
+    ClarkStokes,
+    /// Image-plane maximum entropy.
+    Mem,
     /// Multiscale components.
     Multiscale,
     /// Multi-term multi-frequency synthesis.
     Mtmfs,
 }
 
+/// One box of the user mask (`mask_box`): inclusive signed pixel corners,
+/// and the spectral `range` of the CRTF region it comes from, if any.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UserMaskBox {
+    /// `[x0, y0, x1, y1]`, inclusive; clipped to the image.
+    pub corners: [i64; 4],
+    /// The channels the box masks, as its region's `range` gives them; every
+    /// channel when `None`.
+    pub range: Option<SpectralMaskRange>,
+}
+
+impl UserMaskBox {
+    /// A box over every channel.
+    #[must_use]
+    pub const fn new(corners: [i64; 4]) -> Self {
+        Self {
+            corners,
+            range: None,
+        }
+    }
+}
+
+impl PartialEq<[i64; 4]> for UserMaskBox {
+    fn eq(&self, corners: &[i64; 4]) -> bool {
+        self.range.is_none() && self.corners == *corners
+    }
+}
+
+/// A CRTF region's spectral `range` (casacore's `AnnotationBase`
+/// frequency limits): its two ends as written, in either order. Compile
+/// turns them into the image's channels as casacore's `AnnRegion` and
+/// `LCBox` do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SpectralMaskRange {
+    /// Frequencies in hertz, in the image's spectral frame (CRTF's default
+    /// `frame`).
+    Frequency([f64; 2]),
+    /// Channel pixel coordinates (`pix`).
+    Pixel([f64; 2]),
+}
+
 /// Mask mode (`usemask`).
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum UseMask {
-    /// The boxes and image the request names; everything when it names none.
+    /// The boxes and image the request names, cut to the primary beam at
+    /// a `pbmask` above zero; everything when it names none.
     User,
-    /// CASA auto-multithresh.
+    /// The pixels whose `.pb` exceeds `pbmask`, in every plane
+    /// (`SDMaskHandler::makePBMask`).
+    Pb,
+    /// CASA auto-multithresh, cut to the primary beam at a `pbmask` above
+    /// zero.
     AutoMultithresh,
 }
 
@@ -327,46 +510,66 @@ pub enum Weighting {
     Natural,
     /// Uniform density weighting.
     Uniform,
+    /// Uniform weighting over a density summed in a box about each sample
+    /// (`npixels`).
+    Superuniform,
+    /// Each weight times its sample's uv distance.
+    Radial,
     /// Briggs weighting at `robust`.
     Briggs,
+    /// Briggs weighting at `robust` and the visibility `noise`, unnormalized
+    /// (CASA `rmode = "abs"`).
+    Briggsabs,
     /// Briggs weighting with CASA's bandwidth taper at `robust`.
     Briggsbwtaper,
 }
 
-/// Convolution-function set (`gridder`) and the parameters only it reads.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(tag = "gridder", rename_all = "lowercase")]
-pub enum Gridder {
-    /// The prolate-spheroidal kernel.
-    Standard {
-        /// Facets along each axis of the main image (CASA's `facets`): each
-        /// is gridded about its own centre.
-        facets: NonZeroUsize,
-    },
-    /// W-projection.
-    Wproject {
-        /// W planes; `None` derives the count from the selected W range.
-        #[serde(deserialize_with = "optional")]
-        wprojplanes: Option<NonZeroUsize>,
-    },
-    /// The heterogeneous-array mosaic beams.
-    Mosaic {
-        /// Point each field's beam along the `POINTING` table.
-        usepointing: bool,
-        /// Flat-noise or flat-sky products.
-        #[serde(deserialize_with = "normalization")]
-        normtype: ProductNormalization,
-    },
-    /// EVLA A-projection with W-projection.
-    Awproject(AwProjection),
+impl Weighting {
+    /// Whether the weights divide by a gridded visibility density.
+    #[must_use]
+    pub const fn uses_density(self) -> bool {
+        !matches!(self, Self::Natural | Self::Radial)
+    }
+
+    /// Whether a cube with `perchanweightdensity` grids that density per
+    /// channel (CASA's `BriggsCubeWeightor`): `superuniform` always grids
+    /// one density over the selection (`VisImagingWeight`), as
+    /// `SynthesisImagerVi2::weight` does.
+    #[must_use]
+    pub const fn per_channel_density(self) -> bool {
+        self.uses_density() && !matches!(self, Self::Superuniform)
+    }
 }
 
 /// The parameters of `gridder = awproject`.
+///
+/// The four terms are tclean's, as `AWProjectFT::makeCFObject` reads them.
+/// They shape the cells a native cache generates
+/// (`AWConvFunc::makeConvFunction2`). An imported CASA cache already holds
+/// the cells its own run made, so with one only `conjbeams` changes the
+/// run: it selects the cell a row grids with (`CFBuffer::nearestFreqNdx`).
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct AwProjection {
-    /// W planes of the convolution-function cache.
+    /// W planes of the convolution-function cache: one images co-planar,
+    /// without the W term (`createAWPFTMachine`'s `wprojPlane > 1`).
     #[serde(deserialize_with = "optional")]
     pub wprojplanes: Option<NonZeroUsize>,
+    /// The EVLA aperture term (tclean `aterm`).
+    pub aterm: bool,
+    /// The prolate-spheroidal anti-aliasing term (tclean `psterm`).
+    pub psterm: bool,
+    /// Cells at each selected window's frequency rather than at the image
+    /// reference frequency alone (tclean `wbawp`); without the aperture
+    /// CASA's `AWConvFunc` drops it.
+    pub wbawp: bool,
+    /// Grid each sample with the cell at its conjugate frequency
+    /// `√(2f₀² − f²)` about the image frequency `f₀`, and weigh it with the
+    /// beam there (tclean `conjbeams`).
+    pub conjbeams: bool,
+    /// The maximum PA distance of an imported buffer, in degrees.
+    pub computepastep: f64,
+    /// The PA change that triggers rotation of an imported buffer, degrees.
+    pub rotatepastep: f64,
     /// Sample each row's pointing from the `POINTING` table.
     pub usepointing: bool,
     /// Flat-noise or flat-sky products.
@@ -439,9 +642,92 @@ pub struct InvalidRequest {
 }
 
 impl ImagingRequest {
+    /// The cube's output depth; MVC derives this independently of its input
+    /// channel selection (`PyMtmfsViaCubeSynthesisImager`).
+    pub(crate) const fn cube_output_channel_count(&self) -> Option<usize> {
+        match self.mvc_output_channels {
+            Some(channels) => Some(channels.get()),
+            None => self.channel_count,
+        }
+    }
+
+    /// Check that the request can continue on what an earlier run left at
+    /// its `imagename`, as tclean's `restart=True` does (#944): the same
+    /// run's family of products, a model with no `startmodel`, a CLEAN mask
+    /// with no new one, and what `calcpsf=False` and `calcres=False` read.
+    /// Task entry points call this before creating a run summary.
+    ///
+    /// # Errors
+    ///
+    /// An existing product the request does not continue on, an outlier
+    /// field's existing product, an unreadable output directory, an invalid
+    /// outlier-name file, or an earlier PSF or residual that is missing.
+    pub fn check_tclean_output_prefixes(&self) -> Result<(), crate::PrepareError> {
+        crate::restart::check(self).map(|_| ())
+    }
+
+    /// Clone this request with task continuation enabled after output preflight.
+    /// Lower-level execution of the original request retains atomic replacement.
+    ///
+    /// # Errors
+    /// An unsupported existing product or a conflicting explicit start model.
+    pub fn with_tclean_restart(&self) -> Result<Self, crate::PrepareError> {
+        let (continuing, model) = crate::restart::check(self)?;
+        let mut request = self.clone();
+        request.tclean_restart = continuing;
+        request.continued_model = model;
+        Ok(request)
+    }
+
+    /// Apply CASA's task output policy before summary creation or execution.
+    /// `restart=true` continues on the products at `imagename`. With
+    /// `restart=false`, the main image and its outliers receive a common
+    /// suffix and every selected destination is checked before imaging.
+    ///
+    /// # Errors
+    ///
+    /// Invalid or duplicate names, unreadable directories or outlier file,
+    /// an occupied destination, or missing saved inputs.
+    pub fn with_tclean_output_policy(&self, restart: bool) -> Result<Self, crate::PrepareError> {
+        if restart {
+            return self.with_tclean_restart();
+        }
+        let mut prefixes = vec![self.imagename.clone()];
+        if let Some(path) = &self.outlierfile {
+            prefixes.extend(crate::compile::outlier_output_prefixes(path)?);
+        }
+        let mut outputs = crate::restart::next_prefixes(&prefixes)?.into_iter();
+        let mut unique = std::collections::BTreeSet::new();
+        for output in outputs.as_slice() {
+            let member = crate::restart::product_path(output, "model");
+            let absolute = std::path::absolute(&member).unwrap_or(member);
+            if !unique.insert(absolute) {
+                return Err(crate::PrepareError::DuplicateOutput {
+                    path: output.clone(),
+                });
+            }
+            crate::restart::check_prefix(output)?;
+        }
+        let mut request = self.clone();
+        request.imagename = outputs.next().expect("always a main image");
+        request.numbered_outlier_outputs = self
+            .outlierfile
+            .as_ref()
+            .map(|_| prefixes.into_iter().skip(1).zip(outputs).collect());
+        // A new namespace holds no PSF or residual for calcpsf or calcres to
+        // leave standing.
+        crate::restart::check_inputs(&request, false)?;
+        request.tclean_restart = false;
+        request.continued_model = false;
+        Ok(request)
+    }
+
     /// Check the relations between parameters that no single parameter's
     /// catalog domain can state.
     pub fn validate(&self) -> Result<(), InvalidRequest> {
+        execution::validate_ft_padding(self)?;
+        self.validate_psf_phase_centre()?;
+        execution::validate_awp2_scope(self)?;
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
         if self.phasecenter.is_some() && self.phasecenter_field.is_some() {
             return invalid(
@@ -461,47 +747,96 @@ impl ImagingRequest {
         if self.nsigma < 0.0 || self.scales.iter().any(|scale| *scale < 0.0) {
             return invalid("nsigma, scales", "must not be negative");
         }
-        if self.startmodel.is_some() && self.deconvolver == Deconvolver::Mtmfs {
+        // CASA's image stores refuse more images than terms
+        // (`SIImageStore::setModelImage`, `SIImageStoreMultiTerm`).
+        let terms = match self.deconvolver {
+            Deconvolver::Mtmfs => self.nterms,
+            _ => 1,
+        };
+        if self.startmodel.len() > terms {
             return invalid(
-                "startmodel, deconvolver",
-                "an mtmfs start model is one image per Taylor term, which is not supported yet",
+                "startmodel",
+                if self.deconvolver == Deconvolver::Mtmfs {
+                    "We currently cannot support more than nterms images as the starting model."
+                } else {
+                    "Only one startmodel image is allowed."
+                },
             );
         }
-        if self.startmodel.is_some() && self.outlierfile.is_some() {
+        if self.has_start_model()
+            && self.outlierfile.is_some()
+            && !execution::supports_outlier_start_models(self)
+        {
             return invalid(
                 "startmodel, outlierfile",
-                "a start model with outlier fields is not supported yet: an outlier would own the \
-                 main field's overlap with no start model of its own",
+                execution::OUTLIER_START_MODELS_SCOPE,
             );
         }
-        if self.nterms == 0 || (self.nterms > 1) != (self.deconvolver == Deconvolver::Mtmfs) {
+        // CASA's `mtmfs` takes one Taylor term or more; every other
+        // deconvolver images one.
+        if self.nterms == 0 || (self.nterms > 1 && self.deconvolver != Deconvolver::Mtmfs) {
             return invalid(
                 "nterms, deconvolver",
-                "nterms > 1 exactly when deconvolver = mtmfs",
+                "nterms is at least one, and more than one only with deconvolver = mtmfs",
             );
         }
+        self.validate_mem_scope()?;
         if self.deconvolver == Deconvolver::Mtmfs && self.specmode != SpecMode::Mfs {
             return invalid("deconvolver, specmode", "mtmfs images a continuum (mfs)");
         }
-        if self.solves() && (self.minor_cycle_length == 0 || self.nmajor == Some(0)) {
+        if self.solves() && self.minor_cycle_length == 0 {
             return invalid(
-                "minor_cycle_length, nmajor",
-                "a solving run needs minor-cycle iterations and a major cycle",
+                "minor_cycle_length",
+                "a solving run needs minor-cycle iterations",
             );
         }
-        if self.savemodel && !self.solves() && self.startmodel.is_none() {
+        // CASA's separate prediction initializes each selected visibility
+        // to zero even when there is no model image to degrid.
+        let predicts_empty_column =
+            self.savemodel == SaveModel::ModelColumn && self.niter == 0 && !self.calcres;
+        if self.savemodel != SaveModel::None
+            && !self.solves()
+            && !self.has_start_model()
+            && !self.tclean_restart
+            && !predicts_empty_column
+        {
             return invalid(
                 "savemodel, niter",
                 "MODEL_DATA needs a solved model or a start model",
             );
         }
-        if (self.mask_image.is_some() && !self.mask_box.is_empty())
-            || (self.usemask == UseMask::AutoMultithresh
-                && (self.mask_image.is_some() || !self.mask_box.is_empty()))
+        if self.savemodel == SaveModel::Virtual {
+            self.validate_virtual_model()?;
+        }
+        self.validate_mask_image_list()?;
+        let has_boxes = !self.mask_box.is_empty() || self.explicit_empty_mask;
+        let has_images = !self.mask_images.is_empty();
+        if self.usemask != UseMask::User && (has_images || has_boxes || self.mask_polygon.is_some())
         {
             return invalid(
                 "usemask, mask_image, mask_box",
-                "name one mask: auto-multithresh, a mask image or boxes",
+                "auto-multithresh and primary-beam masks do not take user images or boxes",
+            );
+        }
+        let polygon_with_other_mask = self.mask_polygon.is_some() && (has_images || has_boxes);
+        let list_position = self.mask_regions_before_image;
+        if polygon_with_other_mask
+            || list_position.is_some_and(|before| before > self.mask_box.len())
+            || (has_images && has_boxes && list_position.is_none())
+        {
+            return invalid(
+                "mask_image, mask_box",
+                "a sky region stands alone; combine one image with pixel regions using an ordered mask list (#823)",
+            );
+        }
+        if !(0.0..1.0).contains(&self.pbmask) {
+            return invalid("pbmask", "pbmask is a primary-beam level in [0, 1)");
+        }
+        if self.outlierfile.is_some() && (self.usemask == UseMask::Pb || self.pbmask > 0.0) {
+            return invalid(
+                "outlierfile, usemask, pbmask",
+                "outlier fields take the main field's usemask='pb' and pbmask in CASA, which \
+                 is not implemented yet (#814)",
             );
         }
         if self.save_continuum_residual && self.fitspw.is_none() {
@@ -525,10 +860,125 @@ impl ImagingRequest {
                 "outlier domains are imaged with natural weighting, dirty or Högbom",
             );
         }
+        // Only the measured scalar W-facet route is admitted while the
+        // per-channel and Taylor facet bookkeeping remains unfinished (#1063).
+        if let Gridder::Wproject {
+            facets,
+            wprojplanes,
+        } = self.gridder
+            && facets.get() > 1
+            && (self.specmode != SpecMode::Mfs
+                || self.deconvolver != Deconvolver::Hogbom
+                || !matches!(self.weighting, Weighting::Natural | Weighting::Uniform)
+                || self.stokes != [PolarizationCoordinate::StokesI]
+                || wprojplanes.is_none_or(|planes| planes.get() < 2)
+                || self.outlierfile.is_some())
+        {
+            return invalid(
+                "facets, gridder",
+                "W-projection facets currently require Stokes I, single-term MFS, Högbom, \
+                 natural or uniform weighting, explicit W planes and no outliers (#1063)",
+            );
+        }
         if let Gridder::Awproject(aw) = &self.gridder {
             aw.validate()?;
         }
         Ok(())
+    }
+
+    /// CASA forms a separate PSF only for the mosaic gridder.
+    pub(crate) fn uses_separate_psf(&self) -> bool {
+        self.psfphasecenter.is_some() && matches!(self.gridder, Gridder::Mosaic { .. })
+    }
+
+    pub(crate) fn supports_separate_psf(&self) -> bool {
+        matches!(self.gridder, Gridder::Mosaic { .. })
+            && self.outlierfile.is_none()
+            && match self.specmode {
+                SpecMode::Mfs if self.deconvolver == Deconvolver::Mtmfs => {
+                    self.nterms >= 2
+                        && self.mvc_output_channels.is_none()
+                        && !self.mvc_auto_channels
+                }
+                SpecMode::Mfs => true,
+                SpecMode::Cube => self.deconvolver != Deconvolver::Mtmfs,
+                SpecMode::Cubedata | SpecMode::Cubesource => false,
+            }
+    }
+
+    /// The alternate PSF route reads the same selected observations as the main mosaic.
+    pub(crate) fn validate_psf_phase_centre(&self) -> Result<(), InvalidRequest> {
+        if self.calcpsf && self.uses_separate_psf() && !self.supports_separate_psf() {
+            return Err(InvalidRequest {
+                parameters: "psfphasecenter",
+                reason: if self.specmode == SpecMode::Cubesource {
+                    "a fixed alternate PSF centre cannot track the moving source required by cubesource (#1062)"
+                } else {
+                    "a separate fixed PSF centre is supported for an MFS mosaic or a single-term cube mosaic without outliers (#1062)"
+                },
+            });
+        }
+        Ok(())
+    }
+
+    /// Guard the tested MEM subset at both the CASA reader and typed request.
+    pub(crate) fn validate_mem_scope(&self) -> Result<(), InvalidRequest> {
+        if self.deconvolver == Deconvolver::Mem
+            && (self.specmode != SpecMode::Mfs
+                || self.stokes.as_slice() != [PolarizationCoordinate::StokesI]
+                || !matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1)
+                || self.weighting == Weighting::Briggsbwtaper
+                || self.vis.len() != 1
+                || self.outlierfile.is_some())
+        {
+            return Err(InvalidRequest {
+                parameters: "deconvolver",
+                reason: "MEM supports one MeasurementSet in Stokes I MFS with the standard one-facet gridder, continuum weighting and no outliers (#1060)",
+            });
+        }
+        Ok(())
+    }
+
+    /// What `savemodel='virtual'` saves: the standard gridder's model
+    /// (CASA's `GridFT`, or `MultiTermFTNew` over it) of one Stokes I
+    /// image. CASA also saves W-projection and mosaic machines, other
+    /// polarizations, facets and outlier fields, which wait for #823.
+    fn validate_virtual_model(&self) -> Result<(), InvalidRequest> {
+        let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
+        if !matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1) {
+            return invalid(
+                "savemodel, gridder",
+                "savemodel='virtual' saves the standard gridder's model of one facet; other \
+                 gridders and facets are not implemented by casa-rs yet (#823)",
+            );
+        }
+        if self.stokes != [PolarizationCoordinate::StokesI] {
+            return invalid(
+                "savemodel, stokes",
+                "savemodel='virtual' saves a Stokes I model; other polarizations are not \
+                 implemented by casa-rs yet (#823)",
+            );
+        }
+        if self.outlierfile.is_some() {
+            return invalid(
+                "savemodel, outlierfile",
+                "savemodel='virtual' saves the main image's model; outlier fields are not \
+                 implemented by casa-rs yet (#823)",
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether tclean's final write of the model is `predictModel`, on the
+    /// parent imager's selection, which is not tuned to the image's band:
+    /// after a run with `nsigma` or an automatic mask, whose last major
+    /// cycle's write it overwrites, and for a run of no iterations that forms
+    /// no residual (`task_tclean.py`).
+    #[must_use]
+    pub fn predicts_final_model(&self) -> bool {
+        self.nsigma > 0.0
+            || self.usemask == UseMask::AutoMultithresh
+            || (self.niter == 0 && !self.calcres)
     }
 
     /// Whether the run solves for a model: `mtmfs` always, the other
@@ -536,6 +986,35 @@ impl ImagingRequest {
     #[must_use]
     pub fn solves(&self) -> bool {
         self.deconvolver == Deconvolver::Mtmfs || self.niter > 0
+    }
+
+    /// Each image domain's output prefix: `imagename`, then the outlier
+    /// file's, which an unreadable file leaves out.
+    #[must_use]
+    pub fn image_names(&self) -> Vec<PathBuf> {
+        let outliers = match &self.numbered_outlier_outputs {
+            Some(outputs) => outputs.iter().map(|(_, output)| output.clone()).collect(),
+            None => self.outlierfile.as_deref().map_or_else(Vec::new, |path| {
+                crate::compile::outlier_output_prefixes(path).unwrap_or_default()
+            }),
+        };
+        std::iter::once(self.imagename.clone())
+            .chain(outliers)
+            .collect()
+    }
+
+    /// Whether the model starts from an image rather than empty: a
+    /// `startmodel`, or the model an earlier run left at `imagename` that a
+    /// continuation reads (#944).
+    #[must_use]
+    pub fn starts_from_model(&self) -> bool {
+        self.has_start_model() || self.continued_model
+    }
+
+    /// Whether `startmodel` names an image for some term.
+    #[must_use]
+    pub fn has_start_model(&self) -> bool {
+        self.startmodel.iter().any(Option::is_some)
     }
 
     /// Total minor-cycle iterations.
@@ -560,13 +1039,43 @@ impl ImagingRequest {
 }
 
 impl AwProjection {
+    /// Whether the cells vary with frequency: `wbawp` with the aperture, as
+    /// `AWConvFunc`'s constructor resets `wbAWP` when the A-term is off.
+    #[must_use]
+    pub const fn wideband(&self) -> bool {
+        self.wbawp && self.aterm
+    }
+
+    /// The imported-buffer tolerance. CASA stores the image parameter in
+    /// Float degrees before converting the Quantity to Float radians.
+    pub(crate) fn pa_tolerance_rad(&self) -> f32 {
+        f64::from(self.computepastep as f32).to_radians() as f32
+    }
+
     fn validate(&self) -> Result<(), InvalidRequest> {
         let invalid = |parameters, reason| Err(InvalidRequest { parameters, reason });
-        // The EVLA cache contract CASA's AWProjectFT builds: 32 W planes.
-        if self.wprojplanes.map(NonZeroUsize::get) != Some(32) {
+        let Some(planes) = self.wprojplanes else {
             return invalid(
                 "wprojplanes",
-                "AW projection uses CASA's 32-plane EVLA cache",
+                "AW projection takes a positive W-plane count; deriving it (-1) is not \
+                 implemented by casa-rs yet (#980)",
+            );
+        };
+        let pa_step_rad = self.pa_tolerance_rad();
+        if !pa_step_rad.is_finite() || pa_step_rad <= 0.0 {
+            return invalid("computepastep", "the PA step must be finite and positive");
+        }
+        if !(self.rotatepastep as f32).is_finite() || self.rotatepastep as f32 <= 0.0 {
+            return invalid(
+                "rotatepastep",
+                "the rotation step must be finite and positive",
+            );
+        }
+        // `AWConvFunc`'s constructor: a cell needs one of the two.
+        if !self.aterm && !self.psterm {
+            return invalid(
+                "aterm, psterm",
+                "both psterm and aterm cannot be off, as CASA's AWConvFunc refuses",
             );
         }
         if self
@@ -584,6 +1093,12 @@ impl AwProjection {
             ..
         } = &self.cf_source
         {
+            if self.rotatepastep != 360.0 {
+                return invalid(
+                    "rotatepastep",
+                    "runtime rotation is supported for imported caches (#1070)",
+                );
+            }
             let size = *native_cf_working_size;
             if size < 8
                 || !size.is_multiple_of(2)
@@ -600,7 +1115,7 @@ impl AwProjection {
                      quarter of its side",
                 );
             }
-            if *native_cf_cache_bytes == 0 || *native_cf_maximum_cells < 32 {
+            if *native_cf_cache_bytes == 0 || *native_cf_maximum_cells < planes.get() {
                 return invalid(
                     "native_cf_cache_bytes, native_cf_maximum_cells",
                     "the cache must hold every W plane",
@@ -618,6 +1133,35 @@ const NONE: &str = "none";
 /// blank optional parameter always has.
 fn unset(text: &str) -> bool {
     text == NONE || text.trim().is_empty()
+}
+
+/// `startmodel`: one path, or a list with an entry per Taylor term, an
+/// empty entry `None`; empty or unset is no start model.
+fn start_models<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Option<PathBuf>>, D::Error> {
+    let entry = |value: &Value| match value {
+        Value::String(text) if text.trim().is_empty() => Ok(None),
+        Value::String(text) => Ok(Some(PathBuf::from(text.trim()))),
+        value => Err(unexpected(value, "a path")),
+    };
+    match Value::deserialize(deserializer)? {
+        Value::String(text) if unset(&text) => Ok(Vec::new()),
+        Value::Array(items) if items.len() == 1 && items[0].as_str().is_some_and(unset) => {
+            Ok(Vec::new())
+        }
+        Value::Array(items) => items.iter().map(entry).collect(),
+        value => entry(&value).map(|path| vec![path]),
+    }
+}
+
+/// A selector's exact text, `None` only when it is exactly empty.
+fn exact_selector<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    match Value::deserialize(deserializer)? {
+        Value::String(text) if text.is_empty() => Ok(None),
+        Value::String(text) => Ok(Some(text)),
+        value => Err(unexpected(&value, "text")),
+    }
 }
 
 /// Error on `value` for a field of type `expected`.
@@ -665,23 +1209,6 @@ where
 
 /// The catalog's spelling of a value the run chooses itself.
 const AUTO: &str = "auto";
-
-/// The one element of a one-element array, or the element itself.
-fn single<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: FromStr,
-    T::Err: fmt::Display,
-{
-    match Value::deserialize(deserializer)? {
-        Value::Array(mut items) if items.len() == 1 => match items.remove(0) {
-            Value::String(text) => text.parse().map_err(D::Error::custom),
-            value => Err(unexpected(&value, "text")),
-        },
-        Value::String(text) => text.parse().map_err(D::Error::custom),
-        value => Err(unexpected(&value, "one value")),
-    }
-}
 
 /// A path, resolved against the working directory when relative.
 fn absolute<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PathBuf, D::Error> {
@@ -731,85 +1258,6 @@ fn cell_pair_arcsec<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[f64; 
     Ok([arcsec(&x)?, arcsec(&y)?])
 }
 
-/// CASA's `uvtaper` (`synthesisimager::setweighting`, then
-/// `VisImagingWeight::setFilter`): `[bmaj]`, `[bmaj, bmin]` or
-/// `[bmaj, bmin, bpa]`, with `bmin = bmaj` and `bpa = 0` when not given,
-/// and no taper when the list or its first entry is empty. In wavelengths
-/// (`lambda`, `klambda`, …) the axes are the taper's uv-plane HWHM; as
-/// angles they are its image-plane FWHM θ, whose uv-plane HWHM is
-/// 2 ln 2 / (π θ). CASA reads an axis with no unit as radians and tapers
-/// every weight to zero; casa-rs refuses it (`docs/CASA (C++) bugs.md`).
-fn uv_taper<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<UvTaper>, D::Error> {
-    let entries = match Value::deserialize(deserializer)? {
-        Value::Array(items) => items,
-        value => vec![value],
-    };
-    let texts = entries
-        .iter()
-        .map(|entry| {
-            entry
-                .as_str()
-                .map(str::trim)
-                .ok_or_else(|| unexpected(entry, "a quantity"))
-        })
-        .collect::<Result<Vec<_>, D::Error>>()?;
-    let taper = match texts.as_slice() {
-        [] | ["", ..] => return Ok(None),
-        [bmaj] => uv_taper_axes(bmaj, bmaj, None),
-        [bmaj, bmin] => uv_taper_axes(bmaj, bmin, None),
-        [bmaj, bmin, bpa] => uv_taper_axes(bmaj, bmin, Some(bpa)),
-        _ => Err("uvtaper takes at most [bmaj, bmin, bpa]".to_string()),
-    };
-    taper.map(Some).map_err(D::Error::custom)
-}
-
-/// One `uvtaper` axis: its uv-plane HWHM in wavelengths, and whether it was
-/// given as an angle.
-fn uv_taper_axis(text: &str) -> Result<(f64, bool), String> {
-    let refused = || {
-        format!(
-            "uvtaper {text:?}: give an angle (the image-plane FWHM) or wavelengths (the uv-plane \
-             HWHM, lambda or klambda)"
-        )
-    };
-    let quantity: Quantity = text.parse().map_err(|_| refused())?;
-    let unit = |name: &str| Unit::from_str(name).expect("a casacore unit");
-    let hwhm = if let Ok(wavelengths) = quantity.get_value_in(&unit("lambda")) {
-        (wavelengths, false)
-    } else if let Ok(fwhm) = quantity.get_value_in(&unit("rad")) {
-        (
-            2.0 * std::f64::consts::LN_2 / (std::f64::consts::PI * fwhm),
-            true,
-        )
-    } else {
-        return Err(refused());
-    };
-    if quantity.unit().name().is_empty() || !(hwhm.0.is_finite() && hwhm.0 > 0.0) {
-        return Err(refused());
-    }
-    Ok(hwhm)
-}
-
-fn uv_taper_axes(bmaj: &str, bmin: &str, bpa: Option<&str>) -> Result<UvTaper, String> {
-    let (major, major_angle) = uv_taper_axis(bmaj)?;
-    let (minor, minor_angle) = uv_taper_axis(bmin)?;
-    if major_angle != minor_angle {
-        return Err(format!(
-            "uvtaper {bmaj:?}, {bmin:?}: give both axes as angles or both in wavelengths"
-        ));
-    }
-    let position_angle_rad = match bpa {
-        None => 0.0,
-        Some(text) => text
-            .parse::<Quantity>()
-            .ok()
-            .filter(|angle| !angle.unit().name().is_empty())
-            .and_then(|angle| angle.get_value_in(&Unit::from_str("rad").ok()?).ok())
-            .ok_or_else(|| format!("uvtaper position angle {text:?} needs an angle unit"))?,
-    };
-    Ok(UvTaper::new(major, minor, position_angle_rad))
-}
-
 fn threshold_jy<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
     quantity(&Value::deserialize(deserializer)?, "Jy").map_err(D::Error::custom)
 }
@@ -846,34 +1294,6 @@ fn list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error
     }
 }
 
-fn field_ids<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<i32>>, D::Error> {
-    match choice(deserializer)?.as_str() {
-        text if unset(text) => Ok(None),
-        text => casa_ms::parse_numeric_id_selector(text, "field")
-            .map(Some)
-            .map_err(D::Error::custom),
-    }
-}
-
-/// Boxes `x0,y0,x1,y1` separated by `;`.
-fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<[usize; 4]>, D::Error> {
-    let value = Value::deserialize(deserializer)?;
-    let text = value
-        .as_str()
-        .ok_or_else(|| unexpected(&value, "pixel boxes"))?;
-    if unset(text) {
-        return Ok(Vec::new());
-    }
-    text.split(';')
-        .map(|corners| {
-            comma_list::<usize>(corners)?
-                .try_into()
-                .map_err(|_| format!("a mask box has four corners, not {corners:?}"))
-        })
-        .collect::<Result<_, String>>()
-        .map_err(D::Error::custom)
-}
-
 /// Text of a choice.
 fn choice<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     match Value::deserialize(deserializer)? {
@@ -882,10 +1302,18 @@ fn choice<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error
     }
 }
 
-fn save_model<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+fn projection<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Projection, D::Error> {
+    let text = choice(deserializer)?;
+    Projection::from_casa_name(&text).ok_or_else(|| {
+        D::Error::custom(format!("projection {text:?} is not one casa-rs images in"))
+    })
+}
+
+fn save_model<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SaveModel, D::Error> {
     match choice(deserializer)?.as_str() {
-        text if unset(text) => Ok(false),
-        "modelcolumn" => Ok(true),
+        text if unset(text) => Ok(SaveModel::None),
+        "modelcolumn" => Ok(SaveModel::ModelColumn),
+        "virtual" => Ok(SaveModel::Virtual),
         other => Err(D::Error::custom(format!("savemodel {other:?}"))),
     }
 }
@@ -960,305 +1388,69 @@ fn interpolation<'de, D: Deserializer<'de>>(
     match choice(deserializer)?.as_str() {
         "nearest" => Ok(CubeInterpolation::Nearest),
         "linear" => Ok(CubeInterpolation::Linear),
+        "cubic" => Ok(CubeInterpolation::Cubic),
         other => Err(D::Error::custom(format!(
-            "interpolation {other:?} is neither nearest nor linear"
+            "interpolation {other:?} is none of nearest, linear and cubic"
         ))),
     }
 }
 
-fn rest_frequency_hz<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f64>, D::Error> {
-    match choice(deserializer)?.as_str() {
-        text if unset(text) => Ok(None),
-        text => casa_ms::parse_rest_frequency_hz(text)
-            .map(Some)
-            .map_err(D::Error::custom),
+/// `reffreq` as `SynthesisParamsImage::fromRecord` reads it: casacore's
+/// quantity reader, in Hz; empty or zero is unset (`getImFreq`). A value
+/// without a frequency unit is refused, as CASA's conversion to Hz fails.
+fn reference_frequency_hz<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error> {
+    let text = match Value::deserialize(deserializer)? {
+        Value::String(text) => text,
+        value => return Err(unexpected(&value, "a frequency")),
+    };
+    if unset(&text) {
+        return Ok(None);
     }
+    let quantity = text
+        .trim()
+        .parse::<Quantity>()
+        .map_err(|error| D::Error::custom(format!("reffreq {text:?}: {error}")))?;
+    let hz = Unit::new("Hz").expect("Hz is a casacore unit");
+    let value = quantity.get_value_in(&hz).map_err(|error| {
+        D::Error::custom(format!("reffreq {text:?} is not a frequency: {error}"))
+    })?;
+    if !value.is_finite() || value < 0.0 {
+        return Err(D::Error::custom(format!(
+            "reffreq {text:?} is not a frequency"
+        )));
+    }
+    Ok((value != 0.0).then_some(value))
 }
 
-fn restoring_beam<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<RestoringBeamPolicy, D::Error> {
-    match choice(deserializer)?.as_str() {
-        text if unset(text) => Ok(RestoringBeamPolicy::PerPlane),
-        "common" => Ok(RestoringBeamPolicy::Common),
-        other => Err(D::Error::custom(format!("restoringbeam {other:?}"))),
+/// Rest frequencies: one text, a list of texts, or unset.
+fn rest_frequencies_hz<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error> {
+    let items = match Value::deserialize(deserializer)? {
+        Value::Array(items) => items,
+        value => vec![value],
+    };
+    let mut frequencies = Vec::with_capacity(items.len());
+    for item in &items {
+        match item.as_str() {
+            Some(text) if unset(text) => {}
+            Some(text) => {
+                frequencies.push(casa_ms::parse_rest_frequency_hz(text).map_err(D::Error::custom)?)
+            }
+            None => return Err(unexpected(item, "rest frequencies")),
+        }
     }
+    Ok(frequencies)
 }
 
-fn major_cycle_limit<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<usize>, D::Error> {
-    let value = Value::deserialize(deserializer)?;
-    match value.as_i64() {
-        Some(-1) => Ok(None),
-        Some(limit) => usize::try_from(limit)
-            .map(Some)
-            .map_err(|_| unexpected(&value, "-1 or a major-cycle count")),
-        None => Err(unexpected(&value, "-1 or a major-cycle count")),
-    }
-}
+pub(crate) mod execution;
+mod gridder;
+mod mask;
 
-fn hogbom_iteration_mode<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<HogbomIterationAccounting, D::Error> {
-    match choice(deserializer)?.as_str() {
-        "strict" => Ok(HogbomIterationAccounting::Strict),
-        "casa-inclusive" => Ok(HogbomIterationAccounting::CasaInclusive),
-        other => Err(D::Error::custom(format!("hogbom_iteration_mode {other:?}"))),
-    }
-}
+pub use gridder::Gridder;
 
-fn normalization<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<ProductNormalization, D::Error> {
-    match choice(deserializer)?.as_str() {
-        "flatnoise" => Ok(ProductNormalization::FlatNoise),
-        "flatsky" => Ok(ProductNormalization::FlatSky),
-        other => Err(D::Error::custom(format!("normtype {other:?}"))),
-    }
-}
-
-fn grid_precision<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<GridPrecision>, D::Error> {
-    match choice(deserializer)?.as_str() {
-        "auto" => Ok(None),
-        "f32" => Ok(Some(GridPrecision::F32)),
-        "f64" => Ok(Some(GridPrecision::F64)),
-        other => Err(D::Error::custom(format!("gridprecision {other:?}"))),
-    }
-}
+mod beam;
+mod uv_taper;
 
 #[cfg(test)]
-pub(crate) mod tests {
-    use std::path::PathBuf;
-
-    use serde_json::json;
-
-    use super::*;
-
-    /// The values the catalog resolves from `overrides` over its defaults,
-    /// with a MeasurementSet, an image name and a cell.
-    pub(crate) fn resolved(
-        overrides: Value,
-    ) -> Result<serde_json::Map<String, Value>, casa_task_runtime::ResolveError> {
-        let mut values = json!({ "vis": "unused.ms", "imagename": "unused", "cell": "1arcsec" });
-        let fields = values.as_object_mut().expect("object");
-        fields.extend(overrides.as_object().expect("overrides object").clone());
-        casa_task_runtime::resolve_plain_values(
-            casa_provider_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
-            PathBuf::from("."),
-            fields,
-        )
-    }
-
-    /// The request tclean's `overrides` make, or its refusal.
-    pub(crate) fn read(overrides: Value) -> Result<ImagingRequest, crate::TcleanRefusal> {
-        ImagingRequest::from_tclean(&resolved(overrides).expect("catalog values"))
-    }
-
-    /// A request resolved through the catalog from `overrides` over its
-    /// defaults, with a MeasurementSet, an image name and a cell.
-    pub(crate) fn request(overrides: Value) -> ImagingRequest {
-        read(overrides).expect("imaging request")
-    }
-
-    fn refusal(overrides: Value) -> &'static str {
-        request(overrides)
-            .validate()
-            .expect_err("an invalid request")
-            .parameters
-    }
-
-    #[test]
-    fn the_catalog_defaults_validate() {
-        let request = request(json!({}));
-        request.validate().expect("defaults");
-        assert_eq!(
-            request.gridder,
-            Gridder::Standard {
-                facets: NonZeroUsize::MIN
-            }
-        );
-        assert_eq!(request.backend, BackendRequest::Auto);
-        assert_eq!(request.gridprecision, None);
-        assert_eq!(
-            request.diagnostics,
-            Diagnostics {
-                stage_timing: false,
-                metal_stage_timing: false,
-                science_trace: false,
-            }
-        );
-        assert_eq!(
-            request.resource_policy(),
-            ResourcePolicy::Explicit {
-                workers: 1,
-                memory: u64::MAX,
-            }
-        );
-    }
-
-    /// CASA's `imsize` and `cell` take one value for both axes or one per
-    /// axis, x first.
-    #[test]
-    fn imsize_and_cell_take_one_value_or_one_per_axis() {
-        let square = request(json!({ "imsize": 64, "cell": "2arcsec" }));
-        assert_eq!((square.imsize, square.cell), ([64, 64], [2.0, 2.0]));
-        // CASA's one-element lists are one value for both axes (#970 review).
-        let listed = request(json!({ "imsize": [120], "cell": ["8arcsec"] }));
-        assert_eq!((listed.imsize, listed.cell), ([120, 120], [8.0, 8.0]));
-        let pairs = request(json!({ "imsize": [120, 80], "cell": ["8arcsec", "6arcsec"] }));
-        assert_eq!((pairs.imsize, pairs.cell), ([120, 80], [8.0, 6.0]));
-        pairs.validate().expect("a non-square image");
-        assert!(resolved(json!({ "imsize": [64, 32, 16] })).is_err());
-    }
-
-    /// `uvtaper` as `VisImagingWeight::setFilter` reads it: an angle is the
-    /// image-plane FWHM θ, whose uv-plane HWHM is 2 ln 2 / (π θ), and
-    /// wavelengths are the uv-plane HWHM. CASA's
-    /// `π² θ² / (4 ln 2) = ln 2 / HWHM²`.
-    #[test]
-    fn uvtaper_takes_casas_forms_and_refuses_an_axis_without_a_unit() {
-        use std::f64::consts::{LN_2, PI};
-        let parsed =
-            |value: Value| read(json!({ "uvtaper": value })).map(|request| request.uvtaper);
-        let close = |actual: f64, expected: f64| {
-            assert!(
-                (actual - expected).abs() <= 1.0e-12 * expected,
-                "{actual} against {expected}"
-            );
-        };
-        assert_eq!(request(json!({})).uvtaper, None);
-        assert_eq!(parsed(json!([])).expect("an empty taper"), None);
-        let arcsec = PI / (180.0 * 3600.0);
-        let circular = parsed(json!(["10arcsec"]))
-            .expect("parsed")
-            .expect("a taper");
-        close(circular.major_lambda(), 2.0 * LN_2 / (PI * 10.0 * arcsec));
-        close(circular.minor_lambda(), circular.major_lambda());
-        assert_eq!(circular.position_angle_rad(), 0.0);
-        let rbmaj = PI * PI * (10.0 * arcsec).powi(2) / (4.0 * LN_2);
-        close(LN_2 / circular.major_lambda().powi(2), rbmaj);
-        let uv = parsed(json!(["5klambda", "3klambda", "45deg"]))
-            .expect("parsed")
-            .expect("a taper");
-        close(uv.major_lambda(), 5000.0);
-        close(uv.minor_lambda(), 3000.0);
-        close(uv.position_angle_rad(), PI / 4.0);
-        let two = parsed(json!(["80arcsec", "40arcsec"]))
-            .expect("parsed")
-            .expect("a taper");
-        close(two.minor_lambda(), 2.0 * two.major_lambda());
-        // CASA reads a bare number as radians and tapers every weight to
-        // zero; mixed axes and a unitless angle are refused too.
-        for value in [
-            json!(["500.0"]),
-            json!(["10arcsec", "3klambda"]),
-            json!(["10arcsec", "5arcsec", "30"]),
-            json!(["1Jy"]),
-        ] {
-            assert!(parsed(value.clone()).is_err(), "{value}");
-        }
-    }
-
-    #[test]
-    fn contradictory_parameters_are_refused_before_any_data_is_read() {
-        for (overrides, parameters) in [
-            (
-                json!({ "deconvolver": "mtmfs", "nterms": 0 }),
-                "nterms, deconvolver",
-            ),
-            (
-                json!({ "deconvolver": "mtmfs", "nterms": 2, "specmode": "cube" }),
-                "deconvolver, specmode",
-            ),
-            (json!({ "savemodel": "modelcolumn" }), "savemodel, niter"),
-            (
-                json!({ "save_continuum_residual": true }),
-                "save_continuum_residual, fitspw",
-            ),
-            (json!({ "fitspw": "0:0~3" }), "fitspw, specmode"),
-            (json!({ "pblimit": 1.0 }), "psfcutoff, pblimit"),
-            (
-                json!({ "deconvolver": "mtmfs", "nterms": 2, "startmodel": "deep.model" }),
-                "startmodel, deconvolver",
-            ),
-        ] {
-            assert_eq!(refusal(overrides), parameters);
-        }
-    }
-
-    #[test]
-    fn aw_projection_uses_the_32_plane_evla_cache() {
-        let aw = |planes: Value| {
-            json!({
-                "gridder": "awproject",
-                "conjbeams": true,
-                "cfcache": "cf",
-                "wprojplanes": planes,
-            })
-        };
-        assert_eq!(refusal(aw(json!(16))), "wprojplanes");
-        assert_eq!(refusal(aw(json!(-1))), "wprojplanes");
-        request(aw(json!(32))).validate().expect("32 planes");
-        let native = json!({
-            "gridder": "awproject",
-            "conjbeams": true,
-            "aw_cf_source": "native-evla",
-            "wprojplanes": 32,
-            "native_cf_cache": "cache",
-            "evla_surface": "surface",
-            "native_cf_working_size": 64,
-            "native_cf_oversampling": 4,
-            "native_cf_cache_bytes": 1_048_576,
-            "native_cf_maximum_cells": 16,
-        });
-        assert_eq!(
-            refusal(native),
-            "native_cf_cache_bytes, native_cf_maximum_cells"
-        );
-    }
-
-    /// A blank optional parameter is unset, as CASA's empty text is.
-    #[test]
-    fn blank_optional_values_are_unset() {
-        let blank = request(json!({
-            "phasecenter": "",
-            "mask": "",
-            "outlierfile": "",
-            "restfreq": "",
-            "scales": [],
-            "field": "",
-            "spw": "",
-            "start": "",
-            "startmodel": "",
-        }));
-        assert_eq!(blank, request(json!({})));
-        assert_eq!(blank.datacolumn, None);
-    }
-
-    #[test]
-    fn stokes_names_stokes_parameters_or_correlations_in_casa_order() {
-        use PolarizationCoordinate::*;
-        for (text, coordinates) in [
-            ("I", vec![StokesI]),
-            ("VI", vec![StokesI, StokesV]),
-            ("IQUV", vec![StokesI, StokesQ, StokesU, StokesV]),
-            ("RRLL", vec![CircularRr, CircularLl]),
-            ("XXYY", vec![LinearXx, LinearYy]),
-            ("XXXYYXYY", vec![LinearXx, LinearXy, LinearYx, LinearYy]),
-        ] {
-            assert_eq!(
-                request(json!({ "stokes": text })).stokes,
-                coordinates,
-                "{text}"
-            );
-        }
-        for text in ["IXX", "XXRR", "IQZ", "X", ""] {
-            let refused = resolved(json!({ "stokes": text }))
-                .map_or(true, |values| ImagingRequest::from_tclean(&values).is_err());
-            assert!(refused, "{text:?}");
-        }
-    }
-}
+pub(crate) mod tests;

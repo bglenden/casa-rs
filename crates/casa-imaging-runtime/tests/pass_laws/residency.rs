@@ -57,6 +57,7 @@ fn region_owners_take_the_largest_chunks_that_fit() {
         block,
         chunk_placements: CHUNK_PLACEMENTS,
         chunk_sets: 1,
+        stitched_bytes_per_channel: 0,
     };
     let regions = [PassDomain {
         operator: &operator,
@@ -154,6 +155,40 @@ fn a_one_plane_metal_budget_gives_one_plane_waves() {
     one_plane_budget(BackendChoice::Metal, GridPrecision::F32);
 }
 
+#[test]
+fn a_cube_wave_admits_stitched_images_for_each_channel_it_holds() {
+    let operator = operator_of_planes();
+    let resampler = nearest_cube();
+    let rows = Rows::random(50, 17, operator.geometry());
+    let domains = [planes(&operator, &resampler, 1)];
+    let demand = WaveDemand {
+        domains: &domains,
+        modes: ModeSet::DATA_PSF,
+        with_model: false,
+        native_spacing_hz: WIDTH_HZ,
+        workers: 1,
+        backend: BackendChoice::Cpu,
+        block: rows.maximum_block(),
+        chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
+        stitched_bytes_per_channel: 0,
+    };
+    // A charge comparable to the full pass makes the extra per-channel
+    // storage decisive at this budget.
+    let stitched = demand.bytes(3);
+    let budget = 2 * stitched;
+    assert_eq!(Residency::plan(&demand, budget), Residency::All);
+    let faceted = WaveDemand {
+        stitched_bytes_per_channel: stitched,
+        ..demand
+    };
+    assert!(faceted.bytes(1) <= budget && faceted.bytes(2) > budget);
+    assert_eq!(
+        Residency::plan(&faceted, budget),
+        Residency::Waves { planes_per_wave: 1 }
+    );
+}
+
 fn one_plane_budget(backend: BackendChoice, precision: GridPrecision) {
     let operator = operator(precision, Basis::ChannelLocal { planes: 3 });
     let resampler = nearest_cube();
@@ -174,6 +209,7 @@ fn one_plane_budget(backend: BackendChoice, precision: GridPrecision) {
             block: rows.maximum_block(),
             chunk_placements: CHUNK_PLACEMENTS,
             chunk_sets: 1,
+            stitched_bytes_per_channel: 0,
         };
         let one = demand.bytes(1);
         assert_eq!(
@@ -253,6 +289,7 @@ fn a_writing_pass_in_waves_is_a_typed_error() {
         domains: &domains,
         weighting: &weighting,
         modes: ModeSet::DATA_PSF,
+        refill_scalar_sum_weight: false,
         model: None,
         residency: Residency::Waves { planes_per_wave: 1 },
         native_spacing_hz: WIDTH_HZ,
@@ -319,6 +356,7 @@ fn a_writing_pass_hands_each_row_its_own_prediction() {
             domains: &domains,
             weighting: &weighting,
             modes: ModeSet::DATA,
+            refill_scalar_sum_weight: false,
             model: Some(&prepare),
             residency: Residency::All,
             native_spacing_hz: WIDTH_HZ,
@@ -423,15 +461,34 @@ fn metal_owners_and_predictors_are_charged_their_kernel_copies() {
         block: rows.maximum_block(),
         chunk_placements: CHUNK_PLACEMENTS,
         chunk_sets: 1,
+        stitched_bytes_per_channel: 0,
     };
     let kernels = casa_imaging_metal::kernel_bytes(operator.cf());
     assert!(kernels > 0, "the spheroidal's rows are charged");
     let ring = casa_imaging_metal::ring_bytes(operator.polarization().correlations().len());
     let cpu = demand(BackendChoice::Cpu, false).bytes(1);
     let metal = demand(BackendChoice::Metal, false).bytes(1);
+    let Partition::Regions { regions, .. } = &domains[0].partition else {
+        unreachable!()
+    };
+    let (metal_corrections, cpu_corrections) = regions
+        .iter()
+        .map(|region| {
+            let cells = operator
+                .accumulator_layout(PlaneRange::single(0), Some(region.tile), ModeSet::DATA_PSF)
+                .cells();
+            (
+                casa_imaging_metal::accumulator_extra_bytes(cells as u64),
+                casa_imaging_operator::GridAccumulator::cpu_correction_bytes(
+                    cells as u64,
+                    GridPrecision::F32,
+                ),
+            )
+        })
+        .fold((0, 0), |(metal, cpu), (m, c)| (metal + m, cpu + c));
     assert_eq!(
-        metal,
-        cpu + owners as u64 * (ring + kernels),
+        metal + cpu_corrections,
+        cpu + owners as u64 * (ring + kernels) + metal_corrections,
         "each owner's ring and kernel copies"
     );
     let with_model = demand(BackendChoice::Metal, true).bytes(1);

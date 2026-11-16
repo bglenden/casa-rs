@@ -27,6 +27,9 @@ impl RowAddress {
 /// mapper's uvw to its own phase centre (`FTMachine::rotateUVW`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DomainProjection {
+    /// Exclude this row from this domain, independently of other domains.
+    /// Combined with the shared row flag; does not alter persisted flags.
+    pub row_flag: bool,
     /// Baseline `[u, v, w]` in metres in the domain's phase-centre frame.
     pub uvw_m: [f64; 3],
     /// Path-length shift to the domain's phase centre in metres.
@@ -81,7 +84,7 @@ impl BlockShape {
             + size_of::<u32>()
             + self.domains * size_of::<DomainProjection>()
             + channels * size_of::<f64>()
-            + cells * (size_of::<Complex32>() + size_of::<f32>() + size_of::<bool>());
+            + cells * (size_of::<Complex32>() + size_of::<f32>() + 2 * size_of::<bool>());
         (self.rows * per_row + (channels + self.correlations) * size_of::<u32>()) as u64
     }
 
@@ -133,6 +136,8 @@ pub struct NativeBlock {
     values: Vec<Complex32>,
     weights: Vec<f32>,
     flags: Vec<bool>,
+    /// Original flags, with the parent selection, for an untuned model write.
+    prediction_flags: Vec<bool>,
     /// Whether every row reads the first row's frequencies, values, weights
     /// and flags ([`Self::reset_shared`]).
     shared: bool,
@@ -170,6 +175,7 @@ impl NativeBlock {
             values: Vec::with_capacity(cells),
             weights: Vec::with_capacity(cells),
             flags: Vec::with_capacity(cells),
+            prediction_flags: Vec::new(),
             shared: false,
         }
     }
@@ -188,7 +194,8 @@ impl NativeBlock {
             + self.frequencies_hz.capacity() * size_of::<f64>()
             + self.values.capacity() * size_of::<Complex32>()
             + self.weights.capacity() * size_of::<f32>()
-            + self.flags.capacity() * size_of::<bool>()) as u64
+            + (self.flags.capacity() + self.prediction_flags.capacity()) * size_of::<bool>())
+            as u64
     }
 
     /// Empty the block and set the layout of the rows that follow: the
@@ -208,6 +215,7 @@ impl NativeBlock {
         self.values.clear();
         self.weights.clear();
         self.flags.clear();
+        self.prediction_flags.clear();
         self.channel_indices.clear();
         self.channel_indices.extend_from_slice(channel_indices);
         self.correlation_indices.clear();
@@ -313,6 +321,42 @@ impl NativeBlock {
         Ok(())
     }
 
+    /// Give the most recently appended row separate per-channel grid and
+    /// prediction selections. Each mask is true for a selected channel.
+    pub fn separate_last_row_selection(&mut self, grid: &[bool], prediction: &[bool]) {
+        let channels = self.channels();
+        let products = self.correlations();
+        assert!(!self.shared && grid.len() == channels && prediction.len() == channels);
+        let cells = channels * products;
+        let start = self.flags.len() - cells;
+        assert_eq!(self.prediction_flags.len(), start);
+        if self.prediction_flags.capacity() == 0 {
+            self.prediction_flags.reserve_exact(self.flags.capacity());
+        }
+        self.prediction_flags
+            .extend_from_slice(&self.flags[start..]);
+        for channel in 0..channels {
+            if !grid[channel] {
+                self.flags[start + channel * products..start + (channel + 1) * products].fill(true);
+            }
+            if !prediction[channel] {
+                self.prediction_flags[start + channel * products..start + (channel + 1) * products]
+                    .fill(true);
+            }
+        }
+    }
+
+    /// The row as the final model predictor reads it.
+    #[must_use]
+    pub fn prediction_row(&self, domain: usize, index: usize) -> NativeRow<'_> {
+        let mut row = self.row(domain, index);
+        if !self.prediction_flags.is_empty() {
+            let cells = self.channels() * self.correlations();
+            row.flags = &self.prediction_flags[index * cells..(index + 1) * cells];
+        }
+        row
+    }
+
     /// Order the rows for locality: by antenna pair, a baseline's rows in
     /// arrival order (time order for a MeasurementSet). Appending a row
     /// returns the block to arrival order.
@@ -403,7 +447,7 @@ impl NativeBlock {
             values: &self.values[samples * cells..(samples + 1) * cells],
             weights: &self.weights[samples * cells..(samples + 1) * cells],
             flags: &self.flags[samples * cells..(samples + 1) * cells],
-            row_flag: header.row_flag,
+            row_flag: header.row_flag || projection.row_flag,
             context: header.context,
         }
     }
@@ -433,6 +477,7 @@ mod tests {
         NativeRowHeader {
             row_flag: false,
             context: RowContext {
+                native_frequency_ratio: 1.0,
                 original_uvw_m: None,
                 time_s: row as f64,
                 antennas,
@@ -457,6 +502,7 @@ mod tests {
         let mut block = NativeBlock::default();
         block.reset(1, &[0], &[0]);
         let projection = DomainProjection {
+            row_flag: false,
             uvw_m: [0.0; 3],
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],
@@ -484,6 +530,101 @@ mod tests {
         assert_eq!(block.ordered_row(1), 1, "appending restores arrival order");
     }
 
+    /// A writing block grids and predicts the same rows under separate
+    /// channel selections, and both flag buffers fit its admitted shape.
+    #[test]
+    fn prediction_and_gridding_selections_are_separate_and_charged() {
+        let shape = BlockShape {
+            rows: 16,
+            spectrum: RowSpectrum::evenly_spaced(4),
+            correlations: 2,
+            domains: 1,
+        };
+        let mut block = NativeBlock::with_capacity(shape);
+        let projection = DomainProjection {
+            row_flag: false,
+            uvw_m: [0.0; 3],
+            phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
+        };
+        for _ in 0..2 {
+            block.reset(1, &[0, 1, 2, 3], &[0, 1]);
+            for index in 0..shape.rows {
+                block.push_row(
+                    header([0, 1], index as u64),
+                    &[projection],
+                    &[1.0, 2.0, 3.0, 4.0],
+                    &[Complex32::default(); 8],
+                    &[1.0; 8],
+                    &[false, true, false, false, false, false, false, false],
+                );
+                block.separate_last_row_selection(
+                    &[true, false, true, false],
+                    &[false, true, true, false],
+                );
+            }
+            assert_eq!(
+                block.row(0, 0).flags,
+                &[false, true, true, true, false, false, true, true]
+            );
+            assert_eq!(
+                block.prediction_row(0, 0).flags,
+                &[true, true, false, false, false, false, true, true]
+            );
+            assert!(
+                block.capacity_bytes() <= shape.bytes(),
+                "{} > {}",
+                block.capacity_bytes(),
+                shape.bytes()
+            );
+        }
+    }
+
+    /// The native-frequency factor is retained per row, including when a
+    /// model write carries separate flags, and its bytes are admitted (#1121).
+    #[test]
+    fn native_frequency_factors_are_retained_and_charged_per_row() {
+        let shape = BlockShape {
+            rows: 64,
+            spectrum: RowSpectrum::evenly_spaced(2),
+            correlations: 2,
+            domains: 1,
+        };
+        let mut block = NativeBlock::with_capacity(shape);
+        block.reset(1, &[0, 1], &[0, 1]);
+        let projection = DomainProjection {
+            row_flag: false,
+            uvw_m: [0.0; 3],
+            phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
+        };
+        for index in 0..shape.rows {
+            let mut row = header([0, 1], index as u64);
+            row.context.native_frequency_ratio = 1.0 + index as f64 * 1.0e-6;
+            block.push_row(
+                row,
+                &[projection],
+                &[1.0e9, 1.1e9],
+                &[Complex32::default(); 4],
+                &[1.0; 4],
+                &[false; 4],
+            );
+            block.separate_last_row_selection(&[true; 2], &[true; 2]);
+        }
+        for index in 0..shape.rows {
+            assert_eq!(
+                block.row(0, index).context.native_frequency_ratio,
+                1.0 + index as f64 * 1.0e-6
+            );
+        }
+        assert!(
+            block.capacity_bytes() <= shape.bytes(),
+            "{} > {}",
+            block.capacity_bytes(),
+            shape.bytes()
+        );
+    }
+
     /// Rows that share the spectrum and samples read exactly as the same
     /// rows pushed whole, on every domain, and a block made for them holds
     /// no more than [`BlockShape::shared_bytes`] however many it takes.
@@ -502,6 +643,7 @@ mod tests {
         };
         let projections = |row: usize| {
             [0, 1].map(|domain| DomainProjection {
+                row_flag: false,
                 uvw_m: [row as f64, domain as f64, 0.5],
                 phase_shift_m: 0.25 * domain as f64,
                 pointing_offset_rad: [0.0; 2],

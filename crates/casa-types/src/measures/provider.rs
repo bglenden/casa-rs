@@ -116,17 +116,43 @@ pub trait MeasuresProvider: Debug + Send + Sync {
         Err("IGRF data is unavailable from this measures provider".to_string())
     }
 
-    /// Look up an observatory by case-insensitive name.
+    /// The observatory `name` finds.
+    ///
+    /// A provider finds `name` as casacore's `MeasTable` does
+    /// (`MUString::minimaxNC`, [`crate::quanta::unique_prefix_position`]):
+    /// the entry of that name ignoring case, else the one entry the name
+    /// agrees with over the shorter of their lengths, spaces included. Callers such as
+    /// `readantenna` rely on it to find `ALMASD` as ALMA.
     fn observatory(&self, _name: &str) -> Result<Option<ObservatoryPosition>, String> {
         Ok(None)
     }
 
-    /// Look up a fixed source by case-insensitive name.
+    /// The fixed source `name` finds, by the rule of [`Self::observatory`].
     fn source(&self, _name: &str) -> Result<Option<NamedSourceDirection>, String> {
         Ok(None)
     }
 
-    /// Look up a rest-line frequency by case-insensitive name.
+    /// Every observatory's name, in the catalogue's order (casacore's
+    /// `MeasTable::Observatories`, which `me.obslist` lists). A provider
+    /// without a catalogue has none.
+    fn observatory_names(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Every fixed source's name, in the catalogue's order
+    /// (`MeasTable::Sources`, which `me.sourcelist` lists).
+    fn source_names(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Every rest line's name, in the catalogue's order (`MeasTable::Lines`,
+    /// which `me.linelist` lists).
+    fn spectral_line_names(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// The rest frequency of the line `name` finds, by the rule of
+    /// [`Self::observatory`].
     fn spectral_line_hz(&self, _name: &str) -> Result<Option<f64>, String> {
         Ok(None)
     }

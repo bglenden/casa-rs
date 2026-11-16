@@ -8,11 +8,14 @@ Usage: scripts/tidy-git.sh [--apply]
 
 Finds local git state left behind after pull requests merge into origin/main:
 linked worktrees and local branches whose commits reached main through a
-merge. Without --apply it only reports; with --apply it removes them.
+merge, or whose whole change reached main as one squashed commit. Without
+--apply it only reports; with --apply it removes them.
 
 Never touched: the main worktree, the worktree this runs from, worktrees with
 uncommitted or untracked changes, and branches or worktrees whose tip is on
 main's first-parent line (for example a fresh branch with no commits yet).
+With TIDY_MIN_IDLE_HOURS=N, a worktree whose HEAD moved in the last N hours
+is also kept, since a session may still be in it.
 EOF
 }
 
@@ -24,6 +27,12 @@ case "${1:-}" in
   *) usage >&2; exit 2 ;;
 esac
 
+min_idle_hours="${TIDY_MIN_IDLE_HOURS:-0}"
+if ! [[ "$min_idle_hours" =~ ^[0-9]+$ ]]; then
+  echo "tidy-git: TIDY_MIN_IDLE_HOURS must be a whole number of hours" >&2
+  exit 2
+fi
+
 start_worktree="$(git rev-parse --show-toplevel)"
 main_worktree="$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10); exit}')"
 cd "$main_worktree"
@@ -34,8 +43,39 @@ mainline=$'\n'"$(git rev-list --first-parent "$base")"$'\n'
 
 # A tip counts as merged when main contains it but it is not on main's own
 # first-parent line, i.e. it arrived through a merge.
-merged_into_main() {
+merged_by_merge() {
   git merge-base --is-ancestor "$1" "$base" && [[ "$mainline" != *$'\n'"$1"$'\n'* ]]
+}
+
+# A tip counts as squash-merged when its whole change since it last met main,
+# as one patch, has an equivalent commit on main (`git cherry` compares patch
+# IDs). A branch with work added after its squash merge no longer matches and
+# is kept.
+merged_by_squash() {
+  local tip mb probe
+  tip="$(git rev-parse "$1")"
+  mb="$(git merge-base "$tip" "$base")" || return 1
+  [[ "$mb" == "$tip" ]] && return 1
+  probe="$(GIT_AUTHOR_NAME=tidy GIT_AUTHOR_EMAIL=tidy@localhost \
+    GIT_COMMITTER_NAME=tidy GIT_COMMITTER_EMAIL=tidy@localhost \
+    git commit-tree "$tip^{tree}" -p "$mb" -m "tidy squash probe")"
+  [[ "$(git cherry "$base" "$probe" "$mb")" == "- $probe" ]]
+}
+
+merged_into_main() {
+  merged_by_merge "$1" || merged_by_squash "$1"
+}
+
+# A worktree counts as in use while its HEAD moved (a commit, checkout or
+# reset, which its reflog records) within the idle window. The index is no
+# guide: `git status`, from tidy or an editor, can rewrite it.
+recently_used() {
+  ((min_idle_hours > 0)) || return 1
+  local log
+  log="$(git -C "$1" rev-parse --path-format=absolute --git-path logs/HEAD 2>/dev/null)" ||
+    return 0
+  [[ -e "$log" ]] || log="$(git -C "$1" rev-parse --path-format=absolute --git-path HEAD)"
+  [[ -z "$(find "$log" -mmin +"$((min_idle_hours * 60))" 2>/dev/null)" ]]
 }
 
 run() {
@@ -60,6 +100,9 @@ while IFS= read -r line || [[ -n "$path" ]]; do
         label="$path${branch:+ [$branch]}"
         if [[ "$path" == "$start_worktree" ]]; then
           echo "keep   $label (current worktree)"
+          worktree_branches+="$branch"$'\n'
+        elif recently_used "$path"; then
+          echo "keep   $label (used in the last $min_idle_hours hours)"
           worktree_branches+="$branch"$'\n'
         elif [[ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]]; then
           echo "keep   $label (uncommitted or untracked changes)"

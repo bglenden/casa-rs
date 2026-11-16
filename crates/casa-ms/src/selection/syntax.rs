@@ -96,24 +96,115 @@ impl ChannelSelection {
 
 /// Parse a CASA-style numeric id selector such as `0,2~4`.
 pub fn parse_numeric_id_selector(value: &str, label: &str) -> MsResult<Vec<i32>> {
-    let mut values = Vec::new();
-    for raw_part in value.split(',') {
-        let part = raw_part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some((start, end)) = parse_numeric_range(part) {
-            values.extend(start..=end);
-            continue;
-        }
-        let parsed = part.parse::<i32>().map_err(|_| {
-            MsError::VersionError(format!(
-                "{label} selector {part:?} is not a supported numeric id or range"
-            ))
+    Ok(parse_numeric_id_ranges(value, label)?
+        .into_iter()
+        .flat_map(|(start, end)| start..=end)
+        .collect())
+}
+
+/// Legacy numeric selectors normalize range direction before expansion.
+fn parse_numeric_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i32, i32)>> {
+    let ranges = value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            if let Some((start, end)) = parse_numeric_range_endpoints(part) {
+                return Ok((start.min(end), start.max(end)));
+            }
+            part.parse::<i32>().map(|id| (id, id)).map_err(|_| {
+                MsError::VersionError(format!(
+                    "{label} selector {part:?} is not a supported numeric id or range"
+                ))
+            })
+        })
+        .collect::<MsResult<Vec<_>>>()?;
+    Ok(canonical_numeric_ranges(ranges))
+}
+
+/// Parse CASA's numeric scan/observation list into compact inclusive intervals.
+/// A term may be a nonnegative ID, an ascending range, a comparison, or a pair
+/// of strict or inclusive bounds. Terms combine by union. Valid bounds that
+/// can match no ID contribute no interval. Storage is bounded by term count.
+///
+/// # Errors
+///
+/// A malformed term, an ID outside the nonnegative signed 32-bit range, or
+/// equal or reversed bounds in a paired comparison or a range.
+pub fn parse_numeric_row_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i32, i32)>> {
+    let mut ranges = Vec::new();
+    for term in value.split(',') {
+        let (start, end) = row_id_interval(trim_row_id_space(term)).ok_or_else(|| {
+            MsError::InvalidInput(format!("invalid {label} selector term {term:?}"))
         })?;
-        values.push(parsed);
+        if start <= end {
+            // A nonempty interval has both endpoints in the physical ID
+            // range. The wider intermediate represents strict empty bounds.
+            ranges.push((start as i32, end as i32));
+        }
     }
-    Ok(dedup_i32(values))
+    Ok(canonical_numeric_ranges(ranges))
+}
+
+fn trim_row_id_space(text: &str) -> &str {
+    text.trim_matches([' ', '\t', '\n'])
+}
+
+/// Expand the six comparison productions in MSScanGram and MSObservationGram
+/// to intervals without constructing their auxiliary list of individual IDs.
+fn row_id_interval(term: &str) -> Option<(i64, i64)> {
+    let number = |text: &str| {
+        let digits = trim_row_id_space(text);
+        if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse::<i32>().ok().map(i64::from)
+    };
+    if let Some((lower, upper)) = term.split_once('&') {
+        let upper = trim_row_id_space(upper);
+        let (lower, upper, exclude) = if let Some(lower) = lower.strip_prefix(">=") {
+            (lower, upper.strip_prefix("<=")?, 0)
+        } else {
+            (lower.strip_prefix('>')?, upper.strip_prefix('<')?, 1)
+        };
+        let (lower, upper) = (number(lower)?, number(upper)?);
+        return (lower < upper).then_some((lower + exclude, upper - exclude));
+    }
+    if let Some((start, end)) = term.split_once('~') {
+        let (start, end) = (number(start)?, number(end)?);
+        return (start < end).then_some((start, end));
+    }
+
+    // CASA compares the signed MAIN column. Only the input literal is
+    // required to be nonnegative.
+    let min = i64::from(i32::MIN);
+    let max = i64::from(i32::MAX);
+    match term.as_bytes() {
+        [b'<', b'=', ..] => Some((min, number(&term[2..])?)),
+        [b'>', b'=', ..] => Some((number(&term[2..])?, max)),
+        [b'<', ..] => Some((min, number(&term[1..])? - 1)),
+        [b'>', ..] => Some((number(&term[1..])? + 1, max)),
+        _ => {
+            let id = number(term)?;
+            Some((id, id))
+        }
+    }
+}
+
+pub(super) fn canonical_numeric_ranges(mut values: Vec<(i32, i32)>) -> Vec<(i32, i32)> {
+    values.sort_unstable();
+    let mut count = 0;
+    for index in 0..values.len() {
+        let (start, end) = values[index];
+        if count > 0 && start <= values[count - 1].1.saturating_add(1) {
+            values[count - 1].1 = values[count - 1].1.max(end);
+        } else {
+            values[count] = (start, end);
+            count += 1;
+        }
+    }
+    values.truncate(count);
+    values
 }
 
 /// Parse a CASA-style spectral-window selector.
@@ -213,10 +304,62 @@ fn parse_channel_selection(value: &str) -> MsResult<ChannelSelection> {
     Ok(ChannelSelection { segments })
 }
 
-pub(super) fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
+/// One element of a CASA `intent` selector: a `STATE_ID` (from a number or
+/// a range `a~b`), or an `OBS_MODE` pattern, matched against a whole
+/// `OBS_MODE`, with `*` matching any run of characters
+/// ([`IntentSelector::matches`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IntentSelector {
+    /// A state number.
+    State(i32),
+    /// An `OBS_MODE` pattern.
+    Mode(String),
+}
+
+impl IntentSelector {
+    /// Whether this element selects `obs_mode` as a pattern does; a state
+    /// number matches no mode.
+    #[must_use]
+    pub fn matches(&self, obs_mode: &str) -> bool {
+        match self {
+            Self::State(_) => false,
+            Self::Mode(pattern) => super::parser::matches_simple_glob(pattern, obs_mode),
+        }
+    }
+}
+
+/// The elements of the CASA `intent` selector `text`: comma-separated state
+/// numbers, state ranges and `OBS_MODE` patterns, in order, empty elements
+/// skipped.
+#[must_use]
+pub fn parse_intent_selector(text: &str) -> Vec<IntentSelector> {
+    let mut selectors = Vec::new();
+    for part in text
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        if let Some((start, end)) = parse_numeric_range(part) {
+            selectors.extend((start..=end).map(IntentSelector::State));
+        } else if let Ok(id) = part.parse::<i32>() {
+            selectors.push(IntentSelector::State(id));
+        } else {
+            selectors.push(IntentSelector::Mode(part.to_string()));
+        }
+    }
+    selectors
+}
+
+pub(super) fn parse_numeric_range_endpoints(value: &str) -> Option<(i32, i32)> {
     let (start, end) = value.split_once('~')?;
-    let start = start.trim().parse::<i32>().ok()?;
-    let end = end.trim().parse::<i32>().ok()?;
+    Some((
+        start.trim().parse::<i32>().ok()?,
+        end.trim().parse::<i32>().ok()?,
+    ))
+}
+
+pub(super) fn parse_numeric_range(value: &str) -> Option<(i32, i32)> {
+    let (start, end) = parse_numeric_range_endpoints(value)?;
     let (start, end) = if start <= end {
         (start, end)
     } else {
@@ -236,6 +379,84 @@ pub(super) fn dedup_i32(values: Vec<i32>) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_intervals_are_bounded_by_terms_and_preserve_the_grammar() {
+        let ranges = parse_numeric_id_ranges("0~2147483647", "scan").unwrap();
+        assert_eq!(ranges, [(0, i32::MAX)]);
+        assert_eq!(
+            ranges.capacity(),
+            parse_numeric_id_ranges("0~1", "scan").unwrap().capacity()
+        );
+        assert_eq!(
+            parse_numeric_id_ranges("9, 3~1, 2~5,, 8,2147483647~2147483646", "scan").unwrap(),
+            [(1, 5), (8, 9), (i32::MAX - 1, i32::MAX)]
+        );
+        assert_eq!(
+            parse_numeric_id_selector("3~1,2,,7", "scan").unwrap(),
+            [1, 2, 3, 7]
+        );
+        assert_eq!(
+            parse_numeric_id_ranges("-2147483648~2147483647", "scan").unwrap(),
+            [(i32::MIN, i32::MAX)]
+        );
+        for text in [">1", "*", "1~2~3", "2147483648", "x"] {
+            assert!(parse_numeric_id_ranges(text, "scan").is_err());
+        }
+    }
+
+    #[test]
+    fn row_id_ranges_apply_casas_strict_bounds_without_changing_legacy_ids() {
+        assert_eq!(
+            parse_numeric_row_id_ranges("1,3~5,4", "scan").unwrap(),
+            [(1, 1), (3, 5)]
+        );
+        assert_eq!(
+            parse_numeric_row_id_ranges("0~2147483647", "observation").unwrap(),
+            [(0, i32::MAX)]
+        );
+        for value in ["1~1", "3~1", "-1", "-1~3", "0~0"] {
+            assert!(
+                parse_numeric_row_id_ranges(value, "scan").is_err(),
+                "{value}"
+            );
+            assert!(
+                parse_numeric_row_id_ranges(value, "observation").is_err(),
+                "{value}"
+            );
+        }
+        assert_eq!(
+            parse_numeric_id_selector("1~1,3~1", "legacy").unwrap(),
+            [1, 2, 3]
+        );
+        assert_eq!(parse_numeric_range("1~0"), Some((0, 1)));
+        assert_eq!(parse_numeric_range("0~0"), Some((0, 0)));
+    }
+
+    #[test]
+    fn row_id_lexical_rules_preserve_legacy_numeric_syntax() {
+        for text in [
+            "", " ", ",1", "1,", "1,,2", ",", "+1", "+0~1", "0~+1", "none", "None",
+        ] {
+            assert!(
+                parse_numeric_row_id_ranges(text, "scan").is_err(),
+                "{text:?}"
+            );
+            assert!(
+                parse_numeric_row_id_ranges(text, "observation").is_err(),
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            parse_numeric_row_id_ranges(" 1 , 3 ~ 5 ", "scan").unwrap(),
+            [(1, 1), (3, 5)]
+        );
+        assert_eq!(
+            parse_numeric_id_selector(",+1,1,,+2~+3,", "legacy").unwrap(),
+            [1, 2, 3]
+        );
+        assert!(parse_numeric_id_selector(" ", "legacy").unwrap().is_empty());
+    }
 
     #[test]
     fn parse_numeric_id_selector_deduplicates_ranges() {

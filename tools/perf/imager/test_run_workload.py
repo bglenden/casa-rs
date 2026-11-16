@@ -553,6 +553,26 @@ class EmbeddedCasaBenchmarkTests(unittest.TestCase):
         ):
             self.assertIn(f'CASA_RS_BENCH_{name}="${shell_value}"', bench)
 
+    def test_embedded_casa_call_preserves_source_cube_axis(self) -> None:
+        environment = self._base_environment()
+        environment.update(
+            CASA_RS_BENCH_SPECMODE="cubesource",
+            CASA_RS_BENCH_PHASECENTER="TRACKFIELD",
+            CASA_RS_BENCH_OUTFRAME="REST",
+            CASA_RS_BENCH_CHANNEL_COUNT="16",
+            CASA_RS_BENCH_CUBE_START="0",
+            CASA_RS_BENCH_CUBE_WIDTH="64",
+            CASA_RS_BENCH_CASA_GRIDDER="standard",
+            CASA_RS_BENCH_GRIDDER="standard",
+        )
+        kwargs = self._execute_embedded_casa(environment)
+        self.assertEqual("cubesource", kwargs["specmode"])
+        self.assertEqual("TRACKFIELD", kwargs["phasecenter"])
+        self.assertEqual("REST", kwargs["outframe"])
+        self.assertEqual(16, kwargs["nchan"])
+        self.assertEqual(0, kwargs["start"])
+        self.assertEqual(64, kwargs["width"])
+
     def test_embedded_casa_call_preserves_explicit_false_and_empty_controls(self) -> None:
         environment = self._base_environment()
         environment.update(
@@ -1398,6 +1418,27 @@ real 1.145408
             "/bench/products/current-casa/casa",
             plan["command"]["env"]["IMAGER_BENCH_REUSE_CASA_PREFIX"],
         )
+
+    def test_mosaic_conjbeams_reaches_the_benchmark(self) -> None:
+        manifest_path = (
+            run_workload.WORKLOAD_DIR / "t53-mosaic-mfs-alma-representative.json"
+        )
+        for setting, expected in (("true", "1"), ("false", "0")):
+            with self.subTest(conjbeams=setting):
+                manifest = run_workload.load_manifest(manifest_path)
+                run_workload.apply_imaging_overrides(manifest, [f"conjbeams={setting}"])
+                run_workload.validate_workload_manifest(manifest)
+                plan = run_workload.build_plan(
+                    manifest_path=manifest_path,
+                    manifest=manifest,
+                    repeats_override=None,
+                    run_label_override=None,
+                    storage_label_override=None,
+                    dry_run=True,
+                )
+                self.assertEqual(
+                    expected, plan["command"]["env"]["IMAGER_BENCH_CONJBEAMS"]
+                )
 
     def test_faceted_widefield_plan_preserves_exact_command_controls(self) -> None:
         manifest_path = (
@@ -2876,6 +2917,26 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
             "1", plan["command"]["env"]["IMAGER_BENCH_PERCHANWEIGHTDENSITY"]
         )
         self.assertEqual("after_gpu_metal", plan["review"]["evidence_role"])
+
+    def test_uranus_source_cube_preserves_tracking_in_runner(self) -> None:
+        workloads = Path(run_workload.__file__).with_name("workloads")
+        manifest_path = workloads / "moving-source-cube-alma.json"
+        manifest = json.loads(manifest_path.read_text())
+        plan = run_workload.build_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+        env = plan["command"]["env"]
+        self.assertEqual("runnable", plan["run_support"]["status"])
+        self.assertEqual("cubesource", env["IMAGER_BENCH_SPECMODE"])
+        self.assertEqual("TRACKFIELD", env["IMAGER_BENCH_PHASECENTER"])
+        self.assertEqual("REST", env["IMAGER_BENCH_OUTFRAME"])
+        self.assertEqual("16", env["IMAGER_BENCH_CHANNEL_COUNT"])
+        self.assertEqual("64", env["IMAGER_BENCH_CUBE_WIDTH"])
 
     def test_phase_probe_is_opt_in_for_casa_stage_diagnostics(self) -> None:
         manifest = {

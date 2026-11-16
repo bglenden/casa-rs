@@ -1,0 +1,56 @@
+{
+  "casa_version": "6.7.6-14",
+  "complex_get": {
+    "imtype": "Intensity",
+    "object": "Galaxy"
+  },
+  "get": {
+    "BUNIT": "Jy/beam",
+    "bunit": "Jy/beam",
+    "cdelt1": {
+      "unit": "'",
+      "value": -1.0
+    },
+    "cdelt3": {
+      "unit": "",
+      "value": 1.0
+    },
+    "crpix1": 2.0,
+    "crval1": {
+      "unit": "'",
+      "value": 0.0
+    },
+    "crval3": [
+      "I"
+    ],
+    "ctype1": "Right Ascension",
+    "cunit1": "'",
+    "equinox": "J2000",
+    "imtype": "Intensity",
+    "masks": [],
+    "object": "",
+    "observer": "Karl Jansky",
+    "shape": [
+      4,
+      4,
+      1,
+      4
+    ],
+    "telescope": "ALMA"
+  },
+  "stokes_get": [
+    "I",
+    "Q",
+    "U",
+    "V"
+  ],
+  "summary": {
+    "messages": [],
+    "tileshape": [
+      4,
+      4,
+      1,
+      4
+    ]
+  }
+}

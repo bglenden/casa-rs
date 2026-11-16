@@ -42,9 +42,10 @@ pub(super) fn other_axes(rank: usize, plane: [usize; 2]) -> Vec<usize> {
 pub(super) fn subimage_coordinates(
     coordinates: &CoordinateSystem,
     start: &[usize],
+    shape: &[usize],
 ) -> Result<CoordinateSystem, ImageError> {
     let mut record = coordinates.to_record();
-    shift_record_reference_pixels(&mut record, start)?;
+    shift_record_reference_pixels(&mut record, start, shape)?;
     CoordinateSystem::from_record(&record).map_err(|error| {
         ImageError::InvalidMetadata(format!(
             "failed to build subimage coordinate system: {error}"
@@ -57,13 +58,14 @@ pub(super) fn subimage_coordinates(
 pub(super) fn legacy_subimage_coordinates<T: ImagePixel>(
     image: &PagedImage<T>,
     start: &[usize],
+    shape: &[usize],
 ) -> Option<RecordValue> {
     let Some(Value::Record(mut coords)) = image.table().keywords().get("coords").cloned() else {
         return None;
     };
     // The image's coordinates were read from this record, so its fields
     // resolve; if not, the output keeps the coordinates casa-rs writes.
-    shift_record_reference_pixels(&mut coords, start).ok()?;
+    shift_record_reference_pixels(&mut coords, start, shape).ok()?;
     Some(coords)
 }
 
@@ -74,14 +76,13 @@ pub(super) fn legacy_subimage_coordinates<T: ImagePixel>(
 /// ([`CoordinateSystem::record_coordinates`]): a transposed casacore image
 /// numbers its coordinates in creation order, and a linear coordinate keeps
 /// its removed axes in the record, where they do not move. A lookup table
-/// (a tabular spectral coordinate's, or a tabular coordinate's) moves its
-/// pixels as well as its reference pixel, since casacore and casa-rs
-/// rebuild such a coordinate from the table. casacore's
-/// `CoordinateSystem::subImageInSitu` instead rebuilds a tabular spectral
-/// table over the subimage's channels, which gives the same world values.
+/// (a tabular spectral coordinate's, or a tabular coordinate's) is adjusted
+/// as well. Spectral tables are rebuilt over the selected channels, matching
+/// casacore's `CoordinateSystem::subImageInSitu` for nonlinear frequencies.
 fn shift_record_reference_pixels(
     record: &mut RecordValue,
     start: &[usize],
+    shape: &[usize],
 ) -> Result<(), ImageError> {
     let placed = CoordinateSystem::record_coordinates(record).map_err(|error| {
         ImageError::InvalidMetadata(format!("subimage coordinate system: {error}"))
@@ -95,6 +96,19 @@ fn shift_record_reference_pixels(
         let Some(Value::Record(coordinate_record)) = record.get_mut(&coordinate.field) else {
             continue;
         };
+        if coordinate.field.starts_with("spectral")
+            && let Some(Some(axis)) = coordinate.pixel_axes.first()
+            && casa_coordinates::SpectralCoordinate::subimage_tabular_record(
+                coordinate_record,
+                start[*axis],
+                shape[*axis],
+            )
+            .map_err(|error| {
+                ImageError::InvalidMetadata(format!("subimage spectral coordinate: {error}"))
+            })?
+        {
+            continue;
+        }
         shift_pixels(coordinate_record, &shifts);
         for parameters in ["wcs", "tabular"] {
             if let Some(Value::Record(inner)) = coordinate_record.get_mut(parameters) {

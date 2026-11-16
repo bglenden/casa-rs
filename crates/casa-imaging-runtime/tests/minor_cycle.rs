@@ -23,7 +23,7 @@ use casa_imaging_model::{
 use casa_imaging_products::MinorCycleImageResponse;
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
-    HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, ResourcePolicy,
+    HostResources, MinorCycleOutcome, MinorCycleSetup, MinorLayout, PsfCache, ResourcePolicy,
     prepare_minor_cycle, run_minor_cycle,
 };
 use problems::{empty_final_model, model_lifecycle, reconstruction_problem, validity};
@@ -69,13 +69,25 @@ fn completion(
     cycle.finish(SAMPLES, BLOCKS).expect("complete")
 }
 
-fn setup(problem: &CompiledProblem, response: Option<MinorCycleImageResponse>) -> MinorCycleSetup {
+fn setup(
+    problem: &CompiledProblem,
+    response: Option<MinorCycleImageResponse>,
+) -> MinorCycleSetup<'static> {
     MinorCycleSetup {
+        psf_cutoff: 0.35,
+        psf_beams: None,
+        outlier_psf_beams: Vec::new(),
+        mask_beams: None,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: HogbomIterationAccounting::Strict,
         response,
+        saved_weighted_residual: false,
         nsigma: 0.0,
+        noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
         automask: false,
+        primary_beam: None,
+        residual_pixel_mask: false,
+        pbmask: 0.0,
     }
 }
 
@@ -202,6 +214,464 @@ fn a_negative_residual_publishes_its_peak_magnitude() {
     assert!((outcome.summary.trace[0].flux + 0.1).abs() < 1e-6);
 }
 
+/// A plane whose PSF peaks off its centre has no beam of its own, and CASA
+/// gives it its domain's largest (`SIImageStore::makeImageBeamSet`), which
+/// sizes Clark's patch (`SDAlgorithmClarkClean2`, #1130). Here channel 0's PSF
+/// peaks off-centre, and channel 1's beam is the narrower and channel 2's the
+/// wider of two fitted ones: channel 0 takes channel 2's beam and patch, with
+/// its own sidelobe, measured off its own PSF. A pixel-wide beam would give it
+/// a patch of 13 pixels where channel 2's is about 60.
+#[test]
+fn an_off_centre_plane_takes_its_domains_largest_beam_and_clarks_patch() {
+    const WIDTH: usize = 128;
+    let problem = problem(
+        WIDTH,
+        ReconstructionBasis::ChannelLocal { channels: 3 },
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem);
+    let cells = WIDTH * WIDTH;
+    let cell = |x: usize, y: usize| x * WIDTH + y;
+    let completion = completion(&problem, &scene, |images| {
+        let psf = images.psf.as_mut().expect("the initial pass's PSF");
+        psf.fill(0.0);
+        psf[cell(10, 100)] = 1.0;
+        psf[cell(64, 64)] = 0.99;
+        for (plane, sigma) in [(1, 4.0), (2, 8.0)] {
+            for x in 0..WIDTH {
+                for y in 0..WIDTH {
+                    let (dx, dy) = (x as f64 - 64.0, y as f64 - 64.0);
+                    let value = (-(dx * dx + dy * dy) / (2.0_f64 * sigma * sigma)).exp();
+                    psf[plane * cells + cell(x, y)] = value as f32;
+                }
+            }
+        }
+        images.residual.fill(0.0);
+        images.residual[cell(40, 40)] = 1.0;
+    });
+    let team = WorkerTeam::new(1).expect("team");
+    let mut cache = PsfCache::default();
+    prepare_minor_cycle(
+        &completion,
+        &full_plane(&problem),
+        &setup(&problem, None),
+        &mut cache,
+        &team,
+    )
+    .expect("prepare");
+    let summary = |channel| cache.summary(0, channel, 0).expect("a measured plane");
+    let (off, narrow, wide) = (summary(0), summary(1), summary(2));
+    assert!(off.off_centre() && !narrow.off_centre() && !wide.off_centre());
+    assert!(narrow.clark().size[0] < wide.clark().size[0]);
+    assert_eq!(off.beam(), wide.beam());
+    assert_eq!(off.clark().size, wide.clark().size);
+    assert!(off.sidelobe() >= 1.0, "{}", off.sidelobe());
+    assert!(off.clark().exterior_sidelobe >= 1.0);
+}
+
+/// When every PSF fit in a domain is refused, CASA 6.7.6.14 assigns the
+/// same 1e-6 arcsec circular beam to each plane (#1140). The minor cycle
+/// expresses that angular width in first-axis pixels.
+#[test]
+fn an_all_refused_domain_uses_casas_tiny_beam() {
+    const WIDTH: usize = 64;
+    let problem = problem(
+        WIDTH,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem);
+    let cells = WIDTH * WIDTH;
+    let completion = completion(&problem, &scene, |images| {
+        let psf = images.psf.as_mut().expect("the initial PSF");
+        psf.fill(0.0);
+        images.residual.fill(0.0);
+        for channel in 0..2 {
+            psf[channel * cells + 15 * WIDTH + 32] = 1.0;
+            images.residual[channel * cells + 32 * WIDTH + 32] = 1.0;
+        }
+    });
+    let mut cache = PsfCache::default();
+    prepare_minor_cycle(
+        &completion,
+        &full_plane(&problem),
+        &setup(&problem, None),
+        &mut cache,
+        &WorkerTeam::new(1).expect("team"),
+    )
+    .expect("prepare");
+    let cell_rad = problem.geometry().domains()[0].direction().increment_rad()[0].abs();
+    let expected = (1.0e-6_f64 / 3600.0).to_radians() / cell_rad;
+    for channel in 0..2 {
+        let summary = cache.summary(0, channel, 0).expect("a measured plane");
+        assert!(summary.off_centre() && !summary.needs_domain_beam());
+        let beam = summary.beam();
+        assert!((beam.major_fwhm_rad() / expected - 1.0).abs() < 1e-12);
+        assert!((beam.minor_fwhm_rad() / expected - 1.0).abs() < 1e-12);
+        assert_eq!(beam.position_angle_rad(), 0.0);
+    }
+}
+
+/// CASA 6.7.6.14 subtracts the domain's fitted beam at the image centre
+/// before choosing the largest sidelobe, including for an off-centre PSF.
+#[test]
+fn an_off_centre_plane_remeasures_sidelobes_after_its_domain_beam_is_chosen() {
+    const WIDTH: usize = 64;
+    for algorithm in [
+        ReconstructionAlgorithm::Hogbom,
+        ReconstructionAlgorithm::Clark,
+    ] {
+        let problem = problem(
+            WIDTH,
+            ReconstructionBasis::ChannelLocal { channels: 2 },
+            algorithm,
+        );
+        let scene = Scene::new(&problem);
+        let cells = WIDTH * WIDTH;
+        let completion = completion(&problem, &scene, |images| {
+            let psf = images.psf.as_mut().expect("initial PSF");
+            psf.fill(0.0);
+            for x in 0..WIDTH {
+                for y in 0..WIDTH {
+                    let dx = x as f64 - 32.0;
+                    let dy = y as f64 - 32.0;
+                    psf[x * WIDTH + y] =
+                        (-4.0 * std::f64::consts::LN_2 * (dx * dx + dy * dy) / 1600.0).exp() as f32;
+                }
+            }
+            psf[cells + 15 * WIDTH + 32] = 1.0;
+            images.residual.fill(0.0);
+            images.residual[32 * WIDTH + 32] = 1.0;
+            images.residual[cells + 32 * WIDTH + 32] = 1.0;
+        });
+        let mut cache = PsfCache::default();
+        let result = prepare_minor_cycle(
+            &completion,
+            &full_plane(&problem),
+            &setup(&problem, None),
+            &mut cache,
+            &WorkerTeam::new(1).expect("team"),
+        )
+        .expect("prepare");
+        let off = cache.summary(0, 1, 0).expect("off-centre summary");
+        assert!(off.off_centre());
+        assert!(
+            (off.sidelobe() - 0.39395368).abs() < 2e-5,
+            "{}",
+            off.sidelobe()
+        );
+        assert!(
+            (result.statistics.psf_sidelobe - 0.39395368).abs() < 2e-5,
+            "{}",
+            result.statistics.psf_sidelobe
+        );
+    }
+}
+
+fn automatic_plan(
+    problem: &CompiledProblem,
+    minimum_beam_fraction: f64,
+) -> ImageDomainReconstructionMaskPlans {
+    ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
+        coordinate: problem.geometry().domains()[0].direction(),
+        controls: casa_imaging_deconvolution::AutoMultithreshControls {
+            sidelobe_factor: 2.0,
+            noise_factor: 4.25,
+            low_noise_factor: 1.5,
+            negative_factor: 0.0,
+            minimum_beam_fraction,
+            smooth_factor: 1.0,
+            cut_threshold: 0.01,
+            grow_iterations: 0,
+            grow_prune: false,
+            minimum_percent_change: -1.0,
+            noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
+            verbose: false,
+        },
+        completed_major_cycles: 0,
+        cycle_threshold_reached: false,
+        previous: None,
+        stopped_channels: Box::new([]),
+    }])
+    .expect("automatic mask")
+}
+
+/// A non-Gaussian PSF has different fitted beams at different cutoffs.
+/// Exercise both the ordinary path and the automatic-mask premeasurement.
+fn cutoff_changes_the_measured_beam(automatic: bool) {
+    const WIDTH: usize = 64;
+    let problem = problem(
+        WIDTH,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+    let completion = completion(&problem, &scene, |images| {
+        let psf = images.psf.as_mut().expect("PSF");
+        for x in 0..WIDTH {
+            for y in 0..WIDTH {
+                let dx = x as f64 - 32.0;
+                let dy = y as f64 - 32.0;
+                let r2 = dx * dx + dy * dy;
+                psf[x * WIDTH + y] = (0.7 * (-r2 / 8.0).exp() + 0.3 * (-r2 / 72.0).exp()) as f32;
+            }
+        }
+    });
+    let plans = if automatic {
+        automatic_plan(&problem, 0.3)
+    } else {
+        full_plane(&problem)
+    };
+    let team = WorkerTeam::new(1).expect("team");
+    let beam = |cutoff| {
+        let mut setup = setup(&problem, None);
+        setup.psf_cutoff = cutoff;
+        setup.automask = automatic;
+        let mut cache = PsfCache::default();
+        prepare_minor_cycle(&completion, &plans, &setup, &mut cache, &team).expect("prepare");
+        cache
+            .summary(0, 0, 0)
+            .expect("measured beam")
+            .beam()
+            .major_fwhm_rad()
+    };
+    let (low, high) = (beam(0.15), beam(0.65));
+    assert!(low > high * 1.1, "low {low}, high {high}");
+}
+
+#[test]
+fn a_minor_cycle_fits_its_psf_at_the_requested_cutoff() {
+    cutoff_changes_the_measured_beam(false);
+}
+
+#[test]
+fn an_automatic_mask_measures_its_psf_at_the_requested_cutoff() {
+    cutoff_changes_the_measured_beam(true);
+}
+
+/// A saved beam is authoritative for a restart, whatever the new cutoff.
+fn saved_beam_is_used_by_minor_preparation(automatic: bool) {
+    let problem = problem(
+        64,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+    let completion = completion(&problem, &scene, |_| {});
+    let beam = casa_imaging_deconvolution::RestoringBeam::new(10.0, 6.0, 0.2).unwrap();
+    let mut setup = setup(&problem, None);
+    setup.psf_cutoff = 0.65;
+    setup.psf_beams = Some(vec![beam].into());
+    setup.automask = automatic;
+    let plans = if automatic {
+        automatic_plan(&problem, 0.3)
+    } else {
+        full_plane(&problem)
+    };
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    prepare_minor_cycle(&completion, &plans, &setup, &mut cache, &team).expect("prepare");
+    assert_eq!(cache.summary(0, 0, 0).expect("measured beam").beam(), beam);
+}
+
+#[test]
+fn a_minor_cycle_reuses_its_saved_psf_beam() {
+    saved_beam_is_used_by_minor_preparation(false);
+}
+
+#[test]
+fn an_automatic_mask_reuses_its_saved_psf_beam() {
+    saved_beam_is_used_by_minor_preparation(true);
+}
+
+/// A saved off-centre plane already has CASA's chosen beam; the other
+/// channel's larger beam must not replace it on restart.
+#[test]
+fn a_saved_off_centre_beam_is_not_resettled() {
+    const WIDTH: usize = 64;
+    let problem = problem(
+        WIDTH,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let psf = images.psf.as_mut().expect("PSF");
+        psf[..WIDTH * WIDTH].fill(0.0);
+        psf[8 * WIDTH + 50] = 1.0;
+        psf[32 * WIDTH + 32] = 0.99;
+    });
+    let first = casa_imaging_deconvolution::RestoringBeam::new(10.0, 6.0, 0.0).unwrap();
+    let second = casa_imaging_deconvolution::RestoringBeam::new(20.0, 8.0, 0.0).unwrap();
+    let mut setup = setup(&problem, None);
+    setup.psf_beams = Some(vec![first, second].into());
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    prepare_minor_cycle(
+        &completion,
+        &full_plane(&problem),
+        &setup,
+        &mut cache,
+        &team,
+    )
+    .expect("prepare");
+    assert_eq!(cache.summary(0, 0, 0).unwrap().beam(), first);
+}
+
+/// An incomplete saved beam grid is rejected instead of silently refitting.
+#[test]
+fn an_incomplete_saved_psf_beam_grid_is_refused() {
+    let problem = problem(
+        64,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+    let completion = completion(&problem, &scene, |_| {});
+    let mut setup = setup(&problem, None);
+    setup.psf_beams = Some(Vec::new().into());
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    assert!(matches!(
+        prepare_minor_cycle(
+            &completion,
+            &full_plane(&problem),
+            &setup,
+            &mut cache,
+            &team
+        ),
+        Err(
+            casa_imaging_runtime::MinorCycleRunError::SavedBeamGridLength {
+                expected: 1,
+                actual: 0
+            }
+        )
+    ));
+}
+
+/// An incomplete residual beam grid is rejected before automatic masking.
+#[test]
+fn an_incomplete_saved_residual_beam_grid_is_refused() {
+    let problem = problem(
+        64,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+    let completion = completion(&problem, &scene, |_| {});
+    let mut setup = setup(&problem, None);
+    setup.mask_beams = Some(Vec::new().into());
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    assert!(matches!(
+        prepare_minor_cycle(
+            &completion,
+            &full_plane(&problem),
+            &setup,
+            &mut cache,
+            &team
+        ),
+        Err(
+            casa_imaging_runtime::MinorCycleRunError::SavedBeamGridLength {
+                expected: 1,
+                actual: 0
+            }
+        )
+    ));
+}
+
+/// A blank channel's saved beam participates in its mask block's common
+/// beam, even if that beam is larger than the data channel's.
+#[test]
+fn a_blank_channels_saved_beam_controls_automatic_mask_pruning() {
+    let problem = problem(
+        64,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Hogbom,
+    );
+    let scene = Scene::new(&problem).with_weights(vec![1.0, 0.0]);
+    let completion = completion(&problem, &scene, |images| {
+        images.residual.fill(0.0);
+        for x in 30..35 {
+            for y in 30..35 {
+                images.residual[x * 64 + y] = 10.0;
+            }
+        }
+    });
+    let narrow = casa_imaging_deconvolution::RestoringBeam::new(2.5, 2.5, 0.0).unwrap();
+    let broad = casa_imaging_deconvolution::RestoringBeam::new(10.0, 8.0, 0.0).unwrap();
+    let mut setup = setup(&problem, None);
+    setup.automask = true;
+    setup.psf_beams = Some(vec![narrow, broad].into());
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    let result = prepare_minor_cycle(
+        &completion,
+        &automatic_plan(&problem, 0.5),
+        &setup,
+        &mut cache,
+        &team,
+    )
+    .expect("prepare");
+    let row = result.auto_masks()[0]
+        .as_ref()
+        .unwrap()
+        .plane(0, 0)
+        .unwrap();
+    assert_eq!((row.regions, row.pruned_regions), (1, 1));
+}
+
+/// CASA's autoMask uses the residual beam when both images have beams.
+/// Its choice must not change the PSF sidelobe used by minor-cycle control.
+#[test]
+fn automatic_mask_prefers_the_residual_beam() {
+    let problem = problem(
+        64,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Hogbom,
+    );
+    let scene = Scene::new(&problem).with_weights(vec![1.0, 0.0]);
+    let completion = completion(&problem, &scene, |images| {
+        images.residual.fill(0.0);
+        for x in 30..35 {
+            for y in 30..35 {
+                images.residual[x * 64 + y] = 10.0;
+            }
+        }
+    });
+    let narrow = casa_imaging_deconvolution::RestoringBeam::new(2.5, 2.5, 0.0).unwrap();
+    let broad = casa_imaging_deconvolution::RestoringBeam::new(10.0, 8.0, 0.0).unwrap();
+    let team = WorkerTeam::new(1).unwrap();
+    let mut narrow_psf_sidelobe = None;
+    for (psf, residual, pruned) in [(narrow, broad, 1), (broad, narrow, 0), (narrow, narrow, 0)] {
+        let mut setup = setup(&problem, None);
+        setup.automask = true;
+        setup.psf_beams = Some(vec![psf; 2].into());
+        setup.mask_beams = Some(vec![residual; 2].into());
+        let result = prepare_minor_cycle(
+            &completion,
+            &automatic_plan(&problem, 0.5),
+            &setup,
+            &mut PsfCache::default(),
+            &team,
+        )
+        .expect("prepare");
+        let row = result.auto_masks()[0]
+            .as_ref()
+            .unwrap()
+            .plane(0, 0)
+            .unwrap();
+        assert_eq!((row.regions, row.pruned_regions), (1, pruned));
+        if psf == narrow {
+            if let Some(expected) = narrow_psf_sidelobe {
+                assert_eq!(result.statistics.psf_sidelobe, expected);
+            } else {
+                narrow_psf_sidelobe = Some(result.statistics.psf_sidelobe);
+            }
+        }
+    }
+}
+
 /// A multi-term component records each Taylor coefficient's flux, and the
 /// absolute flux sums them: `[1, −0.5]` at gain 0.1 is `[0.1, −0.05]`, 0.15.
 #[test]
@@ -310,7 +780,11 @@ fn a_cube_cleans_the_same_on_any_number_of_workers() {
 fn cube_with_response(
     weights: Vec<f64>,
     edit: impl FnOnce(&mut PassImages),
-) -> (CompiledProblem, MajorCycleCompletion, MinorCycleSetup) {
+) -> (
+    CompiledProblem,
+    MajorCycleCompletion,
+    MinorCycleSetup<'static>,
+) {
     let problem = problem(
         16,
         ReconstructionBasis::ChannelLocal { channels: 2 },
@@ -429,6 +903,93 @@ fn a_mosaic_cube_normalises_each_channel_by_its_own_weight_image() {
     }
 }
 
+/// The nsigma threshold `prepare_minor_cycle` measures, under `noise`, on
+/// an 8×8 mosaic plane whose beam covers a 4×4 block holding the residuals
+/// 0.01 to 0.16 Jy; the residual outside it is 0.5 Jy before
+/// normalization.
+fn mosaic_nsigma_threshold(noise: casa_imaging_deconvolution::NoiseEstimate) -> f64 {
+    let problem = problem(
+        8,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Hogbom,
+    );
+    let scene = Scene::new(&problem);
+    let psf = scene.unit_psf();
+    let inside = |index: usize| (2..6).contains(&(index % 8)) && (2..6).contains(&(index / 8));
+    let completion = completion(&problem, &scene, |images| {
+        images.sum_weights = vec![1.0];
+        images.published_sum_weights = vec![1.0];
+        images.weight = Some(
+            (0..psf.len())
+                .map(|index| if inside(index) { 1.0 } else { 0.0 })
+                .collect(),
+        );
+        let mut next = 0.0_f32;
+        images.residual = (0..psf.len())
+            .map(|index| {
+                if inside(index) {
+                    next += 0.01;
+                    next
+                } else {
+                    // `normalize_weighted_residual_sample` zeroes the
+                    // residual where the beam is not above the cutoff.
+                    0.5
+                }
+            })
+            .collect();
+        images.psf = Some(psf.iter().map(|value| *value as f32).collect());
+    });
+    let response =
+        MinorCycleImageResponse::new(ProductNormalization::FlatNoise, validity().primary_beam())
+            .expect("response");
+    let mut setup = setup(&problem, Some(response));
+    setup.nsigma = 3.0;
+    setup.noise = noise;
+    let team = WorkerTeam::new(1).expect("team");
+    prepare_minor_cycle(
+        &completion,
+        &full_plane(&problem),
+        &setup,
+        &mut PsfCache::default(),
+        &team,
+    )
+    .expect("prepare")
+    .statistics
+    .nsigma_threshold
+}
+
+/// `SIImageStore::calcRobustRMS` measures a plane's `nsigma` noise where its
+/// primary beam exceeds tclean's `pbmask` of 0, and a mosaic's beam
+/// (`makePBFromWeight`) is zero outside `pblimit`. The beam's residuals,
+/// 0.01 to 0.16 Jy, have the median 0.085 and the median absolute
+/// deviation 0.04: three sigma is 3 · 1.4826 · 0.04 Jy. Over the whole
+/// plane, three quarters of it zero outside the beam, the deviation would
+/// be zero and so the threshold.
+#[test]
+fn a_mosaic_measures_its_noise_inside_its_primary_beam() {
+    let threshold = mosaic_nsigma_threshold(casa_imaging_deconvolution::NoiseEstimate::Fast);
+    let expected = 3.0 * 1.4826 * 0.04;
+    assert!(
+        (threshold - expected).abs() < 1e-6,
+        "{threshold}, expected {expected}"
+    );
+}
+
+/// The same plane under `fastnoise=False`: `calcRobustImageStatistics`
+/// takes the same primary-beam pixels, and Chauvenet's criterion at 16
+/// samples (a z-score between 2 and 2.5, about 0.1 Jy either side of the
+/// mean) keeps all of 0.01 to 0.16 Jy, so the threshold is the fast one;
+/// over the whole plane the zeros would again leave no deviation.
+#[test]
+fn a_mosaic_measures_its_robust_noise_inside_its_primary_beam() {
+    let threshold = mosaic_nsigma_threshold(casa_imaging_deconvolution::NoiseEstimate::Robust);
+    let expected = 3.0 * 1.4826 * 0.04;
+    assert!(
+        (threshold - expected).abs() < 1e-6,
+        "{threshold}, expected {expected}"
+    );
+}
+
 /// A channel no sample reached (CASA's `test_cube_flagged_mosaic_hogbom`)
 /// is skipped; the other channels still clean with their own weights.
 #[test]
@@ -439,4 +1000,449 @@ fn a_cube_with_an_empty_first_channel_cleans_the_others() {
     assert_eq!(increments.len(), 1, "{increments:?}");
     assert_eq!(increments[0].0, 1);
     assert!((increments[0].1 - 1.0).abs() < 1e-6, "{increments:?}");
+}
+
+/// Clark chooses one joint polarization component, rather than one per
+/// plane, as CASA's two-position IV experiment does (#1140).
+#[test]
+fn clark_solves_a_channels_polarizations_as_one_component() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [64, 64],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = 64 * 64;
+        images.polarizations = 2;
+        let psf = images.psf.as_ref().unwrap().clone();
+        images.psf = Some([psf.as_slice(), psf.as_slice()].concat());
+        images.sum_weights = vec![1.0, 1.0];
+        images.published_sum_weights = vec![1.0, 1.0];
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[20 * 64 + 20] = 3.0;
+        images.residual[40 * 64 + 40] = 1.0;
+        images.residual[cells + 40 * 64 + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(1, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 1);
+    assert_eq!(outcome.summary.planes.len(), 1);
+    assert_eq!(outcome.summary.planes[0].polarizations, 2);
+    let trace = &outcome.summary.trace;
+    assert_eq!(trace.len(), 2);
+    assert_eq!(trace[0].cell.pixel(), [40, 40]);
+    assert_eq!(trace[1].cell.pixel(), [40, 40]);
+    assert_eq!(trace[0].cell.polarization(), 0);
+    assert_eq!(trace[1].cell.polarization(), 1);
+    assert!((trace[0].flux - 0.17).abs() < 1e-6);
+    assert!((trace[1].flux - 0.51).abs() < 1e-6);
+}
+
+/// CASA's clarkstokes gives each polarization its own peak and component
+/// rather than Clark's joint polarization component (#1126).
+#[test]
+fn clarkstokes_solves_each_polarization_separately() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [64, 64],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::ClarkStokes,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = 64 * 64;
+        images.polarizations = 2;
+        let psf = images.psf.as_ref().unwrap().clone();
+        images.psf = Some([psf.as_slice(), psf.as_slice()].concat());
+        images.sum_weights = vec![1.0, 1.0];
+        images.published_sum_weights = vec![1.0, 1.0];
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[20 * 64 + 20] = 3.0;
+        images.residual[40 * 64 + 40] = 1.0;
+        images.residual[cells + 40 * 64 + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(1, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 2);
+    assert_eq!(outcome.summary.planes.len(), 2);
+    assert!(
+        outcome
+            .summary
+            .planes
+            .iter()
+            .all(|row| row.polarizations == 1)
+    );
+    let trace = &outcome.summary.trace;
+    assert_eq!(trace.len(), 2);
+    assert_eq!(trace[0].cell.pixel(), [20, 20]);
+    assert_eq!(trace[1].cell.pixel(), [40, 40]);
+    assert_eq!(trace[0].cell.polarization(), 0);
+    assert_eq!(trace[1].cell.polarization(), 1);
+    assert!((trace[0].flux - 0.51).abs() < 1e-6);
+    assert!((trace[1].flux - 0.51).abs() < 1e-6);
+}
+
+/// With one polarization CASA's two Clark names use the same solver, and
+/// the one retained refresh is covered by the planned charge (#1126).
+#[test]
+fn single_plane_clarkstokes_matches_clark_and_its_refresh_charge() {
+    use casa_imaging_runtime::MinorLayout;
+    let mut traces = Vec::new();
+    for algorithm in [
+        ReconstructionAlgorithm::Clark,
+        ReconstructionAlgorithm::ClarkStokes,
+    ] {
+        let problem = problem(
+            64,
+            ReconstructionBasis::ChannelLocal { channels: 1 },
+            algorithm,
+        );
+        let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+        let completion = completion(&problem, &scene, |_| {});
+        let setup = setup(&problem, None);
+        let team = WorkerTeam::new(1).expect("team");
+        let mut cache = PsfCache::default();
+        let prepared = prepare_minor_cycle(
+            &completion,
+            &full_plane(&problem),
+            &setup,
+            &mut cache,
+            &team,
+        )
+        .expect("prepare");
+        let outcome = run_minor_cycle(
+            prepared,
+            &completion,
+            &setup,
+            &controls(5, 0.2),
+            &mut cache,
+            &team,
+            (&HOST, &POLICY),
+        )
+        .expect("minor cycle");
+        let actual = cache.refresh_bytes(&completion);
+        let planned = MinorLayout::of(completion.normal_state()).refresh_bytes(&setup);
+        assert!(actual > 0, "Clark keeps its refresh");
+        assert_eq!(actual, planned, "the retained refresh is admitted");
+        traces.push(outcome.summary.trace);
+    }
+    assert_eq!(traces[0], traces[1], "the one-plane Clark solvers agree");
+}
+
+/// A channel with no samples does not disable joint Clark on a healthy
+/// channel in the same slab (#1140).
+#[test]
+fn an_empty_channel_does_not_split_another_channels_clark_polarizations() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let width = 64;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [width, width],
+        2,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = width * width;
+        images.polarizations = 2;
+        let unit = scene
+            .unit_psf()
+            .into_iter()
+            .map(|v| v as f32)
+            .collect::<Vec<_>>();
+        images.psf = Some(
+            [
+                unit.as_slice(),
+                unit.as_slice(),
+                &vec![0.0; cells],
+                &vec![0.0; cells],
+            ]
+            .concat(),
+        );
+        images.sum_weights = vec![1.0, 1.0, 0.0, 0.0];
+        images.published_sum_weights = images.sum_weights.clone();
+        images.residual = vec![0.0; 4 * cells];
+        images.residual[20 * width + 20] = 3.0;
+        images.residual[40 * width + 40] = 1.0;
+        images.residual[cells + 40 * width + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(1, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 1);
+    assert_eq!(outcome.summary.planes.len(), 2, "one row per channel");
+    assert_eq!(outcome.summary.planes[1].channel, 1);
+    assert_eq!(outcome.summary.planes[1].polarization, 0);
+    assert_eq!(outcome.summary.trace.len(), 2);
+    assert!(
+        outcome
+            .summary
+            .trace
+            .iter()
+            .all(|c| c.cell.pixel() == [40, 40])
+    );
+}
+
+/// CASA's joint IV Clark runs one channel even if either polarization has
+/// no data, retaining a single iteration record (#1140).
+#[test]
+fn joint_clark_keeps_a_blank_polarization_in_its_channel() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    for blank in 0..2 {
+        let width = 64;
+        let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+            31,
+            [width, width],
+            1,
+            1,
+            ReconstructionBasis::ChannelLocal { channels: 1 },
+            ReconstructionAlgorithm::Clark,
+            ReconstructionControls::new(1, 0.17, 0.0),
+            vec![StokesI, StokesV],
+        );
+        let scene = Scene::new(&problem);
+        let completion = completion(&problem, &scene, |images| {
+            let cells = width * width;
+            images.polarizations = 2;
+            let unit = scene
+                .unit_psf()
+                .into_iter()
+                .map(|v| v as f32)
+                .collect::<Vec<_>>();
+            images.psf = Some(unit.repeat(2));
+            images.psf.as_mut().unwrap()[blank * cells..(blank + 1) * cells].fill(0.0);
+            images.sum_weights = vec![1.0, 1.0];
+            images.sum_weights[blank] = 0.0;
+            images.published_sum_weights = images.sum_weights.clone();
+            images.residual = vec![0.0; 2 * cells];
+            images.residual[(1 - blank) * cells + 40 * width + 40] = 3.0;
+        });
+        let (_, outcome) = minor_cycle(
+            &problem,
+            &completion,
+            &setup(&problem, None),
+            &controls(1, 0.17),
+            1,
+        );
+        assert_eq!(outcome.summary.iterations, 1, "blank={blank}");
+        assert_eq!(outcome.summary.planes.len(), 1, "blank={blank}");
+        assert_eq!(outcome.terms.len(), 1, "blank={blank}");
+        let changed = outcome
+            .summary
+            .trace
+            .iter()
+            .find(|c| c.flux != 0.0)
+            .unwrap();
+        assert_eq!(changed.cell.polarization(), 1 - blank);
+        assert!((changed.flux - 0.51).abs() < 1e-6);
+    }
+}
+
+/// CASA's Clark uses the first polarization's PSF even when it is blank;
+/// a zero PSF leaves the other polarization's peak unchanged (#1140).
+#[test]
+fn joint_clark_uses_the_blank_first_polarizations_psf() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let width = 64;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [width, width],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(20, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = width * width;
+        images.polarizations = 2;
+        let unit = scene
+            .unit_psf()
+            .into_iter()
+            .map(|v| v as f32)
+            .collect::<Vec<_>>();
+        images.psf = Some([vec![0.0; cells].as_slice(), unit.as_slice()].concat());
+        images.sum_weights = vec![0.0, 1.0];
+        images.published_sum_weights = images.sum_weights.clone();
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[cells + 40 * width + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(20, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 10);
+    assert!((outcome.summary.peak - 3.0).abs() < 1e-6);
+    assert!((outcome.summary.model_flux - 5.1).abs() < 1e-6);
+}
+
+/// CASA measures masks over both Stokes planes, but Clark reads the first
+/// plane's component mask, even when only the second mask is nonempty (#1140).
+#[test]
+fn joint_clark_counts_all_masks_but_uses_the_first_for_components() {
+    use casa_imaging_deconvolution::{MaskPlanes, PlaneStop};
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    use std::sync::Arc;
+    let width = 64;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [width, width],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = width * width;
+        images.polarizations = 2;
+        let psf = images.psf.take().unwrap();
+        images.psf = Some(psf.repeat(2));
+        images.sum_weights = vec![1.0; 2];
+        images.published_sum_weights = images.sum_weights.clone();
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[cells + 40 * width + 40] = 3.0;
+    });
+    let cells = width * width;
+    let mut support = vec![false; cells];
+    support.extend(vec![true; cells]);
+    let masks = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::Reprojected {
+        coordinate: problem.geometry().domains()[0].direction(),
+        planes: MaskPlanes::new(1, 2).unwrap(),
+        support: Arc::from(support),
+    }])
+    .unwrap();
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    let configured = setup(&problem, None);
+    let prepared =
+        prepare_minor_cycle(&completion, &masks, &configured, &mut cache, &team).unwrap();
+    let outcome = run_minor_cycle(
+        prepared,
+        &completion,
+        &configured,
+        &controls(1, 0.17),
+        &mut cache,
+        &team,
+        (&HOST, &POLICY),
+    )
+    .unwrap();
+    assert_eq!(outcome.summary.iterations, 0);
+    assert!(outcome.terms.is_empty());
+    assert_eq!(outcome.summary.planes.len(), 1);
+    let row = outcome.summary.planes[0];
+    assert_eq!(row.mask_sum, cells);
+    assert!((row.start_peak - 3.0).abs() < 1e-6);
+    assert_eq!(row.stop, PlaneStop::ZeroIterations);
+}
+
+#[test]
+fn mem_minor_cycle_carries_dense_casa_model_into_its_owner() {
+    const FIXTURE: &[u8] =
+        include_bytes!("../../casa-imaging-deconvolution/tests/fixtures/mem_casa_676.f32le");
+    let plane = |index: usize| {
+        FIXTURE[index * 4096..(index + 1) * 4096]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| f32::from_le_bytes(*bytes))
+            .collect::<Vec<_>>()
+    };
+    let problem = problem(
+        32,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Mem,
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        images.psf = Some(plane(0));
+        images.residual = plane(1);
+        images.sum_weights = vec![1.0];
+        images.published_sum_weights = vec![1.0];
+    });
+    let cycle = CycleControls {
+        iterations: 1,
+        threshold: 0.200_081_21,
+        threshold_reached: false,
+        gain: 0.1,
+        nsigma: 0.0,
+    };
+    let (_, outcome) = minor_cycle(&problem, &completion, &setup(&problem, None), &cycle, 1);
+    assert_eq!(outcome.summary.iterations, 1);
+    assert!((outcome.mem_alpha.unwrap() - 0.278_398_78).abs() < 1e-5);
+    assert!(outcome.terms.is_empty());
+    assert_eq!(outcome.dense.len(), 1);
+    let minimum = 1024
+        * (std::mem::size_of::<f64>() + std::mem::size_of::<casa_imaging_model::ModelSample>())
+            as u64
+        + (std::mem::size_of::<casa_imaging_deconvolution::DenseModelPlane>()
+            + std::mem::size_of::<([usize; 3], casa_imaging_deconvolution::DenseModelPlane)>())
+            as u64;
+    assert!(
+        outcome.results.memory() >= minimum,
+        "dense result and model window remain admitted"
+    );
+    let planned =
+        MinorLayout::of(completion.normal_state()).result_bytes(&setup(&problem, None), 1);
+    assert_eq!(
+        planned,
+        outcome.results.memory(),
+        "the planned dense result is the production-held reservation"
+    );
+    let (_, base) = completion.into_parts();
+    let lifecycle = model_lifecycle(&problem);
+    let updated = lifecycle
+        .prepare_final_dense_model(base, outcome.dense)
+        .unwrap();
+    let expected = plane(2);
+    let samples = updated.generation().read_samples(0..1024).unwrap();
+    let mut difference = 0.0;
+    let mut reference = 0.0;
+    for y in 0..32 {
+        for x in 0..32 {
+            let actual = samples[y * 32 + x].value().value();
+            let expected = f64::from(expected[x * 32 + y]);
+            difference += (actual - expected).powi(2);
+            reference += expected.powi(2);
+        }
+    }
+    let nrms = (difference / reference).sqrt();
+    assert!(nrms < 1e-5, "CASA MEM model NRMS {nrms}");
 }

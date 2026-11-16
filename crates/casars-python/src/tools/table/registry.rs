@@ -13,13 +13,38 @@
 //! reported as such, never waited for (two tools visiting each other would
 //! deadlock).
 
-use std::sync::{Arc, Mutex, PoisonError, TryLockError, Weak};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, TryLockError, Weak};
 
 use super::state::State;
 
 /// Every tool made in this process that is still alive, with its
 /// `State::id`.
 static TOOLS: Mutex<Vec<(u64, Weak<Mutex<State>>)>> = Mutex::new(Vec::new());
+
+/// Per-table notification of component-list keyword writes in this process.
+/// Weak references keep the registry from retaining closed tables.
+pub(super) fn keyword_epoch(path: &Path) -> Arc<AtomicU64> {
+    static EPOCHS: OnceLock<Mutex<HashMap<PathBuf, Weak<AtomicU64>>>> = OnceLock::new();
+    let name = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut epochs = EPOCHS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    epochs.retain(|_, epoch| epoch.strong_count() > 0);
+    if let Some(epoch) = epochs.get(&name).and_then(Weak::upgrade) {
+        return epoch;
+    }
+    let epoch = Arc::new(AtomicU64::new(0));
+    epochs.insert(name, Arc::downgrade(&epoch));
+    epoch
+}
+
+pub(super) fn keyword_published(path: &Path) {
+    keyword_epoch(path).fetch_add(1, Ordering::Release);
+}
 
 /// `state` as a tool's shared state, listed with the process's tools.
 pub(super) fn track(state: State) -> Arc<Mutex<State>> {

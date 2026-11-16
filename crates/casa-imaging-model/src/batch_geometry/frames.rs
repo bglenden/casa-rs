@@ -17,7 +17,7 @@ use casa_types::measures::{MPosition, MeasFrame, MeasureError, MeasuresProvider}
 use casa_types::quanta::Unit;
 
 use super::BatchGeometryError;
-use crate::selected_observation_sample::AntennaResponseClass;
+use crate::sample_antennas::AntennaResponseClass;
 
 /// The observatory, antennas and fields of one observation, in the frames
 /// geometry needs, and the parallactic angles computed so far.
@@ -216,8 +216,13 @@ impl Frames {
 
     /// The observatory's frame at `time_mjd_s` on `scale`.
     pub(super) fn observatory_at(&self, time_mjd_s: f64, scale: EpochRef) -> MeasFrame {
+        self.observatory_at_epoch(MEpoch::from_mjd_seconds(time_mjd_s, scale))
+    }
+
+    /// The observatory's frame at `epoch`.
+    pub(super) fn observatory_at_epoch(&self, epoch: MEpoch) -> MeasFrame {
         MeasFrame::new()
-            .with_epoch(MEpoch::from_mjd_seconds(time_mjd_s, scale))
+            .with_epoch(epoch)
             .with_position(self.observatory.clone())
             .with_measures(Arc::clone(&self.measures))
     }
@@ -231,16 +236,27 @@ impl Frames {
         angles_rad: [f64; 2],
         frame: DirectionRef,
     ) -> Result<[f64; 2], BatchGeometryError> {
-        if frame == DirectionRef::J2000 {
+        self.convert((time_mjd_s, scale), angles_rad, frame, DirectionRef::J2000)
+    }
+
+    /// `angles_rad` in `from` converted to `to` at `time_mjd_s` on
+    /// `scale`, from the observatory; unchanged when the frames are the
+    /// same.
+    pub(super) fn convert(
+        &self,
+        (time_mjd_s, scale): (f64, EpochRef),
+        angles_rad: [f64; 2],
+        from: DirectionRef,
+        to: DirectionRef,
+    ) -> Result<[f64; 2], BatchGeometryError> {
+        if from == to {
             return Ok(angles_rad);
         }
-        let direction = MDirection::from_angles(angles_rad[0], angles_rad[1], frame);
+        let direction = MDirection::from_angles(angles_rad[0], angles_rad[1], from);
         let context = self
             .observatory_at(time_mjd_s, scale)
             .with_direction(direction.clone());
-        let (longitude, latitude) = direction
-            .convert_to(DirectionRef::J2000, &context)?
-            .as_angles();
+        let (longitude, latitude) = direction.convert_to(to, &context)?.as_angles();
         Ok([longitude, latitude])
     }
 
@@ -368,6 +384,16 @@ impl Frames {
                     None
                 }
             })
+            .collect()
+    }
+
+    /// CASA's Airy class of each antenna's dish
+    /// ([`AntennaResponseClass::casa_airy`]), for a telescope without a
+    /// default voltage pattern; `None` for a dish that is not positive.
+    pub(super) fn airy_classes(&self) -> Vec<Option<AntennaResponseClass>> {
+        self.antennas
+            .iter()
+            .map(|antenna| AntennaResponseClass::casa_airy(antenna.dish_diameter_m))
             .collect()
     }
 }

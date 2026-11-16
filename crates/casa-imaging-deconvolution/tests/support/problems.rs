@@ -12,52 +12,47 @@
 
 use casa_imaging_deconvolution::{ModelLifecycle, ModelStoragePlan, PreparedFinalModel};
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompiledProblem, CorrelationProduct, CorrelationSelection,
-    DataDescriptionSelection, DeclaredInnerProducts, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput,
-    IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
-    IntentSelection, MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
-    ModelLifecycleRequirements, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
-    SelectedColumns, SelectedMainRow, SelectedRows, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct,
-    WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    compile_observation,
+    AxisOrder, CentreLaws, CompiledProblem, CorrelationProduct, DeclaredInnerProducts,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
+    FlagPolicy, FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole,
+    ImageDomainSpec, ImageShape, InstrumentResponse, IntentSelection, MeasurementEquationContract,
+    ModelBounds, ModelColumnWrite, ModelInnerProduct, ModelLifecycleRequirements, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationSelection, ObservationSnapshotInput,
+    ObservationSourceInput, ObservationSourceProvenance, ObservationTransactionRequirements,
+    PartitionId, PartitionSelection, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemSpecification,
+    ProductBlankingPolicy, ProductKind, ProductNormalization, ProductRequirements,
+    ProductSupportComparison, ProductValidityPolicies, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract, SelectedColumns,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_types::Correlation;
 
 pub fn source(seed: u8) -> ObservationSourceInput {
+    let partition = |id, window| {
+        PartitionSelection::new(
+            PartitionId(id),
+            window,
+            vec![CorrelationProduct::new(0, Correlation::I)],
+        )
+    };
     ObservationSourceInput::new(
         ObservationSourceProvenance::new(format!("fixture://major-cycle/{seed}")),
         ObservationSelection::new(
-            // The seed sets the MeasurementSet's row count, so sources from
-            // different seeds are different observations.
-            SelectedRows::from_ordered_main_rows(
-                3 + u64::from(seed),
-                [SelectedMainRow::new(0, 0), SelectedMainRow::new(2, 1)],
-            )
-            .expect("two selected rows"),
+            // The seed sets the selected samples, so sources from different
+            // seeds are different observations.
+            2 + u64::from(seed),
             RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
-            vec![
-                DataDescriptionSelection::new(0, 0, 0),
-                DataDescriptionSelection::new(1, 1, 0),
-            ],
+            vec![partition(0, 0), partition(1, 1)],
             vec![
                 SpectralWindowSelection::new(0, vec![0]),
                 SpectralWindowSelection::new(1, vec![1]),
             ],
-            vec![CorrelationSelection::new(
-                0,
-                vec![CorrelationProduct::new(0, Correlation::I)],
-            )],
         ),
         SelectedColumns::new(
             VisibilityColumn::Data,
@@ -110,12 +105,58 @@ pub fn reconstruction_problem_with_domains(
     algorithm: ReconstructionAlgorithm,
     controls: ReconstructionControls,
 ) -> CompiledProblem {
-    let centre = width as f64 / 2.0;
+    reconstruction_problem_of_shape(
+        observation,
+        [width, width],
+        channels,
+        domains,
+        basis,
+        algorithm,
+        controls,
+    )
+}
+
+/// [`reconstruction_problem_with_domains`] with domains of `[width, height]`
+/// pixels.
+pub fn reconstruction_problem_of_shape(
+    observation: u8,
+    [width, height]: [usize; 2],
+    channels: usize,
+    domains: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+) -> CompiledProblem {
+    reconstruction_problem_of_shape_and_polarizations(
+        observation,
+        [width, height],
+        channels,
+        domains,
+        basis,
+        algorithm,
+        controls,
+        vec![PolarizationCoordinate::StokesI],
+    )
+}
+
+/// As `reconstruction_problem_of_shape`, with an explicit Stokes axis.
+#[allow(clippy::too_many_arguments)]
+pub fn reconstruction_problem_of_shape_and_polarizations(
+    observation: u8,
+    [width, height]: [usize; 2],
+    channels: usize,
+    domains: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+    polarizations: Vec<PolarizationCoordinate>,
+) -> CompiledProblem {
+    let centre = [width as f64 / 2.0, height as f64 / 2.0];
     let direction = |ordinal: usize| {
         DirectionCoordinateSpec::new(
             Projection::Sin,
             SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-            [centre + (ordinal * width) as f64, centre],
+            [centre[0] + (ordinal * width) as f64, centre[1]],
             [-1.0e-6, 1.0e-6],
             [[1.0, 0.0], [0.0, 1.0]],
             [180.0, 0.0],
@@ -130,7 +171,7 @@ pub fn reconstruction_problem_with_domains(
                     } else {
                         ImageDomainRole::Outlier(format!("outlier-{ordinal}"))
                     },
-                    ImageShape::new(width, width),
+                    ImageShape::new(width, height),
                     direction(ordinal),
                     FacetLayout::Single,
                     AxisOrder::new([
@@ -179,7 +220,7 @@ pub fn reconstruction_problem_with_domains(
                 basis,
                 algorithm,
                 controls,
-                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+                PolarizationContract::new(polarizations),
             ),
             WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
             ProductRequirements::new(

@@ -1,0 +1,83 @@
+{
+  "casatools": "6.7.6-14",
+  "byteorder": "little",
+  "cases": [
+    {
+      "dtype": ">i2",
+      "quantity": {
+        "unit": "m",
+        "value": 256.0
+      },
+      "add": {
+        "unit": "m",
+        "value": 257.0
+      }
+    },
+    {
+      "dtype": ">i4",
+      "quantity": {
+        "unit": "m",
+        "value": 16777216.0
+      },
+      "add": {
+        "unit": "m",
+        "value": 16777217.0
+      }
+    },
+    {
+      "dtype": ">i8",
+      "quantity": {
+        "unit": "m",
+        "value": 0.0
+      },
+      "add": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "dtype": ">u2",
+      "quantity": {
+        "unit": "m",
+        "value": 256.0
+      },
+      "add": {
+        "unit": "m",
+        "value": 257.0
+      }
+    },
+    {
+      "dtype": ">u4",
+      "quantity": {
+        "unit": "m",
+        "value": 16777216.0
+      },
+      "add": {
+        "unit": "m",
+        "value": 16777217.0
+      }
+    },
+    {
+      "dtype": ">u8",
+      "quantity": {
+        "unit": "m",
+        "value": 0.0
+      },
+      "add": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "dtype": "<i4",
+      "quantity": {
+        "unit": "m",
+        "value": 1.0
+      },
+      "add": {
+        "unit": "m",
+        "value": 2.0
+      }
+    }
+  ]
+}

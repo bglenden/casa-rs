@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Host resources, the run's resource policy and the admission of each
-//! phase's memory against them (plan section 5.4).
+//! phase's memory against them.
 //!
 //! The host is detected once per process. A policy turns it into the
 //! workers and memory a run may use; each phase then admits the memory its

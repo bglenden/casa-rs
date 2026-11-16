@@ -5,7 +5,7 @@ Usage, with a CASA install's Python (casatools is an oracle here only):
     python check_v2_readback.py ORIGINAL.ms CONVERTED.ms
 
 The converted MSv2 is compared with the one it was converted from (through
-MSv4 and back). See docs/measurement-set/trial/README.md, "Converter".
+MSv4 and back).
 
 Rows are matched per spectral window (by CHAN_FREQ, over every data
 description of it) on (TIME, ANTENNA1, ANTENNA2); every carried column is

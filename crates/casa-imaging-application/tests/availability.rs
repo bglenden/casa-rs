@@ -34,7 +34,7 @@ const fn host(metal: bool) -> HostResources {
     }
 }
 
-/// The CPU backend at plan decision D2's precision.
+/// The CPU backend at the default precision.
 fn on_cpu(problem: &CompiledProblem) -> Result<(), ImplementationUnavailable> {
     check(problem, BackendChoice::Cpu, None, &host(false))
 }
@@ -83,24 +83,72 @@ fn moving_source_is_available_through_selected_observation_geometry() {
         .expect("moving-source geometry is evaluated by selected observation traversal");
 }
 
+/// A Taylor basis reconstructs a family per polarization, as CASA's
+/// `SDAlgorithmMSMFS` cleans one Stokes plane at a time
+/// (`test_stokes_mtmfs_Q`, `test_stokes_weighting`).
 #[test]
-fn coupled_taylor_basis_rejects_non_stokes_i_polarization() {
-    for coordinate in [
-        PolarizationCoordinate::StokesQ,
-        PolarizationCoordinate::CircularRl,
+fn a_taylor_basis_reconstructs_any_polarization() {
+    for coordinates in [
+        vec![PolarizationCoordinate::StokesQ],
+        vec![PolarizationCoordinate::CircularRl],
+        vec![
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesQ,
+            PolarizationCoordinate::StokesU,
+            PolarizationCoordinate::StokesV,
+        ],
     ] {
-        let problem = ProblemFixture {
-            basis: ReconstructionBasis::Taylor { terms: 2 },
-            algorithm: ReconstructionAlgorithm::Mtmfs {
-                scales_px: vec![0.0],
-                small_scale_bias: 0.0,
-            },
-            polarizations: vec![coordinate],
-            ..ProblemFixture::standard()
+        for terms in [1, 2] {
+            let problem = ProblemFixture {
+                basis: ReconstructionBasis::Taylor { terms },
+                algorithm: ReconstructionAlgorithm::Mtmfs {
+                    scales_px: vec![0.0],
+                    small_scale_bias: 0.0,
+                },
+                polarizations: coordinates.clone(),
+                ..ProblemFixture::standard()
+            }
+            .compile();
+            assert!(on_cpu(&problem).is_ok(), "{terms} terms of {coordinates:?}");
         }
-        .compile();
-        assert_exactly_unsupported(on_cpu(&problem), [Unsupported::PolarizedTaylorBasis]);
     }
+}
+
+/// Standard, mosaic and W-projection kernels image polarized Taylor families.
+#[test]
+fn a_polarized_taylor_basis_grids_with_standard_mosaic_and_w_kernels() {
+    let taylor = |polarizations: Vec<PolarizationCoordinate>| ProblemFixture {
+        basis: ReconstructionBasis::Taylor { terms: 2 },
+        algorithm: ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        polarizations,
+        ..ProblemFixture::standard()
+    };
+    let mosaic = |polarizations| {
+        let mut fixture = taylor(polarizations)
+            .with_primary_beam(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
+        fixture.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
+        fixture.products.push(ProductKind::Sensitivity);
+        fixture
+    };
+    for polarizations in [
+        vec![PolarizationCoordinate::StokesQ],
+        vec![
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesV,
+        ],
+    ] {
+        let mut w = taylor(polarizations.clone());
+        w.measurement_equation = w
+            .measurement_equation
+            .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
+        on_cpu(&mosaic(polarizations).compile()).expect("a polarized mosaic Taylor basis runs");
+        on_cpu(&w.compile()).expect("a polarized W-projection Taylor basis runs");
+    }
+    on_cpu(&mosaic(vec![PolarizationCoordinate::StokesI]).compile())
+        .expect("a Stokes I mosaic Taylor basis runs");
 }
 
 #[test]
@@ -175,9 +223,36 @@ fn aw_projection_runs_on_the_cpu_pass() {
         products: fixture.products.clone(),
         ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
     };
+    let polarized_taylor = |fixture| ProblemFixture {
+        basis: ReconstructionBasis::Taylor { terms: 2 },
+        algorithm: ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        polarizations: vec![
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesV,
+        ],
+        ..fixture
+    };
+    let aw_taylor = polarized_taylor(ProblemFixture {
+        measurement_equation: fixture.measurement_equation,
+        products: fixture.products.clone(),
+        ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
+    });
+    let awp2_taylor = polarized_taylor(ProblemFixture {
+        products: fixture.products.clone(),
+        ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaVlaAwplpg)
+    });
     on_cpu(&fixture.compile()).expect("AW projection runs with its catalog and weight image");
-    // An AW cube's per-plane weights wait for a CASA comparison (#719).
-    assert_exactly_unsupported(on_cpu(&cube.compile()), [Unsupported::CubeAwProjection]);
+    on_cpu(&aw_taylor.compile()).expect("polarized Taylor families run with AW catalogs");
+    assert_exactly_unsupported(
+        on_cpu(&awp2_taylor.compile()),
+        [Unsupported::PolarizedTaylorKernelSet],
+    );
+
+    // An AW cube keeps each plane's weight image as its sensitivity (#719).
+    on_cpu(&cube.compile()).expect("AW projection runs per plane of a cube");
     // Its convolution functions are laid out on one axis (#841 Phase 6b).
     for problem in [non_square, unequal_cells] {
         assert_exactly_unsupported(
@@ -319,7 +394,7 @@ fn auto_takes_the_gpu_where_it_runs_the_problem_and_the_cpu_otherwise() {
         assert_eq!(resolve(&polarized, BackendRequest::Gpu, None, true), Metal);
     }
     let model_write = ProblemFixture {
-        model_column_write: ModelColumnWrite::SelectedRows,
+        model_column_write: ModelColumnWrite::SelectedSamples,
         ..ProblemFixture::standard()
     }
     .compile();
@@ -351,11 +426,10 @@ fn auto_takes_the_gpu_where_it_runs_the_problem_and_the_cpu_otherwise() {
     check(&mosaic, asked, None, &host(true)).expect("mosaic on Metal");
 }
 
-/// Facets (#664) run with the standard kernel set and a constant basis, on
-/// the CPU and on Metal; a Taylor basis or a W, mosaic or AW set is refused,
-/// each with its own reason.
+/// Constant-basis facets run with the standard or W kernel set, and
+/// natural or Briggs Stokes I Taylor facets use the standard set (#1063).
 #[test]
-fn facets_run_with_the_standard_set_and_a_constant_basis() {
+fn facets_admit_standard_continuum_and_bounded_w_and_taylor_modes() {
     let faceted = || ProblemFixture {
         facets: FacetLayout::Regular {
             columns: 2,
@@ -371,21 +445,229 @@ fn facets_run_with_the_standard_set_and_a_constant_basis() {
     );
     on_cpu(&problem).expect("standard facets on the CPU");
     check(&problem, BackendChoice::Metal, None, &host(true)).expect("standard facets on Metal");
-    let taylor = ProblemFixture {
+    let taylor = || ProblemFixture {
         basis: ReconstructionBasis::Taylor { terms: 2 },
         algorithm: ReconstructionAlgorithm::Mtmfs {
             scales_px: vec![0.0],
             small_scale_bias: 0.0,
         },
         ..faceted()
+    };
+    on_cpu(&taylor().compile()).expect("standard natural Stokes I Taylor facets");
+    let briggs_taylor = ProblemFixture {
+        weighting: WeightingScheme::Briggs { robust: 0.5 },
+        ..taylor()
+    };
+    on_cpu(&briggs_taylor.compile()).expect("standard Briggs Stokes I Taylor facets");
+    use PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+    let full_stokes_taylor = || ProblemFixture {
+        polarizations: vec![StokesI, StokesQ, StokesU, StokesV],
+        ..taylor()
+    };
+    on_cpu(&full_stokes_taylor().compile()).expect("standard natural Stokes IQUV Taylor facets");
+    let unverified = [
+        ProblemFixture {
+            basis: ReconstructionBasis::Taylor { terms: 3 },
+            ..taylor()
+        },
+        ProblemFixture {
+            weighting: WeightingScheme::Uniform,
+            ..taylor()
+        },
+        ProblemFixture {
+            weighting: WeightingScheme::Briggs { robust: 0.5 },
+            ..full_stokes_taylor()
+        },
+        ProblemFixture {
+            polarizations: vec![
+                PolarizationCoordinate::StokesI,
+                PolarizationCoordinate::StokesQ,
+            ],
+            ..taylor()
+        },
+    ];
+    for fixture in unverified {
+        assert_exactly_unsupported(on_cpu(&fixture.compile()), [Unsupported::FacetedBasis]);
     }
-    .compile();
-    assert_exactly_unsupported(on_cpu(&taylor), [Unsupported::FacetedBasis]);
+    let cube = || ProblemFixture {
+        basis: ReconstructionBasis::ChannelLocal { channels: 1 },
+        sampling: SpectralSamplingLaw::NEAREST,
+        ..faceted()
+    };
+    on_cpu(&cube().compile()).expect("standard natural Stokes I nearest cube facets");
+    let unverified_cube = ProblemFixture {
+        weighting: WeightingScheme::Uniform,
+        ..cube()
+    };
+    assert_exactly_unsupported(
+        on_cpu(&unverified_cube.compile()),
+        [Unsupported::FacetedBasis],
+    );
     let mut w = faceted();
+    w.measurement_equation = w.measurement_equation.with_w_projection(
+        WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).expect("W contract"),
+    );
+    on_cpu(&w.compile()).expect("W-projection facets on CPU");
+    let mut aw = faceted().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1);
+    aw.measurement_equation = aw.measurement_equation.with_aw_projection(
+        AwProjectionContract::new(
+            12_500.0,
+            std::num::NonZeroUsize::new(32).unwrap(),
+            true,
+            false,
+            true,
+            true,
+            false,
+            [300.0, 30.0],
+            5.0,
+            5.0,
+        )
+        .unwrap(),
+    );
+    aw.products.push(ProductKind::Weight);
+    assert_exactly_unsupported(on_cpu(&aw.compile()), [Unsupported::FacetedKernelSet]);
+}
+
+/// The public compiled capability report has the same W-facet scope as
+/// the validated application request (#1063).
+#[test]
+fn w_facet_availability_refuses_unverified_compiled_modes() {
+    let base = || {
+        let mut fixture = ProblemFixture {
+            facets: FacetLayout::Regular {
+                columns: 2,
+                rows: 2,
+            },
+            ..ProblemFixture::standard()
+        };
+        fixture.measurement_equation = fixture.measurement_equation.with_w_projection(
+            WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).unwrap(),
+        );
+        fixture
+    };
+    on_cpu(&base().compile()).expect("natural W facets");
+    let mut uniform = base();
+    uniform.weighting = WeightingScheme::Uniform;
+    on_cpu(&uniform.compile()).expect("uniform W facets");
+    let mut superuniform = base();
+    superuniform.weighting = WeightingScheme::Uniform;
+    superuniform.density_cells =
+        casa_imaging_model::DensityCells::Box(std::num::NonZeroUsize::new(3).unwrap());
+    assert_exactly_unsupported(on_cpu(&superuniform.compile()), [Unsupported::FacetedWMode]);
+    let mut response = base();
+    response.instrument_model =
+        Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
+    response.measurement_equation =
+        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products())
+            .with_w_projection(
+                WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).unwrap(),
+            );
+    assert_exactly_unsupported(on_cpu(&response.compile()), [Unsupported::FacetedWMode]);
+    let mut automatic = base();
+    automatic.measurement_equation =
+        MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products())
+            .with_w_projection(WProjectionContract::new(100.0, None).unwrap());
+    assert_exactly_unsupported(on_cpu(&automatic.compile()), [Unsupported::FacetedWMode]);
+    let mut clark = base();
+    clark.algorithm = ReconstructionAlgorithm::Clark;
+    assert_exactly_unsupported(on_cpu(&clark.compile()), [Unsupported::FacetedWMode]);
+    let mut briggs = base();
+    briggs.weighting = WeightingScheme::Briggs { robust: 0.5 };
+    assert_exactly_unsupported(on_cpu(&briggs.compile()), [Unsupported::FacetedWMode]);
+    let mut polarized = base();
+    polarized
+        .polarizations
+        .push(PolarizationCoordinate::StokesV);
+    assert_exactly_unsupported(on_cpu(&polarized.compile()), [Unsupported::FacetedWMode]);
+    let mut outlier = base();
+    outlier.outlier = true;
+    assert_exactly_unsupported(on_cpu(&outlier.compile()), [Unsupported::FacetedWMode]);
+}
+
+#[test]
+fn mem_compiled_scope_cannot_bypass_the_task_guard() {
+    let mem = || ProblemFixture {
+        algorithm: ReconstructionAlgorithm::Mem,
+        ..ProblemFixture::standard()
+    };
+    on_cpu(&mem().compile()).expect("standard Stokes I MEM is available");
+    on_cpu(
+        &ProblemFixture {
+            weighting: WeightingScheme::Briggs { robust: 0.5 },
+            ..mem()
+        }
+        .compile(),
+    )
+    .expect("Briggs-weighted Stokes I MEM is available");
+    for weighting in [
+        WeightingScheme::Uniform,
+        WeightingScheme::Radial,
+        WeightingScheme::BriggsAbsolute {
+            robust: 0.5,
+            noise_jy: 1.0,
+        },
+    ] {
+        on_cpu(&ProblemFixture { weighting, ..mem() }.compile())
+            .unwrap_or_else(|error| panic!("MEM with {weighting:?}: {error}"));
+    }
+    on_cpu(
+        &ProblemFixture {
+            model_column_write: ModelColumnWrite::SelectedSamples,
+            ..mem()
+        }
+        .compile(),
+    )
+    .expect("MEM can write MODEL_DATA");
+    on_cpu(
+        &ProblemFixture {
+            polarizations: vec![PolarizationCoordinate::StokesQ],
+            ..ProblemFixture::standard()
+        }
+        .compile(),
+    )
+    .expect("other reconstruction algorithms retain their scope");
+    let mut w = mem();
     w.measurement_equation = w
         .measurement_equation
-        .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
-    assert_exactly_unsupported(on_cpu(&w.compile()), [Unsupported::FacetedKernelSet]);
+        .with_w_projection(WProjectionContract::new(100.0, None).unwrap());
+    let cases = [
+        ProblemFixture {
+            basis: ReconstructionBasis::ChannelLocal { channels: 1 },
+            ..mem()
+        },
+        ProblemFixture {
+            polarizations: vec![PolarizationCoordinate::StokesQ],
+            ..mem()
+        },
+        ProblemFixture {
+            outlier: true,
+            ..mem()
+        },
+        ProblemFixture {
+            facets: FacetLayout::Regular {
+                columns: 2,
+                rows: 2,
+            },
+            ..mem()
+        },
+        ProblemFixture {
+            weighting: WeightingScheme::BriggsBandwidthTaper { robust: 0.5 },
+            ..mem()
+        },
+        ProblemFixture {
+            sources: 2,
+            ..mem()
+        },
+        mem().with_primary_beam(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
+        w,
+    ];
+    for fixture in cases {
+        let result = on_cpu(&fixture.compile()).expect_err("unsupported MEM problem");
+        assert!(
+            result.unsupported().contains(&Unsupported::MemScope),
+            "{result:?}"
+        );
+    }
 }
 
 /// One compiled-problem fixture; [`ProblemFixture::standard`] is a dirty
@@ -393,7 +675,11 @@ fn facets_run_with_the_standard_set_and_a_constant_basis() {
 struct ProblemFixture {
     phase_centre: PhaseCentreLaw,
     basis: ReconstructionBasis,
+    sampling: SpectralSamplingLaw,
     algorithm: ReconstructionAlgorithm,
+    weighting: WeightingScheme,
+    density_cells: casa_imaging_model::DensityCells,
+    sources: usize,
     polarizations: Vec<PolarizationCoordinate>,
     uvw: UvwCoordinateLaw,
     facets: FacetLayout,
@@ -415,7 +701,11 @@ impl ProblemFixture {
                 -0.5,
             )),
             basis: ReconstructionBasis::Constant,
+            sampling: SpectralSamplingLaw::IDENTITY,
             algorithm: ReconstructionAlgorithm::Dirty,
+            weighting: WeightingScheme::Natural,
+            density_cells: casa_imaging_model::DensityCells::Image,
+            sources: 1,
             polarizations: vec![PolarizationCoordinate::StokesI],
             uvw: UvwCoordinateLaw::PhaseTrackingCentre,
             facets: FacetLayout::Single,
@@ -447,6 +737,11 @@ impl ProblemFixture {
     fn request(self) -> ProblemInput {
         let iteration_budget =
             usize::from(!matches!(self.algorithm, ReconstructionAlgorithm::Dirty));
+        let density_scope = if self.weighting.uses_density() {
+            WeightDensityScope::GlobalSelection
+        } else {
+            WeightDensityScope::NotApplicable
+        };
         let ([nx, ny], [cell_x, cell_y]) = self.image;
         let direction = DirectionCoordinateSpec::new(
             Projection::Sin,
@@ -524,7 +819,7 @@ impl ProblemFixture {
                 .collect(),
         );
         let science = ScientificContract::new(
-            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+            SpectralContract::new(self.sampling, SpectralCoupling::Independent),
             self.measurement_equation,
         );
         let science = match self.instrument_model {
@@ -540,7 +835,8 @@ impl ProblemFixture {
                     ReconstructionControls::new(iteration_budget, 1.0, 0.0),
                     PolarizationContract::new(self.polarizations),
                 ),
-                WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+                WeightingContract::new(self.weighting, density_scope)
+                    .with_density_cells(self.density_cells),
                 ProductRequirements::new(
                     self.products,
                     ProductNormalization::UnitResponse,
@@ -551,10 +847,47 @@ impl ProblemFixture {
                 numerics,
             ),
             geometry,
-            common::observation(),
+            observation_with_sources(self.sources),
             common::model_lifecycle(),
         )
     }
+}
+
+fn observation_with_sources(count: usize) -> casa_imaging_model::ObservationSnapshot {
+    if count == 1 {
+        return common::observation();
+    }
+    use casa_imaging_model::{
+        CorrelationProduct, FlagPolicy, IdSelection, IntentSelection, ObservationSelection,
+        ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance, PartitionId,
+        PartitionSelection, RowSelection, SelectedColumns, SpectralWindowSelection, UvSelection,
+        VisibilityColumn, WeightColumn, compile_observation,
+    };
+    let selection = ObservationSelection::new(
+        1,
+        RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
+        vec![PartitionSelection::new(
+            PartitionId(0),
+            0,
+            vec![CorrelationProduct::new(0, casa_types::Correlation::I)],
+        )],
+        vec![SpectralWindowSelection::new(0, vec![0])],
+    );
+    let sources = (0..count)
+        .map(|index| {
+            ObservationSourceInput::new(
+                ObservationSourceProvenance::new(format!("fixture://store-{index}.ms")),
+                selection.clone(),
+                SelectedColumns::new(
+                    VisibilityColumn::Data,
+                    FlagPolicy::FlagOrFlagRow,
+                    WeightColumn::Weight,
+                ),
+                false,
+            )
+        })
+        .collect();
+    compile_observation(ObservationSnapshotInput::new(sources)).unwrap()
 }
 
 fn inner_products() -> DeclaredInnerProducts {

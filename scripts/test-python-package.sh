@@ -17,7 +17,7 @@ case "${1:-}" in
 esac
 
 python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
-tmp_root="$(mktemp -d)"
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/casars-python.XXXXXXXX")"
 cleanup() {
   rm -rf "$tmp_root"
   rm -rf crates/casars-python/.pytest_cache crates/casars-python/python/casars/__pycache__
@@ -42,6 +42,8 @@ echo "==> Building the task executables the end-to-end tests run"
 cargo build -q -p casa-ms --bin flagmanager --bin flagdata -p casa-calibration --bin calibrate
 cargo build -q -p casa-images --bin immath
 cargo build -q -p casars-imexplore --bin imexplore
+cargo build -q -p casars-msconvert --bin msconvert
+cargo build -q -p casars-simulation --bin simobserve --bin simanalyze --bin simalma
 export CASARS_REQUIRE_TASK_BINARIES=1
 
 editable_venv="$tmp_root/editable-venv"
@@ -68,9 +70,10 @@ import sys
 
 import casars
 import casars._core
+import casars._plot_document
 
 venv = pathlib.Path(sys.argv[1]).resolve()
-for module in (casars, casars._core):
+for module in (casars, casars._core, casars._plot_document):
     path = pathlib.Path(module.__file__).resolve()
     if venv not in path.parents:
         raise SystemExit(f"{module.__name__} imported from {path}, not from {venv}")
@@ -98,14 +101,18 @@ echo "==> Installing the built wheel and running Python tests"
 test_installed "$wheel_venv" "$tests_dir"
 
 # A development build is enough to prove that the sdist is complete and
-# builds; the shared target directory saves recompiling its dependencies.
+# builds. Use a fresh target: reproducible sdist timestamps can make Cargo
+# reuse stale workspace artifacts from a previous archive in a shared target.
 sdist_venv="$tmp_root/sdist-venv"
 echo "==> Installing from the sdist and running the binding tests"
 "$python_bin" -m venv "$sdist_venv"
 MATURIN_PEP517_ARGS="--profile dev" \
-  CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo_root/target}" \
+  CARGO_TARGET_DIR="$tmp_root/sdist-target" \
   "$sdist_venv/bin/python" -m pip install "${sdists[0]}[$extras]"
 test_installed "$sdist_venv" \
   "$tests_dir/test_binding_snapshots.py" \
   "$tests_dir/test_parameters.py" \
-  "$tests_dir/test_data.py"
+  "$tests_dir/test_data.py" \
+  "$tests_dir/test_plot_document.py" \
+  "$tests_dir/test_simutil_graphics.py" \
+  "$tests_dir/test_simutil.py::test_the_class_has_casas_signatures"

@@ -1,0 +1,1312 @@
+{
+ "schema": "simobserve-parity-receipt/1",
+ "work_issue": 1301,
+ "date": "2026-11-14",
+ "oracle": "casatasks and casatools 6.7.6.14, Linux x86_64 wheels",
+ "native_revision": "64b576b487c48236a4c14977a844352e8a40e15a",
+ "source_revision": "35f6705616f5aef85e53ae879e413b86959b0005",
+ "build": "cargo build -p casars-simulation --bin simobserve -p casa-atmosphere --example at_tool_quantities; debug, CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0",
+ "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/debug/simobserve --casatestdata . --atmosphere-model TARGET/debug/examples/at_tool_quantities --only if_image_rest if_image_undefined if_components_rest if_components_undefined if_joint_manual if_joint_polarized if_joint_atmosphere if_joint_rest",
+ "inputs": "Committed public image/component/configuration fixtures plus the declared CASA-created unpolarized stars; native component input is copied before CASA runs, avoiding retained C++ input locks. Both implementations use the bundled measures snapshot.",
+ "corrections": [
+  "Raw rejected-frame CASA tasks and independent sm.predict=False controls are retained. Native reports that cause without an unpredicted MS; pre-prediction models and pointings still compare. This corrects ignored prediction failures, not the CASA task return value.",
+  "Polarized joint sky keeps the raw project. Independent C++ image-only and component-only predictions are summed after undoing the single constant-spectrum component extra unit-phase factor. Existing negative/complex component and joint-sum corrections are retained.",
+  "The atmospheric/leakage case excludes only the already documented stray .noisier.T.cal artifact. Calibration channel axes use the same existing floating-point comparison as MS metadata; a regression accepts one ULP and rejects a one-hertz error. DATA/noise thresholds are unchanged."
+ ],
+ "summary": {
+  "cases": 8,
+  "agree": 8,
+  "successful_projects": 4,
+  "corrected_prediction_refusals": 4,
+  "native_measurement_sets_read_by_cpp": 8,
+  "maximum_model_data_nrms": 0.0003050617371949057,
+  "model_nrms_limit": 0.001,
+  "noise": [
+   {
+    "case": "if_joint_manual",
+    "mode": "tsys-manual",
+    "ks_p": 0.18078623412393105,
+    "sigma_range_jy": [
+     0.026401260794977097,
+     0.02641027253657452
+    ]
+   },
+   {
+    "case": "if_joint_atmosphere",
+    "mode": "tsys-atm",
+    "ks_p": 0.30535263186777056,
+    "sigma_range_jy": [
+     0.19684402215878077,
+     0.19701869522579118
+    ]
+   }
+  ]
+ },
+ "preserved_evidence": "Existing accepted VLA/ALMA scripts, model/frame/configuration/pointing/calibrator controls remain valid. Native simobserve tests and all three numerical quick-PSF regressions pass. Prediction operators, backend routing, allocation ownership and accepted performance/memory evidence are unchanged.",
+ "limits": "Representative remaining SIM-21 combinations; no Cartesian parameter sweep, new throughput claim, plotting, single-dish integration or existing-project lifecycle claim.",
+ "cases": [
+  {
+   "name": "if_image_rest",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 0,
+      "channels_hz": [
+       7999999999.999999
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 0,
+      "channels_hz": [
+       8000000000.0
+      ]
+     }
+    ]
+   },
+   "seconds": {
+    "casa": 2.0104578439968463,
+    "casa-rs": 2.247613609
+   },
+   "parameters": {
+    "skymodel": "inputs/sd-sky.image",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "square",
+    "obsmode": "int",
+    "sdantlist": "aca.tp.cfg",
+    "sdant": 0,
+    "direction": "J2000 10h00m00 34d00m00",
+    "mapsize": [
+     "20arcsec",
+     "20arcsec"
+    ],
+    "pointingspacing": "10arcsec",
+    "totaltime": "60s",
+    "refdate": "2024/06/01",
+    "thermalnoise": "",
+    "antennalist": "vla.d.cfg",
+    "incenter": "8GHz",
+    "inwidth": "20MHz",
+    "outframe": "REST"
+   },
+   "measurement_sets": [
+    {
+     "name": "if_image_rest",
+     "differences": [],
+     "known": [
+      "MAIN.CORRECTED_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "MAIN.MODEL_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "POINTING.TARGET: descriptor ndim -1 against 2 [known: casa-ms's POINTING.TARGET has ndim 2, casacore's -1 (#847)]",
+      "SOURCE.DIRECTION: descriptor ndim -1 against 1 [known: CASA's simulator makes SOURCE arrays variable-shaped; casa-ms follows casacore's MSSource (fixed [2])]",
+      "SOURCE.DIRECTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.DIRECTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor ndim -1 against 1 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]"
+     ],
+     "largest": {
+      "MAIN.EXPOSURE": 0.0,
+      "MAIN.INTERVAL": 0.0,
+      "MAIN.SIGMA": 0.0,
+      "MAIN.TIME": 9.5367431640625e-07,
+      "MAIN.TIME_CENTROID": 9.5367431640625e-07,
+      "MAIN.UVW": 8.910352278235223e-08,
+      "MAIN.WEIGHT": 0.0,
+      "ANTENNA.DISH_DIAMETER": 0.0,
+      "ANTENNA.OFFSET": 0.0,
+      "ANTENNA.POSITION": 0.0,
+      "FEED.BEAM_OFFSET": 0.0,
+      "FEED.INTERVAL": 0.0,
+      "FEED.POL_RESPONSE": 0.0,
+      "FEED.POSITION": 0.0,
+      "FEED.RECEPTOR_ANGLE": 0.0,
+      "FEED.TIME": 0.0,
+      "FIELD.DELAY_DIR": 1.1102230246251565e-16,
+      "FIELD.PHASE_DIR": 1.1102230246251565e-16,
+      "FIELD.REFERENCE_DIR": 1.1102230246251565e-16,
+      "FIELD.TIME": 0.0,
+      "OBSERVATION.RELEASE_DATE": 0.0,
+      "OBSERVATION.TIME_RANGE": 9.5367431640625e-07,
+      "POINTING.DIRECTION": 1.1102230246251565e-16,
+      "POINTING.INTERVAL": 0.0,
+      "POINTING.TARGET": 1.1102230246251565e-16,
+      "POINTING.TIME": 9.5367431640625e-07,
+      "POINTING.TIME_ORIGIN": 9.5367431640625e-07,
+      "SOURCE.DIRECTION": 1.1102230246251565e-16,
+      "SOURCE.INTERVAL": 0.0,
+      "SOURCE.PROPER_MOTION": 0.0,
+      "SOURCE.REST_FREQUENCY": 0.0,
+      "SOURCE.SYSVEL": 0.0,
+      "SOURCE.TIME": 0.0,
+      "SPECTRAL_WINDOW.CHAN_FREQ": 9.5367431640625e-07,
+      "SPECTRAL_WINDOW.CHAN_WIDTH": 0.0,
+      "SPECTRAL_WINDOW.EFFECTIVE_BW": 0.0,
+      "SPECTRAL_WINDOW.REF_FREQUENCY": 0.0,
+      "SPECTRAL_WINDOW.RESOLUTION": 0.0,
+      "SPECTRAL_WINDOW.TOTAL_BANDWIDTH": 0.0,
+      "STATE.CAL": 0.0,
+      "STATE.LOAD": 0.0
+     },
+     "data": {
+      "rows_compared": 2106,
+      "samples_compared": 4212,
+      "rows_flagged_in_one": 0,
+      "rows_flagged_in_both": 0,
+      "nrms": 1.7255461155745305e-07,
+      "casa_peak": 1.999958023789923,
+      "max_difference": 1.0409503696306335e-06,
+      "per_correlation": [
+       {
+        "nrms": 1.7255461155745305e-07,
+        "max_difference": 1.0409503696306335e-06
+       },
+       {
+        "nrms": 1.7255461155745305e-07,
+        "max_difference": 1.0409503696306335e-06
+       }
+      ],
+      "cross_nrms": 1.7255461155745305e-07,
+      "auto_nrms": null,
+      "kind": "model"
+     }
+    }
+   ]
+  },
+  {
+   "name": "if_image_undefined",
+   "differences": [],
+   "native_error": "Transformations to/from frame \"Undefined\" are not possible.",
+   "casa_zero_data": true,
+   "casa_rows": 2106,
+   "casa_prediction_returned": false,
+   "seconds": {
+    "casa": 0.290541881997342,
+    "casa-rs": null
+   },
+   "parameters": {
+    "skymodel": "inputs/sd-sky.image",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "square",
+    "obsmode": "int",
+    "sdantlist": "aca.tp.cfg",
+    "sdant": 0,
+    "direction": "J2000 10h00m00 34d00m00",
+    "mapsize": [
+     "20arcsec",
+     "20arcsec"
+    ],
+    "pointingspacing": "10arcsec",
+    "totaltime": "60s",
+    "refdate": "2024/06/01",
+    "thermalnoise": "",
+    "antennalist": "vla.d.cfg",
+    "incenter": "8GHz",
+    "inwidth": "20MHz",
+    "outframe": "Undefined"
+   }
+  },
+  {
+   "name": "if_components_rest",
+   "differences": [],
+   "native_error": "No MeasFrame specified for conversion of Frequency",
+   "casa_zero_data": true,
+   "casa_rows": 2106,
+   "casa_prediction_returned": false,
+   "seconds": {
+    "casa": 0.20928322799954913,
+    "casa-rs": null
+   },
+   "parameters": {
+    "skymodel": "",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "square",
+    "obsmode": "int",
+    "sdantlist": "aca.tp.cfg",
+    "sdant": 0,
+    "direction": "J2000 10h00m00 34d00m00",
+    "mapsize": [
+     "20arcsec",
+     "20arcsec"
+    ],
+    "pointingspacing": "10arcsec",
+    "totaltime": "60s",
+    "refdate": "2024/06/01",
+    "thermalnoise": "",
+    "antennalist": "vla.d.cfg",
+    "incenter": "8GHz",
+    "inwidth": "20MHz",
+    "complist": "inputs/sd-components.cl",
+    "compwidth": "20MHz",
+    "outframe": "REST"
+   }
+  },
+  {
+   "name": "if_components_undefined",
+   "differences": [],
+   "native_error": "Transformations to/from frame \"Undefined\" are not possible.",
+   "casa_zero_data": true,
+   "casa_rows": 2106,
+   "casa_prediction_returned": false,
+   "seconds": {
+    "casa": 0.19594499700178858,
+    "casa-rs": null
+   },
+   "parameters": {
+    "skymodel": "",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "square",
+    "obsmode": "int",
+    "sdantlist": "aca.tp.cfg",
+    "sdant": 0,
+    "direction": "J2000 10h00m00 34d00m00",
+    "mapsize": [
+     "20arcsec",
+     "20arcsec"
+    ],
+    "pointingspacing": "10arcsec",
+    "totaltime": "60s",
+    "refdate": "2024/06/01",
+    "thermalnoise": "",
+    "antennalist": "vla.d.cfg",
+    "incenter": "8GHz",
+    "inwidth": "20MHz",
+    "complist": "inputs/sd-components.cl",
+    "compwidth": "20MHz",
+    "outframe": "Undefined"
+   }
+  },
+  {
+   "name": "if_joint_manual",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       7999999999.999999
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       8000000000.0
+      ]
+     }
+    ]
+   },
+   "seconds": {
+    "casa": 0.8807731060005608,
+    "casa-rs": 4.624282926
+   },
+   "parameters": {
+    "skymodel": "inputs/sd-sky.image",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "square",
+    "obsmode": "int",
+    "sdantlist": "aca.tp.cfg",
+    "sdant": 0,
+    "direction": "J2000 10h00m00 34d00m00",
+    "mapsize": [
+     "1arcsec",
+     "1arcsec"
+    ],
+    "pointingspacing": "10arcsec",
+    "totaltime": "600s",
+    "refdate": "2024/06/01",
+    "thermalnoise": "tsys-manual",
+    "antennalist": "vla.d.cfg",
+    "incenter": "8GHz",
+    "inwidth": "20MHz",
+    "incell": "0.5arcsec",
+    "inbright": "0.02Jy/pixel",
+    "tau0": 0.065,
+    "t_sky": 20.0,
+    "t_ground": 275.0,
+    "leakage": 0.025,
+    "hourangle": "30min"
+   },
+   "component_input": {
+    "name": "if-vla-star.cl",
+    "dir": "J2000 10h00m00 34d00m00",
+    "flux": 0.7,
+    "freq": "8GHz"
+   },
+   "measurement_sets": [
+    {
+     "name": "if_joint_manual",
+     "differences": [],
+     "known": [
+      "MAIN.CORRECTED_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "MAIN.MODEL_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "POINTING.TARGET: descriptor ndim -1 against 2 [known: casa-ms's POINTING.TARGET has ndim 2, casacore's -1 (#847)]",
+      "SOURCE.DIRECTION: descriptor ndim -1 against 1 [known: CASA's simulator makes SOURCE arrays variable-shaped; casa-ms follows casacore's MSSource (fixed [2])]",
+      "SOURCE.DIRECTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.DIRECTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor ndim -1 against 1 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]"
+     ],
+     "largest": {
+      "MAIN.EXPOSURE": 0.0,
+      "MAIN.INTERVAL": 0.0,
+      "MAIN.SIGMA": 0.0,
+      "MAIN.TIME": 9.5367431640625e-07,
+      "MAIN.TIME_CENTROID": 9.5367431640625e-07,
+      "MAIN.UVW": 1.1398850574551034e-07,
+      "MAIN.WEIGHT": 0.0,
+      "ANTENNA.DISH_DIAMETER": 0.0,
+      "ANTENNA.OFFSET": 0.0,
+      "ANTENNA.POSITION": 0.0,
+      "FEED.BEAM_OFFSET": 0.0,
+      "FEED.INTERVAL": 0.0,
+      "FEED.POL_RESPONSE": 0.0,
+      "FEED.POSITION": 0.0,
+      "FEED.RECEPTOR_ANGLE": 0.0,
+      "FEED.TIME": 0.0,
+      "FIELD.DELAY_DIR": 1.1102230246251565e-16,
+      "FIELD.PHASE_DIR": 1.1102230246251565e-16,
+      "FIELD.REFERENCE_DIR": 1.1102230246251565e-16,
+      "FIELD.TIME": 0.0,
+      "OBSERVATION.RELEASE_DATE": 0.0,
+      "OBSERVATION.TIME_RANGE": 9.5367431640625e-07,
+      "POINTING.DIRECTION": 1.1102230246251565e-16,
+      "POINTING.INTERVAL": 0.0,
+      "POINTING.TARGET": 1.1102230246251565e-16,
+      "POINTING.TIME": 9.5367431640625e-07,
+      "POINTING.TIME_ORIGIN": 9.5367431640625e-07,
+      "SOURCE.DIRECTION": 1.1102230246251565e-16,
+      "SOURCE.INTERVAL": 0.0,
+      "SOURCE.PROPER_MOTION": 0.0,
+      "SOURCE.REST_FREQUENCY": 0.0,
+      "SOURCE.SYSVEL": 0.0,
+      "SOURCE.TIME": 0.0,
+      "SPECTRAL_WINDOW.CHAN_FREQ": 9.5367431640625e-07,
+      "SPECTRAL_WINDOW.CHAN_WIDTH": 0.0,
+      "SPECTRAL_WINDOW.EFFECTIVE_BW": 0.0,
+      "SPECTRAL_WINDOW.REF_FREQUENCY": 0.0,
+      "SPECTRAL_WINDOW.RESOLUTION": 0.0,
+      "SPECTRAL_WINDOW.TOTAL_BANDWIDTH": 0.0,
+      "STATE.CAL": 0.0,
+      "STATE.LOAD": 0.0
+     },
+     "data": {
+      "rows_compared": 21060,
+      "samples_compared": 84240,
+      "rows_flagged_in_one": 0,
+      "rows_flagged_in_both": 0,
+      "nrms": 2.004739056257289e-08,
+      "casa_peak": 0.731942415242633,
+      "max_difference": 5.996010677076829e-08,
+      "per_correlation": [
+       {
+        "nrms": 2.004739056257289e-08,
+        "max_difference": 5.996010677076829e-08
+       },
+       {
+        "nrms": null,
+        "max_difference": 0.0
+       },
+       {
+        "nrms": null,
+        "max_difference": 0.0
+       },
+       {
+        "nrms": 2.004739056257289e-08,
+        "max_difference": 5.996010677076829e-08
+       }
+      ],
+      "cross_nrms": 2.004739056257289e-08,
+      "auto_nrms": null,
+      "kind": "model"
+     }
+    },
+    {
+     "name": "if_joint_manual-fullpol",
+     "differences": [],
+     "known": [
+      "MAIN.CORRECTED_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "MAIN.MODEL_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "POINTING.TARGET: descriptor ndim -1 against 2 [known: casa-ms's POINTING.TARGET has ndim 2, casacore's -1 (#847)]",
+      "SOURCE.DIRECTION: descriptor ndim -1 against 1 [known: CASA's simulator makes SOURCE arrays variable-shaped; casa-ms follows casacore's MSSource (fixed [2])]",
+      "SOURCE.DIRECTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.DIRECTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor ndim -1 against 1 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]"
+     ],
+     "largest": {
+      "MAIN.EXPOSURE": 0.0,
+      "MAIN.INTERVAL": 0.0,
+      "MAIN.SIGMA": 0.0,
+      "MAIN.TIME": 9.5367431640625e-07,
+      "MAIN.TIME_CENTROID": 9.5367431640625e-07,
+      "MAIN.UVW": 1.1398850574551034e-07,
+      "MAIN.WEIGHT": 0.0,
+      "ANTENNA.DISH_DIAMETER": 0.0,
+      "ANTENNA.OFFSET": 0.0,
+      "ANTENNA.POSITION": 0.0,
+      "FEED.BEAM_OFFSET": 0.0,
+      "FEED.INTERVAL": 0.0,
+      "FEED.POL_RESPONSE": 0.0,
+      "FEED.POSITION": 0.0,
+      "FEED.RECEPTOR_ANGLE": 0.0,
+      "FEED.TIME": 0.0,
+      "FIELD.DELAY_DIR": 1.1102230246251565e-16,
+      "FIELD.PHASE_DIR": 1.1102230246251565e-16,
+      "FIELD.REFERENCE_DIR": 1.1102230246251565e-16,
+      "FIELD.TIME": 0.0,
+      "OBSERVATION.RELEASE_DATE": 0.0,
+      "OBSERVATION.TIME_RANGE": 9.5367431640625e-07,
+      "POINTING.DIRECTION": 1.1102230246251565e-16,
+      "POINTING.INTERVAL": 0.0,
+      "POINTING.TARGET": 1.1102230246251565e-16,
+      "POINTING.TIME": 9.5367431640625e-07,
+      "POINTING.TIME_ORIGIN": 9.5367431640625e-07,
+      "SOURCE.DIRECTION": 1.1102230246251565e-16,
+      "SOURCE.INTERVAL": 0.0,
+      "SOURCE.PROPER_MOTION": 0.0,
+      "SOURCE.REST_FREQUENCY": 0.0,
+      "SOURCE.SYSVEL": 0.0,
+      "SOURCE.TIME": 0.0,
+      "SPECTRAL_WINDOW.CHAN_FREQ": 9.5367431640625e-07,
+      "SPECTRAL_WINDOW.CHAN_WIDTH": 0.0,
+      "SPECTRAL_WINDOW.EFFECTIVE_BW": 0.0,
+      "SPECTRAL_WINDOW.REF_FREQUENCY": 0.0,
+      "SPECTRAL_WINDOW.RESOLUTION": 0.0,
+      "SPECTRAL_WINDOW.TOTAL_BANDWIDTH": 0.0,
+      "STATE.CAL": 0.0,
+      "STATE.LOAD": 0.0
+     },
+     "data": {
+      "casa": {
+       "parallel_change": 0.0,
+       "window_drift": 1.2074416783366955e-08,
+       "draws": 27,
+       "XY_re": {
+        "mean": 0.003575433050209667,
+        "mean_standard_errors": 0.42905196602516005,
+        "square_scale": 0.7761401599546741,
+        "square_standard_errors": -0.9497568655883147
+       },
+       "XY_im": {
+        "mean": 0.0022945415960337347,
+        "mean_standard_errors": 0.2753449915240482,
+        "square_scale": 1.222446082188153,
+        "square_standard_errors": 0.9437587989817389
+       },
+       "YX_re": {
+        "mean": 0.004128398781141738,
+        "mean_standard_errors": 0.4954078537370086,
+        "square_scale": 0.9158654531623514,
+        "square_standard_errors": -0.35695265160575135
+       },
+       "YX_im": {
+        "mean": -0.0037097390851657222,
+        "mean_standard_errors": -0.4451686902198867,
+        "square_scale": 1.0137586515663908,
+        "square_standard_errors": 0.058373014935467
+       }
+      },
+      "casa-rs": {
+       "parallel_change": 0.0,
+       "window_drift": 1.2480918166614329e-08,
+       "draws": 27,
+       "XY_re": {
+        "mean": 0.0033403800404221257,
+        "mean_standard_errors": 0.40084560485065507,
+        "square_scale": 1.494411477698247,
+        "square_standard_errors": 2.0976102514613513
+       },
+       "XY_im": {
+        "mean": 0.0030537435856789314,
+        "mean_standard_errors": 0.36644923028147175,
+        "square_scale": 1.1870308989057732,
+        "square_standard_errors": 0.7935049014461271
+       },
+       "YX_re": {
+        "mean": -0.0030909247508354373,
+        "mean_standard_errors": -0.3709109701002525,
+        "square_scale": 1.0461550466001255,
+        "square_standard_errors": 0.195819278621579
+       },
+       "YX_im": {
+        "mean": -0.007432947400814227,
+        "mean_standard_errors": -0.8919536880977073,
+        "square_scale": 0.8748606373104777,
+        "square_standard_errors": -0.5309213517067444
+       }
+      },
+      "kind": "leakage"
+     }
+    },
+    {
+     "name": "if_joint_manual-noisy",
+     "differences": [],
+     "known": [
+      "MAIN.CORRECTED_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "MAIN.MODEL_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "POINTING.TARGET: descriptor ndim -1 against 2 [known: casa-ms's POINTING.TARGET has ndim 2, casacore's -1 (#847)]",
+      "SOURCE.DIRECTION: descriptor ndim -1 against 1 [known: CASA's simulator makes SOURCE arrays variable-shaped; casa-ms follows casacore's MSSource (fixed [2])]",
+      "SOURCE.DIRECTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.DIRECTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor ndim -1 against 1 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]"
+     ],
+     "largest": {
+      "MAIN.EXPOSURE": 0.0,
+      "MAIN.INTERVAL": 0.0,
+      "MAIN.SIGMA": 0.0,
+      "MAIN.TIME": 9.5367431640625e-07,
+      "MAIN.TIME_CENTROID": 9.5367431640625e-07,
+      "MAIN.UVW": 1.1398850574551034e-07,
+      "MAIN.WEIGHT": 0.0,
+      "ANTENNA.DISH_DIAMETER": 0.0,
+      "ANTENNA.OFFSET": 0.0,
+      "ANTENNA.POSITION": 0.0,
+      "FEED.BEAM_OFFSET": 0.0,
+      "FEED.INTERVAL": 0.0,
+      "FEED.POL_RESPONSE": 0.0,
+      "FEED.POSITION": 0.0,
+      "FEED.RECEPTOR_ANGLE": 0.0,
+      "FEED.TIME": 0.0,
+      "FIELD.DELAY_DIR": 1.1102230246251565e-16,
+      "FIELD.PHASE_DIR": 1.1102230246251565e-16,
+      "FIELD.REFERENCE_DIR": 1.1102230246251565e-16,
+      "FIELD.TIME": 0.0,
+      "OBSERVATION.RELEASE_DATE": 0.0,
+      "OBSERVATION.TIME_RANGE": 9.5367431640625e-07,
+      "POINTING.DIRECTION": 1.1102230246251565e-16,
+      "POINTING.INTERVAL": 0.0,
+      "POINTING.TARGET": 1.1102230246251565e-16,
+      "POINTING.TIME": 9.5367431640625e-07,
+      "POINTING.TIME_ORIGIN": 9.5367431640625e-07,
+      "SOURCE.DIRECTION": 1.1102230246251565e-16,
+      "SOURCE.INTERVAL": 0.0,
+      "SOURCE.PROPER_MOTION": 0.0,
+      "SOURCE.REST_FREQUENCY": 0.0,
+      "SOURCE.SYSVEL": 0.0,
+      "SOURCE.TIME": 0.0,
+      "SPECTRAL_WINDOW.CHAN_FREQ": 9.5367431640625e-07,
+      "SPECTRAL_WINDOW.CHAN_WIDTH": 0.0,
+      "SPECTRAL_WINDOW.EFFECTIVE_BW": 0.0,
+      "SPECTRAL_WINDOW.REF_FREQUENCY": 0.0,
+      "SPECTRAL_WINDOW.RESOLUTION": 0.0,
+      "SPECTRAL_WINDOW.TOTAL_BANDWIDTH": 0.0,
+      "STATE.CAL": 0.0,
+      "STATE.LOAD": 0.0
+     },
+     "data": {
+      "rows_compared": 21060,
+      "rows_flagged": 0,
+      "sigma_range_jy": [
+       0.026401260794977097,
+       0.02641027253657452
+      ],
+      "elevation_range_deg": [
+       82.5852212366417,
+       84.63919861342544
+      ],
+      "casa": {
+       "corr0": {
+        "n_cross": 21060,
+        "cross_re_var": 0.9986854787902932,
+        "cross_im_var": 1.0112408827090853,
+        "cross_re_im_corr": 0.0025905843604540207
+       },
+       "corr1": {
+        "n_cross": 21060,
+        "cross_re_var": 0.981703012672282,
+        "cross_im_var": 0.9808888118433269,
+        "cross_re_im_corr": -0.004029202251957752
+       },
+       "corr2": {
+        "n_cross": 21060,
+        "cross_re_var": 0.9832619883707104,
+        "cross_im_var": 0.982331392845537,
+        "cross_re_im_corr": -0.006739676792476165
+       },
+       "corr3": {
+        "n_cross": 21060,
+        "cross_re_var": 1.022120157552148,
+        "cross_im_var": 1.0039737788322538,
+        "cross_re_im_corr": 0.0030015162580330373
+       }
+      },
+      "casa-rs": {
+       "corr0": {
+        "n_cross": 21060,
+        "cross_re_var": 1.0078186231215442,
+        "cross_im_var": 0.9994818302222952,
+        "cross_re_im_corr": -0.007069261430857846
+       },
+       "corr1": {
+        "n_cross": 21060,
+        "cross_re_var": 1.0058727218130594,
+        "cross_im_var": 0.9812974945006676,
+        "cross_re_im_corr": -0.0028438422555227974
+       },
+       "corr2": {
+        "n_cross": 21060,
+        "cross_re_var": 1.0073740381624348,
+        "cross_im_var": 0.9969108019452748,
+        "cross_re_im_corr": 0.00634943073895367
+       },
+       "corr3": {
+        "n_cross": 21060,
+        "cross_re_var": 1.0074925818704141,
+        "cross_im_var": 0.9995131636090425,
+        "cross_re_im_corr": -0.0033538125291323806
+       }
+      },
+      "ks_cross": {
+       "statistic": 0.0037749287749287708,
+       "p_value": 0.18078623412393105
+      },
+      "groups": [
+       {
+        "group": "spw0 25m-25m cross t0",
+        "n": 22464,
+        "ratio": 0.9813948370995456,
+        "standard_error": 0.013344012817090595
+       },
+       {
+        "group": "spw0 25m-25m cross t1",
+        "n": 19656,
+        "ratio": 0.9862351987417136,
+        "standard_error": 0.014265349750363764
+       },
+       {
+        "group": "spw0 25m-25m cross t2",
+        "n": 22464,
+        "ratio": 1.0195907717660169,
+        "standard_error": 0.013344012817090595
+       },
+       {
+        "group": "spw0 25m-25m cross t3",
+        "n": 19656,
+        "ratio": 0.9892254347787104,
+        "standard_error": 0.014265349750363764
+       },
+       {
+        "group": "spw0 25m-25m cross t4",
+        "n": 19656,
+        "ratio": 1.0244752827639274,
+        "standard_error": 0.014265349750363764
+       },
+       {
+        "group": "spw0 25m-25m cross t5",
+        "n": 22464,
+        "ratio": 1.0222035456151384,
+        "standard_error": 0.013344012817090595
+       },
+       {
+        "group": "spw0 25m-25m cross t6",
+        "n": 19656,
+        "ratio": 1.018377523586203,
+        "standard_error": 0.014265349750363764
+       },
+       {
+        "group": "spw0 25m-25m cross t7",
+        "n": 22464,
+        "ratio": 1.0012128701438257,
+        "standard_error": 0.013344012817090595
+       }
+      ],
+      "groups_worst_pull": 1.715715576009855,
+      "groups_chi2_per_group": 1.6226456463018837,
+      "kind": "noisy",
+      "noise": "tsys-manual"
+     }
+    }
+   ]
+  },
+  {
+   "name": "if_joint_polarized",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       7959999999.999999,
+       7979999999.999999,
+       7999999999.999999,
+       8019999999.999999
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       7960000000.0,
+       7980000000.0,
+       8000000000.0,
+       8020000000.0
+      ]
+     }
+    ]
+   },
+   "seconds": {
+    "casa": 0.5250614950018644,
+    "casa-rs": 0.491987238
+   },
+   "parameters": {
+    "skymodel": "inputs/if-polarized.image",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "square",
+    "obsmode": "int",
+    "sdantlist": "aca.tp.cfg",
+    "sdant": 0,
+    "direction": "J2000 10h00m00 34d00m00",
+    "mapsize": [
+     "20arcsec",
+     "20arcsec"
+    ],
+    "pointingspacing": "10arcsec",
+    "totaltime": "60s",
+    "refdate": "2024/06/01",
+    "thermalnoise": "",
+    "antennalist": "vla.d.cfg",
+    "incenter": "8GHz",
+    "inwidth": "20MHz",
+    "complist": "inputs/sd-components.cl"
+   },
+   "measurement_sets": [
+    {
+     "name": "if_joint_polarized",
+     "differences": [],
+     "known": [
+      "MAIN.CORRECTED_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "MAIN.MODEL_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "POINTING.TARGET: descriptor ndim -1 against 2 [known: casa-ms's POINTING.TARGET has ndim 2, casacore's -1 (#847)]",
+      "SOURCE.DIRECTION: descriptor ndim -1 against 1 [known: CASA's simulator makes SOURCE arrays variable-shaped; casa-ms follows casacore's MSSource (fixed [2])]",
+      "SOURCE.DIRECTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.DIRECTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor ndim -1 against 1 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]"
+     ],
+     "largest": {
+      "MAIN.EXPOSURE": 0.0,
+      "MAIN.INTERVAL": 0.0,
+      "MAIN.SIGMA": 0.0,
+      "MAIN.TIME": 9.5367431640625e-07,
+      "MAIN.TIME_CENTROID": 9.5367431640625e-07,
+      "MAIN.UVW": 8.910352278235223e-08,
+      "MAIN.WEIGHT": 0.0,
+      "ANTENNA.DISH_DIAMETER": 0.0,
+      "ANTENNA.OFFSET": 0.0,
+      "ANTENNA.POSITION": 0.0,
+      "FEED.BEAM_OFFSET": 0.0,
+      "FEED.INTERVAL": 0.0,
+      "FEED.POL_RESPONSE": 0.0,
+      "FEED.POSITION": 0.0,
+      "FEED.RECEPTOR_ANGLE": 0.0,
+      "FEED.TIME": 0.0,
+      "FIELD.DELAY_DIR": 1.1102230246251565e-16,
+      "FIELD.PHASE_DIR": 1.1102230246251565e-16,
+      "FIELD.REFERENCE_DIR": 1.1102230246251565e-16,
+      "FIELD.TIME": 0.0,
+      "OBSERVATION.RELEASE_DATE": 0.0,
+      "OBSERVATION.TIME_RANGE": 9.5367431640625e-07,
+      "POINTING.DIRECTION": 1.1102230246251565e-16,
+      "POINTING.INTERVAL": 0.0,
+      "POINTING.TARGET": 1.1102230246251565e-16,
+      "POINTING.TIME": 9.5367431640625e-07,
+      "POINTING.TIME_ORIGIN": 9.5367431640625e-07,
+      "SOURCE.DIRECTION": 1.1102230246251565e-16,
+      "SOURCE.INTERVAL": 0.0,
+      "SOURCE.PROPER_MOTION": 0.0,
+      "SOURCE.REST_FREQUENCY": 0.0,
+      "SOURCE.SYSVEL": 0.0,
+      "SOURCE.TIME": 0.0,
+      "SPECTRAL_WINDOW.CHAN_FREQ": 9.5367431640625e-07,
+      "SPECTRAL_WINDOW.CHAN_WIDTH": 0.0,
+      "SPECTRAL_WINDOW.EFFECTIVE_BW": 0.0,
+      "SPECTRAL_WINDOW.REF_FREQUENCY": 0.0,
+      "SPECTRAL_WINDOW.RESOLUTION": 0.0,
+      "SPECTRAL_WINDOW.TOTAL_BANDWIDTH": 0.0,
+      "STATE.CAL": 0.0,
+      "STATE.LOAD": 0.0
+     },
+     "data": {
+      "rows_compared": 2106,
+      "samples_compared": 33696,
+      "rows_flagged_in_one": 0,
+      "rows_flagged_in_both": 0,
+      "nrms": 0.0003050617371949057,
+      "casa_peak": 4.919979772321682,
+      "max_difference": 0.0028011926702171453,
+      "per_correlation": [
+       {
+        "nrms": 0.000281004580010837,
+        "max_difference": 0.0028011926702171453
+       },
+       {
+        "nrms": 1.6105607911157478e-07,
+        "max_difference": 5.623090941939713e-07
+       },
+       {
+        "nrms": 1.6229905205471938e-07,
+        "max_difference": 5.609253115868184e-07
+       },
+       {
+        "nrms": 0.0003451472957097879,
+        "max_difference": 0.002581787886137541
+       }
+      ],
+      "cross_nrms": 0.0003050617371949057,
+      "auto_nrms": null,
+      "kind": "model"
+     }
+    }
+   ]
+  },
+  {
+   "name": "if_joint_atmosphere",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       230000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 1,
+      "channels_hz": [
+       230000000000.0
+      ]
+     }
+    ]
+   },
+   "seconds": {
+    "casa": 1.9797018339995702,
+    "casa-rs": 21.530771118
+   },
+   "parameters": {
+    "skymodel": "inputs/sd-sky.image",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "square",
+    "obsmode": "int",
+    "sdantlist": "aca.tp.cfg",
+    "sdant": 0,
+    "direction": "J2000 10h00m00 -23d00m00",
+    "mapsize": [
+     "20arcsec",
+     "20arcsec"
+    ],
+    "pointingspacing": "10arcsec",
+    "totaltime": "600s",
+    "refdate": "2024/06/01",
+    "thermalnoise": "tsys-atm",
+    "antennalist": "alma.out01.cfg",
+    "incenter": "230GHz",
+    "inwidth": "15.625MHz",
+    "indirection": "J2000 10h00m00 -23d00m00",
+    "incell": "0.5arcsec",
+    "user_pwv": 0.8,
+    "t_ground": 269.0,
+    "leakage": 0.015,
+    "hourangle": "-0.5"
+   },
+   "component_input": {
+    "name": "if-star.cl",
+    "dir": "J2000 10h00m00 -23d00m00",
+    "flux": 0.2,
+    "freq": "230GHz"
+   },
+   "measurement_sets": [
+    {
+     "name": "if_joint_atmosphere",
+     "differences": [],
+     "known": [
+      "MAIN.CORRECTED_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "MAIN.MODEL_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "POINTING.TARGET: descriptor ndim -1 against 2 [known: casa-ms's POINTING.TARGET has ndim 2, casacore's -1 (#847)]",
+      "SOURCE.DIRECTION: descriptor ndim -1 against 1 [known: CASA's simulator makes SOURCE arrays variable-shaped; casa-ms follows casacore's MSSource (fixed [2])]",
+      "SOURCE.DIRECTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.DIRECTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor ndim -1 against 1 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]"
+     ],
+     "largest": {
+      "MAIN.EXPOSURE": 0.0,
+      "MAIN.INTERVAL": 0.0,
+      "MAIN.SIGMA": 0.0,
+      "MAIN.TIME": 9.5367431640625e-07,
+      "MAIN.TIME_CENTROID": 9.5367431640625e-07,
+      "MAIN.UVW": 2.06103152322612e-08,
+      "MAIN.WEIGHT": 0.0,
+      "ANTENNA.DISH_DIAMETER": 0.0,
+      "ANTENNA.OFFSET": 0.0,
+      "ANTENNA.POSITION": 0.0,
+      "FEED.BEAM_OFFSET": 0.0,
+      "FEED.INTERVAL": 0.0,
+      "FEED.POL_RESPONSE": 0.0,
+      "FEED.POSITION": 0.0,
+      "FEED.RECEPTOR_ANGLE": 0.0,
+      "FEED.TIME": 0.0,
+      "FIELD.DELAY_DIR": 5.551115123125783e-17,
+      "FIELD.PHASE_DIR": 5.551115123125783e-17,
+      "FIELD.REFERENCE_DIR": 5.551115123125783e-17,
+      "FIELD.TIME": 0.0,
+      "OBSERVATION.RELEASE_DATE": 0.0,
+      "OBSERVATION.TIME_RANGE": 9.5367431640625e-07,
+      "POINTING.DIRECTION": 5.551115123125783e-17,
+      "POINTING.INTERVAL": 0.0,
+      "POINTING.TARGET": 5.551115123125783e-17,
+      "POINTING.TIME": 9.5367431640625e-07,
+      "POINTING.TIME_ORIGIN": 9.5367431640625e-07,
+      "SOURCE.DIRECTION": 5.551115123125783e-17,
+      "SOURCE.INTERVAL": 0.0,
+      "SOURCE.PROPER_MOTION": 0.0,
+      "SOURCE.REST_FREQUENCY": 0.0,
+      "SOURCE.SYSVEL": 0.0,
+      "SOURCE.TIME": 0.0,
+      "SPECTRAL_WINDOW.CHAN_FREQ": 0.0,
+      "SPECTRAL_WINDOW.CHAN_WIDTH": 0.0,
+      "SPECTRAL_WINDOW.EFFECTIVE_BW": 0.0,
+      "SPECTRAL_WINDOW.REF_FREQUENCY": 0.0,
+      "SPECTRAL_WINDOW.RESOLUTION": 0.0,
+      "SPECTRAL_WINDOW.TOTAL_BANDWIDTH": 0.0,
+      "STATE.CAL": 0.0,
+      "STATE.LOAD": 0.0
+     },
+     "data": {
+      "rows_compared": 73500,
+      "samples_compared": 294000,
+      "rows_flagged_in_one": 0,
+      "rows_flagged_in_both": 0,
+      "nrms": 2.8629209591037575e-07,
+      "casa_peak": 1.9322677862777322,
+      "max_difference": 1.3591950238932823e-06,
+      "per_correlation": [
+       {
+        "nrms": 2.862920959103757e-07,
+        "max_difference": 1.3591950238932823e-06
+       },
+       {
+        "nrms": null,
+        "max_difference": 0.0
+       },
+       {
+        "nrms": null,
+        "max_difference": 0.0
+       },
+       {
+        "nrms": 2.862920959103757e-07,
+        "max_difference": 1.3591950238932823e-06
+       }
+      ],
+      "cross_nrms": 2.8629209591037575e-07,
+      "auto_nrms": null,
+      "kind": "model"
+     }
+    },
+    {
+     "name": "if_joint_atmosphere-fullpol",
+     "differences": [],
+     "known": [
+      "MAIN.CORRECTED_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "MAIN.MODEL_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "POINTING.TARGET: descriptor ndim -1 against 2 [known: casa-ms's POINTING.TARGET has ndim 2, casacore's -1 (#847)]",
+      "SOURCE.DIRECTION: descriptor ndim -1 against 1 [known: CASA's simulator makes SOURCE arrays variable-shaped; casa-ms follows casacore's MSSource (fixed [2])]",
+      "SOURCE.DIRECTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.DIRECTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor ndim -1 against 1 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]"
+     ],
+     "largest": {
+      "MAIN.EXPOSURE": 0.0,
+      "MAIN.INTERVAL": 0.0,
+      "MAIN.SIGMA": 0.0,
+      "MAIN.TIME": 9.5367431640625e-07,
+      "MAIN.TIME_CENTROID": 9.5367431640625e-07,
+      "MAIN.UVW": 2.06103152322612e-08,
+      "MAIN.WEIGHT": 0.0,
+      "ANTENNA.DISH_DIAMETER": 0.0,
+      "ANTENNA.OFFSET": 0.0,
+      "ANTENNA.POSITION": 0.0,
+      "FEED.BEAM_OFFSET": 0.0,
+      "FEED.INTERVAL": 0.0,
+      "FEED.POL_RESPONSE": 0.0,
+      "FEED.POSITION": 0.0,
+      "FEED.RECEPTOR_ANGLE": 0.0,
+      "FEED.TIME": 0.0,
+      "FIELD.DELAY_DIR": 5.551115123125783e-17,
+      "FIELD.PHASE_DIR": 5.551115123125783e-17,
+      "FIELD.REFERENCE_DIR": 5.551115123125783e-17,
+      "FIELD.TIME": 0.0,
+      "OBSERVATION.RELEASE_DATE": 0.0,
+      "OBSERVATION.TIME_RANGE": 9.5367431640625e-07,
+      "POINTING.DIRECTION": 5.551115123125783e-17,
+      "POINTING.INTERVAL": 0.0,
+      "POINTING.TARGET": 5.551115123125783e-17,
+      "POINTING.TIME": 9.5367431640625e-07,
+      "POINTING.TIME_ORIGIN": 9.5367431640625e-07,
+      "SOURCE.DIRECTION": 5.551115123125783e-17,
+      "SOURCE.INTERVAL": 0.0,
+      "SOURCE.PROPER_MOTION": 0.0,
+      "SOURCE.REST_FREQUENCY": 0.0,
+      "SOURCE.SYSVEL": 0.0,
+      "SOURCE.TIME": 0.0,
+      "SPECTRAL_WINDOW.CHAN_FREQ": 0.0,
+      "SPECTRAL_WINDOW.CHAN_WIDTH": 0.0,
+      "SPECTRAL_WINDOW.EFFECTIVE_BW": 0.0,
+      "SPECTRAL_WINDOW.REF_FREQUENCY": 0.0,
+      "SPECTRAL_WINDOW.RESOLUTION": 0.0,
+      "SPECTRAL_WINDOW.TOTAL_BANDWIDTH": 0.0,
+      "STATE.CAL": 0.0,
+      "STATE.LOAD": 0.0
+     },
+     "data": {
+      "casa": {
+       "parallel_change": 0.0,
+       "window_drift": 8.387204797052949e-09,
+       "draws": 50,
+       "XY_re": {
+        "mean": 0.0011414354861908865,
+        "mean_standard_errors": 0.3106593906081452,
+        "square_scale": 0.8329791254373863,
+        "square_standard_errors": -0.9642954688901175
+       },
+       "XY_im": {
+        "mean": 0.004235618629260785,
+        "mean_standard_errors": 1.1527893763017376,
+        "square_scale": 1.1851593202652884,
+        "square_standard_errors": 1.0690178339813237
+       },
+       "YX_re": {
+        "mean": 0.00011902762613626516,
+        "mean_standard_errors": 0.03239521659206805,
+        "square_scale": 1.0099000837254337,
+        "square_standard_errors": 0.057158160038789894
+       },
+       "YX_im": {
+        "mean": -0.008830772665889039,
+        "mean_standard_errors": -2.4034318962161403,
+        "square_scale": 1.1709711414067527,
+        "square_standard_errors": 0.9871023451484626
+       }
+      },
+      "casa-rs": {
+       "parallel_change": 0.0,
+       "window_drift": 8.85407421303763e-09,
+       "draws": 50,
+       "XY_re": {
+        "mean": 0.002684081664366162,
+        "mean_standard_errors": 0.7305145006285906,
+        "square_scale": 1.1031023966201678,
+        "square_standard_errors": 0.5952619644274947
+       },
+       "XY_im": {
+        "mean": -0.0008720678232327472,
+        "mean_standard_errors": -0.23734679866887423,
+        "square_scale": 0.9487998736893125,
+        "square_standard_errors": -0.2956040670801826
+       },
+       "YX_re": {
+        "mean": -5.9809506932177967e-05,
+        "mean_standard_errors": -0.01627808597236548,
+        "square_scale": 1.1960232628869254,
+        "square_standard_errors": 1.1317408359519516
+       },
+       "YX_im": {
+        "mean": -0.0006570526443002475,
+        "mean_standard_errors": -0.17882707918689114,
+        "square_scale": 1.0562213496260398,
+        "square_standard_errors": 0.32459411340798117
+       }
+      },
+      "kind": "leakage"
+     }
+    },
+    {
+     "name": "if_joint_atmosphere-noisy",
+     "differences": [],
+     "known": [
+      "MAIN.CORRECTED_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "MAIN.MODEL_DATA: missing from casa-rs [known: plan decision 6: DATA only]",
+      "POINTING.TARGET: descriptor ndim -1 against 2 [known: casa-ms's POINTING.TARGET has ndim 2, casacore's -1 (#847)]",
+      "SOURCE.DIRECTION: descriptor ndim -1 against 1 [known: CASA's simulator makes SOURCE arrays variable-shaped; casa-ms follows casacore's MSSource (fixed [2])]",
+      "SOURCE.DIRECTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.DIRECTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor ndim -1 against 1 [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: descriptor shape [] against [np.int64(2)] [known: as SOURCE.DIRECTION:ndim]",
+      "SOURCE.PROPER_MOTION: fixed-shape option 0 against 4 [known: as SOURCE.DIRECTION:ndim]"
+     ],
+     "largest": {
+      "MAIN.EXPOSURE": 0.0,
+      "MAIN.INTERVAL": 0.0,
+      "MAIN.SIGMA": 0.0,
+      "MAIN.TIME": 9.5367431640625e-07,
+      "MAIN.TIME_CENTROID": 9.5367431640625e-07,
+      "MAIN.UVW": 2.06103152322612e-08,
+      "MAIN.WEIGHT": 0.0,
+      "ANTENNA.DISH_DIAMETER": 0.0,
+      "ANTENNA.OFFSET": 0.0,
+      "ANTENNA.POSITION": 0.0,
+      "FEED.BEAM_OFFSET": 0.0,
+      "FEED.INTERVAL": 0.0,
+      "FEED.POL_RESPONSE": 0.0,
+      "FEED.POSITION": 0.0,
+      "FEED.RECEPTOR_ANGLE": 0.0,
+      "FEED.TIME": 0.0,
+      "FIELD.DELAY_DIR": 5.551115123125783e-17,
+      "FIELD.PHASE_DIR": 5.551115123125783e-17,
+      "FIELD.REFERENCE_DIR": 5.551115123125783e-17,
+      "FIELD.TIME": 0.0,
+      "OBSERVATION.RELEASE_DATE": 0.0,
+      "OBSERVATION.TIME_RANGE": 9.5367431640625e-07,
+      "POINTING.DIRECTION": 5.551115123125783e-17,
+      "POINTING.INTERVAL": 0.0,
+      "POINTING.TARGET": 5.551115123125783e-17,
+      "POINTING.TIME": 9.5367431640625e-07,
+      "POINTING.TIME_ORIGIN": 9.5367431640625e-07,
+      "SOURCE.DIRECTION": 5.551115123125783e-17,
+      "SOURCE.INTERVAL": 0.0,
+      "SOURCE.PROPER_MOTION": 0.0,
+      "SOURCE.REST_FREQUENCY": 0.0,
+      "SOURCE.SYSVEL": 0.0,
+      "SOURCE.TIME": 0.0,
+      "SPECTRAL_WINDOW.CHAN_FREQ": 0.0,
+      "SPECTRAL_WINDOW.CHAN_WIDTH": 0.0,
+      "SPECTRAL_WINDOW.EFFECTIVE_BW": 0.0,
+      "SPECTRAL_WINDOW.REF_FREQUENCY": 0.0,
+      "SPECTRAL_WINDOW.RESOLUTION": 0.0,
+      "SPECTRAL_WINDOW.TOTAL_BANDWIDTH": 0.0,
+      "STATE.CAL": 0.0,
+      "STATE.LOAD": 0.0
+     },
+     "data": {
+      "rows_compared": 73500,
+      "rows_flagged": 0,
+      "sigma_range_jy": [
+       0.19684402215878077,
+       0.19701869522579118
+      ],
+      "elevation_range_deg": [
+       82.00221984791487,
+       84.26768118689702
+      ],
+      "casa": {
+       "corr0": {
+        "n_cross": 73500,
+        "cross_re_var": 0.9976666360108934,
+        "cross_im_var": 0.9982072915644212,
+        "cross_re_im_corr": -0.0021566571194017586
+       },
+       "corr1": {
+        "n_cross": 73500,
+        "cross_re_var": 0.9965210947291288,
+        "cross_im_var": 1.0043405654956896,
+        "cross_re_im_corr": 0.000379386332579071
+       },
+       "corr2": {
+        "n_cross": 73500,
+        "cross_re_var": 0.989334307913794,
+        "cross_im_var": 0.9965731402389069,
+        "cross_re_im_corr": -0.006623694504221906
+       },
+       "corr3": {
+        "n_cross": 73500,
+        "cross_re_var": 0.9929260723561137,
+        "cross_im_var": 0.9962783477345024,
+        "cross_re_im_corr": -0.0013721862056193105
+       }
+      },
+      "casa-rs": {
+       "corr0": {
+        "n_cross": 73500,
+        "cross_re_var": 1.0014766013347742,
+        "cross_im_var": 0.9937782082203344,
+        "cross_re_im_corr": -0.008581282173118482
+       },
+       "corr1": {
+        "n_cross": 73500,
+        "cross_re_var": 0.9972726854899162,
+        "cross_im_var": 0.99177600333833,
+        "cross_re_im_corr": -0.0018572074242075754
+       },
+       "corr2": {
+        "n_cross": 73500,
+        "cross_re_var": 1.0034014272136478,
+        "cross_im_var": 0.9993976795297882,
+        "cross_re_im_corr": -0.004041193325911615
+       },
+       "corr3": {
+        "n_cross": 73500,
+        "cross_re_var": 1.0015605930185365,
+        "cross_im_var": 1.0030089620811318,
+        "cross_re_im_corr": 0.0014154333317239786
+       }
+      },
+      "ks_cross": {
+       "statistic": 0.0017857142857142794,
+       "p_value": 0.30535263186777056
+      },
+      "groups": [],
+      "groups_worst_pull": null,
+      "groups_chi2_per_group": null,
+      "kind": "noisy",
+      "noise": "tsys-atm"
+     }
+    }
+   ]
+  },
+  {
+   "name": "if_joint_rest",
+   "differences": [],
+   "native_error": "No MeasFrame specified for conversion of Frequency",
+   "casa_zero_data": true,
+   "casa_rows": 2106,
+   "casa_prediction_returned": false,
+   "seconds": {
+    "casa": 1.4794170040004246,
+    "casa-rs": null
+   },
+   "parameters": {
+    "skymodel": "inputs/sd-sky.image",
+    "setpointings": true,
+    "integration": "10s",
+    "maptype": "square",
+    "obsmode": "int",
+    "sdantlist": "aca.tp.cfg",
+    "sdant": 0,
+    "direction": "J2000 10h00m00 34d00m00",
+    "mapsize": [
+     "20arcsec",
+     "20arcsec"
+    ],
+    "pointingspacing": "10arcsec",
+    "totaltime": "60s",
+    "refdate": "2024/06/01",
+    "thermalnoise": "",
+    "antennalist": "vla.d.cfg",
+    "incenter": "8GHz",
+    "inwidth": "20MHz",
+    "complist": "inputs/sd-components.cl",
+    "outframe": "REST"
+   }
+  }
+ ]
+}

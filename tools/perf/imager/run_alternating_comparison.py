@@ -3,8 +3,8 @@
 
 Each role runs its own casa-rs checkout (``--baseline-repo``,
 ``--candidate-repo``; both default to this one). The slowdown gate judges wall
-time alone; the blocking gate (``docs/measurement-set/imaging-port.md``
-decision 4) also judges peak RSS and the image products.
+time alone; the blocking gate (the imaging port's, #932) also judges peak RSS
+and the image products.
 """
 
 from __future__ import annotations

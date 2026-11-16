@@ -3,12 +3,40 @@
 //! Owner of a run's model generations and their sparse updates.
 
 use casa_imaging_model::{
-    CompiledProblem, ModelCell, ModelContractError, ModelDeltaTerm, ModelLifecycleContract,
-    ModelSample, ModelSourceShape, ModelSupport, ModelValue,
+    CompiledProblem, DirectionCoordinateSpec, ModelCell, ModelContractError, ModelDeltaTerm,
+    ModelLifecycleContract, ModelSample, ModelSourceShape, ModelSupport, ModelValue,
 };
 use thiserror::Error;
 
-use crate::model_storage::{ModelSampleUpdate, ModelSamples, ModelStoragePlan};
+use crate::model_storage::{ModelSampleUpdate, ModelSamples, ModelStoragePlan, add_with_precision};
+
+/// A dense model increment for one plane, in x-major deconvolution order.
+#[derive(Debug)]
+pub struct DenseModelPlane {
+    domain: usize,
+    coefficient: usize,
+    polarization: usize,
+    values: Vec<f64>,
+}
+
+impl DenseModelPlane {
+    /// Bind an x-major increment to one model plane. Its length is checked
+    /// against the compiled model when the lifecycle applies it.
+    #[must_use]
+    pub const fn new(
+        domain: usize,
+        coefficient: usize,
+        polarization: usize,
+        values: Vec<f64>,
+    ) -> Self {
+        Self {
+            domain,
+            coefficient,
+            polarization,
+            values,
+        }
+    }
+}
 
 /// One generation of a run's model.
 ///
@@ -64,6 +92,51 @@ impl ModelGeneration {
             .ok_or(ModelLifecycleError::CellOutsideShape)?;
         let [width, height] = self.shape.domains()[domain].pixels();
         self.samples.read(start..start + width * height)
+    }
+
+    /// Read a model plane for prediction, excluding sky pixels owned by a
+    /// later image field. The stored generation keeps its restored overlap
+    /// for publication and subsequent deconvolution.
+    ///
+    /// # Errors
+    /// The plane is outside the model, reading it fails, or a direction
+    /// conversion required for field overlap fails.
+    pub fn prediction_plane(
+        &self,
+        domain: usize,
+        coefficient: usize,
+        polarization: usize,
+    ) -> Result<Box<[ModelSample]>, ModelLifecycleError> {
+        let mut samples = self.read_plane(domain, coefficient, polarization)?;
+        let shape = self.shape();
+        let later = domain + 1..shape.domains().len();
+        if later.is_empty() {
+            return Ok(samples);
+        }
+        let coordinate = |index| {
+            shape
+                .direction(index)
+                .map(DirectionCoordinateSpec::coordinate)
+                .ok_or(ModelLifecycleError::UnsupportedDirectionConversion)
+        };
+        let target = coordinate(domain)?;
+        let [width, _] = shape.domains()[domain].pixels();
+        for owner in later {
+            let source = coordinate(owner)?;
+            let source_shape = shape.domains()[owner].pixels();
+            for (index, sample) in samples.iter_mut().enumerate() {
+                if sample.support() != ModelSupport::Valid || sample.value().value() == 0.0 {
+                    continue;
+                }
+                let pixel = [index % width, index / width];
+                let covered = crate::mask::reprojected_pixel(&source, source_shape, &target, pixel)
+                    .map_err(|_| ModelLifecycleError::UnsupportedDirectionConversion)?;
+                if covered.is_some() {
+                    *sample = ModelSample::invalid();
+                }
+            }
+        }
+        Ok(samples)
     }
 }
 
@@ -168,23 +241,53 @@ impl ModelLifecycle {
                 actual: main.len(),
             });
         }
+        self.initial_from_fn::<ModelLifecycleError>(|index| {
+            Ok(main.get(index).copied().unwrap_or(0.0))
+        })
+    }
+
+    /// Construct a valid model from its canonical samples in increasing order.
+    ///
+    /// The source is called once for every logical sample index. A producer
+    /// may construct one channel or other bounded window at a time, without
+    /// retaining a model-sized input. The lifecycle validates each value and
+    /// writes it through the storage plan's admitted window. No generation is
+    /// returned if the source, validation or backing storage fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns the source error, a non-finite or out-of-bounds model value,
+    /// or a storage failure.
+    pub fn initial_from_fn<E>(
+        &self,
+        mut source: impl FnMut(usize) -> Result<f32, E>,
+    ) -> Result<ModelGeneration, E>
+    where
+        E: From<ModelLifecycleError>,
+    {
         let bound = self.contract.bounds().max_absolute_model_value();
-        let mut samples = self.storage.create(target.sample_count())?;
+        let mut samples = self
+            .storage
+            .create(self.contract.target().sample_count())
+            .map_err(E::from)?;
         let chunk = samples.window_samples().min(1 << 16);
         let mut window = Vec::with_capacity(chunk);
         for start in (0..samples.len()).step_by(chunk) {
             window.clear();
             for index in start..(start + chunk).min(samples.len()) {
-                let value = main.get(index).map_or(0.0, |value| f64::from(*value));
+                let value = f64::from(source(index)?);
                 if value.abs() > bound {
-                    return Err(ModelLifecycleError::ModelValueBoundExceeded);
+                    return Err(E::from(ModelLifecycleError::ModelValueBoundExceeded));
                 }
-                window.push(ModelSample::valid(ModelValue::new(value)?));
+                let value = ModelValue::new(value)
+                    .map_err(ModelLifecycleError::from)
+                    .map_err(E::from)?;
+                window.push(ModelSample::valid(value));
             }
-            samples.write(start, &window)?;
+            samples.write(start, &window).map_err(E::from)?;
         }
         Ok(ModelGeneration {
-            shape: target.clone(),
+            shape: self.contract.target().clone(),
             samples,
         })
     }
@@ -214,6 +317,99 @@ impl ModelLifecycle {
                 self.contract.arithmetic_precision(),
                 self.contract.bounds().max_absolute_model_value(),
             )?;
+        }
+        self.restore_later_domain_overlap(&mut base)?;
+        Ok(PreparedFinalModel { generation: base })
+    }
+
+    /// Apply dense plane increments in canonical plane order using bounded
+    /// model windows, then restore ownership of overlapping domains. Values
+    /// inside each plane use x-major deconvolution order; storage is y-major.
+    /// Zero increments leave a sample unchanged. All nonzero increments obey
+    /// the same support, value, count and precision rules as sparse terms.
+    ///
+    /// # Panics
+    ///
+    /// If `base` does not belong to this lifecycle's model space.
+    ///
+    /// # Errors
+    ///
+    /// If a plane or its samples violate the model contract or storage fails.
+    pub fn prepare_final_dense_model(
+        &self,
+        mut base: ModelGeneration,
+        planes: impl IntoIterator<Item = DenseModelPlane>,
+    ) -> Result<PreparedFinalModel, ModelLifecycleError> {
+        self.validate_generation(&base)?;
+        let mut previous_end = 0;
+        let mut terms = 0_usize;
+        for plane in planes {
+            let shape = self.contract.target();
+            let [width, height] = shape
+                .domains()
+                .get(plane.domain)
+                .ok_or(ModelLifecycleError::CellOutsideShape)?
+                .pixels();
+            let length = width
+                .checked_mul(height)
+                .ok_or(ModelLifecycleError::CellOutsideShape)?;
+            if plane.values.len() != length {
+                return Err(ModelLifecycleError::SampleCountMismatch {
+                    expected: length,
+                    actual: plane.values.len(),
+                });
+            }
+            let start = shape
+                .flat_index(ModelCell::new(
+                    plane.domain,
+                    plane.coefficient,
+                    plane.polarization,
+                    [0, 0],
+                ))
+                .ok_or(ModelLifecycleError::CellOutsideShape)?;
+            if start < previous_end {
+                return Err(ModelLifecycleError::NonCanonicalDelta);
+            }
+            previous_end = start
+                .checked_add(length)
+                .ok_or(ModelLifecycleError::CellOutsideShape)?;
+            for offset in (0..length).step_by(base.samples.window_samples()) {
+                let end = offset
+                    .saturating_add(base.samples.window_samples())
+                    .min(length);
+                let mut window = base.samples.read(start + offset..start + end)?;
+                for (local, sample) in window.iter_mut().enumerate() {
+                    let position = offset + local;
+                    let x = position % width;
+                    let y = position / width;
+                    let increment = plane.values[x * height + y];
+                    if increment == 0.0 {
+                        continue;
+                    }
+                    terms += 1;
+                    let bound = self.contract.bounds().max_delta_terms();
+                    if terms > bound {
+                        return Err(ModelLifecycleError::DeltaTermBoundExceeded { terms, bound });
+                    }
+                    let increment = ModelValue::new(increment)?;
+                    validate_model_value(
+                        increment,
+                        self.contract.bounds().max_absolute_delta_value(),
+                    )
+                    .map_err(|_| ModelLifecycleError::DeltaValueBoundExceeded)?;
+                    if sample.support() != ModelSupport::Valid {
+                        return Err(ModelLifecycleError::DeltaOutsideValidSupport);
+                    }
+                    let value = ModelValue::new(add_with_precision(
+                        self.contract.arithmetic_precision(),
+                        sample.value().value(),
+                        increment.value(),
+                    ))?;
+                    validate_model_value(value, self.contract.bounds().max_absolute_model_value())?;
+                    *sample = ModelSample::valid(value);
+                }
+                base.samples.write(start + offset, &window)?;
+            }
         }
         self.restore_later_domain_overlap(&mut base)?;
         Ok(PreparedFinalModel { generation: base })
@@ -277,22 +473,24 @@ impl ModelLifecycle {
         if shape.domains().len() < 2 {
             return Ok(());
         }
+        let coordinates = (0..shape.domains().len())
+            .map(|domain| {
+                shape
+                    .direction(domain)
+                    .map(DirectionCoordinateSpec::coordinate)
+                    .ok_or(ModelLifecycleError::UnsupportedDirectionConversion)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         for earlier in (0..shape.domains().len() - 1).rev() {
             let [width, height] = shape.domains()[earlier].pixels();
-            let target_coordinate = shape
-                .direction(earlier)
-                .ok_or(ModelLifecycleError::UnsupportedDirectionConversion)?;
             for y in 0..height {
                 for x in 0..width {
                     let mut owner = None;
                     for later in earlier + 1..shape.domains().len() {
-                        let source_coordinate = shape
-                            .direction(later)
-                            .ok_or(ModelLifecycleError::UnsupportedDirectionConversion)?;
                         if let Some(pixel) = crate::mask::reprojected_pixel(
-                            source_coordinate,
+                            &coordinates[later],
                             shape.domains()[later].pixels(),
-                            target_coordinate,
+                            &coordinates[earlier],
                             [x, y],
                         )
                         .map_err(|_| ModelLifecycleError::UnsupportedDirectionConversion)?

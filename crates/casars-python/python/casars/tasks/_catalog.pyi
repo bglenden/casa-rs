@@ -163,14 +163,14 @@ def importvla(
 def tclean(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     selectdata: bool = ...,
-    field: str = ...,
-    spw: str = ...,
-    timerange: str = ...,
-    uvrange: str = ...,
-    antenna: str = ...,
-    scan: str = ...,
+    field: str | list[str] | tuple[str, ...] = ...,
+    spw: str | list[str] | tuple[str, ...] = ...,
+    timerange: str | list[str] | tuple[str, ...] = ...,
+    uvrange: str | list[str] | tuple[str, ...] = ...,
+    antenna: str | list[str] | tuple[str, ...] = ...,
+    scan: str | list[str] | tuple[str, ...] = ...,
     observation: str = ...,
-    intent: str = ...,
+    intent: str | list[str] | tuple[str, ...] = ...,
     datacolumn: str = ...,
     imagename: StrPath = ...,
     imsize: int | list[int] | tuple[int, ...] = ...,
@@ -178,7 +178,7 @@ def tclean(
     phasecenter: str = ...,
     stokes: str = ...,
     projection: str = ...,
-    startmodel: StrPath = ...,
+    startmodel: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     specmode: Literal['cont', 'cube', 'cubedata', 'cubesource', 'mfs', 'mvc'] = ...,
     reffreq: str = ...,
     nchan: int = ...,
@@ -323,9 +323,9 @@ def simobserve(
 
 def imhead(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    mode: Literal['list', 'put', 'summary'] = ...,
+    mode: Literal['add', 'del', 'get', 'history', 'list', 'put', 'summary'] = ...,
     hdkey: str = ...,
-    hdvalue: str = ...,
+    hdvalue: str | bool | int | float | dict[str, ParameterData] | list[ParameterData] = ...,
     verbose: bool = ...,
 ) -> Any:
     ...
@@ -912,6 +912,143 @@ def importfits(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits')
+def msconvert(
+    *,
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    outputvis: StrPath = ...,
+    outformat: Literal['', 'msv2', 'msv4'] = ...,
+    datagroups: str | list[str] | tuple[str, ...] = ...,
+    partitionscheme: Literal['FIELD_ID', 'SCAN_NUMBER'] | list[Literal['FIELD_ID', 'SCAN_NUMBER']] | tuple[Literal['FIELD_ID', 'SCAN_NUMBER'], ...] = ...,
+    withpointing: bool = ...,
+    padding: Literal['flagged', 'omitted'] = ...,
+    chunks: list[int] | tuple[int, ...] = ...,
+    codec: Literal['blosc', 'none', 'zstd'] = ...,
+    nthreads: int = ...,
+    overwrite: bool = ...,
+) -> TaskCompletion:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits']
+def simanalyze(
+    project: str = ...,
+    image: bool = ...,
+    imagename: str = ...,
+    skymodel: StrPath = ...,
+    vis: str = ...,
+    modelimage: str = ...,
+    imsize: int | list[int] | tuple[int, ...] = ...,
+    imdirection: str = ...,
+    cell: str | list[str] | tuple[str, ...] = ...,
+    interactive: bool = ...,
+    niter: int = ...,
+    threshold: str = ...,
+    weighting: Literal['briggs', 'briggsabs', 'briggsbwtaper', 'natural', 'radial', 'superuniform', 'uniform'] = ...,
+    mask: str | list[str] | tuple[str, ...] = ...,
+    outertaper: str | list[str] | tuple[str, ...] = ...,
+    pbcor: bool = ...,
+    stokes: str = ...,
+    featherimage: str = ...,
+    analyze: bool = ...,
+    showuv: bool = ...,
+    showpsf: bool = ...,
+    showmodel: bool = ...,
+    showconvolved: bool = ...,
+    showclean: bool = ...,
+    showresidual: bool = ...,
+    showdifference: bool = ...,
+    showfidelity: bool = ...,
+    graphics: Literal['', 'both', 'file', 'none', 'screen'] = ...,
+    verbose: bool = ...,
+    overwrite: bool = ...,
+    dryrun: bool = ...,
+    logfile: str = ...,
+) -> Any:
+    ...
+
+def tsdimaging(
+    infiles: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    outfile: StrPath = ...,
+    overwrite: bool = ...,
+    field: str | list[str] | tuple[str, ...] = ...,
+    spw: str | list[str] | tuple[str, ...] = ...,
+    antenna: str | list[str] | tuple[str, ...] = ...,
+    scan: str | list[str] | tuple[str, ...] = ...,
+    intent: str | list[str] | tuple[str, ...] = ...,
+    timerange: str | list[str] | tuple[str, ...] = ...,
+    outframe: str = ...,
+    mode: str = ...,
+    nchan: int = ...,
+    start: int | str = ...,
+    width: int | str = ...,
+    veltype: str = ...,
+    specmode: Literal['cont', 'cube', 'cubedata', 'cubesource', 'mfs', 'mvc'] = ...,
+    interpolation: Literal['cubic', 'linear', 'nearest', 'none'] = ...,
+    pointingcolumn: str = ...,
+    convertfirst: str = ...,
+    projection: str = ...,
+    imsize: int | list[int] | tuple[int, ...] = ...,
+    cell: str | list[str] | tuple[str, ...] = ...,
+    phasecenter: str = ...,
+    stokes: str = ...,
+    gridfunction: str = ...,
+    convsupport: int = ...,
+    truncate: int | float | str = ...,
+    gwidth: int | float | str = ...,
+    jwidth: int | float | str = ...,
+    clipminmax: bool = ...,
+    minweight: float = ...,
+    brightnessunit: Literal['', 'K', 'Jy/beam'] = ...,
+    restfreq: str | list[str] | tuple[str, ...] = ...,
+) -> Any:
+    ...
+
+def concat(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    concatvis: StrPath = ...,
+    freqtol: int | float | str | dict[str, object] = ...,
+    dirtol: int | float | str | dict[str, object] = ...,
+    respectname: bool = ...,
+    timesort: bool = ...,
+    copypointing: bool = ...,
+    visweightscale: float | list[float] | tuple[float, ...] = ...,
+    forcesingleephemfield: int | float | str | dict[str, object] = ...,
+) -> Any:
+    ...
+
+def simalma(
+    project: str = ...,
+    dryrun: bool = ...,
+    skymodel: StrPath = ...,
+    inbright: str = ...,
+    indirection: str = ...,
+    incell: str = ...,
+    incenter: str = ...,
+    inwidth: str = ...,
+    complist: StrPath = ...,
+    compwidth: str = ...,
+    setpointings: bool = ...,
+    ptgfile: StrPath = ...,
+    integration: str = ...,
+    direction: str | list[str] | tuple[str, ...] = ...,
+    mapsize: str | list[str] | tuple[str, ...] = ...,
+    antennalist: str | list[str] | tuple[str, ...] = ...,
+    correlator: str | list[str] | tuple[str, ...] = ...,
+    hourangle: str = ...,
+    totaltime: str | list[str] | tuple[str, ...] = ...,
+    tpnant: int = ...,
+    tptime: str = ...,
+    pwv: float = ...,
+    image: bool = ...,
+    imsize: int | list[int] | tuple[int, ...] = ...,
+    imdirection: str = ...,
+    cell: str = ...,
+    niter: int = ...,
+    threshold: str = ...,
+    graphics: Literal['', 'both', 'file', 'none', 'screen'] = ...,
+    verbose: bool = ...,
+    overwrite: bool = ...,
+) -> Any:
+    ...
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma']

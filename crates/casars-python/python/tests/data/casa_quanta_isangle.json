@@ -1,0 +1,120 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "input": "1rad",
+      "result": true
+    },
+    {
+      "input": "-12deg",
+      "result": true
+    },
+    {
+      "input": "1arcsec",
+      "result": true
+    },
+    {
+      "input": "1h",
+      "result": true
+    },
+    {
+      "input": "1s",
+      "result": true
+    },
+    {
+      "input": "1d",
+      "result": true
+    },
+    {
+      "input": "1m",
+      "result": false
+    },
+    {
+      "input": "1Hz",
+      "result": false
+    },
+    {
+      "input": "1m/s",
+      "result": false
+    },
+    {
+      "input": "1",
+      "result": false
+    },
+    {
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": 2,
+      "result": false
+    },
+    {
+      "input": 0.0,
+      "result": false
+    },
+    {
+      "input": true,
+      "result": false
+    },
+    {
+      "input": null,
+      "result": false
+    },
+    {
+      "input": [],
+      "result": false
+    },
+    {
+      "input": [
+        1,
+        2
+      ],
+      "result": false
+    },
+    {
+      "input": {},
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "input": {
+        "value": 1.0,
+        "unit": "rad"
+      },
+      "result": true
+    },
+    {
+      "input": {
+        "value": 2.0,
+        "unit": "s"
+      },
+      "result": true
+    },
+    {
+      "input": {
+        "value": 1.0,
+        "unit": "m"
+      },
+      "result": false
+    },
+    {
+      "input": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "deg"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    }
+  ]
+}

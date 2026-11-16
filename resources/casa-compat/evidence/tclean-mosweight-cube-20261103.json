@@ -1,0 +1,3704 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean mosweight on a mosaic cube's per-channel density (BriggsCubeWeightor multiField)",
+ "work_issue": 980,
+ "issue": 818,
+ "date": "2026-11-03",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "ab3c883f3e4682a35b2aec0cc65bc364c3642220",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_case_matrix.py (absolute, unresolved --output under ~/ext)",
+ "limits": "exact image-product inventory, masks and finite support; NRMS <= 1e-3, .sumwt within 5e-5; WCS, units, beams; exact iterdone/nmajordone/stopcode; maxpsfsidelobe and cyclethreshold 1e-4 relative plus 1e-8 absolute",
+ "runs": {
+  "f1-adhoc": {
+   "case_file": "resources/casa-compat/tclean-mosweight-cube-cases.json",
+   "case_file_sha256": "e66a9f545443cbc0718d5841fe5dae808a70a25adac9b4ef87220f5146c52fe7",
+   "binary_sha256": "51785044a3e0cfa9a2d5a3ddeaf4bc5eac80e07a0be52b62a1e22e60bb625f58",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 9,
+    "total": 19
+   },
+   "cases": {
+    "alma_briggs_mw": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.000639759976017877,
+       "passed": true
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 6.198862721534916e-06,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 0.0005577925000072795,
+       "passed": true
+      },
+      "img.residual": {
+       "nrms": 0.000639759976017877,
+       "passed": true
+      },
+      "img.sumwt": {
+       "nrms": 1.1738129061964073e-05,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 1.1142796395373686e-05,
+       "passed": true
+      }
+     }
+    },
+    "alma_briggs_mwF": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.0004293263020459361,
+       "passed": true
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 2.7386045424186427e-06,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 0.0003924281444804256,
+       "passed": true
+      },
+      "img.residual": {
+       "nrms": 0.0004293263020459361,
+       "passed": true
+      },
+      "img.sumwt": {
+       "nrms": 4.151496822201201e-06,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 4.251835010357949e-06,
+       "passed": true
+      }
+     }
+    },
+    "alma_uniform_mw": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.009559030115252288,
+       "passed": false
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 4.561982398916006e-05,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 0.009337845572609632,
+       "passed": false
+      },
+      "img.residual": {
+       "nrms": 0.009559030115252288,
+       "passed": false
+      },
+      "img.sumwt": {
+       "nrms": 3.372337402604747e-05,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 8.964117525003275e-05,
+       "passed": true
+      }
+     }
+    },
+    "alma_briggsabs_mw": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.00013298020427504018,
+       "passed": true
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 2.14482762397482e-06,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 0.00011547995783315847,
+       "passed": true
+      },
+      "img.residual": {
+       "nrms": 0.00013298020427504018,
+       "passed": true
+      },
+      "img.sumwt": {
+       "nrms": 4.709425124312767e-06,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 3.6536505946521573e-06,
+       "passed": true
+      }
+     }
+    },
+    "alma_briggs_mw_npixels": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.0009013994513969433,
+       "passed": true
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 1.1329814685740435e-05,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 0.0009611807435074283,
+       "passed": true
+      },
+      "img.residual": {
+       "nrms": 0.0009013994513969433,
+       "passed": true
+      },
+      "img.sumwt": {
+       "nrms": 1.5093486888023523e-05,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 1.5111027769065115e-05,
+       "passed": true
+      }
+     }
+    },
+    "alma_briggs_mw_two_fields": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.0012074943801249063,
+       "passed": false
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 1.0538326881323028e-05,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 0.001317984887131771,
+       "passed": false
+      },
+      "img.residual": {
+       "nrms": 0.0012074943801249063,
+       "passed": false
+      },
+      "img.sumwt": {
+       "nrms": 2.2995891013594113e-05,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 1.917589234877424e-05,
+       "passed": true
+      }
+     }
+    },
+    "alma_briggs_mw_clean": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 249,
+         "casa": 249
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.11279010772705078,
+         "casa": 0.11277845501899719,
+         "passed": false
+        },
+        "cyclethreshold": {
+         "native": 0.04825853928923607,
+         "casa": 0.04825379326939583,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.0003686418484927431,
+       "passed": true
+      },
+      "img.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.model": {
+       "nrms": 3.1501792389254325e-05,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 6.198862721534916e-06,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 0.0005577925000072795,
+       "passed": true
+      },
+      "img.residual": {
+       "nrms": 0.001613898397203504,
+       "passed": false
+      },
+      "img.sumwt": {
+       "nrms": 1.1738129061964073e-05,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 1.1142796395373686e-05,
+       "passed": true
+      }
+     }
+    },
+    "evla_briggs_mw": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.323909394327675,
+       "passed": false,
+       "mask_mismatch": 4804
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 0.06640834296734137,
+       "passed": false,
+       "mask_mismatch": 4804
+      },
+      "img.psf": {
+       "nrms": 0.21281268336384482,
+       "passed": false
+      },
+      "img.residual": {
+       "nrms": 0.323909394327675,
+       "passed": false,
+       "mask_mismatch": 4804
+      },
+      "img.sumwt": {
+       "nrms": 0.12078776095570067,
+       "passed": false
+      },
+      "img.weight": {
+       "nrms": 0.08939257348381438,
+       "passed": false
+      }
+     }
+    },
+    "evla_uniform_mw": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.33700197141735144,
+       "passed": false,
+       "mask_mismatch": 4863
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 0.06687075773588874,
+       "passed": false,
+       "mask_mismatch": 4863
+      },
+      "img.psf": {
+       "nrms": 0.22165183887606923,
+       "passed": false
+      },
+      "img.residual": {
+       "nrms": 0.33700197141735144,
+       "passed": false,
+       "mask_mismatch": 4863
+      },
+      "img.sumwt": {
+       "nrms": 0.12324359545995103,
+       "passed": false
+      },
+      "img.weight": {
+       "nrms": 0.09010672770600715,
+       "passed": false
+      }
+     }
+    },
+    "evla_briggs_mwF": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.34119565545783687,
+       "passed": false,
+       "mask_mismatch": 4582
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 0.06421303276079411,
+       "passed": false,
+       "mask_mismatch": 4582
+      },
+      "img.psf": {
+       "nrms": 0.2307462740620246,
+       "passed": false
+      },
+      "img.residual": {
+       "nrms": 0.34119565545783687,
+       "passed": false,
+       "mask_mismatch": 4582
+      },
+      "img.sumwt": {
+       "nrms": 0.11484388362840758,
+       "passed": false
+      },
+      "img.weight": {
+       "nrms": 0.08589191336406214,
+       "passed": false
+      }
+     }
+    },
+    "probe_alma_field0_own_centre": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 6.53864068673932e-07,
+       "passed": true
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 1.5335638426909475e-07,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 9.977802229384201e-08,
+       "passed": true
+      },
+      "img.residual": {
+       "nrms": 6.53864068673932e-07,
+       "passed": true
+      },
+      "img.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 4.661595700200966e-07,
+       "passed": true
+      }
+     }
+    },
+    "probe_alma_field0_off_centre": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.017026431069607238,
+       "passed": false
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 1.8131705481455013e-07,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 0.026466861893018407,
+       "passed": false
+      },
+      "img.residual": {
+       "nrms": 0.017026431069607238,
+       "passed": false
+      },
+      "img.sumwt": {
+       "nrms": 0.000409478519358873,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 4.810022600941584e-07,
+       "passed": true
+      }
+     }
+    },
+    "probe_alma_field1_own_centre": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 6.718619434424399e-07,
+       "passed": true
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 1.5582838010828158e-07,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 8.593355633733457e-08,
+       "passed": true
+      },
+      "img.residual": {
+       "nrms": 6.718619434424399e-07,
+       "passed": true
+      },
+      "img.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 4.5239951815365797e-07,
+       "passed": true
+      }
+     }
+    },
+    "probe_alma_field1_own_centre_briggs": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 6.891969891362256e-07,
+       "passed": true
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 1.4779279968390059e-07,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 9.383613508219984e-08,
+       "passed": true
+      },
+      "img.residual": {
+       "nrms": 6.891969891362256e-07,
+       "passed": true
+      },
+      "img.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 4.855302801430406e-07,
+       "passed": true
+      }
+     }
+    },
+    "probe_evla_natural_two_fields": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 2.0805827574270626e-06,
+       "passed": true
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 1.7882784480024553e-07,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 1.2543262549743166e-07,
+       "passed": true
+      },
+      "img.residual": {
+       "nrms": 2.0805827574270626e-06,
+       "passed": true
+      },
+      "img.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 3.0175379321913034e-07,
+       "passed": true
+      }
+     }
+    },
+    "probe_evla_standard_uniform_field0": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 7.47877303919301e-08,
+       "passed": true
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.psf": {
+       "nrms": 1.3452094330659384e-07,
+       "passed": true
+      },
+      "img.residual": {
+       "nrms": 7.47877303919301e-08,
+       "passed": true
+      },
+      "img.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "probe_evla_uniform_mw_field0": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.00013997368855161492,
+       "passed": false,
+       "mask_mismatch": 10
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 4.1674081028312885e-05,
+       "passed": false,
+       "mask_mismatch": 10
+      },
+      "img.psf": {
+       "nrms": 0.0036139570202309893,
+       "passed": false
+      },
+      "img.residual": {
+       "nrms": 0.00013997368855161492,
+       "passed": false,
+       "mask_mismatch": 10
+      },
+      "img.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 0.00012864769647755316,
+       "passed": true
+      }
+     }
+    },
+    "probe_evla_uniform_mwF_field0": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.00013997368855161492,
+       "passed": false,
+       "mask_mismatch": 10
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 4.1674081028312885e-05,
+       "passed": false,
+       "mask_mismatch": 10
+      },
+      "img.psf": {
+       "nrms": 0.0036139570202309893,
+       "passed": false
+      },
+      "img.residual": {
+       "nrms": 0.00013997368855161492,
+       "passed": false,
+       "mask_mismatch": 10
+      },
+      "img.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 0.00012864769647755316,
+       "passed": true
+      }
+     }
+    },
+    "probe_evla_uniform_mw_field1_own_centre": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "img.image": {
+       "nrms": 0.000288687724782545,
+       "passed": false,
+       "mask_mismatch": 26
+      },
+      "img.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.pb": {
+       "nrms": 6.344775395960504e-05,
+       "passed": false,
+       "mask_mismatch": 26
+      },
+      "img.psf": {
+       "nrms": 0.004847696903350352,
+       "passed": false
+      },
+      "img.residual": {
+       "nrms": 0.000288687724782545,
+       "passed": false,
+       "mask_mismatch": 26
+      },
+      "img.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "img.weight": {
+       "nrms": 0.000253893704636653,
+       "passed": true
+      }
+     }
+    }
+   }
+  },
+  "f2-mosaic-cube": {
+   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
+   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+   "binary_sha256": "51785044a3e0cfa9a2d5a3ddeaf4bc5eac80e07a0be52b62a1e22e60bb625f58",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 13,
+    "total": 19
+   },
+   "cases": {
+    "test_mosaic_cube.test_mosaic_briggsbwtaper.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst1.image": {
+       "nrms": 0.0006318218320045346,
+       "passed": true
+      },
+      "tst1.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst1.pb": {
+       "nrms": 6.126066060640727e-06,
+       "passed": true
+      },
+      "tst1.psf": {
+       "nrms": 0.0005504960605755173,
+       "passed": true
+      },
+      "tst1.residual": {
+       "nrms": 0.0006318218320045346,
+       "passed": true
+      },
+      "tst1.sumwt": {
+       "nrms": 1.1698202045513131e-05,
+       "passed": true
+      },
+      "tst1.weight": {
+       "nrms": 1.1009256927599785e-05,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_mosaic_briggsbwtaper.2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst2.image": {
+       "nrms": 0.000639759976017877,
+       "passed": true
+      },
+      "tst2.model": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst2.pb": {
+       "nrms": 6.198862721534916e-06,
+       "passed": true
+      },
+      "tst2.psf": {
+       "nrms": 0.0005577925000072795,
+       "passed": true
+      },
+      "tst2.residual": {
+       "nrms": 0.000639759976017877,
+       "passed": true
+      },
+      "tst2.sumwt": {
+       "nrms": 1.1738129061964073e-05,
+       "passed": true
+      },
+      "tst2.weight": {
+       "nrms": 1.1142796395373686e-05,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_standard_onefield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14796164631843567,
+         "casa": 0.14796164631843567,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.03350982442498207,
+         "casa": 0.033509813249111176,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 2.6569344181365946e-07,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 3.968782184133589e-07,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 9.643736048465862e-08,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 1.5040369518893153e-07,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 4.5450181974012355e-07,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_standard_twofield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14814192056655884,
+         "casa": 0.14814192056655884,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.04064222797751427,
+         "casa": 0.04064222052693367,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 2.908905709685602e-06,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 5.588060900489823e-06,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 1.6548785072810104e-07,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 1.3229388489630979e-07,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 5.2791127403405725e-06,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14775268733501434,
+         "casa": 0.14775270223617554,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.034303538501262665,
+         "casa": 0.03430362790822983,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 1.0365386660518924e-06,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 1.6657136934024226e-06,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 5.545279361099828e-07,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 6.88472128692072e-08,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 8.831666697093322e-08,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 2.1838461701431144e-06,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.weight": {
+       "nrms": 1.822879768678514e-07,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14857636392116547,
+         "casa": 0.14857636392116547,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.05251051113009453,
+         "casa": 0.05251063033938408,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 3.2536578651004854e-06,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 6.720975946342636e-06,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 5.576340918063326e-07,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 9.974720055391088e-08,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 9.815583906319547e-08,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 6.424213344548055e-06,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.weight": {
+       "nrms": 1.7533991446086969e-07,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_onefield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14775268733501434,
+         "casa": 0.14775270223617554,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.034303538501262665,
+         "casa": 0.03430362790822983,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 1.0365386660518924e-06,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 1.6657136934024226e-06,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 5.545279361099828e-07,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 6.88472128692072e-08,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 8.831666689986646e-08,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 2.1838461701431144e-06,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.weight": {
+       "nrms": 1.8228797682013935e-07,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_twofield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14857636392116547,
+         "casa": 0.14857636392116547,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.05251051113009453,
+         "casa": 0.05251063033938408,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 3.2536578651004854e-06,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 6.720975946342636e-06,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 5.576340918063326e-07,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 9.974720055391088e-08,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 9.815583906319547e-08,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 6.424213344548055e-06,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.weight": {
+       "nrms": 1.7533991446086969e-07,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield.1+2": {
+     "passed": false,
+     "steps": [
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 3
+        }
+       },
+       "scalars": {}
+      },
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "scalars": {}
+      }
+     ],
+     "products": {}
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield.1+2": {
+     "passed": false,
+     "steps": [
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 3
+        }
+       },
+       "scalars": {}
+      },
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "scalars": {}
+      }
+     ],
+     "products": {}
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_onefield.1+2": {
+     "passed": false,
+     "steps": [
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 3
+        }
+       },
+       "scalars": {}
+      },
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "scalars": {}
+      }
+     ],
+     "products": {}
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_twofield.1+2": {
+     "passed": false,
+     "steps": [
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 3
+        }
+       },
+       "scalars": {}
+      },
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "scalars": {}
+      }
+     ],
+     "products": {}
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield_upTrue.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14775268733501434,
+         "casa": 0.14775270223617554,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.034303538501262665,
+         "casa": 0.03430362790822983,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 1.0365386660518924e-06,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 1.6657136934024226e-06,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 5.545279361099828e-07,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 6.88472128692072e-08,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 8.831666697093322e-08,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 2.1838461701431144e-06,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.weight": {
+       "nrms": 1.822879768678514e-07,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield_upTrue.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14857636392116547,
+         "casa": 0.14857636392116547,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.05251051113009453,
+         "casa": 0.05251063033938408,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 3.2536578651004854e-06,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 6.720975946342636e-06,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 5.576340918063326e-07,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 9.974720055391088e-08,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 9.815583906319547e-08,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 6.424213344548055e-06,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.weight": {
+       "nrms": 1.7533991446086969e-07,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield_upTrue.1+2": {
+     "passed": false,
+     "steps": [
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 3
+        }
+       },
+       "scalars": {}
+      },
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "scalars": {}
+      }
+     ],
+     "products": {}
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield_upTrue.1+2": {
+     "passed": false,
+     "steps": [
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 3
+        }
+       },
+       "scalars": {}
+      },
+      {
+       "native_refused": "tclean failed: the installed imaging implementation cannot run this request: AW projection images specmode mfs; a cube waits for its per-plane weight check (#719)",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "scalars": {}
+      }
+     ],
+     "products": {}
+    },
+    "test_mosaic_cube.test_cube_wproj_onefield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14796683192253113,
+         "casa": 0.14796681702136993,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.03336046636104584,
+         "casa": 0.033360470086336136,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 3.3991740060272623e-07,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 5.269643058591931e-07,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 1.15191002738874e-07,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 7.556516414565927e-07,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 5.518862882356126e-07,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 7.579466609649956e-08,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_wproj_onefield_autowprojplanes.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14793288707733154,
+         "casa": 0.14793290197849274,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.03335265815258026,
+         "casa": 0.03335264325141907,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 0.00011497355382708089,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 0.000256818002633932,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 1.2650054356768014e-07,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 0.0005033242561398929,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 0.00021029324613419632,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 1.1675954837970004e-07,
+       "passed": true
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_wproj_twofield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14815302193164825,
+         "casa": 0.14815299212932587,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.040611181408166885,
+         "casa": 0.040611155331134796,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 2.8758521715640122e-06,
+       "passed": true
+      },
+      "tst.image.pbcor": {
+       "nrms": 5.550090443842992e-06,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 1.1158751602841524e-07,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 7.316388154382492e-07,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 5.207971004649362e-06,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 6.772475786996309e-08,
+       "passed": true
+      }
+     }
+    }
+   }
+  },
+  "f3-cube-density": {
+   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
+   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+   "binary_sha256": "51785044a3e0cfa9a2d5a3ddeaf4bc5eac80e07a0be52b62a1e22e60bb625f58",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 14,
+    "total": 16
+   },
+   "cases": {
+    "test_stokes.test_stokes_weighting.9": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 20,
+         "casa": 20
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1685747653245926,
+         "casa": 0.1685747653245926,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.07935158908367157,
+         "casa": 0.07935155928134918,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst8.image": {
+       "nrms": 1.8836957230768797e-07,
+       "passed": true
+      },
+      "tst8.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst8.model": {
+       "nrms": 1.0358911364786055e-07,
+       "passed": true
+      },
+      "tst8.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst8.psf": {
+       "nrms": 1.3836207163168752e-07,
+       "passed": true
+      },
+      "tst8.residual": {
+       "nrms": 4.4075745912656883e-07,
+       "passed": true
+      },
+      "tst8.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cubedata_briggs.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 188,
+         "casa": 188
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17362326383590698,
+         "casa": 0.17362326383590698,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 6.876051425933838,
+         "casa": 6.876051425933838,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst.image": {
+       "nrms": 4.587027192808966e-07,
+       "passed": true
+      },
+      "tst.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.model": {
+       "nrms": 7.92330824113804e-08,
+       "passed": true
+      },
+      "tst.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst.psf": {
+       "nrms": 5.008200583409195e-07,
+       "passed": true
+      },
+      "tst.residual": {
+       "nrms": 5.155813706296867e-07,
+       "passed": true
+      },
+      "tst.sumwt": {
+       "nrms": 2.9820986200073955e-08,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_perchanweight_briggs.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 19,
+         "casa": 19
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12834814190864563,
+         "casa": 0.12834811210632324,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.3465430736541748,
+         "casa": 0.3465430438518524,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_nat.image": {
+       "nrms": 8.167911862703936e-08,
+       "passed": true
+      },
+      "tst_nat.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_nat.model": {
+       "nrms": 7.044290130319318e-08,
+       "passed": true
+      },
+      "tst_nat.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_nat.psf": {
+       "nrms": 1.014539925687666e-07,
+       "passed": true
+      },
+      "tst_nat.residual": {
+       "nrms": 7.153566354736495e-08,
+       "passed": true
+      },
+      "tst_nat.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_perchanweight_briggs.2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 19,
+         "casa": 19
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.10077027231454849,
+         "casa": 0.1007702648639679,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.2720821797847748,
+         "casa": 0.2720821797847748,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_briggs0.image": {
+       "nrms": 9.686870645354998e-08,
+       "passed": true
+      },
+      "tst_briggs0.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_briggs0.model": {
+       "nrms": 1.0956882376165285e-07,
+       "passed": true
+      },
+      "tst_briggs0.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_briggs0.psf": {
+       "nrms": 1.1435055264769776e-07,
+       "passed": true
+      },
+      "tst_briggs0.residual": {
+       "nrms": 8.387960185377994e-08,
+       "passed": true
+      },
+      "tst_briggs0.sumwt": {
+       "nrms": 2.54499120774985e-08,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_perchanweight_briggs.3": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 19,
+         "casa": 19
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1621500700712204,
+         "casa": 0.1621500849723816,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.43780913949012756,
+         "casa": 0.43780916929244995,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_briggs_2.image": {
+       "nrms": 1.0265899233856986e-07,
+       "passed": true
+      },
+      "tst_briggs_2.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_briggs_2.model": {
+       "nrms": 9.297223283670408e-08,
+       "passed": true
+      },
+      "tst_briggs_2.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_briggs_2.psf": {
+       "nrms": 9.331489536763123e-08,
+       "passed": true
+      },
+      "tst_briggs_2.residual": {
+       "nrms": 9.700659602876976e-08,
+       "passed": true
+      },
+      "tst_briggs_2.sumwt": {
+       "nrms": 3.426355640138037e-08,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_perchanweight_briggs.4": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 19,
+         "casa": 19
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.027905497699975967,
+         "casa": 0.02790548838675022,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.13500122725963593,
+         "casa": 0.13500121235847473,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_briggs_3.image": {
+       "nrms": 7.949949736455055e-08,
+       "passed": true
+      },
+      "tst_briggs_3.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_briggs_3.model": {
+       "nrms": 1.3087245510112924e-07,
+       "passed": true
+      },
+      "tst_briggs_3.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_briggs_3.psf": {
+       "nrms": 9.673351392988773e-08,
+       "passed": true
+      },
+      "tst_briggs_3.residual": {
+       "nrms": 7.693932742803716e-08,
+       "passed": true
+      },
+      "tst_briggs_3.sumwt": {
+       "nrms": 3.7936065406630846e-08,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_weighting_taper.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 19,
+         "casa": 19
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.16217546164989471,
+         "casa": 0.1621754765510559,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.43787768483161926,
+         "casa": 0.4378777742385864,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_uniform_notaper.image": {
+       "nrms": 2.8981349042341174e-07,
+       "passed": true
+      },
+      "tst_uniform_notaper.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_uniform_notaper.model": {
+       "nrms": 8.19938046133944e-08,
+       "passed": true
+      },
+      "tst_uniform_notaper.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_uniform_notaper.psf": {
+       "nrms": 8.776094091274131e-08,
+       "passed": true
+      },
+      "tst_uniform_notaper.residual": {
+       "nrms": 7.240053337480902e-08,
+       "passed": true
+      },
+      "tst_uniform_notaper.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_weighting_taper.2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 19,
+         "casa": 19
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.02846468612551689,
+         "casa": 0.028464684262871742,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.13500122725963593,
+         "casa": 0.13500122725963593,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_uniform_with_taper.image": {
+       "nrms": 1.989954097633824e-07,
+       "passed": true
+      },
+      "tst_uniform_with_taper.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_uniform_with_taper.model": {
+       "nrms": 7.695861654612305e-08,
+       "passed": true
+      },
+      "tst_uniform_with_taper.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_uniform_with_taper.psf": {
+       "nrms": 7.672368404988307e-08,
+       "passed": true
+      },
+      "tst_uniform_with_taper.residual": {
+       "nrms": 7.521289356871977e-08,
+       "passed": true
+      },
+      "tst_uniform_with_taper.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_weighting_taper.3": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 19,
+         "casa": 19
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.22686372697353363,
+         "casa": 0.2268637716770172,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.6125375628471375,
+         "casa": 0.612537682056427,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_natural_with_taper.image": {
+       "nrms": 5.190920836343232e-06,
+       "passed": true
+      },
+      "tst_natural_with_taper.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_natural_with_taper.model": {
+       "nrms": 8.020870005938994e-08,
+       "passed": true
+      },
+      "tst_natural_with_taper.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_natural_with_taper.psf": {
+       "nrms": 1.1774412237301181e-07,
+       "passed": true
+      },
+      "tst_natural_with_taper.residual": {
+       "nrms": 8.148359051479773e-08,
+       "passed": true
+      },
+      "tst_natural_with_taper.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_weighting_taper.4": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 19,
+         "casa": 19
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.02846457064151764,
+         "casa": 0.02846456505358219,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.13500122725963593,
+         "casa": 0.13500122725963593,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_briggs_with_taper.image": {
+       "nrms": 2.8230654343375954e-07,
+       "passed": true
+      },
+      "tst_briggs_with_taper.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_briggs_with_taper.model": {
+       "nrms": 1.475454441615565e-07,
+       "passed": true
+      },
+      "tst_briggs_with_taper.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_briggs_with_taper.psf": {
+       "nrms": 9.480863577425631e-08,
+       "passed": true
+      },
+      "tst_briggs_with_taper.residual": {
+       "nrms": 7.720289937075853e-08,
+       "passed": true
+      },
+      "tst_briggs_with_taper.sumwt": {
+       "nrms": 5.970959249711113e-08,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_weighting_taper_cas13260.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 20,
+         "casa": 20
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1125011071562767,
+         "casa": 0.1125011071562767,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.13669052720069885,
+         "casa": 0.13669052720069885,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_natural_with_taper_910_lambda.image": {
+       "nrms": 5.476607584876864e-07,
+       "passed": true
+      },
+      "tst_natural_with_taper_910_lambda.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_natural_with_taper_910_lambda.model": {
+       "nrms": 1.0515934111941632e-07,
+       "passed": true
+      },
+      "tst_natural_with_taper_910_lambda.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_natural_with_taper_910_lambda.psf": {
+       "nrms": 9.974481626137677e-08,
+       "passed": true
+      },
+      "tst_natural_with_taper_910_lambda.residual": {
+       "nrms": 7.814260204238447e-08,
+       "passed": true
+      },
+      "tst_natural_with_taper_910_lambda.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_weighting_taper_cas13260.2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 20,
+         "casa": 20
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.11250104755163193,
+         "casa": 0.11250106990337372,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.13669045269489288,
+         "casa": 0.13669048249721527,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_natural_with_taper_100_arcsec.image": {
+       "nrms": 5.604518564035039e-07,
+       "passed": true
+      },
+      "tst_natural_with_taper_100_arcsec.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_natural_with_taper_100_arcsec.model": {
+       "nrms": 6.490575505645638e-08,
+       "passed": true
+      },
+      "tst_natural_with_taper_100_arcsec.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_natural_with_taper_100_arcsec.psf": {
+       "nrms": 9.781580648156907e-08,
+       "passed": true
+      },
+      "tst_natural_with_taper_100_arcsec.residual": {
+       "nrms": 7.383857214187595e-08,
+       "passed": true
+      },
+      "tst_natural_with_taper_100_arcsec.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_weighting_taper_cas13260.3": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 20,
+         "casa": 20
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1095649003982544,
+         "casa": 0.1095648854970932,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.1331230103969574,
+         "casa": 0.133122980594635,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_natural_with_taper_elliptical_lambda.image": {
+       "nrms": 1.179010985445684e-06,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_lambda.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_lambda.model": {
+       "nrms": 1.1358506801988145e-07,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_lambda.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_lambda.psf": {
+       "nrms": 1.053805963663415e-07,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_lambda.residual": {
+       "nrms": 8.138825677293377e-08,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_lambda.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_cube.test_cube_weighting_taper_cas13260.4": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 20,
+         "casa": 20
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.10956461727619171,
+         "casa": 0.1095646321773529,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.13312265276908875,
+         "casa": 0.13312268257141113,
+         "passed": true
+        }
+       }
+      }
+     ],
+     "products": {
+      "tst_natural_with_taper_elliptical_arcsec.image": {
+       "nrms": 1.256499766887035e-06,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_arcsec.mask": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_arcsec.model": {
+       "nrms": 1.1473824597899878e-07,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_arcsec.pb": {
+       "nrms": 0.0,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_arcsec.psf": {
+       "nrms": 9.698812090917099e-08,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_arcsec.residual": {
+       "nrms": 8.1091018502895e-08,
+       "passed": true
+      },
+      "tst_natural_with_taper_elliptical_arcsec.sumwt": {
+       "nrms": 0.0,
+       "passed": true
+      }
+     }
+    },
+    "test_widefield.test_mosaicft_newpsfphasecenter_cube.1": {
+     "passed": false,
+     "steps": [
+      {
+       "native_refused": "reason='resolve parameter session: parameter \"psfphasecenter\" is not implemented by casa-rs yet (#1062); only CASA\\'s default \\'\\' is accepted'",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 47
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "scalars": {}
+      }
+     ],
+     "products": {}
+    },
+    "test_ephemeris.test_multifield_cube_exttab_eph.1": {
+     "passed": false,
+     "steps": [
+      {
+       "native_refused": "tclean failed: native imaging run failed: unsupported imaging problem: a per-channel weight density needs its compiled padding",
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 3
+        }
+       },
+       "scalars": {}
+      }
+     ],
+     "products": {}
+    }
+   }
+  }
+ },
+ "weight_attribution": {
+  "purpose": "Per-(row, channel) imaging weights of an evidence-only instrumented build (never committed) against CASA's IMAGING_WEIGHT table, captured by wrapping PySynthesisImager.makePSF: field 0 of refim_alma_mosaic.ms as a uniform mosweight cube at the middle field's centre, 7.5 arcsec away, first in casa-rs's frames, then gridding the density at GridFT's rotation of the MeasurementSet uvw and looking it up at the MeasurementSet uvw, as BriggsCubeWeightor does.",
+  "comparisons": {
+   "alma-f0-off": {
+    "0/0": {
+     "samples": 43344,
+     "mismatches": 1933,
+     "worst": 1.0,
+     "native_sum": 2038.5000227186204,
+     "casa_sum": 2039.7707984340377,
+     "zero_one_side": 1
+    },
+    "0/1": {
+     "samples": 43344,
+     "mismatches": 1061,
+     "worst": 1.0,
+     "native_sum": 2053.55053214658,
+     "casa_sum": 2054.253193321754,
+     "zero_one_side": 0
+    },
+    "0/2": {
+     "samples": 43344,
+     "mismatches": 1141,
+     "worst": "inf (CASA zero, casa-rs nonzero)",
+     "native_sum": 2077.5000235347134,
+     "casa_sum": 2077.6430462726858,
+     "zero_one_side": 1
+    }
+   },
+   "alma-f0-off-casa-frames": {
+    "0/0": {
+     "samples": 43344,
+     "mismatches": 0,
+     "worst": 3.5941936327113234e-10,
+     "native_sum": 2039.7707984106523,
+     "casa_sum": 2039.7707984340377,
+     "zero_one_side": 0
+    },
+    "0/1": {
+     "samples": 43344,
+     "mismatches": 0,
+     "worst": 4.2429044800078933e-10,
+     "native_sum": 2054.253193295558,
+     "casa_sum": 2054.253193321754,
+     "zero_one_side": 0
+    },
+    "0/2": {
+     "samples": 43344,
+     "mismatches": 0,
+     "worst": 3.786774543297985e-10,
+     "native_sum": 2077.6430462481676,
+     "casa_sum": 2077.6430462726858,
+     "zero_one_side": 0
+    }
+   }
+  },
+  "note": "worst is the largest relative difference; inf marks a sample CASA weighs zero and casa-rs does not. The test_ephemeris case was imaged by the binary before the cubesource refusal (dcfada3), which refuses it in tclean, naming #980."
+ }
+}

@@ -1,0 +1,141 @@
+{
+ "source": {
+  "purpose": "casa-rs's own tclean cases of start models (#1067): what CASA refuses, and a start model on a channel no sample reaches",
+  "casa_version": "6.7.6.14",
+  "tool": "tools/casa-compat/tclean_case_matrix.py"
+ },
+ "format": "tclean_case_matrix.py's case matrix (resources/casa-compat/tclean-casa-test-cases.json documents it)",
+ "inputs": {
+  "refim_point.ms": "unittest/tclean/refim_point.ms"
+ },
+ "common": {},
+ "cases": {
+  "startmodel_cube_onto_mfs.1+2": {
+   "sequence": [
+    {
+     "call": 1,
+     "depends_on": [],
+     "vis": "refim_point.ms",
+     "imagename": "tst1",
+     "params": {
+      "imsize": 64,
+      "cell": "8.0arcsec",
+      "niter": 10,
+      "deconvolver": "hogbom",
+      "specmode": "cube",
+      "nchan": 4,
+      "start": "1.05GHz",
+      "width": "100MHz",
+      "parallel": false
+     }
+    },
+    {
+     "call": 2,
+     "depends_on": [
+      1
+     ],
+     "vis": "refim_point.ms",
+     "imagename": "tst2",
+     "params": {
+      "imsize": 64,
+      "cell": "8.0arcsec",
+      "niter": 0,
+      "deconvolver": "hogbom",
+      "startmodel": "tst1.model",
+      "parallel": false
+     }
+    }
+   ],
+   "expect_error": "RuntimeError",
+   "note": "A 4-channel start model of an MFS image: ImageRegrid refuses the shapes (SIImageStore::regridToModelImage)",
+   "skip_scalars": false
+  },
+  "startmodel_two_images_hogbom.1+2": {
+   "sequence": [
+    {
+     "call": 1,
+     "depends_on": [],
+     "vis": "refim_point.ms",
+     "imagename": "tst1",
+     "params": {
+      "imsize": 64,
+      "cell": "8.0arcsec",
+      "niter": 10,
+      "deconvolver": "hogbom",
+      "parallel": false
+     }
+    },
+    {
+     "call": 2,
+     "depends_on": [
+      1
+     ],
+     "vis": "refim_point.ms",
+     "imagename": "tst2",
+     "params": {
+      "imsize": 64,
+      "cell": "8.0arcsec",
+      "niter": 0,
+      "deconvolver": "hogbom",
+      "startmodel": [
+       "tst1.model",
+       "tst1.model"
+      ],
+      "parallel": false
+     }
+    }
+   ],
+   "expect_error": "RuntimeError",
+   "note": "Two images with a single-term deconvolver: Only one startmodel image is allowed",
+   "skip_scalars": false
+  },
+  "startmodel_blank_channel_pbcor.1+2": {
+   "sequence": [
+    {
+     "call": 1,
+     "depends_on": [],
+     "vis": "refim_point.ms",
+     "imagename": "tst1",
+     "params": {
+      "imsize": 64,
+      "cell": "8.0arcsec",
+      "deconvolver": "hogbom",
+      "specmode": "cube",
+      "nchan": 8,
+      "start": 0,
+      "width": 1,
+      "pbcor": true,
+      "pblimit": -0.2,
+      "parallel": false,
+      "niter": 200
+     }
+    },
+    {
+     "call": 2,
+     "depends_on": [
+      1
+     ],
+     "vis": "refim_point.ms",
+     "imagename": "tst2",
+     "params": {
+      "imsize": 64,
+      "cell": "8.0arcsec",
+      "deconvolver": "hogbom",
+      "specmode": "cube",
+      "nchan": 8,
+      "start": 0,
+      "width": 1,
+      "pbcor": true,
+      "pblimit": -0.2,
+      "parallel": false,
+      "niter": 0,
+      "spw": "0:2~7",
+      "startmodel": "tst1.model"
+     }
+    }
+   ],
+   "note": "A cube whose first two channels no sample reaches, with a start model and pbcor: the blank planes restore the model, corrected by the VLA PB",
+   "skip_scalars": false
+  }
+ }
+}

@@ -204,7 +204,8 @@ pub(super) fn grids(
         for (input, id) in contributors {
             let map = &combined.rows[*input];
             let placement = &map.partitions[id.0 as usize];
-            let observation = inputs[*input].observation();
+            let source = &inputs[*input];
+            let observation = source.observation();
             let group = &placement.groups[0];
             let times = Sizing::of(observation, *id, std::slice::from_ref(group), WEIGHTS)?.times;
             let bytes = grid_bytes(
@@ -356,12 +357,13 @@ fn acquisitions(
             let map = &combined.rows[*input];
             let placement = &map.partitions[id.0 as usize];
             let groups = [placement.groups[0].clone()];
-            let observation = inputs[*input].observation();
+            let source = &inputs[*input];
+            let observation = source.observation();
             let sizing = Sizing::of(observation, *id, &groups, WEIGHTS)?;
             let batch = sizing.times_per_batch(budget, None) * sizing.integration();
             ledger.during("a weights batch", batch, |_| {
                 count += contributor(
-                    (observation, *id, &groups, budget),
+                    (source, *id, &groups, budget),
                     (combination, baselines, &map.antennas),
                     &mut filled,
                     (&contributors[..position], *input),
@@ -378,16 +380,12 @@ fn acquisitions(
 /// when it is not empty and refused where it is already marked, naming the
 /// `earlier` contributors; antennas are the output's through `antennas`.
 fn contributor(
-    (observation, id, groups, budget): (
-        &dyn casa_observation::Observation,
-        casa_observation::PartitionId,
-        &[String],
-        usize,
-    ),
+    (source, id, groups, budget): (&Input, casa_observation::PartitionId, &[String], usize),
     (combination, baselines, antennas): (&Combination, &[OrderedBaseline], &[i32]),
     filled: &mut [u64],
     (earlier, input): (&[(usize, casa_observation::PartitionId)], usize),
 ) -> Result<usize, ObservationError> {
+    let observation = source.observation();
     let mut count = 0;
     lockstep::read(
         observation,
@@ -403,19 +401,23 @@ fn contributor(
                 .ok_or_else(|| request_error("an occupancy batch carries its weights"))?;
             let origin = MjdHighPrec::new(0.0, 0.0);
             for (sample, weights) in weights.axis_iter(Axis(0)).enumerate() {
-                if !acquired(weights)? {
+                let stored_time = batch
+                    .time
+                    .seconds_since(sample / batch.samples_per_time(), origin);
+                let baseline = batch.sample(sample).baseline;
+                let acquired = if let Some(source) = source.msv2() {
+                    source.main_row(id, stored_time, baseline).is_some()
+                } else {
+                    acquired(weights)?
+                };
+                if !acquired {
                     continue;
                 }
                 count += 1;
                 if filled.is_empty() {
                     continue;
                 }
-                let time = combination.time(
-                    batch
-                        .time
-                        .seconds_since(sample / batch.samples_per_time(), origin),
-                )?;
-                let baseline = batch.sample(sample).baseline;
+                let time = combination.time(stored_time)?;
                 let antenna = |antenna: casa_observation::AntennaId| {
                     casa_observation::AntennaId(antennas[antenna.0 as usize] as u32)
                 };

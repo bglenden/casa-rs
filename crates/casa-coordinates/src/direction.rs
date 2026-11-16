@@ -19,7 +19,8 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::str::FromStr;
 
-use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::MeasFrame;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, IxDyn, ShapeBuilder};
@@ -49,6 +50,8 @@ pub struct DirectionCoordinate {
     projection: Projection,
     /// The celestial reference frame (J2000, GALACTIC, etc.).
     direction_ref: DirectionRef,
+    /// The reference frame used by pixel/world conversion.
+    conversion_ref: DirectionRef,
     /// Reference celestial position [longitude, latitude] in radians (alpha_0, delta_0).
     crval: [f64; 2],
     /// Axis increments [dlon, dlat] in radians per pixel.
@@ -68,15 +71,24 @@ pub struct DirectionCoordinate {
     /// casacore's `worldAxisUnits` (CASA's images use `'`, `deg` or `rad`);
     /// it computes in radians whatever they are.
     world_units: [String; 2],
+    /// Names supplied by the stored coordinate record, if any.
+    world_names: Option<[String; 2]>,
 }
 
 /// Returns the native latitude of the fiducial point for a given projection type.
 fn theta_0_for_projection(proj: &Projection) -> f64 {
     use crate::projection::ProjectionType;
     match proj.projection_type() {
-        ProjectionType::CAR | ProjectionType::MER | ProjectionType::SFL | ProjectionType::AIT => {
-            0.0
-        }
+        ProjectionType::CAR
+        | ProjectionType::MER
+        | ProjectionType::SFL
+        | ProjectionType::AIT
+        | ProjectionType::PAR
+        | ProjectionType::MOL
+        | ProjectionType::PCO
+        | ProjectionType::TSC
+        | ProjectionType::CSC
+        | ProjectionType::QSC => 0.0,
         _ => FRAC_PI_2, // zenithal projections
     }
 }
@@ -98,49 +110,66 @@ fn compute_native_pole(
         return [alpha_0, delta_0];
     }
 
-    // General case: compute delta_p from eq. (2.6.3):
-    //   sin(delta_p) = sin(delta_0) * sin(theta_0) + cos(delta_0) * cos(theta_0) * cos(phi_p)
-    // When there are two solutions, pick the one closest to theta_p (latpole).
-
-    let sin_d0 = delta_0.sin();
+    // General case: Calabretta & Greisen (2002) eq. (8), as WCSLIB's
+    // `celset` solves it (the fiducial native longitude phi_0 is 0):
+    //   delta_p = u +/- v,  u = atan2(sin(theta_0), cos(theta_0) cos(phi_p)),
+    //   v = acos(sin(delta_0) / sqrt(sin^2(theta_0) + cos^2(theta_0) cos^2(phi_p))).
+    // Of two valid solutions, the one nearest theta_p (LATPOLE) is taken.
+    let (sin_t0, cos_t0) = theta_0.sin_cos();
+    // WCSLIB's `sind`/`cosd`: exact at multiples of 90°, so a native pole
+    // at 180° leaks no 1.2e-16 into alpha_p.
+    let (sin_pp, cos_pp) = wcslib_sin_cos_degrees(phi_p.to_degrees());
+    let x = cos_t0 * cos_pp;
+    let z = x.hypot(sin_t0);
+    let delta_p = if z == 0.0 {
+        theta_p
+    } else {
+        let u = sin_t0.atan2(x);
+        let v = (delta_0.sin() / z).clamp(-1.0, 1.0).acos();
+        let wrap = |angle: f64| {
+            if angle > PI {
+                angle - 2.0 * PI
+            } else if angle < -PI {
+                angle + 2.0 * PI
+            } else {
+                angle
+            }
+        };
+        let (first, second) = (wrap(u + v), wrap(u - v));
+        let valid = |angle: f64| angle.abs() < FRAC_PI_2 + 1.0e-10;
+        let delta_p = if (theta_p - first).abs() < (theta_p - second).abs() {
+            if valid(first) { first } else { second }
+        } else if valid(second) {
+            second
+        } else {
+            first
+        };
+        delta_p.clamp(-FRAC_PI_2, FRAC_PI_2)
+    };
     let cos_d0 = delta_0.cos();
-    let sin_t0 = theta_0.sin();
-    let cos_t0 = theta_0.cos();
-    let cos_pp = phi_p.cos();
+    let sin_d0 = delta_0.sin();
 
-    let sin_dp = sin_d0 * sin_t0 + cos_d0 * cos_t0 * cos_pp;
-    let sin_dp = sin_dp.clamp(-1.0, 1.0);
-    let delta_p = sin_dp.asin();
-
-    // There may be two solutions: delta_p and pi - delta_p.
-    // Choose the one closest to theta_p (latpole).
-    let delta_p = if (delta_p - theta_p).abs() <= (PI - delta_p - theta_p).abs() {
-        delta_p
+    // alpha_p, as WCSLIB's `celset` forms it (Calabretta & Greisen eq. 10):
+    // where the native pole is a celestial pole, from the fiducial point and
+    // phi_p alone.
+    let (sin_dp, cos_dp) = delta_p.sin_cos();
+    let z = cos_dp * cos_d0;
+    let alpha_p = if z.abs() < 1.0e-10 {
+        if cos_d0.abs() < 1.0e-10 {
+            // The celestial pole is the fiducial point.
+            alpha_0
+        } else if delta_p > 0.0 {
+            // The celestial north pole is the native pole.
+            alpha_0 + phi_p - PI
+        } else {
+            // The celestial south pole is the native pole.
+            alpha_0 - phi_p
+        }
     } else {
-        PI - delta_p
+        let x = (sin_t0 - sin_dp * sin_d0) / z;
+        let y = sin_pp * cos_t0 / cos_d0;
+        alpha_0 - y.atan2(x)
     };
-
-    // Compute alpha_p
-    let sin_dp2 = delta_p.sin();
-    let cos_dp2 = delta_p.cos();
-
-    if cos_dp2.abs() < 1e-12 {
-        // Native pole is at celestial pole
-        return [alpha_0, delta_p];
-    }
-
-    // alpha_p from eq. (2.6.4):
-    //   sin(alpha_p - alpha_0) = -cos(theta_0) * sin(phi_p) / cos(delta_p)
-    //   cos(alpha_p - alpha_0) = [sin(theta_0) - sin(delta_p)*sin(delta_0)] / [cos(delta_p)*cos(delta_0)]
-    let sin_da = -cos_t0 * phi_p.sin() / cos_dp2;
-    let cos_da = if cos_d0.abs() < 1e-12 {
-        // Fiducial point at celestial pole
-        0.0
-    } else {
-        (sin_t0 - sin_dp2 * sin_d0) / (cos_dp2 * cos_d0)
-    };
-
-    let alpha_p = alpha_0 + sin_da.atan2(cos_da);
 
     [alpha_p, delta_p]
 }
@@ -175,6 +204,7 @@ impl DirectionCoordinate {
         Self {
             projection,
             direction_ref,
+            conversion_ref: direction_ref,
             crval,
             cdelt,
             crpix,
@@ -183,6 +213,7 @@ impl DirectionCoordinate {
             latpole,
             native_pole,
             world_units: ["rad".into(), "rad".into()],
+            world_names: None,
         }
     }
 
@@ -281,6 +312,21 @@ impl DirectionCoordinate {
         self.direction_ref
     }
 
+    /// Reference frame presented by pixel/world conversion.
+    pub fn conversion_direction_ref(&self) -> DirectionRef {
+        self.conversion_ref
+    }
+
+    /// Set the reference frame used by pixel/world conversion.
+    ///
+    /// Conversions that need unavailable frame context return an error when
+    /// they are evaluated. Stored reference values remain in the native frame.
+    #[must_use]
+    pub fn with_conversion_direction_ref(mut self, reference: DirectionRef) -> Self {
+        self.conversion_ref = reference;
+        self
+    }
+
     /// Returns the native longitude of the celestial pole (phi_p) in radians.
     pub fn longpole(&self) -> f64 {
         self.longpole
@@ -289,6 +335,19 @@ impl DirectionCoordinate {
     /// Returns the native latitude of the celestial pole (theta_p) in radians.
     pub fn latpole(&self) -> f64 {
         self.latpole
+    }
+
+    /// Returns the resolved celestial coordinates `[alpha_p, delta_p]` of
+    /// the native pole, in radians.
+    ///
+    /// Together with [`Self::longpole`], these coordinates define the spherical
+    /// rotation used by pixel/world conversion. They are computed from the
+    /// reference direction, projection, LONGPOLE and requested LATPOLE. Unlike
+    /// [`Self::latpole`], which selects a solution when there are two, this is
+    /// the resolved pole: different LATPOLE selectors may give the same rotation.
+    /// Reading it does not change the stored coordinate or its serialized record.
+    pub fn native_pole(&self) -> [f64; 2] {
+        self.native_pole
     }
 
     /// Returns a reference to the PC rotation/coupling matrix.
@@ -330,6 +389,7 @@ impl DirectionCoordinate {
             } else {
                 Projection::new(projection_type)
             };
+        projection.validate_conversion_parameters()?;
 
         let crval = get_required_vec_f64(rec, "crval")?;
         let cdelt = get_required_vec_f64(rec, "cdelt")?;
@@ -362,7 +422,30 @@ impl DirectionCoordinate {
             cdelt,
             [crpix[0], crpix[1]],
         );
+        if rec.get("conversionSystem").is_some()
+            && get_optional_string(rec, "conversionSystem").is_none()
+        {
+            return Err(CoordinateError::InvalidRecord(
+                "invalid direction conversion frame".into(),
+            ));
+        }
+        if let Some(name) = get_optional_string(rec, "conversionSystem") {
+            coord.conversion_ref = DirectionRef::from_str(&name).map_err(|_| {
+                CoordinateError::InvalidRecord(format!(
+                    "unsupported direction conversion frame {name:?} (#977)"
+                ))
+            })?;
+        }
         coord.world_units = [axis_units[0].clone(), axis_units[1].clone()];
+        if let Some(names) = get_optional_vec_string(rec, "axes") {
+            if names.len() != 2 {
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "direction coordinate axes has {} values, expected 2",
+                    names.len()
+                )));
+            }
+            coord.world_names = Some([names[0].clone(), names[1].clone()]);
+        }
 
         if let Some(pc_flat) = get_optional_vec_f64(rec, "pc") {
             if pc_flat.len() != 4 {
@@ -397,6 +480,66 @@ impl DirectionCoordinate {
         }
 
         Ok(coord)
+    }
+
+    /// The world coordinates `[longitude, latitude]`, in radians, of
+    /// `pixel`: what [`Coordinate::to_world`] returns, without allocating,
+    /// for callers that convert many pixels (casacore's
+    /// `DirectionCoordinate::toWorld`).
+    ///
+    /// # Errors
+    ///
+    /// A pixel the projection has no sky position for (beyond a SIN
+    /// image's horizon, for instance), or a frame conversion requiring
+    /// context that is not yet available (#977).
+    pub fn pixel_to_world(&self, pixel: [f64; 2]) -> Result<[f64; 2], CoordinateError> {
+        let (x, y) = self.pixel_to_intermediate(&pixel);
+        let (phi, theta) = self.projection.deproject(x, y)?;
+        let (longitude, latitude) = self.native_to_celestial(phi, theta);
+        self.convert_frame(
+            [longitude, latitude],
+            self.direction_ref,
+            self.conversion_ref,
+        )
+    }
+
+    /// The pixel of `world`, `[longitude, latitude]` in radians in this
+    /// coordinate's frame: what [`Coordinate::to_pixel`] returns, without
+    /// allocating (casacore's `DirectionCoordinate::toPixel`).
+    ///
+    /// # Errors
+    ///
+    /// A direction the projection cannot place (behind a TAN image's
+    /// tangent plane, for instance), a singular PC matrix, or a frame
+    /// conversion requiring context that is not yet available (#977).
+    pub fn world_to_pixel(&self, world: [f64; 2]) -> Result<[f64; 2], CoordinateError> {
+        let world = self.convert_frame(world, self.conversion_ref, self.direction_ref)?;
+        let (phi, theta) = self.celestial_to_native(world[0], world[1]);
+        let (x, y) = self.projection.project(phi, theta)?;
+        let (px, py) = self.intermediate_to_pixel(x, y)?;
+        Ok([px, py])
+    }
+
+    fn convert_frame(
+        &self,
+        world: [f64; 2],
+        from: DirectionRef,
+        to: DirectionRef,
+    ) -> Result<[f64; 2], CoordinateError> {
+        if from == to {
+            return Ok(world);
+        }
+        let converted = MDirection::from_angles(world[0], world[1], from)
+            .convert_to(to, &MeasFrame::new())
+            .map_err(|error| CoordinateError::ConversionFailed(format!("{error} (#977)")))?;
+        let (longitude, latitude) = converted.as_angles();
+        // MVDirection::get uses atan2's signed longitude.
+        let longitude = if longitude > PI {
+            longitude - 2.0 * PI
+        } else {
+            longitude
+        };
+        Ok([longitude, latitude])
     }
 
     /// Pixel to intermediate world coordinates.
@@ -518,8 +661,11 @@ impl DirectionCoordinate {
     /// offset is a multiple of 180°, and from `acos` of the native
     /// longitude's arguments where `|sin θ| > 0.99`, since `asin` near ±1
     /// loses half the precision (up to 1.5e-8 rad at the reference
-    /// direction itself, 0.009 of a 0.35″ pixel). The native longitude keeps
-    /// this coordinate's range, `longpole ± π`.
+    /// direction itself, 0.009 of a 0.35″ pixel). The native longitude is
+    /// normalized to `[-π, π]`, as `sphs2x` normalizes it, so a projection
+    /// whose reference is on its native equator places a direction near
+    /// its reference near the reference pixel whatever its native pole's
+    /// longitude (180° south of the celestial equator).
     fn celestial_to_native(&self, lon: f64, lat: f64) -> (f64, f64) {
         let (alpha_p, delta_p) = (self.native_pole[0], self.native_pole[1]);
         let to_degrees = 180.0 / PI;
@@ -541,7 +687,12 @@ impl DirectionCoordinate {
             x = -wcslib_cos_degrees(latitude_degrees + euler_1) + cos_lat_3 * (1.0 - cos_dlng);
         }
         let y = -cos_lat * sin_dlng;
-        let phi = self.longpole + y.atan2(x);
+        let mut phi = self.longpole + y.atan2(x);
+        if phi > PI {
+            phi -= 2.0 * PI;
+        } else if phi < -PI {
+            phi += 2.0 * PI;
+        }
 
         // Native latitude.
         let theta_degrees = if dlng % 180.0 == 0.0 {
@@ -566,7 +717,7 @@ impl DirectionCoordinate {
     }
 }
 
-fn wcslib_sin_cos_degrees(angle_degrees: f64) -> (f64, f64) {
+pub(crate) fn wcslib_sin_cos_degrees(angle_degrees: f64) -> (f64, f64) {
     if angle_degrees % 90.0 == 0.0 {
         let quadrant = ((angle_degrees / 90.0 + 0.5).floor().abs() as i64) % 4;
         return match quadrant {
@@ -663,16 +814,7 @@ impl Coordinate for DirectionCoordinate {
             });
         }
 
-        // Step 1: pixel -> intermediate
-        let (x, y) = self.pixel_to_intermediate(pixel);
-
-        // Step 2: intermediate -> native spherical
-        let (phi, theta) = self.projection.deproject(x, y)?;
-
-        // Step 3: native spherical -> celestial
-        let (lon, lat) = self.native_to_celestial(phi, theta);
-
-        Ok(vec![lon, lat])
+        Ok(self.pixel_to_world([pixel[0], pixel[1]])?.to_vec())
     }
 
     fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
@@ -683,18 +825,7 @@ impl Coordinate for DirectionCoordinate {
             });
         }
 
-        let (lon, lat) = (world[0], world[1]);
-
-        // Step 1: celestial -> native spherical
-        let (phi, theta) = self.celestial_to_native(lon, lat);
-
-        // Step 2: native spherical -> intermediate
-        let (x, y) = self.projection.project(phi, theta)?;
-
-        // Step 3: intermediate -> pixel
-        let (px, py) = self.intermediate_to_pixel(x, y)?;
-
-        Ok(vec![px, py])
+        Ok(self.world_to_pixel([world[0], world[1]])?.to_vec())
     }
 
     fn reference_value(&self) -> Vec<f64> {
@@ -710,6 +841,9 @@ impl Coordinate for DirectionCoordinate {
     }
 
     fn axis_names(&self) -> Vec<String> {
+        if let Some(names) = &self.world_names {
+            return names.to_vec();
+        }
         match self.direction_ref {
             DirectionRef::GALACTIC | DirectionRef::SUPERGAL => {
                 vec!["Longitude".into(), "Latitude".into()]
@@ -776,7 +910,7 @@ impl DirectionCoordinate {
         );
         rec.upsert(
             "conversionSystem",
-            Value::Scalar(ScalarValue::String(format!("{:?}", self.direction_ref))),
+            Value::Scalar(ScalarValue::String(format!("{:?}", self.conversion_ref))),
         );
         rec.upsert(
             "longpole",
@@ -796,6 +930,48 @@ mod tests {
     use crate::projection::ProjectionType;
 
     const TOL: f64 = 1e-10;
+
+    /// An analytic projection whose reference lies on its native equator takes its
+    /// reference pixel to its reference direction south
+    /// of the celestial equator too, where WCSLIB's default native pole
+    /// longitude is 180° and two native poles solve the rotation
+    /// (Calabretta & Greisen 2002, eq. 8; LATPOLE picks the northern one).
+    #[test]
+    fn a_native_equator_reference_stays_on_its_pixel() {
+        for kind in [
+            ProjectionType::CAR,
+            ProjectionType::SFL,
+            ProjectionType::MER,
+            ProjectionType::AIT,
+            ProjectionType::PAR,
+            ProjectionType::MOL,
+            ProjectionType::PCO,
+            ProjectionType::TSC,
+            ProjectionType::QSC,
+        ] {
+            for latitude in [-1.2, -0.4, -0.05, -1e-9, 0.0, 1e-9, 0.05, 0.4, 1.2] {
+                let coord = DirectionCoordinate::new(
+                    DirectionRef::J2000,
+                    Projection::new(kind),
+                    [5.2, latitude],
+                    [-1e-4, 1e-4],
+                    [50.0, 50.0],
+                );
+                let [longitude, centre] = coord.pixel_to_world([50.0, 50.0]).unwrap();
+                assert!(
+                    (longitude - 5.2).abs() < 1e-12 && (centre - latitude).abs() < 1e-12,
+                    "{kind:?} at {latitude}: {longitude} {centre}"
+                );
+                let pixel = coord.world_to_pixel([5.2 + 1e-3, latitude + 2e-3]).unwrap();
+                let back = coord.pixel_to_world(pixel).unwrap();
+                assert!(
+                    (back[0] - 5.2 - 1e-3).abs() < 1e-12
+                        && (back[1] - latitude - 2e-3).abs() < 1e-12,
+                    "{kind:?} at {latitude}: {back:?}"
+                );
+            }
+        }
+    }
 
     fn make_sin_coord() -> DirectionCoordinate {
         let proj = Projection::new(ProjectionType::SIN);
@@ -1059,6 +1235,49 @@ mod tests {
         assert_eq!(restored.projection().parameters(), &[0.25, -0.5]);
         assert!((restored.longpole() - 0.25).abs() < TOL);
         assert!((restored.latpole() - 1.2).abs() < TOL);
+    }
+
+    /// A tclean zenithal image reopens with its coordinate intact.
+    /// Unsupported parameters fail at open, before regridding.
+    #[test]
+    fn restricted_zenithal_records_open_only_for_tclean_parameters() {
+        for (kind, allowed, rejected) in [
+            (
+                ProjectionType::AZP,
+                vec![0.0, 0.0],
+                vec![vec![0.5, 0.0], vec![0.0, 1.0]],
+            ),
+            (
+                ProjectionType::SZP,
+                vec![0.0, 0.0, 90.0],
+                vec![vec![1.0, 0.0, 90.0], vec![0.0, 0.0, 45.0]],
+            ),
+            (
+                ProjectionType::AIR,
+                vec![0.0, 0.0],
+                vec![vec![], vec![45.0, 0.0]],
+            ),
+        ] {
+            let record_with = |parameters| {
+                DirectionCoordinate::new(
+                    DirectionRef::J2000,
+                    Projection::with_parameters(kind, parameters),
+                    [1.0, 0.5],
+                    [-1e-4, 1e-4],
+                    [128.0, 64.0],
+                )
+                .to_record()
+            };
+            let restored = DirectionCoordinate::from_record(&record_with(allowed.clone())).unwrap();
+            assert_eq!(restored.projection().projection_type(), kind);
+            assert_eq!(restored.projection().parameters(), allowed);
+            for parameters in rejected {
+                assert!(matches!(
+                    DirectionCoordinate::from_record(&record_with(parameters)),
+                    Err(CoordinateError::ConversionFailed(message)) if message.contains(kind.name())
+                ));
+            }
+        }
     }
 
     /// A rotated image CASA 6.7.6 made (`coordsys.setlineartransform` with

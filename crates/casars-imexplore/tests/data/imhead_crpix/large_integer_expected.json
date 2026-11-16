@@ -1,0 +1,273 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "get": -2147483648,
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": 2147483648
+    },
+    {
+      "get": 2147483647,
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": -2147483649
+    },
+    {
+      "get": -1,
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": 4294967295
+    },
+    {
+      "get": 0,
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": 4294967296
+    },
+    {
+      "get": 0,
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": 1099511627776
+    },
+    {
+      "get": -1,
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": 9223372036854775807
+    },
+    {
+      "get": 0,
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": -9223372036854775808
+    },
+    {
+      "get": -2147483648.0,
+      "key": "crpix1",
+      "mode": "put",
+      "return": null,
+      "value": 2147483648
+    },
+    {
+      "get": 2147483647.0,
+      "key": "crpix1",
+      "mode": "put",
+      "return": null,
+      "value": -2147483649
+    },
+    {
+      "get": -1.0,
+      "key": "crpix1",
+      "mode": "put",
+      "return": null,
+      "value": 4294967295
+    },
+    {
+      "get": 0.0,
+      "key": "crpix1",
+      "mode": "put",
+      "return": null,
+      "value": 4294967296
+    },
+    {
+      "get": 0.0,
+      "key": "crpix1",
+      "mode": "put",
+      "return": null,
+      "value": 1099511627776
+    },
+    {
+      "get": -1.0,
+      "key": "crpix1",
+      "mode": "put",
+      "return": null,
+      "value": 9223372036854775807
+    },
+    {
+      "get": 0.0,
+      "key": "crpix1",
+      "mode": "put",
+      "return": null,
+      "value": -9223372036854775808
+    },
+    {
+      "get": {
+        "v": -2147483648
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": 2147483648
+      }
+    },
+    {
+      "get": {
+        "v": 2147483647
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": -2147483649
+      }
+    },
+    {
+      "get": {
+        "v": -1
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": 4294967295
+      }
+    },
+    {
+      "get": {
+        "v": 0
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": 4294967296
+      }
+    },
+    {
+      "get": {
+        "v": 0
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": 1099511627776
+      }
+    },
+    {
+      "get": {
+        "v": -1
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": 9223372036854775807
+      }
+    },
+    {
+      "get": {
+        "v": 0
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": -9223372036854775808
+      }
+    },
+    {
+      "get": {
+        "v": [
+          -2147483648,
+          2
+        ]
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": [
+          2147483648,
+          2
+        ]
+      }
+    },
+    {
+      "get": {
+        "v": [
+          2147483648.0,
+          1.5
+        ]
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": [
+          2147483648,
+          1.5
+        ]
+      }
+    },
+    {
+      "get": {
+        "v": [
+          "2147483648",
+          "abc"
+        ]
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": [
+          2147483648,
+          "abc"
+        ]
+      }
+    },
+    {
+      "get": {
+        "v": [
+          [
+            -2147483648,
+            -1
+          ],
+          [
+            1,
+            2147483647
+          ]
+        ]
+      },
+      "key": "custom",
+      "mode": "add",
+      "return": null,
+      "value": {
+        "v": [
+          [
+            2147483648,
+            4294967295
+          ],
+          [
+            1,
+            -2147483649
+          ]
+        ]
+      }
+    },
+    {
+      "get": {
+        "unit": "'",
+        "value": -35791394.133333325
+      },
+      "key": "cdelt1",
+      "mode": "put",
+      "return": null,
+      "value": {
+        "unit": "arcsec",
+        "value": 2147483648
+      }
+    }
+  ]
+}

@@ -1,0 +1,434 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "get": "SIN",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"SIN\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "projection",
+      "value": "SIN",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    },
+    {
+      "get": "TAN",
+      "history": [
+        "Modified projection from \"SIN\" to \"TAN\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"TAN\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "projection",
+      "value": "TAN",
+      "world": [
+        [
+          0.0005817763516946713,
+          -0.000581776253239601
+        ],
+        [
+          6.283039863076279,
+          -0.0002908881973844879
+        ]
+      ]
+    },
+    {
+      "get": "ARC",
+      "history": [
+        "Modified projection from \"SIN\" to \"ARC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"ARC\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "projection",
+      "value": "ARC",
+      "world": [
+        [
+          0.000581776482968262,
+          -0.000581776384513125
+        ],
+        [
+          6.283039863071152,
+          -0.0002908882076403328
+        ]
+      ]
+    },
+    {
+      "get": "ZEA",
+      "history": [
+        "Modified projection from \"SIN\" to \"ZEA\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"ZEA\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "projection",
+      "value": "ZEA",
+      "world": [
+        [
+          0.0005817764993776179,
+          -0.0005817764009224727
+        ],
+        [
+          6.283039863070511,
+          -0.0002908882089223134
+        ]
+      ]
+    },
+    {
+      "get": "STG",
+      "history": [
+        "Modified projection from \"SIN\" to \"STG\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"STG\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "projection",
+      "value": "STG",
+      "world": [
+        [
+          0.0005817764501498645,
+          -0.0005817763516947442
+        ],
+        [
+          6.283039863072433,
+          -0.00029088820507617295
+        ]
+      ]
+    },
+    {
+      "get": "TAN",
+      "history": [
+        "Modified projection from \"SIN\" to \"tan\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"tan\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "projection",
+      "value": "tan",
+      "world": [
+        [
+          0.0005817763516946713,
+          -0.000581776253239601
+        ],
+        [
+          6.283039863076279,
+          -0.0002908881973844879
+        ]
+      ]
+    },
+    {
+      "get": "SIN",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"SIN\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "projection",
+      "value": "SIN",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    },
+    {
+      "get": "TAN",
+      "history": [
+        "Modified projection from \"SIN\" to \"TAN\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"TAN\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "projection",
+      "value": "TAN",
+      "world": [
+        [
+          0.0005817763516946713,
+          -0.000581776253239601
+        ],
+        [
+          6.283039863076279,
+          -0.0002908881973844879
+        ]
+      ]
+    },
+    {
+      "get": "ARC",
+      "history": [
+        "Modified projection from \"SIN\" to \"ARC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"ARC\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "projection",
+      "value": "ARC",
+      "world": [
+        [
+          0.000581776482968262,
+          -0.000581776384513125
+        ],
+        [
+          6.283039863071152,
+          -0.0002908882076403328
+        ]
+      ]
+    },
+    {
+      "get": "ZEA",
+      "history": [
+        "Modified projection from \"SIN\" to \"ZEA\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"ZEA\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "projection",
+      "value": "ZEA",
+      "world": [
+        [
+          0.0005817764993776179,
+          -0.0005817764009224727
+        ],
+        [
+          6.283039863070511,
+          -0.0002908882089223134
+        ]
+      ]
+    },
+    {
+      "get": "STG",
+      "history": [
+        "Modified projection from \"SIN\" to \"STG\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"STG\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "projection",
+      "value": "STG",
+      "world": [
+        [
+          0.0005817764501498645,
+          -0.0005817763516947442
+        ],
+        [
+          6.283039863072433,
+          -0.00029088820507617295
+        ]
+      ]
+    },
+    {
+      "get": "TAN",
+      "history": [
+        "Modified projection from \"SIN\" to \"tan\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"tan\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "projection",
+      "value": "tan",
+      "world": [
+        [
+          0.0005817763516946713,
+          -0.000581776253239601
+        ],
+        [
+          6.283039863076279,
+          -0.0002908881973844879
+        ]
+      ]
+    },
+    {
+      "get": "TAN",
+      "history": [
+        "Modified projection from \"SIN\" to \"TAN\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"TAN\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "key": "projection",
+      "value": "TAN",
+      "world": [
+        [
+          2.9686497562339897,
+          -1.047409948906806
+        ],
+        [
+          2.9670987219463494,
+          -1.0475221894866518
+        ]
+      ]
+    },
+    {
+      "get": "ARC",
+      "history": [
+        "Modified projection from \"SIN\" to \"ARC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"ARC\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "key": "projection",
+      "value": "ARC",
+      "world": [
+        [
+          2.9686497565928995,
+          -1.0474099489546087
+        ],
+        [
+          2.967098721947725,
+          -1.0475221894980975
+        ]
+      ]
+    },
+    {
+      "get": "ZEA",
+      "history": [
+        "Modified projection from \"SIN\" to \"ZEA\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"ZEA\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "key": "projection",
+      "value": "ZEA",
+      "world": [
+        [
+          2.9686497566377645,
+          -1.0474099489605841
+        ],
+        [
+          2.967098721947897,
+          -1.0475221894995281
+        ]
+      ]
+    },
+    {
+      "get": "STG",
+      "history": [
+        "Modified projection from \"SIN\" to \"STG\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"STG\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "key": "projection",
+      "value": "STG",
+      "world": [
+        [
+          2.9686497565031718,
+          -1.047409948942658
+        ],
+        [
+          2.9670987219473814,
+          -1.0475221894952358
+        ]
+      ]
+    },
+    {
+      "get": "ARC",
+      "history": [
+        "Modified PROJECTION from \"SIN\" to \"ARC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"PROJECTION\", hdvalue=\"ARC\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "PROJECTION",
+      "value": "ARC",
+      "world": [
+        [
+          0.000581776482968262,
+          -0.000581776384513125
+        ],
+        [
+          6.283039863071152,
+          -0.0002908882076403328
+        ]
+      ]
+    },
+    {
+      "error": "Exception: Unknown projection specification NCP.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "SIN",
+      "history": [],
+      "image": "normal",
+      "key": "projection",
+      "value": "NCP",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    },
+    {
+      "error": "Exception: Unknown projection specification BAD.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "SIN",
+      "history": [],
+      "image": "normal",
+      "key": "projection",
+      "value": "bad",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    },
+    {
+      "error": "Exception: Unknown projection specification T.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "SIN",
+      "history": [],
+      "image": "normal",
+      "key": "projection",
+      "value": "T",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    },
+    {
+      "get": "CAR",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"CAR\", verbose=False)"
+      ],
+      "image": "car",
+      "key": "projection",
+      "value": "CAR",
+      "world": [
+        [
+          0.0005817764173314432,
+          -0.0005817764173314432
+        ],
+        [
+          6.2830398630752535,
+          -0.0002908882086657216
+        ]
+      ]
+    }
+  ]
+}

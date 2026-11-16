@@ -32,8 +32,8 @@ pub struct PlaneOutcome {
     pub components: usize,
     /// Sum of the absolute component fluxes over every term.
     pub absolute_flux: f64,
-    /// Sum of the components' signed first-term fluxes: what the cycle adds
-    /// to the model's flux (CASA's `modelFlux`).
+    /// Signed model flux the solver reports (CASA's `modelFlux`): the first
+    /// Taylor term, or the sum of a joint polarization component.
     pub model_flux: f64,
     /// The peak residual on entry.
     pub start_peak: f64,
@@ -45,6 +45,18 @@ pub struct PlaneOutcome {
     pub trace: Vec<Component>,
     /// Exact whole-plane residual refreshes.
     pub refreshes: usize,
+    /// The residual terms the last step left, which the caller measures and
+    /// drops; empty when no step ran.
+    pub end_residual: Vec<Vec<f64>>,
+}
+
+/// What stops a plane with no data, whose peak is zero: `checkStop` as for
+/// any plane ([`run_plane`]), and the plane is skipped either way.
+#[must_use]
+pub fn blank_plane_stop(cycle: &CycleControls, statistics: &PlaneStatistics) -> PlaneStop {
+    PlaneControl::new(cycle, statistics, 0.0)
+        .stop(0.0)
+        .unwrap_or(PlaneStop::ZeroMask)
 }
 
 /// Heap bytes a [`Delta`] entry costs at most: one `(index, flux)` pair in a
@@ -121,9 +133,13 @@ pub fn run_plane<S: Solver>(
         stop: PlaneStop::ZeroMask,
         trace: Vec::new(),
         refreshes: 0,
+        end_residual: Vec::new(),
     };
     let mut stop = control.stop(start_peak);
-    if view.support.is_empty() || stop.is_some() {
+    if stop.is_some()
+        || (view.support.is_empty()
+            && !(statistics.mask_sum > 0 && solver.runs_with_empty_support()))
+    {
         outcome.stop = stop.unwrap_or(PlaneStop::ZeroMask);
         return Ok(outcome);
     }
@@ -160,6 +176,7 @@ pub fn run_plane<S: Solver>(
         }
     }
     outcome.stop = stop.expect("the step loop ends on a stop");
+    outcome.end_residual = residual;
     Ok(outcome)
 }
 
@@ -193,7 +210,7 @@ fn run_step<S: Solver>(
                 solver.accept(&mut state, view, residual, candidate, gain, &mut delta)?;
                 let Candidate::Pixel { index, scale, .. } = candidate;
                 outcome.absolute_flux += fluxes.iter().map(|flux| flux.abs()).sum::<f64>();
-                outcome.model_flux += fluxes.first().copied().unwrap_or(0.0);
+                outcome.model_flux += solver.reported_flux(&fluxes);
                 for (term, &flux) in fluxes.iter().enumerate() {
                     if outcome.trace.len() < trace {
                         outcome.trace.push(Component {

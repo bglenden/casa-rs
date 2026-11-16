@@ -15,19 +15,22 @@ use num_complex::{Complex, Complex32, Complex64};
 
 use crate::accumulator::{GridScalar, Tile};
 use crate::convolution::TapLayout;
+use crate::edge::CellBox;
 use crate::geometry::CellLocation;
 
 /// Add `value · tap'` over the support into `grid` through Mueller plane
 /// `mueller`.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn spread<T: GridScalar>(
+pub(super) fn spread<T: GridScalar, const COMPENSATED: bool>(
     grid: &mut [Complex<T>],
+    correction: &mut [Complex32],
     tile: Tile,
     location: CellLocation,
     taps: &TapLayout<'_>,
     mueller: u8,
     conjugate: bool,
     gradient: [f32; 2],
+    origin_shift: u8,
     value: Complex<T>,
 ) {
     match *taps {
@@ -47,8 +50,26 @@ pub(super) fn spread<T: GridScalar>(
             let ry = &rows[usize::from(location.oy) * support..][..support];
             let (x0, y0) = block_origin(tile, location, [support / 2, support / 2]);
             match support {
-                7 => spread_separable::<T, 7>(grid, tile.shape[0], x0, y0, rx, ry, value),
-                _ => spread_separable_dyn(grid, tile.shape[0], x0, y0, rx, ry, value),
+                7 => spread_separable::<T, 7, COMPENSATED>(
+                    grid,
+                    correction,
+                    tile.shape[0],
+                    x0,
+                    y0,
+                    rx,
+                    ry,
+                    value,
+                ),
+                _ => spread_separable_dyn::<T, COMPENSATED>(
+                    grid,
+                    correction,
+                    tile.shape[0],
+                    x0,
+                    y0,
+                    rx,
+                    ry,
+                    value,
+                ),
             }
         }
         TapLayout::Dense {
@@ -75,9 +96,89 @@ pub(super) fn spread<T: GridScalar>(
                 taps: tile_taps,
                 conjugate,
             };
-            match PointingRamp::new(gradient, fine_fraction(location, oversampling), [sx, sy]) {
-                Some(ramp) => spread_dense::<T, true>(grid, &block, ramp, value),
-                None => spread_dense::<T, false>(grid, &block, PointingRamp::NONE, value),
+            match PointingRamp::new(
+                gradient,
+                fine_fraction(location, oversampling, origin_shift),
+                [sx, sy],
+            ) {
+                Some(ramp) => {
+                    spread_dense::<T, true, COMPENSATED>(grid, correction, &block, ramp, value)
+                }
+                None => spread_dense::<T, false, COMPENSATED>(
+                    grid,
+                    correction,
+                    &block,
+                    PointingRamp::NONE,
+                    value,
+                ),
+            }
+        }
+    }
+}
+
+/// [`spread`] of a sample of which only the taps on `cells` (grid
+/// coordinates) are gridded ([`Reach::Clipped`](crate::Reach::Clipped)):
+/// the taps are spread into `scratch`, a block of the support alone, and
+/// its cells that fall on both `cells` and `tile` are added to the tile as
+/// [`spread`] adds each tap, so they take the values a whole support would
+/// give them.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn spread_clipped<T: GridScalar, const COMPENSATED: bool>(
+    grid: &mut [Complex<T>],
+    correction: &mut [Complex32],
+    (tile, cells): (Tile, CellBox),
+    location: CellLocation,
+    taps: &TapLayout<'_>,
+    (mueller, conjugate, gradient, origin_shift): (u8, bool, [f32; 2], u8),
+    value: Complex<T>,
+    scratch: &mut Vec<Complex<T>>,
+) {
+    let [hx, hy] = taps.half_support().map(usize::from);
+    let block = Tile::full([2 * hx + 1, 2 * hy + 1]);
+    scratch.clear();
+    scratch.resize(block.cells(), Complex::default());
+    let centred = CellLocation {
+        x: hx as i64,
+        y: hy as i64,
+        ..location
+    };
+    spread::<T, false>(
+        scratch,
+        &mut [],
+        block,
+        centred,
+        taps,
+        mueller,
+        conjugate,
+        gradient,
+        origin_shift,
+        value,
+    );
+    // The cells taps may land on, tile-relative.
+    let [[x0, x1], [y0, y1]] = [0, 1].map(|axis| {
+        let origin = tile.origin[axis] as i64;
+        [
+            (cells[axis][0] - origin).max(0),
+            (cells[axis][1] - origin).min(tile.shape[axis] as i64),
+        ]
+    });
+    let first_x = location.x - hx as i64 - tile.origin[0] as i64;
+    let first_y = location.y - hy as i64 - tile.origin[1] as i64;
+    for (iy, row) in scratch.chunks_exact(block.shape[0]).enumerate() {
+        let y = first_y + iy as i64;
+        if !(y0..y1).contains(&y) {
+            continue;
+        }
+        for (ix, added) in row.iter().enumerate() {
+            let x = first_x + ix as i64;
+            if (x0..x1).contains(&x) {
+                let index = y as usize * tile.shape[0] + x as usize;
+                crate::compensation::add::<T, COMPENSATED>(
+                    &mut grid[index],
+                    correction,
+                    index,
+                    *added,
+                );
             }
         }
     }
@@ -91,7 +192,7 @@ pub(super) fn gather<T: GridScalar>(
     taps: &TapLayout<'_>,
     mueller: u8,
     conjugate: bool,
-    gradient: [f32; 2],
+    (gradient, origin_shift): ([f32; 2], u8),
 ) -> Complex64 {
     match *taps {
         TapLayout::SeparableReal {
@@ -134,7 +235,11 @@ pub(super) fn gather<T: GridScalar>(
                 taps: tile_taps,
                 conjugate,
             };
-            match PointingRamp::new(gradient, fine_fraction(location, oversampling), [sx, sy]) {
+            match PointingRamp::new(
+                gradient,
+                fine_fraction(location, oversampling, origin_shift),
+                [sx, sy],
+            ) {
                 Some(ramp) => gather_dense::<T, true>(grid, &block, ramp),
                 None => gather_dense::<T, false>(grid, &block, PointingRamp::NONE),
             }
@@ -182,6 +287,71 @@ pub(crate) fn norm(
     }
 }
 
+/// [`norm`] over the taps landing on `cells` alone (grid coordinates): the
+/// kernel sum `WProjectFT`'s sectioned gridder weighs a support it clips
+/// by ([`GridEdge::Sectioned`](crate::GridEdge::Sectioned)).
+pub(crate) fn clipped_norm(
+    taps: &TapLayout<'_>,
+    location: CellLocation,
+    cells: CellBox,
+    mueller: u8,
+    conjugate: bool,
+) -> Complex64 {
+    let [hx, hy] = taps.half_support().map(i64::from);
+    let first = [location.x - hx, location.y - hy];
+    let kept = |axis: usize, index: usize| {
+        (cells[axis][0]..cells[axis][1]).contains(&(first[axis] + index as i64))
+    };
+    match *taps {
+        TapLayout::SeparableReal {
+            rows,
+            support,
+            oversampling: _,
+        } => {
+            debug_assert_eq!(mueller, 0, "separable kernels have one Mueller plane");
+            let support = usize::from(support);
+            let axis_sum = |axis: usize, offset: u16| {
+                rows[usize::from(offset) * support..][..support]
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| kept(axis, *index))
+                    .map(|(_, tap)| f64::from(*tap))
+                    .sum::<f64>()
+            };
+            Complex64::new(axis_sum(0, location.ox) * axis_sum(1, location.oy), 0.0)
+        }
+        TapLayout::Dense {
+            data,
+            support,
+            oversampling,
+            mueller_planes,
+            ..
+        } => {
+            let tile = dense_tile(
+                data,
+                support,
+                oversampling,
+                mueller_planes,
+                location,
+                mueller,
+            );
+            let [sx, sy] = support.map(usize::from);
+            let mut sum = Complex64::default();
+            for (iy, row) in tile.chunks_exact(sx).enumerate().take(sy) {
+                if !kept(1, iy) {
+                    continue;
+                }
+                for (ix, tap) in row.iter().enumerate() {
+                    if kept(0, ix) {
+                        sum += oriented(*tap, conjugate);
+                    }
+                }
+            }
+            sum
+        }
+    }
+}
+
 /// Block-local `(x0, y0)` of the first tap.
 fn block_origin(tile: Tile, location: CellLocation, half: [usize; 2]) -> (usize, usize) {
     let x0 = location.x - half[0] as i64 - tile.origin[0] as i64;
@@ -196,8 +366,10 @@ fn block_origin(tile: Tile, location: CellLocation, half: [usize; 2]) -> (usize,
     (x0 as usize, y0 as usize)
 }
 
-fn spread_separable<T: GridScalar, const S: usize>(
+#[allow(clippy::too_many_arguments)]
+fn spread_separable<T: GridScalar, const S: usize, const COMPENSATED: bool>(
     grid: &mut [Complex<T>],
+    correction: &mut [Complex32],
     nx: usize,
     x0: usize,
     y0: usize,
@@ -214,8 +386,13 @@ fn spread_separable<T: GridScalar, const S: usize>(
         let row: &mut [Complex<T>; S] = (&mut grid[(y0 + iy) * nx + x0..][..S])
             .try_into()
             .expect("row has S cells");
-        for (cell, tap) in row.iter_mut().zip(&taps_x) {
-            *cell = *cell + scaled * *tap;
+        for (ix, (cell, tap)) in row.iter_mut().zip(&taps_x).enumerate() {
+            crate::compensation::add::<T, COMPENSATED>(
+                cell,
+                correction,
+                (y0 + iy) * nx + x0 + ix,
+                scaled * *tap,
+            );
         }
     }
 }
@@ -270,8 +447,10 @@ fn gather_separable_dyn<T: GridScalar>(
     sum
 }
 
-fn spread_separable_dyn<T: GridScalar>(
+#[allow(clippy::too_many_arguments)]
+fn spread_separable_dyn<T: GridScalar, const COMPENSATED: bool>(
     grid: &mut [Complex<T>],
+    correction: &mut [Complex32],
     nx: usize,
     x0: usize,
     y0: usize,
@@ -283,8 +462,13 @@ fn spread_separable_dyn<T: GridScalar>(
     for (iy, wy) in ry.iter().enumerate() {
         let scaled = value * T::from_f32(*wy);
         let row = &mut grid[(y0 + iy) * nx + x0..][..support];
-        for (cell, tap) in row.iter_mut().zip(rx) {
-            *cell = *cell + scaled * T::from_f32(*tap);
+        for (ix, (cell, tap)) in row.iter_mut().zip(rx).enumerate() {
+            crate::compensation::add::<T, COMPENSATED>(
+                cell,
+                correction,
+                (y0 + iy) * nx + x0 + ix,
+                scaled * T::from_f32(*tap),
+            );
         }
     }
 }
@@ -313,18 +497,19 @@ fn dense_tile_index(
     mueller: u8,
 ) -> usize {
     debug_assert!(mueller < mueller_planes, "Mueller plane outside the cell");
-    let rows = usize::from(oversampling) + 1;
+    let rows = CellLocation::fine_rows(oversampling);
     (usize::from(location.oy) * rows + usize::from(location.ox)) * usize::from(mueller_planes)
         + usize::from(mueller)
 }
 
-/// The sample's offset from its cell in cells, `(off − s/2)/s` per axis,
-/// from its fine rows: the pointing ramp is anchored at the sample itself
-/// (CASA reads the ramped kernel at `ix·sampling + off`), so every mode,
-/// the PSF and weight image included, carries the same per-sample phase.
-fn fine_fraction(location: CellLocation, oversampling: u16) -> [f64; 2] {
-    let half = f64::from(oversampling) / 2.0;
-    let fraction = |offset: u16| (f64::from(offset) - half) / f64::from(oversampling);
+/// The ramp's fine fraction `(off − ceil(s/2) − origin_shift)/s` per axis.
+/// CASA reads the ramp at `ix·sampling + off` relative to its array
+/// centre; the odd AW gradient array starts one fine pixel later.
+fn fine_fraction(location: CellLocation, oversampling: u16, origin_shift: u8) -> [f64; 2] {
+    let half = f64::from(CellLocation::fine_centre(oversampling));
+    let fraction = |offset: u16| {
+        (f64::from(offset) - half - f64::from(origin_shift)) / f64::from(oversampling)
+    };
     [fraction(location.ox), fraction(location.oy)]
 }
 
@@ -457,8 +642,9 @@ fn oriented(tap: Complex32, conjugate: bool) -> Complex64 {
 /// Add `value · tap'` over `block`, each tap times `ramp` when `RAMPED`:
 /// a row segment's value carries the ramp at its first tap, and each tap
 /// its table factor ([`PointingRamp`]).
-fn spread_dense<T: GridScalar, const RAMPED: bool>(
+fn spread_dense<T: GridScalar, const RAMPED: bool, const COMPENSATED: bool>(
     grid: &mut [Complex<T>],
+    correction: &mut [Complex32],
     block: &DenseBlock<'_>,
     mut ramp: PointingRamp,
     value: Complex<T>,
@@ -470,17 +656,33 @@ fn spread_dense<T: GridScalar, const RAMPED: bool>(
         let row = &mut grid[(y0 + iy) * block.nx + x0..][..sx];
         let taps = &block.taps[iy * sx..][..sx];
         let Some(table) = &table else {
-            for (cell, tap) in row.iter_mut().zip(taps) {
+            for (ix, (cell, tap)) in row.iter_mut().zip(taps).enumerate() {
                 let tap = oriented(*tap, block.conjugate);
-                *cell = *cell + value * Complex::new(T::from_f64(tap.re), T::from_f64(tap.im));
+                crate::compensation::add::<T, COMPENSATED>(
+                    cell,
+                    correction,
+                    (y0 + iy) * block.nx + x0 + ix,
+                    value * Complex::new(T::from_f64(tap.re), T::from_f64(tap.im)),
+                );
             }
             continue;
         };
         let mut start = wide * ramp.row;
-        for (cells, taps) in row.chunks_mut(RAMP_SEGMENT).zip(taps.chunks(RAMP_SEGMENT)) {
-            for ((cell, tap), factor) in cells.iter_mut().zip(taps).zip(&table.factors) {
+        for (segment, (cells, taps)) in row
+            .chunks_mut(RAMP_SEGMENT)
+            .zip(taps.chunks(RAMP_SEGMENT))
+            .enumerate()
+        {
+            for (ix, ((cell, tap), factor)) in
+                cells.iter_mut().zip(taps).zip(&table.factors).enumerate()
+            {
                 let added = start * (oriented(*tap, block.conjugate) * *factor);
-                *cell = *cell + Complex::new(T::from_f64(added.re), T::from_f64(added.im));
+                crate::compensation::add::<T, COMPENSATED>(
+                    cell,
+                    correction,
+                    (y0 + iy) * block.nx + x0 + segment * RAMP_SEGMENT + ix,
+                    Complex::new(T::from_f64(added.re), T::from_f64(added.im)),
+                );
             }
             start *= ramp.segment;
         }
@@ -575,6 +777,7 @@ mod tests {
     fn ramp_case<T: GridScalar>(
         (support, gradient, offsets, conjugate): ([usize; 2], [f32; 2], [u16; 2], bool),
         spread_tolerance: f64,
+        origin_shift: u8,
     ) {
         let oversampling = 4_u16;
         let [sx, sy] = support;
@@ -605,8 +808,10 @@ mod tests {
             + usize::from(offsets[0]))
             * sx
             * sy;
-        let [fx, fy] = offsets
-            .map(|o| (f64::from(o) - f64::from(oversampling) / 2.0) / f64::from(oversampling));
+        let [fx, fy] = offsets.map(|o| {
+            (f64::from(o) - f64::from(oversampling) / 2.0 - f64::from(origin_shift))
+                / f64::from(oversampling)
+        });
         let direct = |ix: usize, iy: usize| {
             let stored = data[first + iy * sx + ix];
             let sign = if conjugate { -1.0 } else { 1.0 };
@@ -624,14 +829,16 @@ mod tests {
 
         let value = Complex::new(T::from_f64(0.6), T::from_f64(-1.3));
         let mut spread_grid = vec![Complex::<T>::default(); tile.shape[0] * tile.shape[1]];
-        spread::<T>(
+        spread::<T, false>(
             &mut spread_grid,
+            &mut [],
             tile,
             location,
             &taps,
             0,
             conjugate,
             gradient,
+            origin_shift,
             value,
         );
         for (ix, iy) in (0..sy).flat_map(|iy| (0..sx).map(move |ix| (ix, iy))) {
@@ -661,7 +868,15 @@ mod tests {
                 direct(ix, iy).conj() * Complex64::new(cell.re.into_f64(), cell.im.into_f64())
             })
             .fold(Complex64::default(), |sum, term| sum + term);
-        let got = gather::<T>(&grid, tile, location, &taps, 0, conjugate, gradient);
+        let got = gather::<T>(
+            &grid,
+            tile,
+            location,
+            &taps,
+            0,
+            conjugate,
+            (gradient, origin_shift),
+        );
         if gradient == [0.0, 0.0] {
             assert!(got == expected, "{label}: gather changed");
         } else {
@@ -695,11 +910,20 @@ mod tests {
             ([9, 5], [0.0, 0.0], [1, 4], false),
         ];
         for case in cases {
-            ramp_case::<f64>(case, 1e-12);
-            ramp_case::<f32>(case, 1e-6);
+            ramp_case::<f64>(case, 1e-12, 0);
+            ramp_case::<f32>(case, 1e-6, 0);
         }
         assert!(PointingRamp::new([0.0, 0.0], [0.25, -0.5], [7, 7]).is_none());
         assert!(PointingRamp::new([-0.0, 0.0], [0.25, -0.5], [7, 7]).is_none());
+    }
+
+    /// Odd CASA AW phase arrays are read one fine pixel before their
+    /// construction origin, in both spreading and prediction (#1070).
+    #[test]
+    fn odd_aw_phase_origin_is_used_by_spread_and_gather() {
+        let case = ([7, 5], [0.37_f32, -0.21], [1_u16, 3], true);
+        ramp_case::<f64>(case, 1e-12, 1);
+        ramp_case::<f32>(case, 1e-6, 1);
     }
 
     /// A dense cell's norm read from its tiles' sums (#449) is the sum of
@@ -710,7 +934,7 @@ mod tests {
     fn a_stored_dense_norm_is_the_sum_of_its_tile() {
         let (oversampling, mueller_planes, support) = (4_u16, 2_u8, [3_u16, 5]);
         let taps = usize::from(support[0]) * usize::from(support[1]);
-        let rows = usize::from(oversampling) + 1;
+        let rows = CellLocation::fine_rows(oversampling);
         let data = (0..rows * rows * usize::from(mueller_planes) * taps)
             .map(|i| Complex32::new(noise(5 * i) as f32, noise(5 * i + 2) as f32))
             .collect::<Vec<_>>();
@@ -748,3 +972,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "correction_laws.rs"]
+mod correction_laws;

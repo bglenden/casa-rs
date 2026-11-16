@@ -1,0 +1,269 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": {
+    "all_ignored": {
+      "dtype": "bool",
+      "shape": [
+        2,
+        2
+      ],
+      "values": [
+        [
+          false,
+          false
+        ],
+        [
+          false,
+          false
+        ]
+      ]
+    },
+    "bool_scalars": {
+      "dtype": "bool",
+      "shape": [
+        2,
+        2
+      ],
+      "values": [
+        [
+          false,
+          false
+        ],
+        [
+          true,
+          false
+        ]
+      ]
+    },
+    "flat_float_then_string": {
+      "dtype": "<U8",
+      "shape": [
+        3
+      ],
+      "values": [
+        "1.000000",
+        "1.500000",
+        "a"
+      ]
+    },
+    "flat_integer_then_string": {
+      "dtype": "<U1",
+      "shape": [
+        3
+      ],
+      "values": [
+        "1",
+        "2",
+        "a"
+      ]
+    },
+    "flat_string_first": {
+      "dtype": "<U8",
+      "shape": [
+        3
+      ],
+      "values": [
+        "a",
+        "true",
+        "1.500000"
+      ]
+    },
+    "float_bool_string": {
+      "dtype": "<U8",
+      "shape": [
+        4
+      ],
+      "values": [
+        "0.000000",
+        "1.000000",
+        "1.250000",
+        "a"
+      ]
+    },
+    "floats": {
+      "dtype": "float64",
+      "shape": [
+        2,
+        2
+      ],
+      "values": [
+        [
+          1.5,
+          0.0
+        ],
+        [
+          0.0,
+          4.5
+        ]
+      ]
+    },
+    "included_signed": {
+      "dtype": "int64",
+      "shape": [
+        2,
+        2
+      ],
+      "values": [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ]
+      ]
+    },
+    "integer_cube": {
+      "dtype": "int64",
+      "shape": [
+        2,
+        2,
+        3
+      ],
+      "values": [
+        [
+          [
+            1,
+            0,
+            3
+          ],
+          [
+            4,
+            5,
+            6
+          ]
+        ],
+        [
+          [
+            7,
+            8,
+            9
+          ],
+          [
+            10,
+            0,
+            12
+          ]
+        ]
+      ]
+    },
+    "integers": {
+      "dtype": "int64",
+      "shape": [
+        2,
+        2
+      ],
+      "values": [
+        [
+          1,
+          0
+        ],
+        [
+          0,
+          4
+        ]
+      ]
+    },
+    "numeric_before_string": {
+      "dtype": "<U1",
+      "shape": [
+        4
+      ],
+      "values": [
+        "2",
+        "a",
+        "0",
+        "0"
+      ]
+    },
+    "ordinary_promotion": {
+      "dtype": "<U8",
+      "shape": [
+        4
+      ],
+      "values": [
+        "1.000000",
+        "a",
+        "1.250000",
+        "2"
+      ]
+    },
+    "single_column": {
+      "dtype": "<U1",
+      "shape": [
+        4
+      ],
+      "values": [
+        "a",
+        "",
+        "c",
+        ""
+      ]
+    },
+    "single_row": {
+      "dtype": "<U5",
+      "shape": [
+        4
+      ],
+      "values": [
+        "a",
+        "false",
+        "c",
+        "false"
+      ]
+    },
+    "string_cube": {
+      "dtype": "<U5",
+      "shape": [
+        8
+      ],
+      "values": [
+        "a",
+        "e",
+        "c",
+        "g",
+        "false",
+        "f",
+        "d",
+        ""
+      ]
+    },
+    "strings_before": {
+      "dtype": "<U5",
+      "shape": [
+        4
+      ],
+      "values": [
+        "a",
+        "c",
+        "false",
+        "d"
+      ]
+    },
+    "strings_last": {
+      "dtype": "<U1",
+      "shape": [
+        4
+      ],
+      "values": [
+        "a",
+        "c",
+        "b",
+        ""
+      ]
+    },
+    "strings_trailing": {
+      "dtype": "<U5",
+      "shape": [
+        4
+      ],
+      "values": [
+        "a",
+        "false",
+        "false",
+        ""
+      ]
+    }
+  }
+}

@@ -7,8 +7,8 @@ mod common;
 
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
-    Basis, CpuBackend, GridBackend, GridPrecision, Mode, ModeSet, ModelImages, ModelPlane,
-    ModelPrescale, NormalImages, PlaneRange, Tile, Work,
+    Basis, CpuBackend, GridBackend, GridPrecision, GridStorage, Mode, ModeSet, ModelImages,
+    ModelPlane, ModelPrescale, NormalImages, Placement, PlaneRange, Tile, Work,
 };
 use casa_types::Correlation;
 use common::{
@@ -59,13 +59,22 @@ fn adjoint_law_on(
     requested: &[PolarizationCoordinate],
     basis_factor: f64,
 ) {
-    let shape = geometry.image().shape;
     let operator = operator_on(geometry, precision, Basis::Constant, &XX_YY, requested);
+    adjoint_operator_law(operator, precision, requested.len(), basis_factor);
+}
+
+fn adjoint_operator_law(
+    operator: casa_imaging_operator::MeasurementOperator,
+    precision: GridPrecision,
+    pols: usize,
+    basis_factor: f64,
+) {
+    let shape = operator.geometry().image().shape;
     let mut rng = Rng::new(7);
     let placed = placements(operator.geometry(), 300, 1, &mut rng);
     let (values, weights) = samples(&placed, 2, &mut rng);
     let block = buffer(&placed, &values, &weights, 2);
-    let model = random_model_of(shape, requested.len(), &mut rng);
+    let model = random_model_of(shape, pols, &mut rng);
     let mut backend = CpuBackend::new();
 
     let prepared = operator
@@ -101,7 +110,7 @@ fn adjoint_law_on(
         )
         .expect("grid");
     let normal = operator.finish(acc).expect("finish");
-    let image_side = (0..requested.len())
+    let image_side = (0..pols)
         .map(|pol| {
             normal
                 .data(0, 0, pol)
@@ -453,6 +462,61 @@ fn f32_and_f64_grids_agree() {
     }
 }
 
+/// A standard kernel that fits the Fourier grid contributes every tap and
+/// its full weight. CASA's sector off-by-one drops the last cell (#1069).
+#[test]
+fn standard_grid_keeps_taps_at_the_last_column_and_row() {
+    let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
+    let [nx, ny] = operator.geometry().grid_shape();
+    let [sx, sy] = operator.geometry().scale();
+    let mut backend = CpuBackend::new();
+    for (axis, last) in [(0, nx - 1), (1, ny - 1)] {
+        let mut sample = Placement {
+            u: 0.0,
+            v: 0.0,
+            w: 0.0,
+            prediction_w_positive: false,
+            phase: 0.0,
+            plane: 0,
+            spectral: 0.0,
+            cf: Default::default(),
+            gradient: [0.0; 2],
+        };
+        let extent = [nx, ny][axis];
+        let inside = last as f64 - 3.0 + 0.25 - (extent / 2) as f64;
+        if axis == 0 {
+            sample.u = inside / sx;
+        } else {
+            sample.v = inside / sy;
+        }
+        let placements = [sample];
+        let samples = buffer(&placements, &[Complex64::new(1.0, 0.0); 2], &[1.0; 2], 2);
+        let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::PSF);
+        backend
+            .apply(
+                &samples.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode: Mode::Psf,
+                    acc: &mut acc,
+                },
+            )
+            .expect("grid a support reaching the last cell");
+        let (_, storage, _) = acc.backend_parts();
+        let GridStorage::F64(cells) = storage else {
+            panic!("f64 grid")
+        };
+        let cell = if axis == 0 {
+            (ny / 2) * nx + last
+        } else {
+            last * nx + nx / 2
+        };
+        assert!(cells[cell].re > 0.0, "missing edge tap on axis {axis}");
+        assert!((cells.iter().map(|cell| cell.re).sum::<f64>() - 2.0).abs() < 1e-6);
+        assert_eq!(acc.sumwt_at(0, 0, 0), 2.0);
+    }
+}
+
 #[test]
 fn residual_grid_of_the_predicted_model_is_empty() {
     let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
@@ -596,4 +660,22 @@ fn polarized_point_source_matches_the_casa_stokes_psf() {
         worst < 1.0e-3 * flux,
         "Q dirty image differs from the shifted Q PSF by {worst}"
     );
+}
+
+#[test]
+fn boxcar_kernel_is_adjoint_in_both_precisions() {
+    use casa_imaging_operator::{Boxcar, MeasurementOperator, PolarizationRouting};
+    for precision in [GridPrecision::F32, GridPrecision::F64] {
+        let geometry = geometry();
+        let routing = PolarizationRouting::compile(&XX_YY, &STOKES_I).unwrap();
+        let kernel = Boxcar::new(&geometry, &routing);
+        let operator = MeasurementOperator::new(
+            geometry,
+            Basis::Constant,
+            routing,
+            Box::new(kernel),
+            precision,
+        );
+        adjoint_operator_law(operator, precision, 1, 1.);
+    }
 }

@@ -14,17 +14,16 @@
 //! field and time, a pointing direction per antenna and time, a frequency
 //! conversion per time.
 //!
-//! The arithmetic is the selected-observation route's, statement for
-//! statement, through the same shared pieces ([`GridFtProjection`],
+//! The arithmetic goes through the shared pieces ([`GridFtProjection`],
 //! [`ObservationPointingLaw::resolve`](crate::ObservationPointingLaw::resolve),
-//! [`AwPointingEpochs`], `casa-types` Measures), so the two routes agree
-//! to rounding on an MSv2.
+//! [`AwPointingEpochs`], `casa-types` Measures). It agreed to rounding with
+//! the row route it replaced on every T1 run (#932, step 3b), and with
+//! itself across stores (`casa-imaging-application`'s store law).
 //!
 //! AW pointing groups carry state from epoch to epoch (a time of one
 //! partition), in the order the batches arrive: partition by partition,
 //! each in time order. [`GeometryTraversal`] holds it for one traversal.
-//! AW projection images MFS only (cube AW is refused, #719), so a
-//! traversal visits every epoch.
+//! A traversal visits every epoch of the partitions it reads.
 //!
 //! A field that follows an ephemeris ([`FieldEntry::ephemeris`]) is
 //! observed towards the body's direction from the observatory at each time,
@@ -38,7 +37,19 @@
 //! the last two give; under any other phase centre a batch that needs one
 //! is refused.
 //!
+//! A cube gridded through LSRK ([`FrequencyFrame::gridded_through_lsrk`])
+//! is gridded as CASA grids it: CASA fixes the image's channels in LSRK at
+//! the image's anchor (an LSRK conversion layer on the grid's coordinates,
+//! `SIImageStore::forwardGrid`) and takes each row to LSRK at its own time
+//! (`FTMachine::matchChannel`). A time's frequencies are therefore its LSRK
+//! frequencies over `A`, the output frame's LSRK factor at the anchor, so a
+//! row at the anchor keeps its own frequencies exactly, as CASA's equal
+//! output and native channels convert alike; and its projected baselines
+//! are scaled by `A`, so `uvw · ν / c` and the phase-centre phase are those
+//! of the LSRK frequency CASA grids at (`GridFT::put`).
+//!
 //! [`FieldEntry::ephemeris`]: casa_observation::FieldEntry::ephemeris
+//! [`FrequencyFrame::gridded_through_lsrk`]: crate::FrequencyFrame::gridded_through_lsrk
 
 mod frames;
 mod pointing;
@@ -52,6 +63,7 @@ use casa_observation::{
     AntennaId, Catalogue, FieldEphemeris, FieldId, PointingSeries, VisibilityBatch,
 };
 use casa_types::measures::direction::MDirection;
+use casa_types::measures::epoch::MEpoch;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::radial_velocity::MRadialVelocity;
 use casa_types::measures::{
@@ -65,9 +77,10 @@ use crate::aw_pointing::{AwPointingEpochs, AwPointingError, AwPointingGrouping};
 use crate::compiled_problem::{CompiledProblem, InstrumentModel};
 use crate::geometry::{
     DirectionFrame, PhaseCentreLaw, PointingCentreLaw, PointingTimeSampling, SkyDirection,
+    SpectralCoordinateSpec, SpectralFrameAnchor,
 };
 use crate::pointing_law::PointingLawError;
-use crate::selected_observation_sample::{
+use crate::sample_antennas::{
     AntennaResponseClass, SelectedAntennaResponses, SelectedPointingDirections,
 };
 use crate::uvw_projection::GridFtProjection;
@@ -82,6 +95,9 @@ pub enum BatchGeometryError {
     /// A fixed phase or pointing centre outside J2000.
     #[error("a fixed centre in {0:?} (imaging geometry takes J2000)")]
     FixedCentreFrame(DirectionFrame),
+    /// The interpolation grid and the TOPO WCS describe different planes.
+    #[error("source LSRK grid does not agree with the anchored TOPO spectral coordinate")]
+    SourceGridWcs,
     /// A faceted domain under the mosaic UVW law.
     #[error("a faceted image domain under the mosaic UVW law")]
     FacetedMosaic,
@@ -177,8 +193,21 @@ pub struct GeometryPlan {
     pointing: PointingCentreLaw,
     charts: Vec<Chart>,
     mosaic: bool,
+    /// Whether each row's pointing is placed on each chart
+    /// ([`BatchGeometry::chart_pointing`]): under the mosaic law, when the
+    /// phase centre moves or a chart is outside J2000.
+    chart_pointing: bool,
     output_frame: FrequencyRef,
+    /// `A`, the factor that takes an output-frame frequency to LSRK at the
+    /// image's anchor, for a cube gridded through LSRK.
+    output_in_lsrk: Option<f64>,
+    /// Factor between the interpolation frequency coordinate and LSRK.
+    grid_in_lsrk: f64,
+    /// A retained LSRK grid with converted inputs compares native channels
+    /// after each Doppler hop, preserving CASA's nearest-weight boundary.
+    convert_lsrk_hops: bool,
     parallactic: bool,
+    aw_pa: bool,
     responses: Responses,
     aw: Option<AwPointingGrouping>,
 }
@@ -191,7 +220,9 @@ impl fmt::Debug for GeometryPlan {
             .field("pointing", &self.pointing)
             .field("charts", &self.charts.len())
             .field("mosaic", &self.mosaic)
+            .field("chart_pointing", &self.chart_pointing)
             .field("output_frame", &self.output_frame)
+            .field("output_in_lsrk", &self.output_in_lsrk)
             .field("parallactic", &self.parallactic)
             .field("aw", &self.aw.is_some())
             .finish_non_exhaustive()
@@ -268,7 +299,8 @@ const TRACKFIELD: &str = "TRACKFIELD";
 /// The aperture classes the instrument model assigns.
 enum Responses {
     None,
-    Aca7m,
+    /// One class for every antenna.
+    Uniform(AntennaResponseClass),
     Heterogeneous {
         classes: Vec<Option<AntennaResponseClass>>,
         envelope: Option<AntennaResponseClass>,
@@ -293,7 +325,9 @@ pub struct BatchGeometry {
     projections: Vec<ChartProjection>,
     pointing: Vec<SelectedPointingDirections>,
     parallactic: Vec<[f64; 2]>,
+    aw_pa: Vec<f32>,
     aw_pixels: Vec<[f64; 2]>,
+    chart_pointing: Vec<SkyDirection>,
     responses: Vec<Option<SelectedAntennaResponses>>,
     frequencies_hz: Vec<f64>,
 }
@@ -318,11 +352,32 @@ impl BatchGeometry {
         self.parallactic.get(sample).copied()
     }
 
+    /// The physical parallactic angle of antenna 0 at `time`, before adding
+    /// its feed-0 receptor angle (`getPA`, `VisBufferImpl2::feedPa`).
+    #[must_use]
+    pub fn aw_parallactic_angle(&self, time: usize) -> Option<f32> {
+        self.aw_pa.get(time).copied()
+    }
+
     /// Sample `sample`'s AW pointing pixel on chart `chart`, on an AW run
     /// with pointing.
     #[must_use]
     pub fn aw_pointing_pixel(&self, sample: usize, chart: usize) -> Option<[f64; 2]> {
         self.aw_pixels.get(sample * self.charts + chart).copied()
+    }
+
+    /// Sample `sample`'s antenna-1 pointing on chart `chart`, in the
+    /// chart's frame and less the moving phase centre's shift since the
+    /// image's epoch, as CASA's `SimplePBConvFunc::toPix` places a mosaic
+    /// row's pointing (`MosaicFT` passes it the shift negated); `None`
+    /// where the chart takes the J2000 pointing as it is
+    /// ([`Self::pointing`]): a fixed phase centre with every chart in
+    /// J2000, or a law other than the mosaic's.
+    #[must_use]
+    pub fn chart_pointing(&self, sample: usize, chart: usize) -> Option<SkyDirection> {
+        self.chart_pointing
+            .get(sample * self.charts + chart)
+            .copied()
     }
 
     /// Sample `sample`'s antennas' aperture classes, when the instrument
@@ -347,7 +402,9 @@ impl BatchGeometry {
         self.projections.capacity() * size_of::<ChartProjection>()
             + self.pointing.capacity() * size_of::<SelectedPointingDirections>()
             + self.parallactic.capacity() * size_of::<[f64; 2]>()
+            + self.aw_pa.capacity() * size_of::<f32>()
             + self.aw_pixels.capacity() * size_of::<[f64; 2]>()
+            + self.chart_pointing.capacity() * size_of::<SkyDirection>()
             + self.responses.capacity() * size_of::<Option<SelectedAntennaResponses>>()
             + self.frequencies_hz.capacity() * size_of::<f64>()
     }
@@ -413,25 +470,62 @@ impl GeometryPlan {
             .model_phase_centre();
         let phase = PhaseCentre::resolve(centres.phase_tracking(), phase_table, &frames)?;
         let (charts, mosaic) = projection::charts(problem)?;
+        let chart_pointing = mosaic
+            && (phase.moves()
+                || charts
+                    .iter()
+                    .any(|chart| chart.centre.frame() != DirectionFrame::J2000));
         let responses = match problem.science().instrument_model() {
-            None | Some(InstrumentModel::CasaEvlaWidebandAwV1) => Responses::None,
-            Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => Responses::Aca7m,
+            None
+            | Some(
+                InstrumentModel::CasaEvlaWidebandAwV1
+                | InstrumentModel::CasaVlaAwplpg
+                | InstrumentModel::CasaVlaAwplpgSquint,
+            ) => Responses::None,
+            Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => {
+                Responses::Uniform(AntennaResponseClass::CasaAca7m)
+            }
+            Some(InstrumentModel::CasaEvlaCommonInterferometricResponseV1) => {
+                Responses::Uniform(AntennaResponseClass::CasaEvla)
+            }
             Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1) => {
                 let classes = frames.alma_aca_classes(catalogue);
                 let envelope = AntennaResponseClass::family_envelope(&classes);
                 Responses::Heterogeneous { classes, envelope }
             }
+            Some(InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1) => {
+                let classes = frames.airy_classes();
+                let envelope = AntennaResponseClass::family_envelope(&classes);
+                Responses::Heterogeneous { classes, envelope }
+            }
         };
+        let spectral = problem.geometry().spectral();
+        let output_in_lsrk = output_in_lsrk(spectral, &frames)?;
+        let grid_in_lsrk = interpolation_frequency_scale(spectral, output_in_lsrk)?;
         Ok(Self {
             catalogue: Arc::clone(catalogue),
+            output_in_lsrk,
+            grid_in_lsrk,
+            convert_lsrk_hops: spectral.reporting_conversions().is_some(),
             frames,
             phase,
             anchor,
             pointing: centres.pointing().clone(),
             charts,
             mosaic,
-            output_frame: problem.geometry().spectral().output_frame().frequency_ref(),
+            chart_pointing,
+            output_frame: spectral.output_frame().frequency_ref(),
             parallactic: problem.requires_parallactic_angles(),
+            aw_pa: problem
+                .science()
+                .measurement_equation()
+                .aw_projection()
+                .is_some()
+                || (problem.requires_parallactic_angles()
+                    && matches!(
+                        problem.science().instrument_model(),
+                        Some(InstrumentModel::CasaVlaAwplpg | InstrumentModel::CasaVlaAwplpgSquint)
+                    )),
             responses,
             aw: AwPointingGrouping::new(problem)?,
         })
@@ -442,6 +536,22 @@ impl GeometryPlan {
     #[must_use]
     pub fn charts(&self) -> usize {
         self.charts.len()
+    }
+
+    /// Factor converting an output-frame frequency to LSRK at the image's
+    /// anchor, when the image has an LSRK conversion layer.
+    #[must_use]
+    pub const fn output_lsrk_factor(&self) -> Option<f64> {
+        self.output_in_lsrk
+    }
+
+    /// Convert a frequency on the resampler's grid into the frequency
+    /// used for gridder UVW. For an anchored TOPO or BARY cube this takes
+    /// the grid's coordinate into LSRK, and is also used with the
+    /// unrotated W in AW prediction.
+    #[must_use]
+    pub const fn gridding_frequency_scale(&self) -> f64 {
+        self.grid_in_lsrk
     }
 
     /// Whether [`Self::apply`] needs the batch's pointing samples.
@@ -503,24 +613,30 @@ impl GeometryPlan {
         if self.aw.is_some() {
             per_sample += charts * size_of::<[f64; 2]>();
         }
+        if self.chart_pointing {
+            per_sample += charts * size_of::<SkyDirection>();
+        }
         if !matches!(self.responses, Responses::None) {
             per_sample += size_of::<Option<SelectedAntennaResponses>>();
         }
-        samples * per_sample + times * channels * size_of::<f64>()
+        samples * per_sample
+            + times * channels * size_of::<f64>()
+            + usize::from(self.aw_pa) * times * size_of::<f32>()
     }
 
-    /// CASA's aperture classes of the observation's antennas, sorted and
-    /// without repeats: the dishes a heterogeneous mosaic's kernel set
-    /// keys on (`HetArrayConvFunc::findAntennaSizes`), as the
-    /// selected-observation route lists them.
+    /// CASA's aperture classes of the observation's antennas under the
+    /// instrument model, sorted and without repeats: the dishes a mosaic's
+    /// kernel set keys on (`HetArrayConvFunc::findAntennaSizes`); none
+    /// without an aperture response.
     #[must_use]
     pub fn aperture_classes(&self) -> Vec<AntennaResponseClass> {
-        let mut classes = self
-            .frames
-            .alma_aca_classes(&self.catalogue)
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let mut classes = match &self.responses {
+            Responses::None => Vec::new(),
+            Responses::Uniform(class) => vec![*class],
+            Responses::Heterogeneous { classes, .. } => {
+                classes.iter().copied().flatten().collect::<Vec<_>>()
+            }
+        };
         classes.sort_unstable();
         classes.dedup();
         classes
@@ -616,20 +732,25 @@ impl GeometryPlan {
                 reprojections = Some((field, self.reprojections(&context, &field_direction)?));
             }
             let machines = &reprojections.as_ref().expect("reprojections formed").1;
+            // Convert the grid's coordinate to LSRK wavelengths.
+            let in_lsrk = self.gridding_frequency_scale();
             for sample in context.row_samples() {
                 let raw = uvw.metres_at(sample);
                 for (chart, machine) in machines.iter().enumerate() {
                     let (uvw_m, phase_shift_m) =
                         machine.map_or((raw, 0.0), |machine| machine.apply(raw));
                     out.projections[sample * out.charts + chart] = ChartProjection {
-                        uvw_m,
-                        phase_shift_m,
+                        uvw_m: uvw_m.map(|metres| metres * in_lsrk),
+                        phase_shift_m: phase_shift_m * in_lsrk,
                     };
                 }
             }
             self.antenna_quantities(&context, &field_direction, out)?;
             directions.clear();
             self.pointing_directions(&context, pointing, &mut directions, out)?;
+            if self.chart_pointing {
+                self.chart_pointings(&context, out)?;
+            }
             if let Some(grouping) = &self.aw {
                 let series =
                     pointing.ok_or(BatchGeometryError::MissingInput("pointing samples"))?;
@@ -682,12 +803,23 @@ impl GeometryPlan {
         );
         let parallactic = if self.parallactic { samples } else { 0 };
         refill(&mut out.parallactic, parallactic, [f64::NAN; 2]);
+        refill(
+            &mut out.aw_pa,
+            usize::from(self.aw_pa) * batch.times(),
+            f32::NAN,
+        );
         let aw = if self.aw.is_some() {
             samples * out.charts
         } else {
             0
         };
         refill(&mut out.aw_pixels, aw, [f64::NAN; 2]);
+        let charted = if self.chart_pointing {
+            samples * out.charts
+        } else {
+            0
+        };
+        refill(&mut out.chart_pointing, charted, nowhere);
         let responses = if matches!(self.responses, Responses::None) {
             0
         } else {
@@ -723,6 +855,15 @@ impl GeometryPlan {
         self.charts
             .iter()
             .map(|chart| {
+                if chart.centre.frame() != DirectionFrame::J2000
+                    && shift.is_none()
+                    && !chart.faceted
+                {
+                    let frame = self.frames.observatory_at(context.time_mjd_s, scale);
+                    return projection::native_reprojection(field, chart, &frame, self.mosaic)
+                        .map(Some)
+                        .map_err(Into::into);
+                }
                 let mut target = self.frames.j2000(
                     context.time_mjd_s,
                     scale,
@@ -730,6 +871,24 @@ impl GeometryPlan {
                     chart.centre.frame().direction_ref(),
                 )?;
                 if let Some([longitude, latitude]) = shift {
+                    if self.mosaic {
+                        let (field_lon, field_lat) = field.as_angles();
+                        let shifted_field = MDirection::from_angles(
+                            field_lon + longitude,
+                            field_lat + latitude,
+                            DirectionFrame::J2000.direction_ref(),
+                        );
+                        let target = MDirection::from_angles(
+                            target[0],
+                            target[1],
+                            DirectionFrame::J2000.direction_ref(),
+                        );
+                        return Ok(Some(GridFtProjection::mosaic_through_shifted_field(
+                            field,
+                            &shifted_field,
+                            &target,
+                        )));
+                    }
                     target[0] += longitude;
                     target[1] += latitude;
                 }
@@ -754,12 +913,20 @@ impl GeometryPlan {
     ) -> Result<(), BatchGeometryError> {
         let per_time = context.batch.samples_per_time();
         let angles = if self.parallactic {
-            Some(self.frames.parallactic_angles(
+            let mut antennas = context.row_antennas();
+            if self.aw_pa && antennas.first() != Some(&AntennaId(0)) {
+                antennas.push(AntennaId(0));
+            }
+            let angles = self.frames.parallactic_angles(
                 (context.time_mjd_s, context.batch.time.reference()),
                 context.field,
                 field,
-                &context.row_antennas(),
-            )?)
+                &antennas,
+            )?;
+            if self.aw_pa {
+                out.aw_pa[context.time] = angles[0] as f32;
+            }
+            Some(angles)
         } else {
             None
         };
@@ -866,10 +1033,10 @@ impl GeometryPlan {
     ) -> Result<Option<SelectedAntennaResponses>, BatchGeometryError> {
         Ok(match &self.responses {
             Responses::None => None,
-            Responses::Aca7m => Some(SelectedAntennaResponses {
-                antenna1: AntennaResponseClass::CasaAca7m,
-                antenna2: AntennaResponseClass::CasaAca7m,
-                family_envelope: AntennaResponseClass::CasaAca7m,
+            Responses::Uniform(class) => Some(SelectedAntennaResponses {
+                antenna1: *class,
+                antenna2: *class,
+                family_envelope: *class,
             }),
             Responses::Heterogeneous { classes, envelope } => {
                 let class = |antenna: AntennaId| {
@@ -901,11 +1068,31 @@ impl GeometryPlan {
         field: FieldId,
         direction: &MDirection,
         source: FrequencyRef,
-    ) -> Result<PreparedFrequencyConversion, BatchGeometryError> {
+    ) -> Result<RowFrequencies, BatchGeometryError> {
+        if self.output_in_lsrk.is_some() && source != FrequencyRef::REST {
+            // Rows convert at their own time to the interpolation grid's
+            // frequency coordinate. A source-defined grid is already in LSRK.
+            let frame = self
+                .frames
+                .observatory_at(time_mjd_s, scale)
+                .with_direction(direction.clone());
+            let lsrk = PreparedFrequencyConversion::new(
+                source,
+                FrequencyRef::LSRK,
+                Some(&frame),
+                Some(&frame),
+            )?;
+            if self.convert_lsrk_hops {
+                return Ok(RowFrequencies::Direct(lsrk));
+            }
+            return Ok(RowFrequencies::ThroughLsrk(
+                lsrk.convert_hz(1.0) / self.grid_in_lsrk,
+            ));
+        }
         if source == self.output_frame {
-            return Ok(PreparedFrequencyConversion::new(
+            return Ok(RowFrequencies::Direct(PreparedFrequencyConversion::new(
                 source, source, None, None,
-            )?);
+            )?));
         }
         let mut frame = self
             .frames
@@ -917,11 +1104,143 @@ impl GeometryPlan {
                 .ok_or(BatchGeometryError::RestFrameWithoutVelocity)?;
             frame = frame.with_radial_velocity(velocity);
         }
-        Ok(PreparedFrequencyConversion::new(
+        Ok(RowFrequencies::Direct(PreparedFrequencyConversion::new(
             source,
             self.output_frame,
             Some(&frame),
             Some(&frame),
-        )?)
+        )?))
+    }
+}
+
+/// How one time's channel frequencies reach the output frame.
+enum RowFrequencies {
+    /// Straight to the output frame, hop by hop.
+    Direct(PreparedFrequencyConversion),
+    /// To LSRK at the time, then to the output frame by the factor at the
+    /// image's anchor: one factor.
+    ThroughLsrk(f64),
+}
+
+impl RowFrequencies {
+    fn convert_hz(&self, frequency_hz: f64) -> f64 {
+        match self {
+            Self::Direct(conversion) => conversion.convert_hz(frequency_hz),
+            Self::ThroughLsrk(factor) => frequency_hz * factor,
+        }
+    }
+}
+
+/// The interpolation grid and its UVW scale share a frequency coordinate.
+/// Verify that the retained LSRK grid represents the anchored TOPO planes.
+fn interpolation_frequency_scale(
+    spectral: &SpectralCoordinateSpec,
+    output_in_lsrk: Option<f64>,
+) -> Result<f64, BatchGeometryError> {
+    let factor = output_in_lsrk.unwrap_or(1.0);
+    if !spectral.has_source_lsrk_grid() {
+        return Ok(factor);
+    }
+    let [_, first, step] = spectral.linear_grid().expect("source LSRK grid is linear");
+    let channels = spectral.output_channels();
+    let last = first + (channels - 1) as f64 * step;
+    let world = [0, channels - 1]
+        .map(|plane| spectral.channel_centre_hz(plane).expect("in-range plane") * factor);
+    // Forward and reverse Doppler hops, plus regridChanBounds' stepping
+    // and linearization, incur roundoff proportional to the channel count.
+    // The two grids must also agree on the identity of the edge channels.
+    let relative_bound = 16.0 * (channels as f64 + 1.0) * f64::EPSILON;
+    for (actual, expected) in world.into_iter().zip([first, last]) {
+        let bound = (expected * relative_bound).min(step.abs() / 2.0);
+        if !actual.is_finite() || (actual - expected).abs() > bound {
+            return Err(BatchGeometryError::SourceGridWcs);
+        }
+    }
+    Ok(1.0)
+}
+
+/// `A`, the factor that takes `spectral`'s output frame to LSRK at its
+/// anchor, for a cube gridded through LSRK: CASA's LSRK conversion layer at
+/// the image's epoch and reference direction, from the observatory the rows
+/// convert from, as CASA's grid and rows share one.
+fn output_in_lsrk(
+    spectral: &SpectralCoordinateSpec,
+    frames: &Frames,
+) -> Result<Option<f64>, BatchGeometryError> {
+    let output = spectral.output_frame();
+    let SpectralFrameAnchor::Conversion {
+        epoch, direction, ..
+    } = spectral.anchor()
+    else {
+        return Ok(None);
+    };
+    if !output.gridded_through_lsrk() {
+        return Ok(None);
+    }
+    let frame = frames
+        .observatory_at_epoch(MEpoch::from_mjd(
+            epoch.mjd_days(),
+            epoch.scale().epoch_ref(),
+        ))
+        .with_direction(MDirection::from_angles(
+            direction.longitude_rad(),
+            direction.latitude_rad(),
+            direction.frame().direction_ref(),
+        ));
+    let factor = PreparedFrequencyConversion::new(
+        output.frequency_ref(),
+        FrequencyRef::LSRK,
+        Some(&frame),
+        Some(&frame),
+    )?
+    .convert_hz(1.0);
+    Ok(Some(factor))
+}
+
+#[cfg(test)]
+mod source_grid_tests {
+    use super::*;
+    use crate::{DopplerConvention, FrequencyFrame, RestFrequency, SourceLsrkGrid, SpectralWcs};
+
+    #[test]
+    fn source_grid_must_identify_the_anchored_topo_planes() {
+        let factor = 0.99995;
+        let first = 1.0e9;
+        let step = 50.0e6;
+        let spectral = SpectralCoordinateSpec::new(
+            FrequencyFrame::Lsrk,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 5,
+                reference_pixel: 0.0,
+                reference_frequency_hz: first / factor,
+                increment_hz: step / factor,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::Radio,
+        );
+        let grid = |first_hz, increment_hz| {
+            Some(SourceLsrkGrid {
+                first_hz,
+                increment_hz,
+                reporting_conversions: None,
+                terminal_plane_outside: false,
+            })
+        };
+        let correct = spectral.clone().with_source_lsrk_grid(grid(first, step));
+        assert_eq!(
+            interpolation_frequency_scale(&correct, Some(factor)).unwrap(),
+            1.0
+        );
+        for wrong in [[first + step, step], [first, step * 2.0]] {
+            let wrong = spectral
+                .clone()
+                .with_source_lsrk_grid(grid(wrong[0], wrong[1]));
+            assert!(matches!(
+                interpolation_frequency_scale(&wrong, Some(factor)),
+                Err(BatchGeometryError::SourceGridWcs)
+            ));
+        }
     }
 }

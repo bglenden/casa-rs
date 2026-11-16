@@ -2,6 +2,8 @@
 //! Tests of casacore's quantum arithmetic, with expectations from CASA
 //! 6.7.6's `qa` tool (probed 2026-10-21).
 
+use std::collections::BTreeMap;
+
 use super::*;
 
 fn read(text: &str) -> Quantity {
@@ -123,19 +125,19 @@ fn holders_read_strings_and_records() {
         .unwrap()
         .unwrap();
     assert!(!scalar.is_array());
-    let array = Variant::Record(BTreeMap::from([
-        ("value".to_string(), Variant::Numbers(vec![2.0, 3.0])),
-        ("unit".to_string(), Variant::Text("s".to_string())),
-    ]));
+    let array = Variant::Record(
+        BTreeMap::from([
+            ("value".to_string(), Variant::Numbers(vec![2.0, 3.0])),
+            ("unit".to_string(), Variant::Text("s".to_string())),
+        ])
+        .into(),
+    );
     let array = quantum_holder(&array).unwrap().unwrap();
     assert_eq!(
         (array.values.clone(), array.shape.clone()),
         (vec![2.0, 3.0], Some(vec![2]))
     );
-    let bad = Variant::Record(BTreeMap::from([(
-        "value".to_string(),
-        Variant::Number(1.0),
-    )]));
+    let bad = Variant::Record(BTreeMap::from([("value".to_string(), Variant::Number(1.0))]).into());
     assert_eq!(
         quantum_holder(&bad).unwrap_err().to_string(),
         "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"

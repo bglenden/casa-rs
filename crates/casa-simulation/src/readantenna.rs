@@ -52,9 +52,10 @@
 //! 2. A known observatory: the measures provider's observatory table
 //!    (CASA's `me.observatory`), converted to WGS 84. The name matches as
 //!    casacore's `MeasTable::Observatory` matches it: a case-insensitive
-//!    exact match, else the one table name that is a prefix of the
-//!    telescope name (CASA's `aca.tp.cfg` says `observatory=ALMASD`, which
-//!    is ALMA). Two such names (`GB` and `GBT` for `GBTX`) match none.
+//!    exact match, else the one table name that agrees with the telescope
+//!    name over the shorter of their lengths (CASA's `aca.tp.cfg` says
+//!    `observatory=ALMASD`, which is ALMA). Two such names (`GB` and `GBT`
+//!    for `GBTX`) match none.
 //! 3. Otherwise a `LOC` file is an error, and for absolute coordinates the
 //!    observatory is the mean antenna position, converted to WGS 84 with
 //!    [`geodesy::xyz_to_geodetic`].
@@ -98,11 +99,6 @@
 //!   `me.observatory`, which can fail (`xALMAx`). CASA then raises
 //!   `KeyError` for a `LOC` file and takes the mean-position path otherwise;
 //!   here such a name is simply unknown.
-//! - **Prefix ambiguity.** casacore also counts a longer table name that
-//!   starts with the telescope name as a candidate (`MWA3` matches both
-//!   `MWA` and `MWA32T`, so neither; from casacore's `MUString::minimaxNC`).
-//!   The measures provider only answers exact lookups and cannot list its
-//!   table, so that case resolves to the shorter name here.
 //! - **`COFA` height.** The observatory is at height 0. casacore stores a
 //!   zero-height WGS 84 position as a 1e-6 m vector, so CASA's position, and
 //!   the height its `LOC` conversion uses, is 1e-6 m.
@@ -396,10 +392,10 @@ fn coordinate_system(
     }
 }
 
-/// The telescope's position from the provider's table, in WGS 84, as
-/// casacore's `MeasTable::Observatory` finds it: an exact
-/// (case-insensitive) match, else the single table name that is a proper
-/// prefix of the telescope name.
+/// The telescope's position from the provider's table, in WGS 84. The
+/// provider finds the name as casacore's `MeasTable::Observatory` does: an
+/// exact (case-insensitive) match, else the one table name it agrees with
+/// over the shorter of their lengths (`MUString::minimaxNC`).
 fn catalog_observatory(
     telescope: &str,
     measures: &dyn MeasuresProvider,
@@ -408,30 +404,8 @@ fn catalog_observatory(
         telescope: telescope.to_string(),
         source,
     };
-    let lookup = |name: &str| MPosition::from_observatory_name(name, measures).map_err(failed);
-    let position = match lookup(telescope)? {
-        Some(position) => Some(position),
-        None => {
-            let mut matches = Vec::new();
-            for (end, _) in telescope.char_indices().skip(1) {
-                let prefix = &telescope[..end];
-                // Providers trim their queries; a prefix ending in white
-                // space would match the shorter name a second time.
-                if prefix.trim() != prefix {
-                    continue;
-                }
-                if let Some(position) = lookup(prefix)? {
-                    matches.push(position);
-                }
-            }
-            if matches.len() == 1 {
-                matches.pop()
-            } else {
-                None
-            }
-        }
-    };
-    position
+    MPosition::from_observatory_name(telescope, measures)
+        .map_err(failed)?
         .map(|position| position.convert_to(PositionRef::WGS84).map_err(failed))
         .transpose()
 }

@@ -1,0 +1,452 @@
+{
+  "casatools": "6.7.6-14",
+  "aliases": {
+    "BEAM": "beam",
+    "DAYS": "d",
+    "DEGREES": "deg",
+    "DEG": "deg",
+    "HZ": "Hz",
+    "JY": "Jy",
+    "KELVINS": "K",
+    "KELVIN": "K",
+    "KM": "km",
+    "METERS": "m",
+    "M": "m",
+    "PASCAL": "Pa",
+    "PIXEL": "pixel",
+    "SECONDS": "s",
+    "SEC": "s",
+    "S": "s",
+    "VOLTS": "V",
+    "YEARS": "a",
+    "YEAR": "a",
+    "kHZ": "kHz",
+    "JY/BEAM": "Jy/beam",
+    "S.m": "s.m",
+    "S2": "s2",
+    "NO_SUCH_FITS_UNIT": "m"
+  },
+  "before": {
+    "BEAM": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'BEAM'"
+      }
+    },
+    "DAYS": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'DAYS'"
+      }
+    },
+    "DEGREES": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'DEGREES'"
+      }
+    },
+    "DEG": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'DEG'"
+      }
+    },
+    "HZ": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'HZ'"
+      }
+    },
+    "JY": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'JY'"
+      }
+    },
+    "KELVINS": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'KELVINS'"
+      }
+    },
+    "KELVIN": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'KELVIN'"
+      }
+    },
+    "KM": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'KM'"
+      }
+    },
+    "METERS": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'METERS'"
+      }
+    },
+    "M": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'M'"
+      }
+    },
+    "PASCAL": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'PASCAL'"
+      }
+    },
+    "PIXEL": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'PIXEL'"
+      }
+    },
+    "SECONDS": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'SECONDS'"
+      }
+    },
+    "SEC": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'SEC'"
+      }
+    },
+    "S": {
+      "quantity": {
+        "unit": "S",
+        "value": 1.0
+      },
+      "conformant": false
+    },
+    "VOLTS": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'VOLTS'"
+      }
+    },
+    "YEARS": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'YEARS'"
+      }
+    },
+    "YEAR": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'YEAR'"
+      }
+    },
+    "kHZ": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'kHZ'"
+      }
+    },
+    "JY/BEAM": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'JY/BEAM'"
+      }
+    },
+    "S.m": {
+      "quantity": {
+        "unit": "S.m",
+        "value": 1.0
+      },
+      "conformant": false
+    },
+    "S2": {
+      "quantity": {
+        "unit": "S2",
+        "value": 1.0
+      },
+      "conformant": false
+    },
+    "NO_SUCH_FITS_UNIT": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'NO_SUCH_FITS_UNIT'"
+      }
+    }
+  },
+  "first": true,
+  "after": {
+    "BEAM": {
+      "quantity": {
+        "unit": "BEAM",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "beam",
+        "value": 1.0
+      }
+    },
+    "DAYS": {
+      "quantity": {
+        "unit": "DAYS",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "d",
+        "value": 1.0
+      }
+    },
+    "DEGREES": {
+      "quantity": {
+        "unit": "DEGREES",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "deg",
+        "value": 1.0
+      }
+    },
+    "DEG": {
+      "quantity": {
+        "unit": "DEG",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "deg",
+        "value": 1.0
+      }
+    },
+    "HZ": {
+      "quantity": {
+        "unit": "HZ",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "Hz",
+        "value": 1.0
+      }
+    },
+    "JY": {
+      "quantity": {
+        "unit": "JY",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "Jy",
+        "value": 1.0
+      }
+    },
+    "KELVINS": {
+      "quantity": {
+        "unit": "KELVINS",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "K",
+        "value": 1.0
+      }
+    },
+    "KELVIN": {
+      "quantity": {
+        "unit": "KELVIN",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "K",
+        "value": 1.0
+      }
+    },
+    "KM": {
+      "quantity": {
+        "unit": "KM",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "km",
+        "value": 1.0
+      }
+    },
+    "METERS": {
+      "quantity": {
+        "unit": "METERS",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    "M": {
+      "quantity": {
+        "unit": "M",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    "PASCAL": {
+      "quantity": {
+        "unit": "PASCAL",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "Pa",
+        "value": 1.0
+      }
+    },
+    "PIXEL": {
+      "quantity": {
+        "unit": "PIXEL",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "pixel",
+        "value": 1.0
+      }
+    },
+    "SECONDS": {
+      "quantity": {
+        "unit": "SECONDS",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "s",
+        "value": 1.0
+      }
+    },
+    "SEC": {
+      "quantity": {
+        "unit": "SEC",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "s",
+        "value": 1.0
+      }
+    },
+    "S": {
+      "quantity": {
+        "unit": "S",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "s",
+        "value": 1.0
+      }
+    },
+    "VOLTS": {
+      "quantity": {
+        "unit": "VOLTS",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "V",
+        "value": 1.0
+      }
+    },
+    "YEARS": {
+      "quantity": {
+        "unit": "YEARS",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "a",
+        "value": 1.0
+      }
+    },
+    "YEAR": {
+      "quantity": {
+        "unit": "YEAR",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "a",
+        "value": 1.0
+      }
+    },
+    "kHZ": {
+      "quantity": {
+        "unit": "kHZ",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "kHz",
+        "value": 1.0
+      }
+    },
+    "JY/BEAM": {
+      "quantity": {
+        "unit": "JY/BEAM",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "Jy/beam",
+        "value": 1.0
+      }
+    },
+    "S.m": {
+      "quantity": {
+        "unit": "S.m",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "s.m",
+        "value": 1.0
+      }
+    },
+    "S2": {
+      "quantity": {
+        "unit": "S2",
+        "value": 1.0
+      },
+      "conformant": true,
+      "converted": {
+        "unit": "s2",
+        "value": 1.0
+      }
+    },
+    "NO_SUCH_FITS_UNIT": {
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'NO_SUCH_FITS_UNIT'"
+      }
+    }
+  },
+  "second": true,
+  "other_instance": {
+    "quantity": {
+      "unit": "DEGREES",
+      "value": 1.0
+    },
+    "conformant": true,
+    "converted": {
+      "unit": "deg",
+      "value": 1.0
+    }
+  }
+}

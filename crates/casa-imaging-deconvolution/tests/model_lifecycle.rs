@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_deconvolution::{
-    MajorCycle, ModelGeneration, ModelLifecycle, ModelLifecycleError, ModelStoragePlan,
-    NormalStoragePlan, PassImages, PreparedFinalModel,
+    DenseModelPlane, MajorCycle, ModelGeneration, ModelLifecycle, ModelLifecycleError,
+    ModelStoragePlan, NormalStoragePlan, PassImages, PreparedFinalModel,
 };
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DirectionCoordinateSpec,
@@ -53,6 +53,10 @@ fn product_validity() -> ProductValidityPolicies {
 }
 
 fn geometry(width: usize) -> GeometryInput {
+    geometry_2d(width, 1)
+}
+
+fn geometry_2d(width: usize, height: usize) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -64,7 +68,7 @@ fn geometry(width: usize) -> GeometryInput {
     GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
-            ImageShape::new(width, 1),
+            ImageShape::new(width, height),
             direction,
             FacetLayout::Single,
             AxisOrder::new([
@@ -359,6 +363,66 @@ fn a_start_model_seeds_the_main_domain_and_zeroes_the_others() {
     );
 }
 
+/// A generated model is streamed in canonical order through the admitted
+/// storage window, and source/validation errors stop construction.
+#[test]
+fn generated_model_reads_canonical_samples_without_a_whole_model_window() {
+    let compiled = problem(
+        1,
+        5,
+        empty_requirements(NumericPrecision::F64),
+        NumericPrecision::F64,
+    );
+    let owner = ModelLifecycle::new(&compiled, ModelStoragePlan::resident(2).unwrap());
+    let mut seen = Vec::new();
+    let model = owner
+        .initial_from_fn::<ModelLifecycleError>(|index| {
+            seen.push(index);
+            Ok(index as f32 - 2.0)
+        })
+        .unwrap();
+    assert_eq!(seen, [0, 1, 2, 3, 4]);
+    assert!(model.read_samples(0..5).is_err());
+    let values: Vec<_> = (0..5)
+        .map(|index| {
+            model.read_samples(index..index + 1).unwrap()[0]
+                .value()
+                .value()
+        })
+        .collect();
+    assert_eq!(values, [-2.0, -1.0, 0.0, 1.0, 2.0]);
+    let mut failed_at = Vec::new();
+    let failed = owner.initial_from_fn::<ModelLifecycleError>(|index| {
+        failed_at.push(index);
+        if index == 2 {
+            Err(ModelLifecycleError::Storage("source sentinel".into()))
+        } else {
+            Ok(0.0)
+        }
+    });
+    assert!(
+        matches!(failed, Err(ModelLifecycleError::Storage(message)) if message == "source sentinel")
+    );
+    assert_eq!(failed_at, [0, 1, 2]);
+    assert!(
+        owner
+            .initial_from_fn::<ModelLifecycleError>(|index| Ok(if index == 3 {
+                f32::NAN
+            } else {
+                0.0
+            }))
+            .is_err()
+    );
+    assert!(matches!(
+        owner.initial_from_fn::<ModelLifecycleError>(|index| Ok(if index == 4 {
+            1.0e31
+        } else {
+            0.0
+        })),
+        Err(ModelLifecycleError::ModelValueBoundExceeded)
+    ));
+}
+
 #[test]
 fn final_model_restores_highest_ordinal_domain_across_overlaps() {
     let compiled = problem_with_geometry(
@@ -438,6 +502,9 @@ struct ModelIoCounts {
     fail_reads: std::sync::atomic::AtomicBool,
     creations: std::sync::atomic::AtomicUsize,
     updated: std::sync::atomic::AtomicUsize,
+    largest_read: std::sync::atomic::AtomicUsize,
+    largest_write: std::sync::atomic::AtomicUsize,
+    invalid_first: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug)]
@@ -476,15 +543,23 @@ impl casa_imaging_deconvolution::ModelSampleStorage for CountedModelStorage {
     ) -> Result<(), ModelLifecycleError> {
         use std::sync::atomic::Ordering::Relaxed;
         self.counts.reads.fetch_add(destination.len(), Relaxed);
+        self.counts
+            .largest_read
+            .fetch_max(destination.len(), Relaxed);
         if self.counts.fail_reads.load(Relaxed) {
             return Err(ModelLifecycleError::Storage("injected read failure".into()));
         }
         destination
             .copy_from_slice(&self.samples.read().unwrap()[start..start + destination.len()]);
+        if start == 0 && !destination.is_empty() && self.counts.invalid_first.load(Relaxed) {
+            destination[0] = ModelSample::invalid();
+        }
         Ok(())
     }
 
     fn write(&mut self, start: usize, samples: &[ModelSample]) -> Result<(), ModelLifecycleError> {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.counts.largest_write.fetch_max(samples.len(), Relaxed);
         self.samples.get_mut().unwrap()[start..start + samples.len()].copy_from_slice(samples);
         Ok(())
     }
@@ -675,4 +750,174 @@ fn compiled_precision_governs_delta_arithmetic() {
             .value(),
         16_777_217.0
     );
+}
+
+#[test]
+fn dense_plane_matches_sparse_updates_in_canonical_windows_and_precision() {
+    let increments = vec![1.0, 0.25, 0.0, 1.25, 2.0, -4.0];
+    for precision in [NumericPrecision::F32, NumericPrecision::F64] {
+        let compiled = problem_with_geometry(
+            1,
+            geometry_2d(3, 2),
+            empty_requirements(precision),
+            precision,
+        );
+        for window in [1, 2, 4, 6] {
+            let owner = ModelLifecycle::new(&compiled, ModelStoragePlan::resident(window).unwrap());
+            let initial = [16_777_216.0_f32, -2.0, 3.0, 4.0, 5.0, 6.0];
+            let base = || owner.initial_from_start_model(&initial).unwrap();
+            let dense = owner
+                .prepare_final_dense_model(
+                    base(),
+                    [DenseModelPlane::new(0, 0, 0, increments.clone())],
+                )
+                .unwrap();
+            let sparse = (0..2)
+                .flat_map(|y| {
+                    (0..3).filter_map({
+                        let increments = &increments;
+                        move |x| {
+                            let v = increments[x * 2 + y];
+                            (v != 0.0).then(|| {
+                                ModelDeltaTerm::new(ModelCell::new(0, 0, 0, [x, y]), value(v))
+                            })
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            let sparse = owner.prepare_final_model(base(), sparse).unwrap();
+            let read = |generation: &ModelGeneration| {
+                (0..6)
+                    .map(|i| generation.read_samples(i..i + 1).unwrap()[0])
+                    .collect::<Vec<_>>()
+            };
+            let actual = read(dense.generation());
+            assert_eq!(
+                actual,
+                read(sparse.generation()),
+                "window {window}, precision {precision:?}"
+            );
+            let first = actual[0].value().value();
+            assert_eq!(
+                first,
+                if precision == NumericPrecision::F32 {
+                    16_777_216.0
+                } else {
+                    16_777_217.0
+                }
+            );
+            assert_eq!(actual[1].value().value(), -2.0);
+            assert_eq!(actual[2].value().value(), 5.0);
+            assert_eq!(actual[3].value().value(), 4.25);
+        }
+    }
+}
+
+#[test]
+fn dense_plane_enforces_shape_order_and_delta_bounds() {
+    let compiled = problem_with_geometry(
+        1,
+        geometry_2d(3, 3),
+        empty_requirements(NumericPrecision::F64),
+        NumericPrecision::F64,
+    );
+    let owner = model_lifecycle(&compiled);
+    let base = || owner.initial_empty().unwrap();
+    assert!(matches!(
+        owner.prepare_final_dense_model(base(), [DenseModelPlane::new(0, 0, 0, vec![1.0; 8])]),
+        Err(ModelLifecycleError::SampleCountMismatch {
+            expected: 9,
+            actual: 8
+        })
+    ));
+    assert!(matches!(
+        owner.prepare_final_dense_model(base(), [DenseModelPlane::new(0, 0, 0, vec![1.0; 9])]),
+        Err(ModelLifecycleError::DeltaTermBoundExceeded { terms: 9, bound: 8 })
+    ));
+    assert!(matches!(
+        owner.prepare_final_dense_model(
+            base(),
+            [
+                DenseModelPlane::new(0, 0, 0, vec![0.0; 9]),
+                DenseModelPlane::new(0, 0, 0, vec![0.0; 9])
+            ]
+        ),
+        Err(ModelLifecycleError::NonCanonicalDelta)
+    ));
+    let mut too_large = vec![0.0; 9];
+    too_large[0] = 1.0e31;
+    assert!(matches!(
+        owner.prepare_final_dense_model(base(), [DenseModelPlane::new(0, 0, 0, too_large)]),
+        Err(ModelLifecycleError::DeltaValueBoundExceeded)
+    ));
+    let mut nonfinite = vec![0.0; 9];
+    nonfinite[3] = f64::NAN;
+    assert!(
+        owner
+            .prepare_final_dense_model(base(), [DenseModelPlane::new(0, 0, 0, nonfinite)])
+            .is_err()
+    );
+}
+
+#[test]
+fn dense_plane_respects_storage_windows_support_and_io_errors() {
+    use std::sync::{Arc, atomic::Ordering::Relaxed};
+    let compiled = problem(
+        1,
+        6,
+        empty_requirements(NumericPrecision::F64),
+        NumericPrecision::F64,
+    );
+    let counts = Arc::new(ModelIoCounts::default());
+    let owner = ModelLifecycle::new(
+        &compiled,
+        ModelStoragePlan::new(Arc::new(CountedModelFactory(counts.clone())), 2).unwrap(),
+    );
+    let base = owner.initial_empty().unwrap();
+    counts.largest_read.store(0, Relaxed);
+    counts.largest_write.store(0, Relaxed);
+    let result = owner
+        .prepare_final_dense_model(base, [DenseModelPlane::new(0, 0, 0, vec![1.0; 6])])
+        .unwrap();
+    assert_eq!(
+        counts.creations.load(Relaxed),
+        1,
+        "dense updates reuse their model backing"
+    );
+    assert_eq!(counts.largest_read.load(Relaxed), 2);
+    assert_eq!(counts.largest_write.load(Relaxed), 2);
+    for i in 0..6 {
+        assert_eq!(
+            result.generation().read_samples(i..i + 1).unwrap()[0]
+                .value()
+                .value(),
+            1.0
+        );
+    }
+    let base = owner.initial_empty().unwrap();
+    counts.invalid_first.store(true, Relaxed);
+    assert!(matches!(
+        owner.prepare_final_dense_model(base, [DenseModelPlane::new(0, 0, 0, vec![1.0; 6])]),
+        Err(ModelLifecycleError::DeltaOutsideValidSupport)
+    ));
+    counts.invalid_first.store(false, Relaxed);
+    let base = owner.initial_empty().unwrap();
+    counts.fail_reads.store(true, Relaxed);
+    assert!(matches!(
+        owner.prepare_final_dense_model(base, [DenseModelPlane::new(0, 0, 0, vec![1.0; 6])]),
+        Err(ModelLifecycleError::Storage(_))
+    ));
+}
+
+#[test]
+fn dense_plane_checks_the_updated_model_bound() {
+    let bounds = ModelBounds::new(16, 8, 10.0, 10.0).unwrap();
+    let requirements = ModelLifecycleRequirements::new(bounds, NumericPrecision::F64);
+    let compiled = problem(1, 2, requirements, NumericPrecision::F64);
+    let owner = model_lifecycle(&compiled);
+    let base = owner.initial_from_start_model(&[9.0, 0.0]).unwrap();
+    assert!(matches!(
+        owner.prepare_final_dense_model(base, [DenseModelPlane::new(0, 0, 0, vec![5.0, 0.0])]),
+        Err(ModelLifecycleError::ModelValueBoundExceeded)
+    ));
 }

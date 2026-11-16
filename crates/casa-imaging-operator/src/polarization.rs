@@ -38,8 +38,10 @@ pub enum GridPolarization {
 /// [`PolarizationRouting::to_requested`] (CASA `StokesImageUtil::To`,
 /// real part taken). The forward transform expands requested model planes
 /// to grid planes with [`PolarizationRouting::from_requested`]
-/// (`StokesImageUtil::From`). `sumwt` of a requested Stokes plane is that of
-/// grid plane 0 (`StokesImageUtil::ToStokesSumWt`).
+/// (`StokesImageUtil::From`). A requested plane's `sumwt` follows
+/// `StokesImageUtil::ToStokesSumWt` ([`SumwtSource`]). A grid plane no
+/// selected correlation feeds stays empty, as CASA images Stokes Q and U of
+/// parallel-hand data: zero planes with zero `sumwt`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PolarizationRouting {
     correlations: Vec<Correlation>,
@@ -50,7 +52,27 @@ pub struct PolarizationRouting {
     to_requested: Vec<Complex64>,
     to_requested_psf: Vec<Complex64>,
     from_requested: Vec<Complex64>,
-    sumwt_source: Vec<usize>,
+    sumwt_source: Vec<SumwtSource>,
+}
+
+/// The grid planes whose weight sums give a requested plane's `sumwt`, as
+/// `StokesImageUtil::ToStokesSumWt` (with coordinates) forms it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SumwtSource {
+    /// One grid plane's.
+    Plane(usize),
+    /// The smaller of two grid planes'.
+    Min(usize, usize),
+}
+
+impl SumwtSource {
+    /// This source's `sumwt` from each grid plane's, `plane`.
+    pub fn sumwt(self, plane: impl Fn(usize) -> f64) -> f64 {
+        match self {
+            Self::Plane(gpol) => plane(gpol),
+            Self::Min(first, second) => plane(first).min(plane(second)),
+        }
+    }
 }
 
 impl PolarizationRouting {
@@ -126,9 +148,9 @@ impl PolarizationRouting {
                     .map(|index| index as u8)
             })
             .collect::<Vec<_>>();
-        if (0..grid.len()).any(|gpol| !pol_map.contains(&Some(gpol as u8))) {
+        if !(0..grid.len()).any(|gpol| pol_map.contains(&Some(gpol as u8))) {
             return Err(OperatorError::Polarization {
-                reason: "selected correlations do not feed every grid polarization",
+                reason: "selected correlations feed no grid polarization",
             });
         }
         let to_requested = requested
@@ -155,15 +177,18 @@ impl PolarizationRouting {
             .collect();
         let sumwt_source = requested
             .iter()
-            .map(|coordinate| {
+            .enumerate()
+            .map(|(index, coordinate)| {
                 if stokes_requested {
-                    0
+                    stokes_sumwt_source(feed, requested, index, grid.len())
                 } else {
-                    grid.iter()
-                        .position(|plane| {
-                            *plane == GridPolarization::Correlation(correlation_of(*coordinate))
-                        })
-                        .expect("requested correlations are grid planes")
+                    SumwtSource::Plane(
+                        grid.iter()
+                            .position(|plane| {
+                                *plane == GridPolarization::Correlation(correlation_of(*coordinate))
+                            })
+                            .expect("requested correlations are grid planes"),
+                    )
                 }
             })
             .collect();
@@ -245,10 +270,43 @@ impl PolarizationRouting {
         self.from_requested[gpol * self.requested.len() + requested]
     }
 
-    /// Grid plane whose `sumwt` normalises requested plane `requested`.
+    /// The grid planes whose weight sums give requested plane `requested`'s
+    /// `sumwt`.
     #[must_use]
-    pub fn sumwt_source(&self, requested: usize) -> usize {
+    pub fn sumwt_source(&self, requested: usize) -> SumwtSource {
         self.sumwt_source[requested]
+    }
+}
+
+/// `StokesImageUtil::ToStokesSumWt` for requested Stokes plane `index` of
+/// `requested` over `grid_planes` grid planes, on physical feeds: one Stokes
+/// parameter from two planes takes their smaller weight sum; two take
+/// `min(c0, c1)` and `c1` (CASA's own pairing); four take
+/// `min(RR, LL)` for I and V and `min(RL, LR)` for Q and U on circular feeds,
+/// `min(XX, YY)` for I and Q and `min(XY, YX)` for U and V on linear ones.
+/// One grid plane, data already in Stokes, and the combinations CASA's
+/// function leaves unset take grid plane 0's.
+fn stokes_sumwt_source(
+    feed: FeedBasis,
+    requested: &[PolarizationCoordinate],
+    index: usize,
+    grid_planes: usize,
+) -> SumwtSource {
+    use PolarizationCoordinate::{StokesI, StokesQ, StokesV};
+    if feed == FeedBasis::Stokes {
+        return SumwtSource::Plane(0);
+    }
+    match (requested.len(), grid_planes) {
+        (1, 2) => SumwtSource::Min(0, 1),
+        (2, 2) if index == 0 => SumwtSource::Min(0, 1),
+        (2, 2) => SumwtSource::Plane(1),
+        (4, 4) => match (feed, requested[index]) {
+            (FeedBasis::Circular, StokesI | StokesV) | (FeedBasis::Linear, StokesI | StokesQ) => {
+                SumwtSource::Min(0, 3)
+            }
+            _ => SumwtSource::Min(1, 2),
+        },
+        _ => SumwtSource::Plane(0),
     }
 }
 

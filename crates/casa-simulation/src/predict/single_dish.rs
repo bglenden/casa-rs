@@ -13,19 +13,24 @@
 //! - `PB`: the telescope's power pattern along the x axis, at the frequency
 //!   of model plane 0 for every channel ([`KernelTable::primary_beam`]).
 //!
-//! The model is a Stokes I image: the parallel hands take its value and the
-//! cross hands none. A channel takes the model plane `matchChannel` gives
-//! it, and none off the model's spectral axis. Every row of a scan is
-//! pointed at the scan's field, so a field's samples serve all its rows.
+//! Stokes planes become the selected receptor products through the shared
+//! polarization route, and SDGrid conjugates each sampled coherency.
+//! Channels select their nearest model plane; off-axis channels stay zero.
+//! Fixed frames share samples at identical pointings. Local image frames
+//! use each row's epoch and antenna position; saved image/squinted beams
+//! retain their orientation at CASA's requested angle threshold.
 //!
 //! Only autocorrelations are predicted, and flagged rows are not. CASA
 //! skips a row with a positive uvw component, which leaves a cross
 //! correlation with no positive component predicted as if it were one dish;
 //! casa-rs predicts autocorrelations only (`docs/CASA (C++) bugs.md`).
 
-use casa_imaging_operator::SpectralAxis;
+use super::image_beam::ImageBeam;
+use casa_imaging_model::PolarizationCoordinate;
+use casa_imaging_operator::{PolarizationRouting, SpectralAxis};
 use casa_imaging_runtime::Reservation;
 use casa_imaging_singledish::{GridFunction, KernelTable};
+use casa_types::Correlation;
 use num_complex::Complex32;
 
 use super::{BeamPattern, PredictError, SkyModel};
@@ -39,27 +44,42 @@ pub enum SingleDishKernel {
     Box,
     /// `SF`: CASA's prolate spheroid over 3 pixels.
     Spheroidal,
+    /// CASA's default Gaussian kernel.
+    Gauss,
+    /// CASA's default Gaussian-times-jinc kernel.
+    Gjinc,
 }
 
 impl SingleDishKernel {
     /// The kernel `gridfunction` names, in any case; `None` for the others
-    /// (`GAUSS` and `GJINC`, which CASA also has, among them).
+    /// (an unknown name is refused at prediction).
     #[must_use]
     pub fn from_grid_function(grid_function: &str) -> Option<Self> {
         match grid_function.to_lowercase().as_str() {
             "pb" => Some(Self::Pb),
             "box" => Some(Self::Box),
             "sf" => Some(Self::Spheroidal),
+            "gauss" => Some(Self::Gauss),
+            "gjinc" => Some(Self::Gjinc),
             _ => None,
         }
     }
 
     /// The kernel with the simulator's support, CASA's default.
-    const fn grid_function(self) -> GridFunction {
+    fn grid_function(self) -> GridFunction {
         match self {
             Self::Pb => GridFunction::PrimaryBeam,
             Self::Box => GridFunction::BOX,
             Self::Spheroidal => GridFunction::SPHEROIDAL,
+            Self::Gauss => GridFunction::Gauss {
+                hwhm: std::f64::consts::LN_2.sqrt(),
+                truncate: (3. * std::f64::consts::LN_2.sqrt()) as f32,
+            },
+            Self::Gjinc => GridFunction::Gjinc {
+                hwhm: 2.52 * std::f64::consts::LN_2.sqrt(),
+                jwidth: 1.55,
+                truncate: None,
+            },
         }
     }
 
@@ -95,6 +115,11 @@ pub(crate) struct SingleDishPointings {
     pub(crate) directions_rad: Vec<[f64; 2]>,
     /// `[scan]`: the scan's pointing, an index into `directions_rad`.
     pub(crate) of_scan: Vec<usize>,
+    /// Epoch/antenna-dependent pixels, where a local image frame needs them.
+    pub(crate) pixels: Option<Vec<[f64; 2]>>,
+    /// Sorted (scan, stored time bits, antenna) to prepared sample.
+    pub(crate) visits: Vec<((usize, u64, usize), usize)>,
+    pub(crate) angles: Vec<f64>,
 }
 
 impl SingleDishPointings {
@@ -113,6 +138,9 @@ impl SingleDishPointings {
         Self {
             directions_rad,
             of_scan,
+            pixels: None,
+            visits: Vec::new(),
+            angles: Vec::new(),
         }
     }
 }
@@ -125,6 +153,7 @@ pub(crate) struct SingleDishPrediction {
     samples: Vec<Vec<Vec<Complex32>>>,
     /// `[scan]`: the scan's pointing.
     of_scan: Vec<usize>,
+    visits: Vec<((usize, u64, usize), usize)>,
     /// The bytes [`Self::bytes`] counts.
     _reservation: Reservation,
 }
@@ -144,7 +173,9 @@ impl SingleDishPrediction {
                 })
                 .sum::<usize>();
         (pointings.directions_rad.len() * per_pointing
-            + pointings.of_scan.len() * size_of::<usize>()) as u64
+            + pointings.of_scan.len() * size_of::<usize>()
+            + pointings.visits.capacity() * size_of::<((usize, u64, usize), usize)>())
+            as u64
     }
 
     /// Bytes preparing the prediction holds beside it:
@@ -157,24 +188,27 @@ impl SingleDishPrediction {
     ///   and sample of the plane read.
     pub(crate) fn preparation_bytes(
         model: &SkyModel,
+        kind: SingleDishKernel,
+        transformed: bool,
         beam: Option<&BeamPattern>,
         (windows, pointings): (&[SingleDishWindow], &SingleDishPointings),
     ) -> u64 {
-        // The PB kernel's, or the larger of BOX's and SF's.
+        // The PB kernel's extent, or the selected fixed kernel's support.
         let kernel = match beam {
             Some(beam) => GridFunction::PrimaryBeam.forming_bytes(
                 beam.support_pixels(model.increment_rad[0], model.plane_frequency_hz(0)),
             ),
-            None => GridFunction::SPHEROIDAL.forming_bytes(0),
+            None => kind.grid_function().forming_bytes(0),
         };
         let channels: usize = windows.iter().map(|w| w.frequencies_hz.len()).sum();
         let planes_of =
             windows.len() * size_of::<Vec<Option<usize>>>() + channels * size_of::<Option<usize>>();
-        let per_pointing = 2 * size_of::<[f64; 2]>() + size_of::<f32>();
+        let per_pointing = 2 * size_of::<[f64; 2]>() + size_of::<f32>() + size_of::<f64>();
         kernel
             + (planes_of + pointings.directions_rad.len() * per_pointing) as u64
-            + 2 * model.plane_bytes()
+            + if transformed { 4 } else { 2 } * model.plane_bytes()
             + model.cache_bytes()
+            + windows.len() as u64 * 4096 // At most four products and Stokes coordinates per route.
     }
 
     /// Prepare `model` with `kernel` for `windows` at `pointings`, holding
@@ -191,15 +225,29 @@ impl SingleDishPrediction {
     pub(crate) fn new(
         model: &SkyModel,
         kernel: SingleDishKernel,
-        (beam, voltage_pattern): (Option<&BeamPattern>, Option<&BeamPattern>),
+        (beam, voltage_pattern, image_beam): (
+            Option<&BeamPattern>,
+            Option<&BeamPattern>,
+            Option<&ImageBeam>,
+        ),
         (windows, pointings): (&[SingleDishWindow], SingleDishPointings),
         reservation: Reservation,
     ) -> Result<Self, PredictError> {
         let SingleDishPointings {
             directions_rad,
             of_scan,
+            pixels: supplied_pixels,
+            visits,
+            angles,
         } = pointings;
         let kernel = kernel.table(model, beam);
+        if model.shape().iter().any(|&n| n <= 2 * kernel.support()) {
+            return Err(PredictError::InvalidModel(format!(
+                "number of image pixels {:?} is smaller than or equal to gridding support {}; use a larger image",
+                model.shape(),
+                2 * kernel.support()
+            )));
+        }
         let axis = SpectralAxis::new(
             model.first_frequency_hz,
             model.frequency_increment_hz,
@@ -217,10 +265,13 @@ impl SingleDishPrediction {
                     .collect()
             })
             .collect();
-        let pixels: Vec<[f64; 2]> = directions_rad
-            .iter()
-            .map(|direction| model.pixel_of(*direction))
-            .collect::<Result<_, _>>()?;
+        let pixels = match supplied_pixels {
+            Some(pixels) => pixels,
+            None => directions_rad
+                .iter()
+                .map(|direction| model.pixel_of(*direction))
+                .collect::<Result<_, _>>()?,
+        };
         // The samples, zero until a plane fills them. Sized exactly: they
         // are kept, and charged by their length.
         let mut samples: Vec<Vec<Vec<Complex32>>> = directions_rad
@@ -240,7 +291,31 @@ impl SingleDishPrediction {
         // One plane read at a time, each pointing's sample of it written
         // into the channels it feeds, so no plane × pointing matrix is held
         // (#874 review).
-        let mut by_pointing = vec![0.0_f32; directions_rad.len()];
+        let full_stokes = [
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesQ,
+            PolarizationCoordinate::StokesU,
+            PolarizationCoordinate::StokesV,
+        ];
+        let stokes = if image_beam.is_some() {
+            &full_stokes[..]
+        } else {
+            model.polarizations()
+        };
+        let routing = windows
+            .iter()
+            .map(|window| {
+                let correlations = window
+                    .correlations
+                    .iter()
+                    .map(|&code| {
+                        Correlation::from_casacore_code(code)
+                            .expect("validated simulator correlation")
+                    })
+                    .collect::<Vec<_>>();
+                PolarizationRouting::compile(&correlations, stokes)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         for plane in 0..model.planes() {
             if !planes_of
                 .iter()
@@ -249,20 +324,39 @@ impl SingleDishPrediction {
             {
                 continue;
             }
-            let values = model.read_plane(plane)?;
-            for (value, pixel) in by_pointing.iter_mut().zip(&pixels) {
-                *value = match voltage_pattern {
-                    Some(pattern) => {
-                        let apparent =
-                            &values * &super::beam::power_plane(pattern, model, plane, *pixel);
-                        kernel.degrid(apparent.view(), *pixel)
+            let sky = model.read_polarizations(plane)?;
+            for (pointing, (&direction, &pixel)) in directions_rad.iter().zip(&pixels).enumerate() {
+                let apparent;
+                let values = match image_beam {
+                    Some(beam) => {
+                        apparent = beam.apply_plane(
+                            model,
+                            plane,
+                            sky.clone(),
+                            direction,
+                            angles[pointing],
+                            None,
+                        )?;
+                        &apparent
                     }
-                    None => kernel.degrid(values.view(), *pixel),
+                    None => &sky,
                 };
-            }
-            for (pointing_windows, &value) in samples.iter_mut().zip(&by_pointing) {
-                for ((cells, window), planes) in
-                    pointing_windows.iter_mut().zip(windows).zip(&planes_of)
+                let mut sampled = [0_f32; 4];
+                for (sample, values) in sampled.iter_mut().zip(values) {
+                    *sample = match voltage_pattern {
+                        Some(pattern) => {
+                            let apparent =
+                                values * &super::beam::power_plane(pattern, model, plane, pixel);
+                            kernel.degrid(apparent.view(), pixel)
+                        }
+                        None => kernel.degrid(values.view(), pixel),
+                    };
+                }
+                for (((cells, window), planes), route) in samples[pointing]
+                    .iter_mut()
+                    .zip(windows)
+                    .zip(&planes_of)
+                    .zip(&routing)
                 {
                     let correlations = window.correlations.len();
                     for (channel, _) in planes
@@ -270,11 +364,23 @@ impl SingleDishPrediction {
                         .enumerate()
                         .filter(|(_, mapped)| **mapped == Some(plane))
                     {
-                        let channel_cells = &mut cells[channel * correlations..][..correlations];
-                        for (cell, &code) in channel_cells.iter_mut().zip(&window.correlations) {
-                            // The parallel hands carry Stokes I.
-                            if matches!(code, 1 | 5 | 8 | 9 | 12) {
-                                *cell = Complex32::new(value, 0.0);
+                        for (cell, &gpol) in cells[channel * correlations..][..correlations]
+                            .iter_mut()
+                            .zip(route.pol_map())
+                        {
+                            if let Some(gpol) = gpol {
+                                for (polarization, &value) in
+                                    sampled.iter().take(stokes.len()).enumerate()
+                                {
+                                    // dgridsd conjugates the sampled complex model.
+                                    let coefficient = route
+                                        .from_requested(usize::from(gpol), polarization)
+                                        .conj();
+                                    *cell += Complex32::new(
+                                        coefficient.re as f32,
+                                        coefficient.im as f32,
+                                    ) * value;
+                                }
                             }
                         }
                     }
@@ -289,8 +395,29 @@ impl SingleDishPrediction {
         Ok(Self {
             samples,
             of_scan,
+            visits,
             _reservation: reservation,
         })
+    }
+
+    pub(crate) fn needs_epoch(&self) -> bool {
+        !self.visits.is_empty()
+    }
+
+    pub(crate) fn samples_at(
+        &self,
+        scan: usize,
+        window: usize,
+        time: f64,
+        antenna: usize,
+    ) -> &[Complex32] {
+        if self.visits.is_empty() {
+            return self.samples(scan, window);
+        }
+        self.visits
+            .binary_search_by_key(&(scan, time.to_bits(), antenna), |v| v.0)
+            .ok()
+            .map_or(&[], |index| &self.samples[self.visits[index].1][window])
     }
 
     /// The samples of scan `scan`'s pointing in window `window`,

@@ -29,7 +29,7 @@ from perf_harness.subprocesses import run_command
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-# The native generator: casa-ms's synthetic-ms developer binary,
+# The native generator: casa-simulation's synthetic-ms developer binary,
 # which takes the run and family requests `simobserve --json-run` took.
 DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "synthetic-ms"
 DEFAULT_OUTPUT_DIR = perf_paths.artifact_path("wave1", "simobserve-bench")
@@ -478,17 +478,14 @@ def native_performance_summary(native: dict[str, Any]) -> dict[str, Any]:
     size_bytes = int(native["size_bytes"])
     best_seconds = float(native["best_seconds"])
     report = native.get("last_result", {}).get("report", {})
-    main_timing = report.get("timing", {}).get("main_rows", {})
-    data_io_bytes = int(main_timing.get("data_io_bytes") or 0)
-    data_io_write_millis = float(main_timing.get("data_io_write_millis") or 0)
     return {
         "native_output_mb_per_second": mb_per_second(size_bytes, best_seconds),
-        "data_io_mb_per_second": mb_per_second(
-            data_io_bytes,
-            data_io_write_millis / 1000.0 if data_io_write_millis > 0 else 0.0,
-        ),
-        "data_io_bytes": data_io_bytes,
-        "data_io_write_millis": data_io_write_millis,
+        # The current Simulator overlaps prediction and persistence. The
+        # developer generator reports its whole-session wall time; it does
+        # not expose the retired writer's separate I/O timer.
+        "data_io_mb_per_second": None,
+        "data_io_bytes": None,
+        "data_io_write_millis": None,
         "stage_timing": stage_timing_summary(report),
     }
 
@@ -619,58 +616,9 @@ def casa_relative_timing(
 
 
 def stage_timing_summary(report: dict[str, Any]) -> dict[str, Any]:
-    timing = report.get("timing", {})
-    main_rows = timing.get("main_rows", {})
-    total_millis = float(timing.get("total_millis") or 0.0)
-    stages = {
-        "validate_millis": float(timing.get("validate_millis") or 0.0),
-        "setup_millis": float(timing.get("setup_millis") or 0.0),
-        "metadata_millis": float(timing.get("metadata_millis") or 0.0),
-        "model_prepare_millis": float(timing.get("model_prepare_millis") or 0.0),
-        "uvw_and_row_setup_millis": float(
-            main_rows.get("uvw_and_row_setup_millis") or 0.0
-        ),
-        "prediction_millis": float(main_rows.get("prediction_millis") or 0.0),
-        "prediction_worker_wall_millis": float(
-            main_rows.get("prediction_worker_wall_millis") or 0.0
-        ),
-        "prediction_gather_millis": float(
-            main_rows.get("prediction_gather_millis") or 0.0
-        ),
-        "corruption_millis": float(main_rows.get("corruption_millis") or 0.0),
-        "data_io_enqueue_millis": float(
-            main_rows.get("data_io_enqueue_millis") or 0.0
-        ),
-        "data_io_finalize_millis": float(
-            main_rows.get("data_io_finalize_millis") or 0.0
-        ),
-        "data_io_assemble_millis": float(
-            main_rows.get("data_io_assemble_millis") or 0.0
-        ),
-        "data_io_write_millis": float(main_rows.get("data_io_write_millis") or 0.0),
-        "main_write_millis": float(main_rows.get("main_write_millis") or 0.0),
-        "save_millis": float(timing.get("save_millis") or 0.0),
-    }
-    fractions = {
-        name.replace("_millis", "_fraction"): (
-            value / total_millis if total_millis > 0.0 else 0.0
-        )
-        for name, value in stages.items()
-    }
-    prediction_fraction = fractions.get("prediction_fraction", 0.0)
-    io_fraction = (
-        fractions.get("data_io_enqueue_fraction", 0.0)
-        + fractions.get("data_io_finalize_fraction", 0.0)
-        + fractions.get("data_io_assemble_fraction", 0.0)
-        + fractions.get("data_io_write_fraction", 0.0)
-    )
     return {
-        "total_millis": total_millis,
-        "stages_millis": stages,
-        "stage_fractions": fractions,
-        "prediction_fraction": prediction_fraction,
-        "streamed_io_fraction": io_fraction,
-        "gpu_candidate": prediction_fraction > max(0.25, io_fraction),
+        "total_millis": float(report["elapsed_seconds"]) * 1000.0,
+        "scope": "complete native Simulator session and model preparation",
     }
 
 
@@ -688,6 +636,8 @@ def enforce_native_performance_targets(
     required_data_io = args.require_data_io_throughput_mb_s
     if required_data_io is not None:
         actual = performance["data_io_mb_per_second"]
+        if actual is None:
+            raise BenchError("separate streamed-write timing is unavailable from the current generator; use tools/simulation/bench_sustained_io.py")
         if actual < required_data_io:
             raise BenchError(
                 f"streamed DATA/FLAG/UVW/WEIGHT/SIGMA write throughput "

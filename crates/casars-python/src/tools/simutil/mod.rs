@@ -5,7 +5,7 @@
 //!
 //! `simutil` is a Python class of CASA's tasks, not a CASA tool, so it is
 //! not under `casars.tools`; `casars.simutil` is its public import (CASA's
-//! is `casatasks.private.simutil`). ADR-0018 puts its computation in Rust,
+//! is `casatasks.private.simutil`). ADR-0017 puts its computation in Rust,
 //! so the class is declared here like the tools, with CASA's constructor
 //! and method signatures, and its state: `direction`, `verbose`,
 //! `centerfreq`, `bandwidth` and `totaltime` from the constructor, the
@@ -20,14 +20,25 @@
 //! which CASA writes at precision 5 and reads back
 //! ([`casa_simulation::simutil::direction::Directions`]).
 //!
-//! Declared so far (simulation Phases 5a and 5b): `readantenna`; the
-//! direction helpers `direction_splitter`, `average_direction`,
+//! Implemented: `readantenna`; the direction helpers `direction_splitter`, `average_direction`,
 //! `median_direction`, `dir_m2s`, `wrapang`, `isquantity` and
 //! `isdirection`; the pointings `calc_pointings2`, `read_pointings` and
 //! `write_pointings`; `noisetemp`, `bandname` and `polsettings`;
 //! `itrf2loc`, `baselineLengths` and `approxBeam`; and the sky-model
 //! helpers `modifymodel` and `flatimage`
-//! ([`casa_simulation::simutil::skymodel`]).
+//! ([`casa_simulation::simutil::skymodel`]); and the analysis helpers
+//! `ismstp`, `cellsize`, `statim` and `convimage` (`analysis.rs`); and the
+//! geodesy `getdatum`, `tconpc`, `tmgeod`, `utm2long`, `long2xyz`,
+//! `xyz2long`, `xyz2long_old`, `utm2xyz`, `locxyz2itrf` and `itrf2locname`
+//! (`geodesy.rs`); and `msg`, `isreport`, `openreport`, `closereport`,
+//! `dir_s2m`, `is4d`, `spectral` and `setcfg` (`helpers.rs`); and the direct
+//! pointing patterns `getTrianglePoints`, `getTriangularTiling`,
+//! `getBaseTriangularTiling` and `getShiftTriangularTiling` (`tiling.rs`);
+//! and the direct arithmetic helpers `applyRotate`, `isEven` and `needsFiller`
+//! (`arithmetic.rs`); and numerical `sfBeam1d` and `sensitivity` diagnostics
+//! (`diagnostics.rs`). CASA's other
+//! public methods have its signatures and raise `NotImplementedError` naming #1053, which
+//! classifies them (`stubs.rs`).
 //!
 //! Not being a CASA tool, the class is not in the object-surface bundle
 //! (whose CASA tools are [`crate::tools::TOOLS`]); its Python tests compare
@@ -49,7 +60,15 @@
 //! differs from CASA's; also, CASA's LOC files give the positions as NumPy
 //! `float64` scalars, which here are `float`s.
 
+mod analysis;
+mod arithmetic;
+mod diagnostics;
+mod geodesy;
+mod graphics;
+mod helpers;
 mod ops;
+mod stubs;
+mod tiling;
 
 use std::path::PathBuf;
 
@@ -96,6 +115,15 @@ pub(crate) struct PySimutil {
     /// The telescope `noisetemp` defaults to.
     #[pyo3(get, set)]
     telescopename: Option<Py<PyAny>>,
+    /// The report file's path, which CASA's tasks set before `openreport`.
+    #[pyo3(get, set)]
+    reportfile: Option<Py<PyAny>>,
+    /// The report file `openreport` opened, a Python file object.
+    #[pyo3(get, set)]
+    report: Option<Py<PyAny>>,
+    /// CASA's current multi-panel specification, retaining the caller's list.
+    #[pyo3(get, set)]
+    pmulti: Py<PyAny>,
 }
 
 /// A configuration-file error as the Python exception CASA's raises.
@@ -159,6 +187,9 @@ impl PySimutil {
             totaltime: or_quantity(totaltime, 0.0, "h")?,
             pointings: None,
             telescopename: None,
+            reportfile: None,
+            report: None,
+            pmulti: 0_i64.into_pyobject(py)?.into_any().unbind(),
         })
     }
 
@@ -209,12 +240,18 @@ impl PySimutil {
         relmargin: f64,
         beam: f64,
     ) -> PyResult<Py<PyAny>> {
-        let sizes = ops::sizes(size)?;
+        let (size_values, initial_sizes, size_state) = ops::size_values(size)?;
         if let Some(direction) = direction {
             self.direction = direction;
         }
         let directions = ops::directions(self.direction.bind(py))?;
-        if py.detach(|| directions.split()).is_err() {
+        if py
+            .detach(|| {
+                casa_types::quanta::registry::global_registry()
+                    .with_stable_units(|| directions.split())
+            })
+            .is_err()
+        {
             return Err(PyRuntimeError::new_err(format!(
                 "can't interpret '{}' as a direction",
                 self.direction.bind(py).str()?
@@ -223,9 +260,16 @@ impl PySimutil {
         if matches!(&directions, Directions::List(listed) if listed.len() > 1) {
             return Ok(self.direction.clone_ref(py));
         }
-        let spacing = ops::quantity(&spacing)?;
-        let pointings = py
-            .detach(|| {
+        let pointings = py.detach(|| {
+            casa_types::quanta::registry::global_registry().with_locked_units(|| {
+                let registry = casa_types::quanta::registry::global_registry();
+                let refreshed = if registry.unit_state() == size_state {
+                    None
+                } else {
+                    Some(ops::size_quantities(&size_values)?)
+                };
+                let sizes = refreshed.as_ref().unwrap_or(&initial_sizes);
+                let spacing = ops::quantity(&spacing)?;
                 calc_pointings(
                     &spacing,
                     [&sizes[0], &sizes[1]],
@@ -234,8 +278,9 @@ impl PySimutil {
                     relmargin,
                     beam,
                 )
+                .map_err(ops::raised)
             })
-            .map_err(ops::raised)?;
+        })?;
         emit(
             py,
             LOGGER,
@@ -370,7 +415,10 @@ impl PySimutil {
                 "the direction measure's refer is not a string",
             ));
         };
-        let (longitude, latitude) = (ops::quantity(field("m0")?)?, ops::quantity(field("m1")?)?);
+        let (longitude, latitude) = casa_types::quanta::registry::global_registry()
+            .with_stable_units(|| {
+                Ok::<_, PyErr>((ops::quantity(field("m0")?)?, ops::quantity(field("m1")?)?))
+            })?;
         let text = format_direction(refer, &longitude, &latitude).map_err(ops::raised)?;
         CasaValue::Text(text).into_python(py)
     }
@@ -599,16 +647,29 @@ impl PySimutil {
         } else {
             vec![s.clone()]
         };
-        for item in items {
-            if !ops::is_quantity(&item) {
-                if halt {
-                    return Err(PyRuntimeError::new_err(format!(
-                        "can't interpret '{}' as a CASA quantity",
-                        item.str()?
-                    )));
+        let mut candidates = vec![None; items.len()];
+        let invalid = casa_types::quanta::registry::global_registry().with_stable_units(|| {
+            items.iter().enumerate().find_map(|(index, item)| {
+                let candidate =
+                    candidates[index].get_or_insert_with(|| ops::quantity_candidate(item));
+                if candidate
+                    .as_ref()
+                    .is_some_and(|value| ops::quantity(value).is_ok())
+                {
+                    None
+                } else {
+                    Some(index)
                 }
-                return Ok(false);
+            })
+        });
+        if let Some(index) = invalid {
+            if halt {
+                return Err(PyRuntimeError::new_err(format!(
+                    "can't interpret '{}' as a CASA quantity",
+                    items[index].str()?
+                )));
             }
+            return Ok(false);
         }
         Ok(true)
     }

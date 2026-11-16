@@ -514,6 +514,7 @@ fn a_pipelined_pass_cancelled_midway_stops_within_a_block() {
         domains: &domains,
         weighting: &weighting,
         modes: ModeSet::DATA,
+        refill_scalar_sum_weight: false,
         model: None,
         residency: Residency::All,
         native_spacing_hz: WIDTH_HZ,
@@ -641,6 +642,7 @@ fn first_pass_row_work(
         domains,
         weighting,
         modes: Run::initial().modes,
+        refill_scalar_sum_weight: false,
         model: None,
         residency: Residency::All,
         native_spacing_hz: WIDTH_HZ,
@@ -751,8 +753,10 @@ fn the_row_work_pass_measures_what_a_first_pass_reports() {
         height: IMAGE,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: INCREMENT_RAD,
         rule: DensityCellRule::Standard,
+        fields: None,
     };
     let density = run_density_pass(
         &spheroidal,
@@ -893,8 +897,10 @@ fn streamed_density_grid_equals_the_one_shot_build() {
         height: IMAGE,
         planes: 7,
         padding: 2,
+        box_half_width: 0,
         increment_rad: INCREMENT_RAD,
         rule: DensityCellRule::Cube,
+        fields: None,
     };
     let mut buffer = SampleBuffer::new(1);
     for index in 0..rows.rows.len() {
@@ -902,13 +908,13 @@ fn streamed_density_grid_equals_the_one_shot_build() {
             .place_density(&operator, &rows.native(0, index), &shape, &mut buffer)
             .expect("density");
     }
-    let expected = build_density_grid(std::iter::once(buffer.block()), shape);
+    let expected = build_density_grid(std::iter::once(buffer.block()), shape.clone());
     for workers in [1, 3] {
         let team = WorkerTeam::new(workers).expect("team");
         let streamed = run_density_pass(
             &operator,
             &resampler,
-            shape,
+            shape.clone(),
             &mut rows,
             &team,
             &Cancel::new(),
@@ -962,6 +968,7 @@ fn writing_pass(
         domains,
         weighting,
         modes: ModeSet::DATA,
+        refill_scalar_sum_weight: false,
         model: Some(prepare),
         residency: Residency::All,
         native_spacing_hz: WIDTH_HZ,
@@ -1015,8 +1022,10 @@ fn kept_density_weights_hold_across_blocks_and_model_writing() {
         height: IMAGE,
         planes: 1,
         padding: 0,
+        box_half_width: 0,
         increment_rad: INCREMENT_RAD,
         rule: DensityCellRule::Standard,
+        fields: None,
     };
     let team = WorkerTeam::new(1).expect("team");
     let grid = run_density_pass(
@@ -1067,6 +1076,7 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
         domains: &domains,
         weighting: &weighting,
         modes: ModeSet::DATA,
+        refill_scalar_sum_weight: false,
         model: None,
         residency: Residency::All,
         native_spacing_hz: WIDTH_HZ,
@@ -1135,6 +1145,7 @@ fn a_pass_cancelled_midway_reads_no_further_block() {
         domains: &domains,
         weighting: &weighting,
         modes: ModeSet::DATA,
+        refill_scalar_sum_weight: false,
         model: None,
         residency: Residency::All,
         native_spacing_hz: WIDTH_HZ,
@@ -1211,6 +1222,7 @@ fn a_source_failing_midway_fails_the_pass() {
         domains: &domains,
         weighting: &weighting,
         modes: ModeSet::DATA,
+        refill_scalar_sum_weight: false,
         model: None,
         residency: Residency::All,
         native_spacing_hz: WIDTH_HZ,

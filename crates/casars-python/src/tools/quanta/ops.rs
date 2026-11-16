@@ -12,8 +12,9 @@ use casa_types::quanta::casacore;
 use casa_types::quanta::format::{
     CalendarDate, angle_format, format_angle, format_time, time_format,
 };
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
+use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, UnitVal, unique_prefix_index};
 
+use crate::convert::holder::frequency_hz;
 use crate::convert::quantum::{self, Quantum, quantum_holder};
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertError, ConvertResult, Variant, casacore_unit, quantity};
@@ -29,6 +30,51 @@ fn has(quantity: &Quantity, dimension: Dimension) -> bool {
 
 fn record(quantity: &Quantity) -> CasaValue {
     Quantum::scalar(quantity).to_value()
+}
+
+/// Define a user unit in casacore's process-wide unit registry.
+pub(super) fn define(name: &str, value: &Variant) -> ConvertResult<CasaValue> {
+    casa_types::quanta::registry::global_registry().define_user(name, "User defined", || {
+        let quantity = quantity(value)?;
+        let unit = quantity.unit().val();
+        Ok::<_, ConvertError>(UnitVal::new(quantity.value() * unit.factor, unit.dim))
+    })?;
+    Ok(CasaValue::Bool(true))
+}
+
+/// CASA's physical constants use casacore's case-insensitive minimax lookup.
+pub(super) fn constants(name: &str) -> CasaValue {
+    const NAMES: &[&str] = &[
+        "pi", "ee", "c", "G", "h", "HI", "R", "NA", "e", "mp", "mp_me", "mu0", "epsilon0", "k",
+        "F", "me", "re", "a0", "R0", "k2",
+    ];
+    const VALUES: &[(f64, &str)] = &[
+        (std::f64::consts::PI, ""),
+        (std::f64::consts::E, ""),
+        (299_792_458.0, "m/s"),
+        (6.67259e-11, "N.m2/kg2"),
+        (6.6260755e-34, "J.s"),
+        (1420.405751786, "MHz"),
+        (8.31451, "J/K/mol"),
+        (6.0221367e23, "mol-1"),
+        (1.60217733e-19, "C"),
+        (1.6726231e-27, "kg"),
+        (1836.152701, ""),
+        (1.2566370614359173e-6, "H/m"),
+        (8.854187817620389e-12, "F/m"),
+        (1.3806577987510647e-23, "J/K"),
+        (96485.3089890101, "C/mol"),
+        (9.109389971155782e-31, "kg"),
+        (2.8179e-15, "m"),
+        (5.2918e-11, "m"),
+        (6.9599e8, "m"),
+        (0.00029591220828559115, "AU3/d2/S0"),
+    ];
+    let (value, unit) = unique_prefix_index(name, NAMES).map_or((0.0, ""), |index| VALUES[index]);
+    CasaValue::record([
+        ("value", CasaValue::Float(value)),
+        ("unit", CasaValue::Text(unit.into())),
+    ])
 }
 
 fn non_conforming(quantity: &Quantity) -> ConvertError {
@@ -70,7 +116,10 @@ pub(super) fn quantity_of(
 
 /// A quantity record holding an array, else `None`.
 fn array_record(value: &Variant) -> ConvertResult<Option<Quantum>> {
-    if !matches!(value, Variant::Record(_)) {
+    let Variant::Record(record) = value else {
+        return Ok(None);
+    };
+    if matches!(record.get("value"), Some(Variant::Array { shape, .. }) if shape.is_empty()) {
         return Ok(None);
     }
     Ok(quantum_holder(value)?.filter(Quantum::is_array))
@@ -145,10 +194,246 @@ pub(super) fn abs(value: &Variant) -> ConvertResult<CasaValue> {
     )))
 }
 
+/// `qa.ceil(v)` and `qa.floor(v)` preserve the input quantity's unit.
+pub(super) fn round_integer(value: &Variant, upward: bool) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let rounded = if upward {
+        value.value().ceil()
+    } else {
+        value.value().floor()
+    };
+    Ok(record(&Quantity::with_unit(rounded, value.unit().clone())))
+}
+
+/// CASA's scalar exponential and logarithmic functions.
+pub(super) fn logarithm(value: &Variant, method: &str) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    if value.unit().val().dim != UnitDim::NODIM {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::{method} illegal unit type '{}'",
+            value.unit().name()
+        )));
+    }
+    let number = value.get_si_value();
+    let result = match method {
+        "exp" => number.exp(),
+        "log" => number.ln(),
+        "log10" => number.log10(),
+        _ => unreachable!("the binding selects an exponential or logarithmic method"),
+    };
+    Ok(record(&Quantity::dimensionless(result)))
+}
+
+/// CASA's scalar trigonometric functions, with angular unit checking.
+pub(super) fn trigonometry(value: &Variant, method: &str) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let inverse = matches!(method, "asin" | "acos" | "atan");
+    let valid = if inverse {
+        value.unit().val().dim == UnitDim::NODIM
+    } else {
+        has(&value, Dimension::Angle)
+    };
+    if !valid {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::{method} illegal unit type '{}'",
+            value.unit().name()
+        )));
+    }
+    let number = value.get_si_value();
+    let result = match method {
+        "sin" => number.sin(),
+        "cos" => number.cos(),
+        "tan" => number.tan(),
+        "asin" => number.asin(),
+        "acos" => number.acos(),
+        "atan" => number.atan(),
+        _ => unreachable!("the binding selects a trigonometric method"),
+    };
+    Ok(record(&if inverse {
+        Quantity::with_unit(result, unit("rad"))
+    } else {
+        Quantity::dimensionless(result)
+    }))
+}
+
+/// `qa.atan2(v, a)`: convert both dimensionless quantities before computing.
+pub(super) fn atan2(value: &Variant, other: &Variant) -> ConvertResult<CasaValue> {
+    let (value, other) = (quantity(value)?, quantity(other)?);
+    if value.unit().val().dim != UnitDim::NODIM || other.unit().val().dim != UnitDim::NODIM {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::atan2 illegal unit type '{}'",
+            value.unit().name()
+        )));
+    }
+    Ok(record(&Quantity::with_unit(
+        value.get_si_value().atan2(other.get_si_value()),
+        unit("rad"),
+    )))
+}
+
+/// `qa.sqrt(v)`: take the root in SI units, as casacore does.
+pub(super) fn sqrt(value: &Variant) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let dimension =
+        value.unit().val().dim.sqrt().map_err(|_| {
+            ConvertError::runtime("UnitVal::UnitVal Illegal unit dimensions for root")
+        })?;
+    let result_unit = if dimension == UnitDim::NODIM {
+        Unit::dimensionless()
+    } else {
+        unit(&dimension.to_string())
+    };
+    let number = value.get_si_value();
+    // CASA's root calculation maps both signed zeros to positive zero.
+    let result = if number == 0.0 { 0.0 } else { number.sqrt() };
+    Ok(record(&Quantity::with_unit(result, result_unit)))
+}
+
+/// `qa.pow(v, a)`: CASA multiplies or divides repeatedly in the original unit.
+pub(super) fn power(value: &Variant, power: i32) -> ConvertResult<CasaValue> {
+    let quantity = quantity(value)?;
+    if power.unsigned_abs() >= 100 {
+        return Err(ConvertError::runtime("Quantum::pow exponent too large"));
+    }
+    let number = quantity.value();
+    // This initialization deliberately turns infinities into NaN, as CASA does.
+    let mut result = number * 0.0 + 1.0;
+    if power >= 0 {
+        for _ in 0..power {
+            result *= number;
+        }
+    } else {
+        for _ in power..0 {
+            result /= number;
+        }
+    }
+    let unit = if power == 0 || quantity.unit().name().is_empty() {
+        String::new()
+    } else {
+        format!("({}){power}", quantity.unit().name())
+    };
+    Ok(CasaValue::record([
+        ("unit", CasaValue::Text(unit)),
+        ("value", CasaValue::Float(result)),
+    ]))
+}
+
+/// `qa.norm(v, a)`: casacore's MVAngle normalizes in turns and returns degrees.
+#[allow(clippy::manual_range_contains)] // NaN must leave the value unchanged.
+pub(super) fn normalize(value: &Variant, origin: f64) -> ConvertResult<CasaValue> {
+    let mut angle = angle_radians(&quantity(value)?)?;
+    let turns = angle / CIRCLE - origin;
+    if turns < 0.0 || turns >= 1.0 {
+        angle -= turns.floor() * CIRCLE;
+    }
+    let degrees = unit("deg");
+    Ok(record(&Quantity::with_unit(
+        angle / degrees.val().factor,
+        degrees,
+    )))
+}
+
 /// `qa.compare(v, a)`: whether the units have the same dimensions.
 pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValue> {
     Ok(CasaValue::Bool(
         quantity(left)?.unit().val().dim == quantity(right)?.unit().val().dim,
+    ))
+}
+
+/// The six scalar relational operators convert the right value into the left
+/// unit. Equality allows unlike dimensions; ordered comparisons reject them.
+pub(super) fn relational(left: &Variant, right: &Variant, op: &str) -> ConvertResult<CasaValue> {
+    let (left, right) = (quantity(left)?, quantity(right)?);
+    let conformant = left.unit().val().dim == right.unit().val().dim;
+    if !conformant && !matches!(op, "eq" | "ne") {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::operator< unequal units '{}, '{}'",
+            left.unit().name(),
+            right.unit().name()
+        )));
+    }
+    let scaled = right.value() * (right.unit().val().factor / left.unit().val().factor);
+    let order = left.value().partial_cmp(&scaled);
+    let equal = conformant && order == Some(std::cmp::Ordering::Equal);
+    let result = match op {
+        "eq" => equal,
+        "ne" => !equal,
+        "lt" => order == Some(std::cmp::Ordering::Less),
+        "gt" => order == Some(std::cmp::Ordering::Greater),
+        // casacore defines <= as !(>) and >= as !(<), including for NaN.
+        "le" => order != Some(std::cmp::Ordering::Greater),
+        "ge" => order != Some(std::cmp::Ordering::Less),
+        _ => unreachable!("unknown quantity comparison"),
+    };
+    Ok(CasaValue::Bool(result))
+}
+
+/// `qa.convertfreq`: use casacore's frequency equivalencies in both directions.
+pub(super) fn convert_frequency(value: &Variant, output: &str) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let hz = frequency_hz(&value).ok_or_else(|| non_conforming(&value))?;
+    let output = casacore_unit(output).map_err(ConvertError::runtime)?;
+    let one = Quantity::with_unit(1.0, output.clone());
+    let factor = frequency_hz(&one).ok_or_else(|| non_conforming(&one))?;
+    let dim = output.val().dim;
+    let result =
+        if dim == UnitDim::basis(Dimension::Time) || dim == UnitDim::basis(Dimension::Length) {
+            factor / hz
+        } else {
+            hz / factor
+        };
+    Ok(record(&Quantity::with_unit(result, output)))
+}
+
+/// `qa.convertdop`: a fraction of light speed and a speed are equivalent.
+pub(super) fn convert_doppler(value: &Variant, output: &str) -> ConvertResult<CasaValue> {
+    const C: f64 = 299_792_458.0;
+    let value = quantity(value)?;
+    let time = UnitDim::basis(Dimension::Time);
+    let speed = UnitDim::basis(Dimension::Length) / time;
+    let dimension = value.unit().val().dim;
+    let ratio = if dimension == UnitDim::NODIM {
+        value.get_si_value()
+    } else if dimension == speed {
+        value.get_si_value() / C
+    } else {
+        return Err(non_conforming(&value));
+    };
+    let output = casacore_unit(output).map_err(ConvertError::runtime)?;
+    let result = if output.val().dim == UnitDim::NODIM {
+        ratio / output.val().factor
+    } else if output.val().dim == speed {
+        ratio * C / output.val().factor
+    } else {
+        return Err(non_conforming(&Quantity::with_unit(1.0, output)));
+    };
+    Ok(record(&Quantity::with_unit(result, output)))
+}
+
+/// `qa.checkfreq(cm)`: the dimensions accepted by casacore's MVFrequency.
+pub(super) fn checkfreq(value: &Variant) -> ConvertResult<CasaValue> {
+    let dimension = quantity(value)?.unit().val().dim;
+    let time = UnitDim::basis(Dimension::Time);
+    let angle = UnitDim::basis(Dimension::Angle);
+    let length = UnitDim::basis(Dimension::Length);
+    let mass = UnitDim::basis(Dimension::Mass);
+    let accepted = [
+        time,
+        UnitDim::NODIM / time,
+        angle / time,
+        length,
+        UnitDim::NODIM / length,
+        mass * length * length / time / time,
+        mass * length,
+    ];
+    Ok(CasaValue::Bool(accepted.contains(&dimension)))
+}
+
+/// `qa.isangle(v)`: angles and times are accepted by casacore's angle form.
+pub(super) fn isangle(value: &Variant) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    Ok(CasaValue::Bool(
+        has(&value, Dimension::Angle) || has(&value, Dimension::Time),
     ))
 }
 

@@ -7,7 +7,7 @@
 //! [`MetalBackend`] implements the `casa-imaging-operator` backend trait for
 //! both tap layouts and every [`Work`](casa_imaging_operator::Work) variant
 //! with support-generic kernels: one SIMD group per sample, its lanes over
-//! the taps, `f32` grids updated with atomic adds (D2). The host locates
+//! the taps, `f32` grids updated with atomic adds (ADR-0016 decision 6). The host locates
 //! every sample with the operator's rounding rule and accumulates `sumwt`
 //! in `f64`, so tap selection and `sumwt` equal the CPU backend's; only the
 //! order of the `f32` grid additions differs.
@@ -21,8 +21,7 @@
 //! unified-memory Metal 3 device, constructors return
 //! [`DeviceFailure::Unavailable`](casa_imaging_operator::DeviceFailure).
 //!
-//! The design is `docs/imaging-architecture/imaging-foundation-plan-20261007.md`
-//! sections 5.3 and 5.9, ADR-0016, and the IF-4 deviations on #653.
+//! The design is ADR-0016, with the IF-4 deviations on #653.
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 mod backend;
@@ -64,16 +63,28 @@ const MAX_SUB: usize = 32_768;
 /// Device bytes per sample of a ring slot: the record, its native endpoints
 /// (or a native term), and per visibility polarization a value, a weight,
 /// an inverse norm and an output.
-const SAMPLE_BYTES: usize = 40;
-const SOURCE_BYTES: usize = 24;
+const SAMPLE_BYTES: usize = 56;
+const SOURCE_BYTES: usize = 40;
 const POLARIZATION_BYTES: usize = 8 + 4 + 8 + 8;
 
-/// The most device memory one backend's ring holds for blocks of `npol`
-/// visibility polarizations; its kernel copies add [`kernel_bytes`], and a
+/// The most host/device memory one backend's ring holds for blocks of `npol`
+/// visibility polarizations;
+/// its kernel copies add [`kernel_bytes`], and a
 /// native prediction its batch ([`batch_bytes`]).
 #[must_use]
 pub const fn ring_bytes(npol: usize) -> u64 {
-    (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) as u64
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    let host = backend::ring_host_bytes();
+    #[cfg(not(all(target_os = "macos", not(coverage))))]
+    let host = 0;
+    (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) as u64 + host
+}
+
+/// Additional device-grid bytes for compensated f32 accumulation (#991).
+/// Two correction grids each hold an f32 complex pair per accumulation cell.
+#[must_use]
+pub const fn accumulator_extra_bytes(cells: u64) -> u64 {
+    cells.saturating_mul(16)
 }
 
 /// Device bytes of one kernel table record (`records::TableRecord`).

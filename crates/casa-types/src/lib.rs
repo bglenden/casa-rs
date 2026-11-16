@@ -13,6 +13,7 @@
 
 pub mod correlation;
 pub mod measures;
+pub mod memory;
 pub mod quanta;
 
 pub use correlation::Correlation;

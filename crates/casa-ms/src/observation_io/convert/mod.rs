@@ -15,6 +15,7 @@
 //! data and weights, or, by the declared policy that reproduces an
 //! original sparse MSv2, as no row ([`PaddingRows`]).
 
+mod chunks;
 mod to_msv4;
 
 use std::path::Path;
@@ -25,9 +26,26 @@ use super::creation::{
     CreationInput, CreationOptions, CreationPlan, Destination, default_memory_bytes,
 };
 pub use super::creation::{Loss, LossKind, PaddingRows};
-pub use to_msv4::to_msv4;
+pub use chunks::{BLOSC_MAX_BUFFER_BYTES, DEFAULT_CHUNK_BYTES, xradio_chunks};
+pub use to_msv4::{ChunkShape, Msv4Conversion, to_msv4, to_msv4_with};
 
 use super::Msv4Codec;
+
+/// The data groups a conversion into an MSv4 of the observation
+/// `catalogue` describes selects from `requested`, or every group of it,
+/// `base` first, for `None`; refused as [`to_msv4()`] refuses them: no group,
+/// a group selected twice, or one a partition lacks. A caller can check a
+/// request with it before converting.
+///
+/// # Errors
+///
+/// [`ObservationError::InvalidRequest`] naming the group refused.
+pub fn selected_data_groups(
+    catalogue: &casa_observation::Catalogue,
+    requested: Option<&[String]>,
+) -> Result<Vec<String>, ObservationError> {
+    super::creation::losses::selected_groups(catalogue, requested)
+}
 
 /// How a conversion reads its source and stores its destination.
 #[derive(Clone, Debug)]
@@ -88,7 +106,7 @@ pub struct ConversionReport {
 /// subtable rows. Every grid cell becomes one row; padding becomes a row
 /// whose every `FLAG` is set, with NaN data, weights and `UVW`, the grid's
 /// interval, no exposure and `FLAG_ROW` false (its flags already exclude
-/// it), as D23 decided. With [`PaddingRows::Omitted`], padding becomes no
+/// it). With [`PaddingRows::Omitted`], padding becomes no
 /// row, which reproduces an original sparse MSv2. A field that follows an
 /// ephemeris gets the table casacore reads (`FIELD/EPHEM<id>_<name>.tab`)
 /// and its `EPHEMERIS_ID`, its `PHASE_DIR` the offset from the body and its
@@ -111,6 +129,7 @@ pub fn to_msv2(
     let plan = CreationPlan::new(
         &[CreationInput::new(source)],
         &CreationOptions {
+            copy_pointing: true,
             data_groups: options.data_groups.clone(),
             accept: options.accept.clone(),
             batch_bytes: options.batch_bytes,

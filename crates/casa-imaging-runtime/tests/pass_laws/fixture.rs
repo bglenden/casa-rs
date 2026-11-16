@@ -102,6 +102,7 @@ impl Rows {
                 let weight = (0.5 + rng.unit()) as f32;
                 Row {
                     projections: vec![DomainProjection {
+                        row_flag: false,
                         uvw_m: [u, v, rng.signed() * 20.0],
                         phase_shift_m: rng.signed() * 0.05,
                         pointing_offset_rad: [0.0; 2],
@@ -133,6 +134,7 @@ impl Rows {
         for row in &mut self.rows {
             let [u, v, w] = row.projections[0].uvw_m;
             row.projections.push(DomainProjection {
+                row_flag: false,
                 uvw_m: [u * cos - v * sin, u * sin + v * cos, w],
                 phase_shift_m: 0.1 + rng.signed() * 0.05,
                 pointing_offset_rad: [0.0; 2],
@@ -201,6 +203,7 @@ impl Rows {
 /// block's rows by baseline reorders them.
 pub fn context(index: usize) -> RowContext {
     RowContext {
+        native_frequency_ratio: 1.0,
         original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1 + (index % 5) as u32],
@@ -684,6 +687,7 @@ pub fn try_run_on(
         domains,
         weighting: &weighting,
         modes: run.modes,
+        refill_scalar_sum_weight: false,
         model: run.model,
         residency: run.residency,
         native_spacing_hz: run.native_spacing_hz,

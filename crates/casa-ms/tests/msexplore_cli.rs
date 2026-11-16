@@ -8,8 +8,6 @@ use std::process::Command;
 
 use casa_ms::columns::frequency_columns::ChanFreqColumn;
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::msexplore::cli::command_schema;
-use casa_ms::msexplore::cli::{UiArgumentParser, UiValueKind};
 use casa_ms::subtables::SubTable;
 use casa_ms::{
     DEFAULT_MAX_PLOT_POINTS, MSEXPLORE_TASK_PROTOCOL_NAME, MeasurementSet, MeasurementSetPlotKind,
@@ -245,52 +243,6 @@ fn msexplore_protocol_info_reports_task_surface() {
     assert_eq!(info["protocol_name"], MSEXPLORE_TASK_PROTOCOL_NAME);
     assert_eq!(info["protocol_version"], 2);
     assert_eq!(info["surface_kind"], "task");
-}
-
-#[test]
-fn msexplore_presentation_form_describes_launcher_contract() {
-    let schema = command_schema("msexplore");
-    assert_eq!(schema.command_id, "msexplore");
-    assert_eq!(schema.display_name, "MSExplore");
-    assert_eq!(schema.category, "MeasurementSet");
-
-    let preset = schema.argument("preset").expect("preset argument");
-    assert_eq!(preset.value_kind, UiValueKind::Choice);
-    let page_spec = schema.argument("page_spec").expect("page_spec argument");
-    assert_eq!(page_spec.value_kind, UiValueKind::Path);
-
-    let x_axis = schema.argument("x_axis").expect("x_axis argument");
-    assert!(matches!(
-        x_axis.parser,
-        UiArgumentParser::Option { ref metavar, .. } if metavar == "AXIS"
-    ));
-    let iteraxis = schema.argument("iteraxis").expect("iteraxis argument");
-    assert_eq!(iteraxis.value_kind, UiValueKind::Choice);
-
-    let plot_format = schema
-        .argument("plot_format")
-        .expect("plot_format argument");
-    assert_eq!(plot_format.value_kind, UiValueKind::Choice);
-    let legendposition = schema
-        .argument("legendposition")
-        .expect("legendposition argument");
-    assert_eq!(legendposition.value_kind, UiValueKind::Choice);
-    let flag_action = schema
-        .argument("flag_action")
-        .expect("flag_action argument");
-    assert_eq!(flag_action.value_kind, UiValueKind::Choice);
-    let flag_plotindex = schema
-        .argument("flag_plotindex")
-        .expect("flag_plotindex argument");
-    assert_eq!(flag_plotindex.value_kind, UiValueKind::Float);
-    let flag_panel = schema.argument("flag_panel").expect("flag_panel argument");
-    assert_eq!(flag_panel.value_kind, UiValueKind::String);
-    let flag_xmin = schema.argument("flag_xmin").expect("flag_xmin argument");
-    assert_eq!(flag_xmin.value_kind, UiValueKind::Float);
-    let max_points = schema.argument("max_points").expect("max_points argument");
-    assert_eq!(max_points.value_kind, UiValueKind::Float);
-
-    assert!(schema.managed_output.is_none());
 }
 
 #[test]

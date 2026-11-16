@@ -535,11 +535,15 @@
     },
     {
       "id": "imhead.mode",
-      "semantic_revision": 1,
+      "semantic_revision": 34,
       "casa_name": "mode",
       "value_domain": {
         "kind": "choice",
         "values": [
+          "add",
+          "del",
+          "get",
+          "history",
           "list",
           "put",
           "summary"
@@ -553,7 +557,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Header operation mode.",
-        "details": null,
+        "details": "summary, list, get and history read CASA images and primary-HDU FITS images; FITS images are read-only. get supports standard image, coordinate, spectral, beam, date and extrema metadata. put supports direction reference frames whose conversions need no additional context, SIN, TAN, ARC, ZEA, STG, CAR, SFL, MER and AIT projection changes with one direction coordinate, no direction conversion and no nonzero projection parameters, observation dates (except extreme or non-finite values), single restoring-beam components, spectral reference frames, rest-frequency quantities, axis increments except polarization and reference values including supported Stokes names (non-zenithal direction coordinates require matching direction frames, zero projection parameters and increments of at least 1e-12 rad), reference pixels, axis names and units, and string-valued brightness unit, image type, object, observer and telescope. add supports a missing beam axis or rest frequency and del removes all restoring beams; both also support brightness unit, object, observer and telescope. del ignores its hdvalue for these string keys, including arrays and records. summary logs image and coordinate information, with verbose listing each per-plane beam. list posts its header fields to the configured logging sinks or the default task output. history replays the image log, using the configured logging sinks or the default task output. Quantity records may contain additional fields. NumPy scalar values follow CASA conversion rules at the top level, in record fields and in rectangular lists, within the signed-64-bit input limit. Scalar variant integers and integer-only arrays wrap to signed 32-bit values as in CASA; mixed floating-point, complex, or string arrays promote before conversion. User-defined keys support string, boolean, 32-bit integer, floating-point (including NaN and infinities), rectangular scalar-array (up to 32 dimensions, without empty nested list dimensions; NumPy arrays may have empty dimensions with sizes within the signed 32-bit range), and nested record writes with supported field types including complex scalars, zero-dimensional NumPy arrays with supported scalar types and signed-64-bit integer values as record fields or elements of rectangular lists, and arrays (complex-valued inputs up to 48 combined array/record levels), and string, integer, floating-point, and supported record reads including complex scalars and unsigned integer arrays; other values and operations are unimplemented (#977).",
         "examples": [
           "summary"
         ]
@@ -777,6 +781,71 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.field",
+      "semantic_revision": 2,
+      "casa_name": "field",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "casa_selector",
+        "grammar": "field",
+        "capabilities": [
+          "ids",
+          "names",
+          "ranges",
+          "wildcards"
+        ]
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA field selector, one per MeasurementSet or one for all",
+        "details": "Accepts field IDs, names, ranges, and wildcards subject to surface and provider capabilities. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "examples": [
+          "0",
+          "calibrator",
+          "0~2"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.field",
+      "semantic_revision": 3,
+      "casa_name": "field",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {"kind": "tclean_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA field selector, one per MeasurementSet or one for all",
+        "details": "Preserves each selector's text for the task's FIELD grammar. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "examples": [
+          "0",
+          "calibrator",
+          "0~2"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "ms.selection.intent",
       "semantic_revision": 1,
       "casa_name": "intent",
@@ -799,6 +868,41 @@
       "documentation": {
         "summary": "Intent selector.",
         "details": null,
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.intent",
+      "semantic_revision": 2,
+      "casa_name": "intent",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "casa_selector",
+        "grammar": "intent",
+        "capabilities": [
+          "ids",
+          "names",
+          "ranges",
+          "wildcards"
+        ]
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Intent selector, one per MeasurementSet or one for all",
+        "details": "A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
         "examples": [
           ""
         ]
@@ -920,6 +1024,41 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.spw",
+      "semantic_revision": 2,
+      "casa_name": "spw",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "casa_selector",
+        "grammar": "spectral_window",
+        "capabilities": [
+          "ids",
+          "names",
+          "ranges",
+          "wildcards"
+        ]
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Comma-separated SPECTRAL_WINDOW_ID integers, one per MeasurementSet or one for all",
+        "details": "A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "ms.selection.timerange",
       "semantic_revision": 1,
       "casa_name": "timerange",
@@ -971,6 +1110,41 @@
       "documentation": {
         "summary": "UV range selector.",
         "details": null,
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.uvrange",
+      "semantic_revision": 2,
+      "casa_name": "uvrange",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "casa_selector",
+        "grammar": "uv_range",
+        "capabilities": [
+          "ids",
+          "names",
+          "ranges",
+          "wildcards"
+        ]
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "UV range selector, one per MeasurementSet or one for all",
+        "details": "A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
         "examples": [
           ""
         ]
@@ -1907,7 +2081,7 @@
       "unit_dimension": null,
       "semantic_role": "output_data",
       "documentation": {
-        "summary": "Concatenated MeasurementSet.",
+        "summary": "Name of visibility file that will contain the",
         "details": null,
         "examples": []
       },
@@ -1948,7 +2122,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Copy POINTING table.",
+        "summary": "Make a proper copy of the POINTING subtable",
         "details": null,
         "examples": [
           "true"
@@ -2180,16 +2354,16 @@
       "semantic_revision": 1,
       "casa_name": "dirtol",
       "value_domain": {
-        "kind": "string"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Direction tolerance.",
+        "summary": "Direction shift tolerance for considering data as the",
         "details": null,
         "examples": [
           ""
@@ -2939,16 +3113,16 @@
       "semantic_revision": 1,
       "casa_name": "forcesingleephemfield",
       "value_domain": {
-        "kind": "string"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Ephemeris field override.",
+        "summary": "Make sure that there is only one joint ephemeris for every field in this list",
         "details": null,
         "examples": [
           ""
@@ -3067,16 +3241,16 @@
       "semantic_revision": 1,
       "casa_name": "freqtol",
       "value_domain": {
-        "kind": "string"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Frequency tolerance.",
+        "summary": "Frequency shift tolerance for considering data as the",
         "details": null,
         "examples": [
           ""
@@ -3451,7 +3625,7 @@
       "semantic_role": "presentation",
       "documentation": {
         "summary": "Log one timing event per imaging phase",
-        "details": "Each phase (preparation, setup, every major and minor cycle, products) logs at INFO, under target casa_imaging::stage_timing, its wall time, the process's peak resident memory and the memory admission held: the phase record of <imagename>.summary.json. The events reach stderr when its priority admits INFO (--log-stderr-priority INFO), and the log table at its own priority. They change nothing the run computes.",
+        "details": "Each phase (preparation, setup, every major and minor cycle, products) logs at INFO, under target casa_imaging::stage_timing, its wall time, the process's peak resident memory and the memory admission held: the phase record of the run summary casars-imager writes as <imagename>.summary.json when CASA_RS_IMAGER_RUN_SUMMARY=1. The events reach stderr when its priority admits INFO (--log-stderr-priority INFO), and the log table at its own priority. They change nothing the run computes.",
         "examples": [
           "true"
         ]
@@ -3548,13 +3722,13 @@
     },
     {
       "id": "parameter.hdkey",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "hdkey",
       "value_domain": {
         "kind": "string"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -3568,19 +3742,19 @@
     },
     {
       "id": "parameter.hdvalue",
-      "semantic_revision": 1,
+      "semantic_revision": 3,
       "casa_name": "hdvalue",
       "value_domain": {
-        "kind": "string"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Header value to write when mode is put.",
+        "summary": "Header value to write for add or put.",
         "details": null,
         "examples": []
       },
@@ -3641,7 +3815,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Hogbom iteration accounting policy: strict is the corrected default; casa reproduces CASA's inclusive off-by-one behavior for parity comparisons",
+        "summary": "Hogbom iteration accounting policy: casa-inclusive (default) reproduces CASA's inclusive terminal component and reported count; strict limits physical updates to the requested budget",
         "details": null,
         "examples": [
           "strict"
@@ -4853,7 +5027,7 @@
       "unit_dimension": null,
       "semantic_role": "output_data",
       "documentation": {
-        "summary": "Output MeasurementSet path for corrected-data export or continuum subtraction",
+        "summary": "Output MeasurementSet path.",
         "details": null,
         "examples": []
       },
@@ -5497,7 +5671,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Respect source names.",
+        "summary": "If true, fields with a different name are not merged even",
         "details": null,
         "examples": [
           "false"
@@ -6278,7 +6452,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Device the major-cycle passes grid on: auto, cpu or gpu",
-        "details": "auto grids on the GPU where it runs the request and on the CPU otherwise; the run summary records which. gpu is Metal on macOS, needs a unified-memory Metal 3 device, grids in f32 and runs the standard gridder (W projection, mosaic and AW projection run on the CPU); a request it cannot run is refused. Choosing the GPU accepts f32 grids, so an explicit gridprecision = f64 keeps auto on the CPU. auto also keeps on the CPU what no GPU-against-CPU law covers yet: outlier fields, polarizations other than Stokes I, and runs that write MODEL_DATA or CORRECTED_DATA. Sample placement stays on the CPU workers; on the GPU, the model is also predicted at native channels and the residual formed there.",
+        "details": "auto grids on the GPU where it runs the request and on the CPU otherwise; the run summary records which. gpu is Metal on macOS, needs a unified-memory Metal 3 device, grids in f32 and runs the standard and mosaic gridders (W projection and AW projection run on the CPU); a request it cannot run is refused. Choosing the GPU accepts f32 grids, so an explicit gridprecision = f64 keeps auto on the CPU. auto also keeps on the CPU what no GPU-against-CPU law covers yet: outlier fields, polarizations other than Stokes I, and runs that write MODEL_DATA or CORRECTED_DATA. Sample placement stays on the CPU workers; on the GPU, the model is also predicted at native channels and the residual formed there.",
         "examples": [
           "auto",
           "cpu",
@@ -6309,11 +6483,17 @@
     },
     {
       "id": "parameter.startmodel",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "startmodel",
       "value_domain": {
-        "kind": "path",
-        "resource_kind": "image"
+        "kind": "array",
+        "element": {
+          "kind": "path",
+          "resource_kind": "image"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
       },
       "normalization": {
         "kind": "path"
@@ -6322,8 +6502,8 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "CASA image in Jy/pixel that the model starts from",
-        "details": "Its masked pixels are zero. On another grid it is regridded linearly onto the image's, its flux kept; its direction frame must be the image's, since casa-rs does not convert frames. Its Stokes must be the image's, plane for plane. A cube's start model has the cube's spectral axis; an MFS image's has one plane, at any frequency, as CASA's regrid takes it. The first major cycle subtracts its prediction, and the restored image includes it.",
+        "summary": "CASA image in Jy/pixel that the model starts from, or one per Taylor term",
+        "details": "One image, or with deconvolver='mtmfs' a list of at most nterms images, the k-th the start of Taylor term k, an empty entry leaving its term zero. Its masked pixels are zero. On another grid it is regridded linearly onto the image's, its flux kept, along direction and frequency; its direction and spectral frames must be the image's, since casa-rs does not convert frames. Its Stokes must be the image's, plane for plane. An MFS image's has one plane, at any frequency, as CASA's regrid takes it. The first major cycle subtracts its prediction, and the restored image includes it.",
         "examples": [
           "deep.model"
         ]
@@ -6681,7 +6861,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Sort by time.",
+        "summary": "If true, sort by TIME in ascending order",
         "details": null,
         "examples": [
           "false"
@@ -7024,16 +7204,22 @@
       "semantic_revision": 1,
       "casa_name": "visweightscale",
       "value_domain": {
-        "kind": "string"
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Per-MS weight scaling list.",
+        "summary": "List of the weight scaling factors to be applied to the",
         "details": null,
         "examples": [
           "[]"
@@ -7428,7 +7614,7 @@
       "semantic_role": "input_data",
       "documentation": {
         "summary": "EVLA dish surface model",
-        "details": "Explicit radius, height and slope reference-data file for the frozen homogeneous 25 m EVLA model; no CASA installation discovery.",
+        "details": "Radius, height and slope reference data for the homogeneous 25 m VLA or EVLA dish.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -10517,6 +10703,1386 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {"summary": "Compute the PSF image.", "details": null, "examples": ["true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.observation",
+      "semantic_revision": 2,
+      "casa_name": "observation",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Syntax-preserving numeric observation selection",
+        "details": "Only the exact empty string is unset. Whitespace-only text and literal none are invalid. Numeric IDs, comma-separated ID lists, and strictly ascending inclusive ranges are supported. Selector grammar beyond this numeric subset remains unfinished (#980); unsupported input is not thereby classified as CASA-invalid. Preserve the original string for native grammar validation.",
+        "examples": [
+          "",
+          "1",
+          "1,3",
+          "1~3"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.observation",
+      "semantic_revision": 3,
+      "casa_name": "observation",
+      "value_domain": {"kind": "string"},
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Observation selection applied to every MeasurementSet",
+        "details": "Supply one string. CASA's tclean requires observation text at execution. IDs, ranges and comparisons select OBSERVATION_IDs. Only exactly empty text is unset.",
+        "examples": [
+          "",
+          "1",
+          "1,3",
+          "1~3"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.scan",
+      "semantic_revision": 2,
+      "casa_name": "scan",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Syntax-preserving numeric scan selection",
+        "details": "Only the exact empty string is unset. Whitespace-only text and literal none are invalid. Numeric IDs, comma-separated ID lists, and strictly ascending inclusive ranges are supported. Richer CASA-valid expressions such as >1 remain unfinished (#980), rather than CASA-invalid. Preserve the original string for native grammar validation.",
+        "examples": [
+          "",
+          "1",
+          "1,3",
+          "1~3"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.scan",
+      "semantic_revision": 3,
+      "casa_name": "scan",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Syntax-preserving numeric scan selection, one per MeasurementSet or one for all",
+        "details": "Use one string per MeasurementSet or the same selector for every MeasurementSet. Only exactly empty text is unset. The task interprets the selector's preserved text.",
+        "examples": [
+          "",
+          "1",
+          "1,3",
+          "1~3"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.antenna",
+      "semantic_revision": 2,
+      "casa_name": "antenna",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA antenna (baseline) selection, exact text",
+        "details": "Only the exact empty string is unset. The exact text reaches casa-rs's port of CASA's antenna grammar (MSAntennaGram): IDs, names, stations, patterns, regular expressions, &/&&/&&& baseline forms, ! negation, ; terms, @station and baseline-length forms. Whitespace-only text and literal none are invalid, as in CASA.",
+        "examples": [
+          "",
+          "ea05",
+          "ea01&ea02",
+          "!ea01",
+          "ea0*&&"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.antenna",
+      "semantic_revision": 3,
+      "casa_name": "antenna",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA antenna (baseline) selection, exact text, one per MeasurementSet or one for all",
+        "details": "Only the exact empty string is unset. The exact text reaches casa-rs's port of CASA's antenna grammar (MSAntennaGram): IDs, names, stations, patterns, regular expressions, &/&&/&&& baseline forms, ! negation, ; terms, @station and baseline-length forms. Whitespace-only text and literal none are invalid, as in CASA. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "examples": [
+          "",
+          "ea05",
+          "ea01&ea02",
+          "!ea01",
+          "ea0*&&"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.timerange",
+      "semantic_revision": 2,
+      "casa_name": "timerange",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA time selection, exact text",
+        "details": "Only the exact empty string is unset. The exact text reaches casa-rs's port of CASA's time grammar (MSTimeGram): absolute and partial dates, ranges, >, <, T+dT durations and comma lists, with CASA's defaults from the first logical row.",
+        "examples": [
+          "",
+          "09:00:00~09:30:00",
+          ">2017/03/01/09:00:00",
+          "2017/03/01/09:00:00+10m"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.timerange",
+      "semantic_revision": 3,
+      "casa_name": "timerange",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA time selection, exact text, one per MeasurementSet or one for all",
+        "details": "Only the exact empty string is unset. The exact text reaches casa-rs's port of CASA's time grammar (MSTimeGram): absolute and partial dates, ranges, >, <, T+dT durations and comma lists, with CASA's defaults from the first logical row. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "examples": [
+          "",
+          "09:00:00~09:30:00",
+          ">2017/03/01/09:00:00",
+          "2017/03/01/09:00:00+10m"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.outformat",
+      "semantic_revision": 1,
+      "casa_name": "outformat",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "",
+          "msv2",
+          "msv4"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Format of the converted MeasurementSet: msv2 or msv4.",
+        "details": "Empty converts to the other format than the input: an MSv2 to an MSv4 processing set, an MSv4 to an MSv2. Naming the input's own format rewrites it, as an MSv4 re-chunked.",
+        "examples": [
+          "",
+          "msv4"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.datagroups",
+      "semantic_revision": 1,
+      "casa_name": "datagroups",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Data groups to convert; empty converts every one.",
+        "details": "An MSv2's groups are base (DATA), corrected (CORRECTED_DATA) and model (MODEL_DATA). The first group named carries the flags, weights and UVW; a group not converted is reported as a loss.",
+        "examples": [
+          "[]",
+          "[\"corrected\"]",
+          "[\"base\", \"model\"]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.partitionscheme",
+      "semantic_revision": 1,
+      "casa_name": "partitionscheme",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "choice",
+          "values": [
+            "FIELD_ID",
+            "SCAN_NUMBER"
+          ]
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "trim"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv2 into MSv4: further keys the MSv2 is partitioned by, as XRADIO's partition_scheme.",
+        "details": "Every MSv4 dataset holds one spectral window and polarization setup, observing mode, observation and ephemeris; FIELD_ID also splits by field and SCAN_NUMBER by scan. Empty, XRADIO's default, splits no further, as rapidly moving mosaics need. Only an MSv2 converted into an MSv4 is partitioned.",
+        "examples": [
+          "[]",
+          "[\"FIELD_ID\"]",
+          "[\"FIELD_ID\", \"SCAN_NUMBER\"]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.withpointing",
+      "semantic_revision": 1,
+      "casa_name": "withpointing",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv4 output: convert the pointing, as XRADIO's with_pointing.",
+        "details": "Pointing can be most of a large MeasurementSet's conversion time and size. Without it, the MSv4 holds no pointing_xds and the source's pointing is reported lost. An MSv2 output always carries pointing.",
+        "examples": [
+          "true",
+          "false"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.padding",
+      "semantic_revision": 1,
+      "casa_name": "padding",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "flagged",
+          "omitted"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv2 output: what a grid cell no acquisition filled becomes.",
+        "details": "flagged writes a row flagged throughout with NaN data and weights; omitted writes no row, which reproduces an original sparse MSv2.",
+        "examples": [
+          "flagged",
+          "omitted"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.chunks",
+      "semantic_revision": 1,
+      "casa_name": "chunks",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "max_items": 4,
+        "allow_scalar": false
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0.0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv4 output: chunk shape [time, baseline, frequency, polarization]; empty for XRADIO's default.",
+        "details": "0 is a whole axis, and each extent is clipped to a dataset's. The default is XRADIO's converter's: every axis whole but time, with as many times as make a chunk of the largest variable about 128 MiB, each dataset sized by itself.",
+        "examples": [
+          "[]",
+          "[10, 0, 0, 0]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "msconvert.codec",
+      "semantic_revision": 1,
+      "casa_name": "codec",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "blosc",
+          "none",
+          "zstd"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MSv4 output: compression of the visibilities, flags and weights.",
+        "details": "blosc is Blosc with LZ4, XRADIO's default; zstd is Zstandard; none stores them uncompressed.",
+        "examples": [
+          "blosc",
+          "zstd"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "workers.msconvert",
+      "semantic_revision": 1,
+      "casa_name": "nthreads",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0.0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "MSv4 output: partitions converted at once; 0 for as many as the cores and the memory allow.",
+        "details": "Each thread converts one partition and is budgeted 1 GiB; 0 takes as many as half the host's physical memory holds, at most one a core. An MSv2 is written by one thread.",
+        "examples": [
+          "0",
+          "4"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.image",
+      "semantic_revision": 1,
+      "casa_name": "image",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze image.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.imagename",
+      "semantic_revision": 1,
+      "casa_name": "imagename",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "CASA simanalyze imagename.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.vis",
+      "semantic_revision": 2,
+      "casa_name": "vis",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "project_path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "CASA simanalyze vis.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.modelimage",
+      "semantic_revision": 2,
+      "casa_name": "modelimage",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "project_path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "CASA simanalyze modelimage.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.imsize",
+      "semantic_revision": 1,
+      "casa_name": "imsize",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze imsize.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.imdirection",
+      "semantic_revision": 1,
+      "casa_name": "imdirection",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze imdirection.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.cell",
+      "semantic_revision": 1,
+      "casa_name": "cell",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": 2,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze cell.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.outertaper",
+      "semantic_revision": 1,
+      "casa_name": "outertaper",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze outertaper.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.featherimage",
+      "semantic_revision": 2,
+      "casa_name": "featherimage",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "project_path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "CASA simanalyze featherimage.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.analyze",
+      "semantic_revision": 1,
+      "casa_name": "analyze",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze analyze.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showuv",
+      "semantic_revision": 1,
+      "casa_name": "showuv",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showuv.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showpsf",
+      "semantic_revision": 1,
+      "casa_name": "showpsf",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showpsf.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showmodel",
+      "semantic_revision": 1,
+      "casa_name": "showmodel",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showmodel.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showconvolved",
+      "semantic_revision": 1,
+      "casa_name": "showconvolved",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showconvolved.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showclean",
+      "semantic_revision": 1,
+      "casa_name": "showclean",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showclean.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showresidual",
+      "semantic_revision": 1,
+      "casa_name": "showresidual",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showresidual.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showdifference",
+      "semantic_revision": 1,
+      "casa_name": "showdifference",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showdifference.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.showfidelity",
+      "semantic_revision": 1,
+      "casa_name": "showfidelity",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze showfidelity.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.dryrun",
+      "semantic_revision": 1,
+      "casa_name": "dryrun",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze dryrun.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.analysis.logfile",
+      "semantic_revision": 1,
+      "casa_name": "logfile",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA simanalyze logfile.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.infiles",
+      "semantic_revision": 1,
+      "casa_name": "infiles",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "path",
+          "resource_kind": "measurement_set"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "CASA tsdimaging's infiles.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.mode",
+      "semantic_revision": 1,
+      "casa_name": "mode",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's mode.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.pointingcolumn",
+      "semantic_revision": 1,
+      "casa_name": "pointingcolumn",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's pointingcolumn.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.convertfirst",
+      "semantic_revision": 1,
+      "casa_name": "convertfirst",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's convertfirst.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.imsize",
+      "semantic_revision": 1,
+      "casa_name": "imsize",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "max_items": 2,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "geometry",
+      "documentation": {
+        "summary": "CASA tsdimaging's imsize.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.cell",
+      "semantic_revision": 1,
+      "casa_name": "cell",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": 2,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "geometry",
+      "documentation": {
+        "summary": "CASA tsdimaging's cell.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.gridfunction",
+      "semantic_revision": 1,
+      "casa_name": "gridfunction",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's gridfunction.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.convsupport",
+      "semantic_revision": 1,
+      "casa_name": "convsupport",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's convsupport.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.truncate",
+      "semantic_revision": 1,
+      "casa_name": "truncate",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's truncate.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.gwidth",
+      "semantic_revision": 1,
+      "casa_name": "gwidth",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's gwidth.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.jwidth",
+      "semantic_revision": 1,
+      "casa_name": "jwidth",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's jwidth.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.clipminmax",
+      "semantic_revision": 1,
+      "casa_name": "clipminmax",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's clipminmax.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.minweight",
+      "semantic_revision": 1,
+      "casa_name": "minweight",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's minweight.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.brightnessunit",
+      "semantic_revision": 1,
+      "casa_name": "brightnessunit",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "",
+          "K",
+          "Jy/beam"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "CASA tsdimaging's brightnessunit.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.start",
+      "semantic_revision": 1,
+      "casa_name": "start",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Native channel start or a spectral quantity.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "single_dish.width",
+      "semantic_revision": 1,
+      "casa_name": "width",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Native channel width or a spectral quantity.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.antennalist",
+      "semantic_revision": 1,
+      "casa_name": "antennalist",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "antenna position files of ALMA 12m and 7m arrays",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.correlator",
+      "semantic_revision": 1,
+      "casa_name": "correlator",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Name of the correlator, used to lookup the efficiency. Allowed options are based on",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.totaltime",
+      "semantic_revision": 1,
+      "casa_name": "totaltime",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "total time of observation; vector corresponding to antennalist",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.tpnant",
+      "semantic_revision": 1,
+      "casa_name": "tpnant",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Number of total power antennas to use (0-4)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.tptime",
+      "semantic_revision": 1,
+      "casa_name": "tptime",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "total observation time for total power",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.pwv",
+      "semantic_revision": 1,
+      "casa_name": "pwv",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "number_range",
+          "min": 0
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Precipitable Water Vapor in mm. 0 for noise-free simulation",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "simulation.alma.cell",
+      "semantic_revision": 1,
+      "casa_name": "cell",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "cell size with units or \"\" to equal model",
+        "details": null,
+        "examples": []
+      },
       "persistence_class": "profile"
     }
   ]

@@ -1,0 +1,501 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "args": [
+        4,
+        "_"
+      ],
+      "result": {
+        "unit": "_",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        "4_"
+      ],
+      "result": {
+        "unit": "_",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_"
+        }
+      ],
+      "result": {
+        "unit": "_",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        4,
+        "_0"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string '_0'"
+      }
+    },
+    {
+      "args": [
+        "4_0"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"4_0\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_0"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string '_0'"
+      }
+    },
+    {
+      "args": [
+        4,
+        "_1"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string '_1'"
+      }
+    },
+    {
+      "args": [
+        "4_1"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"4_1\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_1"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string '_1'"
+      }
+    },
+    {
+      "args": [
+        4,
+        "_2"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string '_2'"
+      }
+    },
+    {
+      "args": [
+        "4_2"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"4_2\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_2"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string '_2'"
+      }
+    },
+    {
+      "args": [
+        4,
+        "_4"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string '_4'"
+      }
+    },
+    {
+      "args": [
+        "4_4"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"4_4\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_4"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string '_4'"
+      }
+    },
+    {
+      "args": [
+        4,
+        "_+2"
+      ],
+      "result": {
+        "unit": "_+2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        "4_+2"
+      ],
+      "result": {
+        "unit": "_+2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_+2"
+        }
+      ],
+      "result": {
+        "unit": "_+2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        4,
+        "_-0"
+      ],
+      "result": {
+        "unit": "_-0",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        "4_-0"
+      ],
+      "result": {
+        "unit": "_-0",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_-0"
+        }
+      ],
+      "result": {
+        "unit": "_-0",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        4,
+        "_-1"
+      ],
+      "result": {
+        "unit": "_-1",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        "4_-1"
+      ],
+      "result": {
+        "unit": "_-1",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_-1"
+        }
+      ],
+      "result": {
+        "unit": "_-1",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        4,
+        "_-2"
+      ],
+      "result": {
+        "unit": "_-2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        "4_-2"
+      ],
+      "result": {
+        "unit": "_-2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_-2"
+        }
+      ],
+      "result": {
+        "unit": "_-2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        4,
+        "(_)2"
+      ],
+      "result": {
+        "unit": "(_)2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        "4(_)2"
+      ],
+      "result": {
+        "unit": "(_)2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "(_)2"
+        }
+      ],
+      "result": {
+        "unit": "(_)2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        4,
+        "(_)-2"
+      ],
+      "result": {
+        "unit": "(_)-2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        "4(_)-2"
+      ],
+      "result": {
+        "unit": "(_)-2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "(_)-2"
+        }
+      ],
+      "result": {
+        "unit": "(_)-2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        4,
+        "_._"
+      ],
+      "result": {
+        "unit": "_._",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        "4_._"
+      ],
+      "result": {
+        "unit": "_._",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_._"
+        }
+      ],
+      "result": {
+        "unit": "_._",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        4,
+        "_/s2"
+      ],
+      "result": {
+        "unit": "_/s2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        "4_/s2"
+      ],
+      "result": {
+        "unit": "_/s2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "_/s2"
+        }
+      ],
+      "result": {
+        "unit": "_/s2",
+        "value": 4.0
+      }
+    },
+    {
+      "args": [
+        4,
+        "m_2"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'm_2'"
+      }
+    },
+    {
+      "args": [
+        "4m_2"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"4m_2\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "m_2"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'm_2'"
+      }
+    },
+    {
+      "args": [
+        4,
+        "m._2"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'm._2'"
+      }
+    },
+    {
+      "args": [
+        "4m._2"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"4m._2\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "m._2"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'm._2'"
+      }
+    },
+    {
+      "args": [
+        4,
+        "m/_2"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'm/_2'"
+      }
+    },
+    {
+      "args": [
+        "4m/_2"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"4m/_2\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "m/_2"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'm/_2'"
+      }
+    }
+  ]
+}

@@ -16,32 +16,47 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use casa_imaging_deconvolution::{
-    AutoMaskBeam, AutoMultithreshEvidence, FinalNormalState, ImageDomainReconstructionMaskPlans,
-    ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, ModelGeneration,
-    ModelLifecycle, ModelLifecycleError, NormalBasis, NormalStateError, SpectralChannelValidity,
+    AutoMaskEvidence, AutoMaskPlane, AutoMaskSource, DenseModelPlane, FinalNormalState,
+    ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
+    MaskError, MaskPlaneKey, MaskSources, ModelGeneration, ModelLifecycle, ModelLifecycleError,
+    NoiseEstimate, NormalBasis, NormalStateError, SpectralChannelValidity, robust_noise,
 };
 use casa_imaging_deconvolution::{
     Clark, Component, CycleControls, Delta, Hogbom, LinearRefresh, MinorCycleView, Multiscale,
-    PlaneOutcome, PlaneShape, PlaneStatistics, PlaneStop, PsfSummary, ResidualStatistics, Solver,
-    Support, Taylor, run_plane,
+    PlaneOutcome, PlaneShape, PlaneStatistics, PlaneStop, PsfSummary, ResidualStatistics,
+    RestoringBeam, Solver, Support, Taylor, peak_magnitude, run_plane,
 };
 use casa_imaging_model::{
     HogbomIterationAccounting, ModelCell, ModelDeltaTerm, ModelSupport, ModelValue,
     ReconstructionAlgorithm,
 };
 use casa_imaging_products::{
-    MinorCycleImageResponse, MosaicSensitivity, ProductsError, ResidualFamily,
+    AnalyticPrimaryBeam, MinorCycleImageResponse, MosaicSensitivity, ProductsError, ResidualFamily,
 };
 
 use crate::pass::WorkerTeam;
 use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit};
 
+mod beams;
+mod channel;
 mod layout;
+mod mem;
+mod pixels;
+mod polarized;
+mod prepare;
+mod psfs;
+mod rows;
 pub use layout::{
-    MinorLayout, mask_bytes, prepare_bytes, prepare_bytes_for, run_bytes, run_bytes_for,
+    MinorLayout, mask_bytes, prepare_bytes, prepare_bytes_for, psf_cache_bytes, run_bytes,
+    run_bytes_for,
 };
+use mem::{dense_result_bytes, dense_result_slots, solve_mem};
+pub use prepare::{prepare_minor_cycle, prepare_minor_cycle_with_residual_masks};
+use psfs::{measure_psfs, saved_beam, saved_psf_beam, single_psf_peak};
+pub use rows::PlaneCycleRow;
 
 /// Component records kept per minor cycle for diagnostics.
 const TRACE: usize = 64;
@@ -72,6 +87,14 @@ pub enum MinorCycleRunError {
     /// The solver failed.
     #[error(transparent)]
     Solver(#[from] casa_imaging_deconvolution::Error),
+    /// A saved beam grid does not cover the image's channels and polarizations.
+    #[error("saved beam grid has {actual} planes; expected {expected}")]
+    SavedBeamGridLength {
+        /// Number of beam planes required.
+        expected: usize,
+        /// Number of beam planes supplied.
+        actual: usize,
+    },
     /// The selected algorithm has no minor cycle.
     #[error("{0:?} has no minor cycle")]
     Algorithm(ReconstructionAlgorithm),
@@ -82,7 +105,15 @@ pub enum MinorCycleRunError {
 
 /// What every minor cycle of a run shares.
 #[derive(Clone, Debug)]
-pub struct MinorCycleSetup {
+pub struct MinorCycleSetup<'a> {
+    /// The PSF main-lobe fit cutoff.
+    pub psf_cutoff: f32,
+    /// A complete saved PSF beam grid in pixels, channel-major, for the main image.
+    pub psf_beams: Option<Arc<[RestoringBeam]>>,
+    /// Complete saved PSF beam grids in pixels, in outlier-domain order.
+    pub outlier_psf_beams: Vec<Option<Arc<[RestoringBeam]>>>,
+    /// Saved residual beams in pixels, preferred by automatic masking.
+    pub mask_beams: Option<Arc<[RestoringBeam]>>,
     /// The deconvolver.
     pub algorithm: ReconstructionAlgorithm,
     /// Högbom's iteration accounting.
@@ -90,11 +121,31 @@ pub struct MinorCycleSetup {
     /// CASA's flat-noise or flat-sky residual units, for a direction-dependent
     /// response (mosaic, A-projection).
     pub response: Option<MinorCycleImageResponse>,
+    /// Whether the current weighted residual was read in its saved image units.
+    pub saved_weighted_residual: bool,
     /// The `nsigma` multiplier; zero when off.
     pub nsigma: f64,
+    /// How the `nsigma` threshold's noise is estimated (`fastnoise`).
+    pub noise: NoiseEstimate,
     /// Whether the mask is CASA's automatic multi-threshold mask, whose
     /// n-sigma threshold adds the residual median.
     pub automask: bool,
+    /// CASA's `.pb` of a run without a response (the standard and
+    /// W-projection gridders): the telescope's analytic beam, whose
+    /// support bounds what each plane's statistics read. `None` under a
+    /// response, whose beam is each plane's weight image, and for a run
+    /// without a `.pb`, whose statistics read every valid pixel.
+    pub primary_beam: Option<AnalyticPrimaryBeam<'a>>,
+    /// Whether the residual carries the `.pb`'s support as its pixel mask,
+    /// as tclean's does where the run has a `.pb` and `pblimit` is not
+    /// negative (`SIImageStore::divideResidualByWeight`): each plane's
+    /// peaks and automatic mask then read only the pixels inside the beam.
+    pub residual_pixel_mask: bool,
+    /// tclean's `pbmask`, in `[0, 1)`: the `nsigma` noise reads the pixels
+    /// whose `.pb` exceeds it (`SIImageStore::calcRobustRMS`), and above
+    /// zero it is an automatic mask's pixel mask
+    /// (`SDMaskHandler::autoMaskWithinPB`).
+    pub pbmask: f64,
 }
 
 /// One plane of the normal state: image domain, absolute output channel
@@ -111,11 +162,32 @@ struct PlaneKey {
 /// run is kept with them.
 #[derive(Default)]
 pub struct PsfCache {
+    reuses_single_psf: bool,
     summaries: BTreeMap<PlaneKey, PsfSummary>,
     clark: Option<LinearRefresh>,
+    /// Whether each image domain's `.pb` keeps a pixel in some plane,
+    /// found at the first boundary whose `nsigma` noise reads the beam:
+    /// `calcRobustRMS` falls back to every pixel only for an image the
+    /// beam leaves none of (CAS-13318). The beam does not change.
+    beams: Option<Box<[bool]>>,
 }
 
 impl PsfCache {
+    /// The measurements of a plane, once measured.
+    #[must_use]
+    pub fn summary(
+        &self,
+        domain: usize,
+        channel: usize,
+        polarization: usize,
+    ) -> Option<&PsfSummary> {
+        self.summaries.get(&PlaneKey {
+            domain,
+            channel,
+            polarization,
+        })
+    }
+
     /// Heap bytes the cached Clark refresh holds, which outlives each minor
     /// cycle ([`LinearRefresh::bytes`]); zero when none is cached.
     #[must_use]
@@ -145,10 +217,13 @@ pub const fn result_bytes(terms: usize) -> u64 {
 /// One minor cycle's masks and plane measurements.
 pub struct PreparedMinorCycle {
     masks: ImageDomainReconstructionMasks,
-    auto_masks: Box<[Option<AutoMultithreshEvidence>]>,
+    auto_masks: Box<[Option<AutoMaskEvidence>]>,
     planes: Vec<(PlaneKey, PlaneStatistics)>,
+    /// The planes with no data, measured as empty.
+    blank: Vec<(PlaneKey, PlaneStatistics)>,
     /// A single plane's load, kept for its solve ([`Self::retained_bytes`]).
     retained: Option<RetainedPlane>,
+    residual_masks: Vec<Option<Support>>,
     /// The measurements of every plane and field, for the controller.
     pub statistics: ResidualStatistics,
 }
@@ -160,6 +235,7 @@ struct RetainedPlane {
     key: PlaneKey,
     residual: Vec<Vec<f64>>,
     psf: Vec<Vec<f64>>,
+    psf_peak: f64,
     support: Support,
     valid: Support,
 }
@@ -173,7 +249,7 @@ impl PreparedMinorCycle {
 
     /// Automatic-mask diagnostics per image domain.
     #[must_use]
-    pub fn auto_masks(&self) -> &[Option<AutoMultithreshEvidence>] {
+    pub fn auto_masks(&self) -> &[Option<AutoMaskEvidence>] {
         &self.auto_masks
     }
 
@@ -218,8 +294,7 @@ pub struct MinorCycleSummary {
     pub components: usize,
     /// Sum of the absolute component fluxes over every term.
     pub absolute_flux: f64,
-    /// Sum of the components' signed first-term fluxes over every plane:
-    /// what the cycle adds to the model's flux.
+    /// Sum of the components' signed model fluxes over every solve.
     pub model_flux: f64,
     /// Largest peak residual on entry.
     pub start_peak: f64,
@@ -234,6 +309,9 @@ pub struct MinorCycleSummary {
     pub refreshes: usize,
     /// The first component records.
     pub trace: Vec<TracedComponent>,
+    /// Every plane's row, those with no data too, ordered by image domain,
+    /// channel and polarization.
+    pub planes: Vec<PlaneCycleRow>,
 }
 
 /// What one minor cycle hands to the next major cycle and to products.
@@ -241,13 +319,17 @@ pub struct MinorCycleOutcome {
     /// The model update in strictly increasing model order; empty when no
     /// component was cleaned.
     pub terms: Vec<ModelDeltaTerm>,
+    /// Dense updates in canonical plane order.
+    pub dense: Vec<DenseModelPlane>,
+    /// The last MEM alpha when this cycle ran its entropy solver.
+    pub mem_alpha: Option<f32>,
     /// The charge of `terms` ([`result_bytes`]), which covers queuing them
     /// on the model too: keep it until the model holds them under its own.
     pub results: Reservation,
     /// The masks components were placed within.
     pub masks: ImageDomainReconstructionMasks,
     /// Automatic-mask diagnostics per image domain.
-    pub auto_masks: Box<[Option<AutoMultithreshEvidence>]>,
+    pub auto_masks: Box<[Option<AutoMaskEvidence>]>,
     /// What the cycle did.
     pub summary: MinorCycleSummary,
 }
@@ -258,132 +340,17 @@ struct Measured {
     summary: PsfSummary,
 }
 
-/// Form the masks of `completion` and measure every plane: its peak
-/// residual, noise and PSF sidelobe (CASA's `initminorcycle`).
-///
-/// # Errors
-///
-/// When a mask, a plane or a PSF cannot be read or measured.
-pub fn prepare_minor_cycle(
-    completion: &MajorCycleCompletion,
-    mask_plans: &ImageDomainReconstructionMaskPlans,
-    setup: &MinorCycleSetup,
-    cache: &mut PsfCache,
-    team: &WorkerTeam,
-) -> Result<PreparedMinorCycle, MinorCycleRunError> {
-    let normal = completion.normal_state();
-    let base = completion.final_model();
-    let taylor = is_taylor(normal);
-    let keys = plane_keys(normal, taylor);
-    // The automatic mask (one-channel continuum only) smooths by the
-    // primary PSF's beam; a cube's first channel may hold no data.
-    let beam = if setup.automask {
-        let primary = keys[0];
-        summarise(normal, taylor, cache, primary)?;
-        Some(automask_beam(&cache.summaries[&primary]))
-    } else {
-        None
-    };
-    let (masks, auto_masks) = mask_plans.materialize(base, normal, beam)?.into_parts();
-    let inputs = Inputs {
-        normal,
-        base,
-        masks: &masks,
-        setup,
-        taylor,
-    };
-    let mut slots = keys
-        .iter()
-        .map(|key| (*key, None::<Measured>, None::<RetainedPlane>))
-        .collect::<Vec<_>>();
-    let missing = keys
-        .iter()
-        .filter(|key| !cache.summaries.contains_key(key))
-        .count();
-    // A cycle's only plane is solved straight after it is measured, so its
-    // load is kept for the solve rather than read twice.
-    let retain = keys.len() == 1 && setup.response.is_none();
-    let shared = &*cache;
-    team.for_each_mut(&mut slots, |_, (key, out, kept)| {
-        let Some(plane) = load(&inputs, *key)? else {
-            return Ok(());
-        };
-        let summary = match shared.summaries.get(key) {
-            Some(summary) => *summary,
-            None => PsfSummary::new(&plane.psf[0], plane.shape)?,
-        };
-        let statistics = PlaneStatistics::measure(
-            &plane.residual[0],
-            &plane.support,
-            &plane.valid,
-            setup.nsigma,
-            setup.automask,
-        );
-        *out = Some(Measured {
-            statistics,
-            summary,
-        });
-        if retain && plane.response.is_none() {
-            *kept = Some(RetainedPlane {
-                key: *key,
-                residual: plane.residual,
-                psf: plane.psf,
-                support: plane.support,
-                valid: plane.valid,
-            });
-        }
-        Ok::<_, MinorCycleRunError>(())
-    })?;
-    let mut planes = Vec::with_capacity(keys.len());
-    let mut sidelobes = Vec::with_capacity(keys.len());
-    let mut retained = None;
-    for (key, measured, kept) in slots {
-        let Some(Measured {
-            statistics,
-            summary,
-        }) = measured
-        else {
-            continue;
-        };
-        sidelobes.push(summary.sidelobe());
-        cache.summaries.entry(key).or_insert(summary);
-        planes.push((key, statistics));
-        retained = retained.or(kept);
-    }
-    // Each image domain is one CASA image store.
-    let mut statistics = ResidualStatistics::empty();
-    let domains = planes
-        .iter()
-        .map(|(key, _)| key.domain)
-        .collect::<BTreeSet<_>>();
-    for domain in domains {
-        statistics.include_store(
-            planes
-                .iter()
-                .zip(&sidelobes)
-                .filter(|((key, _), _)| key.domain == domain)
-                .map(|((_, plane), sidelobe)| (plane, *sidelobe)),
-            setup.nsigma,
-        );
-    }
-    tracing::debug!(
-        planes = planes.len(),
-        psf_fits = missing,
-        "minor cycle prepared"
-    );
-    Ok(PreparedMinorCycle {
-        masks,
-        auto_masks,
-        planes,
-        retained,
-        statistics,
-    })
-}
-
 /// One plane of a multi-plane cycle on the team.
 struct Slot {
     key: PlaneKey,
     statistics: PlaneStatistics,
+    solved: Option<Solved>,
+}
+
+/// A CASA Clark solve groups a channel's polarization planes.
+struct PolarizedSlot {
+    keys: [PlaneKey; 4],
+    stats: [PlaneStatistics; 4],
     solved: Option<Solved>,
 }
 
@@ -403,7 +370,7 @@ struct Slot {
 pub fn run_minor_cycle(
     prepared: PreparedMinorCycle,
     completion: &MajorCycleCompletion,
-    setup: &MinorCycleSetup,
+    setup: &MinorCycleSetup<'_>,
     controls: &CycleControls,
     cache: &mut PsfCache,
     team: &WorkerTeam,
@@ -413,7 +380,9 @@ pub fn run_minor_cycle(
         masks,
         auto_masks,
         planes,
+        mut blank,
         retained,
+        residual_masks,
         ..
     } = prepared;
     let normal = completion.normal_state();
@@ -423,16 +392,41 @@ pub fn run_minor_cycle(
         masks: &masks,
         setup,
         taylor: is_taylor(normal),
+        residual_masks: &residual_masks,
     };
     let admission = (host, policy);
     let fft_threads = scale_fft_threads(planes.len(), team.workers());
     let mut results = Vec::with_capacity(planes.len());
-    if let [(key, statistics)] = planes.as_slice() {
+    let n_pol = normal.polarization_count();
+    // Temporary experiment: groups with blank planes need an explicit CASA
+    // comparison before this path can be considered complete.
+    let joint = matches!(setup.algorithm, ReconstructionAlgorithm::Clark)
+        && !inputs.taylor
+        && matches!(n_pol, 2 | 4);
+    if joint {
+        polarized::solve_groups(
+            &inputs,
+            admission,
+            (&planes, &mut blank),
+            cache,
+            controls,
+            team,
+            &mut results,
+        )?;
+    } else if let [(key, statistics)] = planes.as_slice() {
         let summary = cache.summaries[key];
-        let clark = &mut cache.clark;
+        // A planned multi-plane run admits no retained Clark refresh, even
+        // if every plane but this one is blank. In that case its refresh is
+        // local to this solve; only a planned single plane can cache it.
+        let mut transient_refresh = None;
+        let clark = if blank.is_empty() {
+            &mut cache.clark
+        } else {
+            &mut transient_refresh
+        };
         // A lone plane has the team to itself: Clark spreads its refresh
         // across it, and the scale solvers transform on its threads.
-        results.push(team.install(|| {
+        let solved = team.install(|| {
             solve(
                 &inputs,
                 admission,
@@ -442,7 +436,8 @@ pub fn run_minor_cycle(
                 controls,
                 (clark, fft_threads),
             )
-        })?);
+        })?;
+        results.push((*key, *statistics, solved));
     } else {
         let mut slots = planes
             .iter()
@@ -466,11 +461,13 @@ pub fn run_minor_cycle(
             )?);
             Ok::<_, MinorCycleRunError>(())
         })?;
-        results.extend(
-            slots
-                .into_iter()
-                .map(|slot| slot.solved.expect("every plane slot ran")),
-        );
+        results.extend(slots.into_iter().map(|slot| {
+            (
+                slot.key,
+                slot.statistics,
+                slot.solved.expect("every plane slot ran"),
+            )
+        }));
     }
     let mut summary = MinorCycleSummary {
         iterations: 0,
@@ -483,11 +480,19 @@ pub fn run_minor_cycle(
         stops: Vec::with_capacity(results.len()),
         refreshes: 0,
         trace: Vec::new(),
+        planes: Vec::with_capacity(results.len() + blank.len()),
     };
     // Each plane's charge covers its terms' copy here.
-    let mut terms = Vec::with_capacity(results.iter().map(|solved| solved.terms.len()).sum());
+    let mut terms = Vec::with_capacity(
+        results
+            .iter()
+            .map(|(_, _, solved)| solved.terms.len())
+            .sum(),
+    );
     let mut charge = Reservation::none();
-    for ((_, statistics), solved) in planes.iter().zip(results) {
+    let mut dense = dense_result_slots(&setup.algorithm, results.len());
+    let mut mem_alpha = None;
+    for (key, statistics, solved) in results {
         charge.join(solved.charge);
         let outcome = &solved.outcome;
         summary.iterations += outcome.iterations;
@@ -507,15 +512,38 @@ pub fn run_minor_cycle(
         }
         summary.stops.push(outcome.stop);
         summary.refreshes += outcome.refreshes;
+        let mut row = rows::cycle_row(key, &statistics, outcome, solved.peak_no_mask, controls);
+        row.polarizations = if joint { n_pol } else { 1 };
+        summary.planes.push(row);
         let room = TRACE - summary.trace.len();
         summary.trace.extend(solved.trace.into_iter().take(room));
         terms.extend(solved.terms);
+        if solved.mem_alpha.is_some() {
+            mem_alpha = solved.mem_alpha;
+        }
+        if let Some(plane) = solved.dense {
+            dense.push((key, plane));
+        }
     }
+    summary.planes.extend(blank.iter().map(|(key, statistics)| {
+        let mut row = rows::blank_row(*key, statistics, controls);
+        row.polarizations = if joint { n_pol } else { 1 };
+        row
+    }));
+    summary
+        .planes
+        .sort_unstable_by_key(|row| (row.domain, row.channel, row.polarization));
     terms.sort_unstable_by_key(|(index, _)| *index);
+    dense.sort_unstable_by_key(|(key, _)| *key);
+    let mut ordered_dense = Vec::with_capacity(dense.len());
+    ordered_dense.extend(dense.into_iter().map(|(_, plane)| plane));
+    let dense = ordered_dense;
     let mut ordered = Vec::with_capacity(terms.len());
     ordered.extend(terms.into_iter().map(|(_, term)| term));
     Ok(MinorCycleOutcome {
         terms: ordered,
+        dense,
+        mem_alpha,
         results: charge,
         masks,
         auto_masks,
@@ -523,22 +551,26 @@ pub fn run_minor_cycle(
     })
 }
 
-/// Whether `normal` holds one Taylor family (decided once per cycle half).
+/// Whether `normal` holds Taylor families, one per polarization (decided
+/// once per cycle half).
 fn is_taylor(normal: &FinalNormalState) -> bool {
     normal.basis() == NormalBasis::Taylor
 }
 
 /// The planes a minor cycle cleans, in CASA's order within each image
-/// domain: one Taylor family, every channel of every polarization of a
+/// domain: one Taylor family per polarization (`SDAlgorithmMSMFS` cleans
+/// one Stokes plane at a time), every channel of every polarization of a
 /// cube or continuum plane, or each polarization of every image field.
 fn plane_keys(normal: &FinalNormalState, taylor: bool) -> Vec<PlaneKey> {
     let first = normal.slab().core_range().start;
     if taylor {
-        return vec![PlaneKey {
-            domain: 0,
-            channel: first,
-            polarization: 0,
-        }];
+        return (0..normal.polarization_count())
+            .map(|polarization| PlaneKey {
+                domain: 0,
+                channel: first,
+                polarization,
+            })
+            .collect();
     }
     let mut keys = Vec::new();
     for polarization in 0..normal.polarization_count() {
@@ -555,34 +587,82 @@ fn plane_keys(normal: &FinalNormalState, taylor: bool) -> Vec<PlaneKey> {
     keys
 }
 
-/// Measure the PSF of `key` into the cache.
-fn summarise(
-    normal: &FinalNormalState,
-    taylor: bool,
-    cache: &mut PsfCache,
+/// The pixels plane `key`'s preparation measures, `plane` read as a view:
+/// its valid pixels and, when the cycle reads the `.pb`
+/// ([`pixels::reads_beam`]), their part inside it and above `pbmask`.
+fn plane_pixels<'p>(
+    inputs: &Inputs<'_>,
     key: PlaneKey,
-) -> Result<(), MinorCycleRunError> {
-    if cache.summaries.contains_key(&key) {
-        return Ok(());
-    }
-    let shape = plane_shape(normal, key);
-    let psf = read_psf(normal, taylor, key)?;
-    let peak = psf_peak_value(&psf, shape)?;
-    cache
-        .summaries
-        .insert(key, PsfSummary::new(&normalise(psf, peak), shape)?);
-    Ok(())
+    plane: &'p PlaneData<'_>,
+) -> Result<pixels::PlanePixels<'p>, MinorCycleRunError> {
+    let (beam, within) = if pixels::reads_beam(inputs.setup) {
+        pixels::beam_pixels(
+            inputs.setup,
+            (inputs.base.shape().domain_roles(), key, inputs.taylor),
+            plane.valid.as_slice(),
+            plane.response.as_ref(),
+        )?
+        .map(|beam| beam.into_supports(plane.shape))
+        .unzip()
+    } else {
+        (None, None)
+    };
+    Ok(pixels::PlanePixels {
+        valid: &plane.valid,
+        beam,
+        within: within.flatten(),
+    })
 }
 
-/// The automatic mask's view of the primary PSF's fitted beam (pixels).
-fn automask_beam(summary: &PsfSummary) -> AutoMaskBeam {
-    let beam = summary.beam();
-    AutoMaskBeam::new(
-        beam.major_fwhm_rad(),
-        beam.minor_fwhm_rad(),
-        beam.position_angle_rad(),
-        summary.sidelobe(),
-    )
+/// Whether the plane `key` holds data: a valid channel, or a valid Taylor
+/// family.
+fn holds_data(normal: &FinalNormalState, taylor: bool, key: PlaneKey) -> bool {
+    let validity = if taylor {
+        normal.support_validity(key.polarization)
+    } else {
+        normal.domain_channel_validity(
+            key.domain,
+            key.channel - normal.slab().core_range().start,
+            key.polarization,
+        )
+    };
+    validity == Some(SpectralChannelValidity::Valid)
+}
+
+/// The plane of a mask's `key`, whose channel counts from the normal
+/// state's first; a Taylor family is one channel.
+fn absolute(normal: &FinalNormalState, taylor: bool, key: MaskPlaneKey) -> PlaneKey {
+    let first = normal.slab().core_range().start;
+    PlaneKey {
+        domain: key.domain,
+        channel: if taylor { first } else { first + key.channel },
+        polarization: key.polarization,
+    }
+}
+
+/// Which pixels of the plane `key` the model holds valid, every Taylor
+/// term's for a family, x-major.
+fn valid_support(
+    normal: &FinalNormalState,
+    base: &ModelGeneration,
+    taylor: bool,
+    key: PlaneKey,
+    shape: PlaneShape,
+) -> Result<Vec<bool>, MinorCycleRunError> {
+    let coefficients = if taylor {
+        0..normal.coefficient_term_count()
+    } else {
+        key.channel..key.channel + 1
+    };
+    let mut valid = vec![true; shape.len()];
+    for coefficient in coefficients {
+        let samples = base.read_plane(key.domain, coefficient, key.polarization)?;
+        for (index, supported) in valid.iter_mut().enumerate() {
+            let [x, y] = shape.pixel(index);
+            *supported &= samples[y * shape.nx + x].support() == ModelSupport::Valid;
+        }
+    }
+    Ok(valid)
 }
 
 fn plane_shape(normal: &FinalNormalState, key: PlaneKey) -> PlaneShape {
@@ -592,7 +672,7 @@ fn plane_shape(normal: &FinalNormalState, key: PlaneKey) -> PlaneShape {
     PlaneShape::new(nx, ny)
 }
 
-/// Term-0 PSF of `key`, unnormalised.
+/// Term-0 PSF of `key` in gridded or saved image units.
 fn read_psf(
     normal: &FinalNormalState,
     taylor: bool,
@@ -601,7 +681,7 @@ fn read_psf(
     if taylor {
         let window = normal.read_window(normal.slab().core_range())?;
         let moment = window
-            .normal_moment(0)
+            .normal_moment(0, key.polarization)
             .expect("a Taylor family has its zeroth moment");
         return Ok(moment
             .normal_approximation()
@@ -623,9 +703,20 @@ struct Inputs<'a> {
     normal: &'a FinalNormalState,
     base: &'a ModelGeneration,
     masks: &'a ImageDomainReconstructionMasks,
-    setup: &'a MinorCycleSetup,
-    /// Whether the normal state is one Taylor family.
+    setup: &'a MinorCycleSetup<'a>,
+    /// Whether the normal state holds Taylor families.
     taylor: bool,
+    residual_masks: &'a [Option<Support>],
+}
+
+impl Inputs<'_> {
+    fn residual_mask(&self, key: PlaneKey) -> Option<&Support> {
+        let channels = self.normal.slab().total_channels();
+        let channel = if self.taylor { 0 } else { key.channel };
+        self.residual_masks
+            .get(key.domain * channels + channel)
+            .and_then(Option::as_ref)
+    }
 }
 
 /// A direction-dependent response bound to one plane's weights: what turns
@@ -640,6 +731,7 @@ struct ResponseBinding<'a> {
 struct PlaneTerms<'a> {
     residual: Vec<Vec<f64>>,
     psf: Vec<Vec<f64>>,
+    psf_peak: f64,
     response: Option<ResponseBinding<'a>>,
 }
 
@@ -648,6 +740,7 @@ struct PlaneData<'a> {
     shape: PlaneShape,
     residual: Vec<Vec<f64>>,
     psf: Vec<Vec<f64>>,
+    psf_peak: f64,
     support: Support,
     valid: Support,
     response: Option<ResponseBinding<'a>>,
@@ -688,10 +781,9 @@ impl Physical<'_> {
     }
 }
 
-/// Read `key` as a view: residual and PSF normalised by the term-0 PSF peak
-/// (or the residual in CASA's flat-noise or flat-sky units under a
-/// direction-dependent response), and the support. `None` for a plane with
-/// no valid data.
+/// Read `key` as a view: the single-term or Taylor-family residual and
+/// unit-peak PSF, with the requested direction-dependent response, and support.
+/// `None` for a plane with no valid data.
 fn load<'a>(
     inputs: &Inputs<'a>,
     key: PlaneKey,
@@ -702,44 +794,29 @@ fn load<'a>(
         masks,
         setup,
         taylor,
+        ..
     } = *inputs;
     let shape = plane_shape(normal, key);
-    let validity = if taylor {
-        normal.support_validity()
-    } else {
-        normal.domain_channel_validity(
-            key.domain,
-            key.channel - normal.slab().core_range().start,
-            key.polarization,
-        )
-    };
-    if validity != Some(SpectralChannelValidity::Valid) {
+    if !holds_data(normal, taylor, key) {
         return Ok(None);
     }
-    let coefficients = if taylor {
-        0..normal.coefficient_term_count()
-    } else {
-        key.channel..key.channel + 1
-    };
-    let mut valid = vec![true; shape.len()];
-    for coefficient in coefficients {
-        let samples = base.read_plane(key.domain, coefficient, key.polarization)?;
-        for (index, supported) in valid.iter_mut().enumerate() {
-            let [x, y] = shape.pixel(index);
-            *supported &= samples[y * shape.nx + x].support() == ModelSupport::Valid;
-        }
-    }
+    let valid = valid_support(normal, base, taylor, key, shape)?;
     let mask = masks
         .get(key.domain)
-        .expect("a mask for every image domain");
+        .and_then(|mask| {
+            mask.plane(
+                key.channel - normal.slab().core_range().start,
+                key.polarization,
+            )
+        })
+        .expect("a mask for every plane of every image domain");
     let support = mask
-        .support()
         .iter()
         .zip(&valid)
         .map(|(masked, valid)| *masked && *valid)
         .collect();
     let terms = if taylor {
-        read_taylor(normal, setup)?
+        read_taylor(normal, setup, key.polarization)?
     } else {
         read_single(normal, setup, key)?
     };
@@ -747,14 +824,15 @@ fn load<'a>(
         shape,
         residual: terms.residual,
         psf: terms.psf,
+        psf_peak: terms.psf_peak,
         support: Support::new(shape, support),
         valid: Support::new(shape, valid),
         response: terms.response,
     }))
 }
 
-/// One plane's residual and PSF. Without a response both are divided by the
-/// PSF peak; with one the residual takes CASA's normalisation
+/// One plane's residual and PSF. Without a response the residual divides by
+/// sumwt and the PSF by its peak; with one the residual takes CASA's normalisation
 /// (`SIImageStore::divideResidualByWeight`) and the components convert back
 /// with `divideModelByWeight`. The residual divides by the published sum of
 /// weights and the weight image by the normal one; for one term both are
@@ -765,24 +843,45 @@ fn load<'a>(
 /// channel reads its own; a paged cube reads only this plane.
 fn read_single<'a>(
     normal: &'a FinalNormalState,
-    setup: &MinorCycleSetup,
+    setup: &MinorCycleSetup<'_>,
     key: PlaneKey,
 ) -> Result<PlaneTerms<'a>, MinorCycleRunError> {
     let plane = normal.read_reconstruction_plane(key.domain, key.channel, key.polarization)?;
-    let shape = plane_shape(normal, key);
     let psf = plane
         .normal_approximation()
         .iter()
         .map(|value| value.re)
         .collect::<Vec<_>>();
-    let peak = psf_peak_value(&psf, shape)?;
-    let raw = plane.residual();
+    let peak = single_psf_peak(&psf)?;
+    let (residual, response) = single_residual(
+        normal,
+        setup,
+        key,
+        plane.residual().iter().map(|value| value.re),
+        plane.sum_weight(),
+    )?;
+    // CASA normalizes the PSF by its own peak (SIImageStore::normPSF).
+    Ok(PlaneTerms {
+        residual: vec![residual],
+        psf: vec![normalise(psf, peak)],
+        psf_peak: peak,
+        response,
+    })
+}
+
+/// A single-term plane's residual in the units the minor cycle cleans, from
+/// its raw real values `raw` and its sum of weights: divided by the sum
+/// (`SIImageStore::divideResidualByWeight`), or with a response in CASA's
+/// units, with the response bound to the plane's weights.
+fn single_residual<'a>(
+    normal: &'a FinalNormalState,
+    setup: &MinorCycleSetup<'_>,
+    key: PlaneKey,
+    raw: impl Iterator<Item = f64>,
+    sum_weight: f64,
+) -> Result<(Vec<f64>, Option<ResponseBinding<'a>>), MinorCycleRunError> {
     let Some(response) = setup.response else {
-        return Ok(PlaneTerms {
-            residual: vec![raw.iter().map(|value| value.re / peak).collect()],
-            psf: vec![normalise(psf, peak)],
-            response: None,
-        });
+        return Ok((raw.map(|value| value / sum_weight).collect(), None));
     };
     let weights = normal.read_plane(key.domain, key.channel, key.polarization)?;
     let sensitivity = weights.read_sensitivity()?;
@@ -790,11 +889,13 @@ fn read_single<'a>(
     let published_weight = weights.published_sum_weight();
     let bound = MosaicSensitivity::new(&sensitivity)?.with_normal_sum_weight(normal_weight)?;
     let residual = raw
-        .iter()
         .enumerate()
         .map(|(index, value)| {
+            if setup.saved_weighted_residual {
+                return Ok(value);
+            }
             bound.normalize_weighted_residual_sample(
-                value.re,
+                value,
                 index,
                 response.normalization(),
                 ResidualFamily::Single,
@@ -803,37 +904,38 @@ fn read_single<'a>(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(PlaneTerms {
-        residual: vec![residual],
-        psf: vec![normalise(psf, peak)],
-        response: Some(ResponseBinding {
+    Ok((
+        residual,
+        Some(ResponseBinding {
             sensitivity,
             response,
             sum_weight: normal_weight,
         }),
-    })
+    ))
 }
 
-/// The Taylor family's residual terms and `2·N_t − 1` PSF moments. Every
-/// moment divides by the zeroth moment's peak, with or without a response
-/// (`SIImageStore::normPSF`, which `SDAlgorithmMSMFS::initializeDeconvolver`
-/// reads, #704). Without a response the residuals divide by the same peak;
-/// with one they take CASA's units and the components convert back over
-/// the zeroth moment's sum weight.
+/// Polarization `polarization`'s Taylor family: its residual terms and
+/// `2·N_t − 1` PSF moments. Every moment divides by the zeroth moment's
+/// peak, with or without a response (`SIImageStore::normPSF`, which
+/// `SDAlgorithmMSMFS::initializeDeconvolver` reads, #704). Without a
+/// response the residuals divide by the same peak; with one they take
+/// CASA's units and the components convert back over the zeroth moment's
+/// sum weight.
 fn read_taylor(
     normal: &FinalNormalState,
-    setup: &MinorCycleSetup,
+    setup: &MinorCycleSetup<'_>,
+    polarization: usize,
 ) -> Result<PlaneTerms<'static>, MinorCycleRunError> {
     let window = normal.read_window(normal.slab().core_range())?;
     let [nx, ny] = normal.shape();
     let shape = PlaneShape::new(nx, ny);
     let principal = window
-        .normal_moment(0)
+        .normal_moment(0, polarization)
         .expect("a Taylor family has its zeroth moment");
     let moments = (0..normal.normal_moment_count())
         .map(|moment| {
             window
-                .normal_moment(moment)
+                .normal_moment(moment, polarization)
                 .expect("every normal moment is present")
                 .normal_approximation()
                 .iter()
@@ -843,7 +945,7 @@ fn read_taylor(
         .collect::<Vec<_>>();
     let raw = (0..normal.coefficient_term_count()).map(|term| {
         window
-            .coefficient_term(term)
+            .coefficient_term(term, polarization)
             .expect("every coefficient term is present")
             .residual()
     });
@@ -858,11 +960,14 @@ fn read_taylor(
                 .map(|term| term.iter().map(|value| value.re / peak).collect())
                 .collect(),
             psf,
+            psf_peak: peak,
             response: None,
         });
     };
     let normal_weight = principal.sum_weight();
-    let published_weight = window.published_sum_weights()[0];
+    let published_weight = window
+        .published_sum_weight(0, polarization)
+        .expect("a Taylor family has its zeroth sum of weights");
     let sensitivity = principal.sensitivity().to_vec();
     let bound = MosaicSensitivity::new(&sensitivity)?.with_normal_sum_weight(normal_weight)?;
     let residual = raw
@@ -870,6 +975,9 @@ fn read_taylor(
             term.iter()
                 .enumerate()
                 .map(|(index, value)| {
+                    if setup.saved_weighted_residual {
+                        return Ok(value.re);
+                    }
                     bound.normalize_weighted_residual_sample(
                         value.re,
                         index,
@@ -885,12 +993,72 @@ fn read_taylor(
     Ok(PlaneTerms {
         residual,
         psf,
+        psf_peak: peak,
         response: Some(ResponseBinding {
             sensitivity: Cow::Owned(sensitivity),
             response,
             sum_weight: normal_weight,
         }),
     })
+}
+
+/// The zeroth Taylor term's residual of polarization `polarization` in the
+/// units the minor cycle cleans, as [`read_taylor`] gives it, read alone,
+/// with the response bound to the family's weights: an automatic mask reads
+/// that term and, of the zeroth PSF moment, its value at its measured
+/// `peak`, not the whole family.
+fn taylor_principal_residual(
+    normal: &FinalNormalState,
+    setup: &MinorCycleSetup<'_>,
+    polarization: usize,
+    peak: usize,
+) -> Result<(Vec<f64>, Option<ResponseBinding<'static>>), MinorCycleRunError> {
+    let window = normal.read_window(normal.slab().core_range())?;
+    let principal = window
+        .normal_moment(0, polarization)
+        .expect("a Taylor family has its zeroth moment");
+    let scale = principal.normal_approximation()[peak].re;
+    if !(scale.is_finite() && scale > 0.0) {
+        return Err(casa_imaging_deconvolution::Error::PsfPeak.into());
+    }
+    let term = window
+        .coefficient_term(0, polarization)
+        .expect("a Taylor family has its zeroth term")
+        .residual();
+    let Some(response) = setup.response else {
+        return Ok((term.iter().map(|value| value.re / scale).collect(), None));
+    };
+    let normal_weight = principal.sum_weight();
+    let published_weight = window
+        .published_sum_weight(0, polarization)
+        .expect("a Taylor family has its zeroth sum of weights");
+    let sensitivity = principal.sensitivity().to_vec();
+    let bound = MosaicSensitivity::new(&sensitivity)?.with_normal_sum_weight(normal_weight)?;
+    let residual = term
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            if setup.saved_weighted_residual {
+                return Ok(value.re);
+            }
+            bound.normalize_weighted_residual_sample(
+                value.re,
+                index,
+                response.normalization(),
+                ResidualFamily::Taylor,
+                published_weight,
+                response.policy(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((
+        residual,
+        Some(ResponseBinding {
+            sensitivity: Cow::Owned(sensitivity),
+            response,
+            sum_weight: normal_weight,
+        }),
+    ))
 }
 
 fn psf_peak_value(psf: &[f64], shape: PlaneShape) -> Result<f64, MinorCycleRunError> {
@@ -914,7 +1082,11 @@ fn normalise(mut plane: Vec<f64>, scale: f64) -> Vec<f64> {
 /// hold, and their charge.
 struct Solved {
     outcome: PlaneOutcome,
+    /// The residual's peak over the plane's pixels once the plane is done.
+    peak_no_mask: f64,
     terms: Vec<(usize, ModelDeltaTerm)>,
+    dense: Option<DenseModelPlane>,
+    mem_alpha: Option<f32>,
     trace: Vec<TracedComponent>,
     charge: Reservation,
 }
@@ -940,6 +1112,7 @@ fn solve(
             shape: kept.support.shape(),
             residual: kept.residual,
             psf: kept.psf,
+            psf_peak: kept.psf_peak,
             support: kept.support,
             valid: kept.valid,
             response: None,
@@ -953,6 +1126,17 @@ fn solve(
         summary,
         support: &plane.support,
     };
+    if matches!(setup.algorithm, ReconstructionAlgorithm::Mem) {
+        return solve_mem(
+            inputs,
+            (host, policy),
+            key,
+            &plane,
+            &view,
+            statistics,
+            controls,
+        );
+    }
     let outcome = match &setup.algorithm {
         ReconstructionAlgorithm::Hogbom => clean(
             &Hogbom::new(setup.accounting == HogbomIterationAccounting::CasaInclusive),
@@ -960,7 +1144,7 @@ fn solve(
             controls,
             statistics,
         )?,
-        ReconstructionAlgorithm::Clark => {
+        ReconstructionAlgorithm::Clark | ReconstructionAlgorithm::ClarkStokes => {
             let solver = Clark::new(clark.take());
             let outcome = clean(&solver, &view, controls, statistics);
             *clark = solver.into_refresh();
@@ -988,6 +1172,21 @@ fn solve(
         algorithm => return Err(MinorCycleRunError::Algorithm(algorithm.clone())),
     };
     let mut outcome = outcome;
+    // CASA reads this after a plane it cleaned, and keeps the entry's for one
+    // it skipped.
+    let end_residual = std::mem::take(&mut outcome.end_residual);
+    let peak_no_mask = match end_residual.first() {
+        Some(residual) if let Some(mask) = inputs.residual_mask(key).filter(|_| !inputs.taylor) => {
+            peak_magnitude(residual, mask)
+        }
+        Some(residual) if setup.residual_pixel_mask => {
+            let pixels = plane_pixels(inputs, key, &plane)?;
+            peak_magnitude(residual, pixels.residual_mask(true))
+        }
+        Some(residual) => peak_magnitude(residual, &plane.valid),
+        None => statistics.peak_no_mask,
+    };
+    drop(end_residual);
     let delta = std::mem::take(&mut outcome.delta);
     let entries = (0..delta.term_count())
         .map(|term| delta.term(term).count())
@@ -1004,7 +1203,10 @@ fn solve(
     let trace = trace(&outcome.trace, &plane, inputs, key);
     Ok(Solved {
         outcome,
+        peak_no_mask,
         terms,
+        dense: None,
+        mem_alpha: None,
         trace,
         charge,
     })

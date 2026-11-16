@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Internal selector parsing and TaQL construction for listobs-style selection.
 
-use std::collections::BTreeSet;
+use std::{borrow::Cow, collections::BTreeMap};
 
 use casa_types::quanta::MvTime;
 
-use crate::selection::syntax::{dedup_i32, parse_numeric_id_selector, parse_numeric_range};
+use crate::selection::antenna_expr::regex::FieldRegex;
+use crate::selection::syntax::{canonical_numeric_ranges, dedup_i32, parse_numeric_id_selector};
 use crate::selection::{CompiledMsSelection, UvBound, UvBoundOp, UvSelectionRange, UvUnit};
-use crate::subtables::{get_f64, has_column};
-use crate::{MeasurementSet, MsError, MsResult};
+use crate::subtables::{MsField, get_f64, has_column, optional_string};
+use crate::{MeasurementSet, MsError, MsResult, SubtableId};
 
 use crate::listobs::{ListObsOptions, format_float_compact};
 
@@ -19,15 +20,7 @@ pub(crate) fn selection_from_options(
     let mut selection = CompiledMsSelection::new();
 
     if let Some(field) = options.field.as_deref() {
-        let (field_ids, field_names) = parse_field_selector(ms, field)?;
-        if !field_ids.is_empty() {
-            selection = selection.field(&field_ids);
-        }
-        if !field_names.is_empty() {
-            let names = field_names.iter().map(String::as_str).collect::<Vec<_>>();
-            let resolved_ids = resolve_field_names(ms, &names)?;
-            selection = selection.field(&resolved_ids);
-        }
+        selection = selection.field(resolve_field_predicate(ms, field)?);
     }
 
     if let Some(spw) = options.spw.as_deref() {
@@ -67,35 +60,390 @@ pub(crate) fn selection_from_options(
     Ok(selection)
 }
 
-fn parse_field_selector(ms: &MeasurementSet, value: &str) -> MsResult<(Vec<i32>, Vec<String>)> {
+/// One FIELD row as the field selector reads it.
+/// Row `i` of a slice of these is `FIELD_ID` `i`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FieldSelectorRow<'a> {
+    /// The stored name; the selector compares it trimmed.
+    pub name: &'a str,
+    /// The stored CODE, used as a fallback when no NAME matches.
+    pub code: Option<&'a str>,
+    /// Whether the row is flagged: it matches no name, pattern or bound,
+    /// following `MSFieldIndex`, though a numeric ID still selects it.
+    pub flagged: bool,
+}
+
+/// Resolve a field selector over `fields`, a FIELD table's rows in row
+/// order, as [`MeasurementSet::resolve_field_selector`] does over its own
+/// FIELD table. An observation catalogue states the same rows, so a
+/// consumer that holds one resolves fields without the MeasurementSet.
+///
+/// # Errors
+///
+/// As [`MeasurementSet::resolve_field_selector`], without its FIELD read.
+pub fn resolve_field_selector_rows(
+    fields: &[FieldSelectorRow<'_>],
+    value: &str,
+) -> MsResult<Vec<i32>> {
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = resolve_field_predicate_rows(fields, value)?;
+    if ids.is_empty() {
+        return Err(MsError::InvalidInput(format!(
+            "field selector {value:?} did not match any existing fields"
+        )));
+    }
+    Ok(ids)
+}
+
+impl MeasurementSet {
+    /// Resolve a field selector using FIELD metadata, without scanning MAIN.
+    ///
+    /// Comma-separated IDs, inclusive numeric ranges, exact names, shell
+    /// patterns, slash-delimited regexes and
+    /// strict ID comparisons form a union as in CASA's `MSFieldGram` index list.
+    /// The returned IDs are sorted and unique. Empty text returns an empty
+    /// list, the selection builder's convention for selecting every field.
+    ///
+    /// # Errors
+    ///
+    /// Unreadable FIELD metadata, invalid numeric ranges, a name/pattern matching
+    /// no FIELD row, or a nonempty selection resolving to no existing fields.
+    /// Slash regexes support positive and negative lookahead. Escapes
+    /// outside a delimited pattern are refused.
+    /// An out-of-range numeric ID tries its decimal text as a name or code.
+    /// Only the FIELD rows themselves bound numeric range enumeration.
+    /// Name matching trims stored names and
+    /// excludes flagged FIELD rows, following `MSFieldIndex`.
+    pub fn resolve_field_selector(&self, value: &str) -> MsResult<Vec<i32>> {
+        if value.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = field_selector_rows(self)?;
+        resolve_field_selector_rows(&borrow_field_rows(&rows), value)
+    }
+}
+
+/// The FIELD table's metadata in row order.
+fn field_selector_rows(ms: &MeasurementSet) -> MsResult<Vec<(String, Option<String>, bool)>> {
+    let table = ms
+        .subtable(SubtableId::Field)
+        .ok_or_else(|| MsError::MissingSubtable("FIELD".to_string()))?;
+    let field = MsField::new(table);
+    (0..field.row_count())
+        .map(|row| {
+            Ok((
+                field.name(row)?,
+                optional_string(table, row, "CODE")?,
+                field.flag_row(row)?,
+            ))
+        })
+        .collect()
+}
+
+fn borrow_field_rows(rows: &[(String, Option<String>, bool)]) -> Vec<FieldSelectorRow<'_>> {
+    rows.iter()
+        .map(|(name, code, flagged)| FieldSelectorRow {
+            name,
+            code: code.as_deref(),
+            flagged: *flagged,
+        })
+        .collect()
+}
+
+/// Preserve the difference between no predicate and an explicit empty match.
+/// Generic MS consumers allow empty results; imaging's public wrapper refuses them.
+fn resolve_field_predicate(ms: &MeasurementSet, value: &str) -> MsResult<Option<Vec<i32>>> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let rows = field_selector_rows(ms)?;
+    resolve_field_predicate_rows(&borrow_field_rows(&rows), value).map(Some)
+}
+
+/// The FIELD rows of `fields` that the nonempty selector `value` names,
+/// sorted and unique; possibly none.
+fn resolve_field_predicate_rows(
+    fields: &[FieldSelectorRow<'_>],
+    value: &str,
+) -> MsResult<Vec<i32>> {
+    let mut ranges = Vec::new();
     let mut ids = Vec::new();
-    let mut names = Vec::new();
-    for raw_part in value.split(',') {
-        let part = raw_part.trim();
-        if part.is_empty() {
+    // MSFieldGram permits a single pair of parentheses around the list.
+    let list = if let Some(inside) = value.strip_prefix('(') {
+        inside
+            .strip_suffix(')')
+            .ok_or_else(|| MsError::InvalidInput(format!("unclosed FIELD list {value:?}")))?
+    } else {
+        value
+    };
+    let mut delimiter = None;
+    let parts = list.split(|character| {
+        match delimiter {
+            Some(close) if character == close => delimiter = None,
+            None if matches!(character, '"' | '/') => delimiter = Some(character),
+            _ => {}
+        }
+        character == ',' && delimiter.is_none()
+    });
+    for raw_part in parts {
+        if raw_part.is_empty() {
+            return Err(MsError::InvalidInput(format!(
+                "empty term in field selector {value:?}"
+            )));
+        }
+        let term = raw_part.trim_matches([' ', '\t', '\n']);
+        if let Some(delimiter @ ('"' | '/')) = term.chars().next() {
+            let pattern = field_delimited_pattern(raw_part, delimiter)?;
+            ids.extend(resolve_field_pattern(fields, &pattern, delimiter == '/')?);
             continue;
         }
-        if part.contains('*') {
-            let matched = collect_matching_field_names(ms, part)?;
-            if matched.is_empty() {
-                return Err(MsError::VersionError(format!(
-                    "field selector {part:?} did not match any field names"
+        if term.starts_with(['<', '>']) {
+            append_field_comparison(fields, raw_part, &mut ids)?;
+            continue;
+        }
+        if let Some(range) = field_id_range(term)? {
+            ranges.push(range);
+            continue;
+        }
+
+        let name = raw_part.trim_matches(' ');
+        if !raw_part.bytes().all(field_name_byte) {
+            // SIDENTIFIER has a different alphabet and may consume leading
+            // or trailing tabs and newlines. stripWhite then removes spaces
+            // only, including when it leaves an empty identifier.
+            if (term.is_empty() && !raw_part.contains(' ')) || !term.bytes().all(field_pattern_byte)
+            {
+                return Err(MsError::InvalidInput(format!(
+                    "invalid bare FIELD term {raw_part:?}"
                 )));
             }
-            names.extend(matched);
+            ids.extend(resolve_field_pattern(fields, name, false)?);
             continue;
         }
-        if let Some((start, end)) = parse_numeric_range(part) {
-            ids.extend(start..=end);
-            continue;
+        let matching = field_ids_by_name_or_code(
+            fields,
+            |value| Ok(value == name),
+            |code| Ok(code.trim_matches(' ') == name),
+        )?;
+        if matching.is_empty() {
+            return Err(MsError::VersionError(format!(
+                "field selector name {name:?} did not match any FIELD rows"
+            )));
         }
-        if let Ok(id) = part.parse::<i32>() {
-            ids.push(id);
-            continue;
-        }
-        names.push(part.to_string());
+        ids.extend(matching);
     }
-    Ok((dedup_i32(ids), dedup_strings(names)))
+    append_numeric_fields(fields, ranges, &mut ids);
+    Ok(dedup_i32(ids))
+}
+
+/// MSFieldGram reads the full IDENTIFIER before SIDENTIFIER on a tie.
+fn field_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"_.{}+-=;@#%:! ".contains(&byte)
+}
+
+fn field_pattern_byte(byte: u8) -> bool {
+    byte != b'.' && (field_name_byte(byte) || b"$'*?".contains(&byte))
+}
+
+fn field_delimited_pattern(raw: &str, delimiter: char) -> MsResult<Cow<'_, str>> {
+    let invalid = || {
+        if delimiter == '"' {
+            MsError::InvalidInput(format!(
+                "invalid or unterminated quoted field selector {raw:?}"
+            ))
+        } else {
+            MsError::InvalidInput(format!("invalid slash-delimited FIELD regex {raw:?}"))
+        }
+    };
+    let body = raw
+        .strip_prefix(delimiter)
+        .and_then(|text| text.strip_suffix(delimiter))
+        .filter(|text| !text.contains(delimiter))
+        .ok_or_else(invalid)?;
+    // In QS and RS, the lexer's default rule consumes these characters
+    // without appending them to the token.
+    if body.contains(['\\', '\n']) {
+        Ok(Cow::Owned(body.replace(['\\', '\n'], "")))
+    } else {
+        Ok(Cow::Borrowed(body))
+    }
+}
+
+/// Check the unsigned decimal tokens before attempting a FIELD name. A sign
+/// is part of an identifier, and an overflowing decimal is an invalid ID.
+fn field_id_range(term: &str) -> MsResult<Option<(i32, i32)>> {
+    let decimal = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    let (start, end) = if let Some((start, end)) = term.split_once('~') {
+        (
+            start.trim_end_matches([' ', '\t', '\n']),
+            end.trim_start_matches([' ', '\t', '\n']),
+        )
+    } else if decimal(term) {
+        (term, term)
+    } else {
+        return Ok(None);
+    };
+    if !decimal(start) || !decimal(end) {
+        return Err(MsError::InvalidInput(format!(
+            "invalid FIELD ID range {term:?}"
+        )));
+    }
+    let integer = |text: &str| {
+        text.parse::<i32>().map_err(|_| {
+            MsError::InvalidInput(format!(
+                "FIELD ID {text} does not fit in a signed 32-bit integer"
+            ))
+        })
+    };
+    let (start, end) = (integer(start)?, integer(end)?);
+    if end < start {
+        return Err(MsError::InvalidInput(format!(
+            "descending FIELD ID range {term:?}"
+        )));
+    }
+    Ok(Some((start, end)))
+}
+
+/// MSFieldGram accepts LT INT, GT INT and GT INT AMPERSAND LT INT.
+fn append_field_comparison(
+    fields: &[FieldSelectorRow<'_>],
+    text: &str,
+    ids: &mut Vec<i32>,
+) -> MsResult<()> {
+    let integer = |digits: &str| {
+        let digits = digits.trim_matches([' ', '\t', '\n']);
+        digits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+            .then(|| digits.parse::<i32>().ok())
+            .flatten()
+    };
+    let bounds = match text.as_bytes().first() {
+        Some(b'<') => integer(&text[1..]).map(|upper| (-1, Some(upper))),
+        Some(b'>') => {
+            let tail = &text[1..];
+            match tail.split_once("&<") {
+                Some((low, high)) => integer(low).zip(integer(high)).map(|(l, h)| (l, Some(h))),
+                None => integer(tail).map(|lower| (lower, None)),
+            }
+        }
+        _ => None,
+    };
+    let (lower, upper) = bounds.ok_or_else(|| {
+        MsError::InvalidInput(format!("invalid FIELD ID comparison {text:?} (#54)"))
+    })?;
+    let start = ids.len();
+    ids.extend(fields.iter().enumerate().filter_map(|(row, field)| {
+        let row = i32::try_from(row).ok()?;
+        (!field.flagged && row > lower && upper.is_none_or(|upper| row < upper)).then_some(row)
+    }));
+    if ids.len() == start {
+        return Err(MsError::InvalidInput(format!(
+            "FIELD ID comparison {text:?} did not match any unflagged FIELD rows"
+        )));
+    }
+    Ok(())
+}
+
+/// MSFieldIndex keeps an in-range ID. For other numbers, it uses the first
+/// unflagged decimal NAME, then the first unflagged decimal CODE. Search the
+/// stored labels in the requested intervals, so their numeric width does
+/// not control how much work the fallback does.
+fn append_numeric_fields(
+    fields: &[FieldSelectorRow<'_>],
+    ranges: Vec<(i32, i32)>,
+    ids: &mut Vec<i32>,
+) {
+    let Some(last) = fields.len().checked_sub(1) else {
+        return;
+    };
+    let last = i32::try_from(last).unwrap_or(i32::MAX);
+    let ranges = canonical_numeric_ranges(ranges);
+    for &(start, end) in &ranges {
+        ids.extend(start..=end.min(last));
+    }
+    if ranges.last().is_none_or(|&(_, end)| end <= last) {
+        return;
+    }
+
+    let rows = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| !field.flagged);
+    let names = rows
+        .clone()
+        .map(|(row, field)| (row, field.name.trim_matches(' ')));
+    let codes = rows.filter_map(|(row, field)| Some((row, field.code?.trim_matches(' '))));
+    let mut aliases = BTreeMap::new();
+    for (row, text) in names.chain(codes) {
+        if !text.bytes().all(|byte| byte.is_ascii_digit())
+            || (text.len() > 1 && text.starts_with('0'))
+        {
+            continue;
+        }
+        let Ok(number) = text.parse::<i32>() else {
+            continue;
+        };
+        if number <= last {
+            continue;
+        }
+        let index = ranges.partition_point(|&(_, end)| end < number);
+        if ranges.get(index).is_some_and(|&(start, _)| start <= number) {
+            aliases.entry(number).or_insert(row as i32);
+        }
+    }
+    ids.extend(aliases.into_values());
+}
+
+/// A FIELD pattern matches a complete trimmed NAME or, if none match,
+/// a complete CODE as stored.
+fn resolve_field_pattern(
+    fields: &[FieldSelectorRow<'_>],
+    pattern: &str,
+    regex: bool,
+) -> MsResult<Vec<i32>> {
+    let matcher = FieldRegex::compile(pattern, regex).map_err(MsError::InvalidInput)?;
+    let matches = |text: &str| {
+        matcher.matches(text).map_err(|error| {
+            MsError::InvalidInput(format!("matching FIELD regex {pattern:?}: {error}"))
+        })
+    };
+    let ids = field_ids_by_name_or_code(fields, matches, matches)?;
+    if ids.is_empty() {
+        return Err(MsError::VersionError(format!(
+            "field selector pattern {pattern:?} did not match any field names or codes"
+        )));
+    }
+    Ok(ids)
+}
+
+fn field_ids_by_name_or_code(
+    fields: &[FieldSelectorRow<'_>],
+    matches_name: impl Fn(&str) -> MsResult<bool>,
+    matches_code: impl Fn(&str) -> MsResult<bool>,
+) -> MsResult<Vec<i32>> {
+    let rows = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| !field.flagged);
+    let mut ids = Vec::new();
+    for (row, field) in rows.clone() {
+        if matches_name(field.name.trim_matches(' '))? {
+            ids.push(row as i32);
+        }
+    }
+    if ids.is_empty() {
+        for (row, field) in rows {
+            if let Some(code) = field.code
+                && matches_code(code)?
+            {
+                ids.push(row as i32);
+            }
+        }
+    }
+    Ok(ids)
 }
 
 fn apply_antenna_selector(
@@ -612,68 +960,30 @@ fn parse_two_or_four_digit_year(value: &str, original: &str) -> MsResult<i32> {
     Ok(if value.len() < 3 { 2000 + year } else { year })
 }
 
-fn resolve_field_names(ms: &MeasurementSet, names: &[&str]) -> MsResult<Vec<i32>> {
-    let field = ms.field()?;
-    let mut ids = Vec::new();
-    for row in 0..field.row_count() {
-        let name = field.name(row)?;
-        if names.iter().any(|candidate| candidate == &name) {
-            ids.push(row as i32);
-        }
-    }
-    if ids.is_empty() {
-        return Err(MsError::VersionError(format!(
-            "field selector names {names:?} did not match any FIELD rows"
-        )));
-    }
-    Ok(dedup_i32(ids))
-}
-
-fn collect_matching_field_names(ms: &MeasurementSet, pattern: &str) -> MsResult<Vec<String>> {
-    let field = ms.field()?;
-    let mut matches = Vec::new();
-    for row in 0..field.row_count() {
-        let name = field.name(row)?;
-        if matches_simple_glob(pattern, &name) {
-            matches.push(name);
-        }
-    }
-    Ok(dedup_strings(matches))
-}
-
 pub(crate) fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> {
     let state = ms.state()?;
+    let modes = (0..state.row_count())
+        .map(|row| state.string(row, "OBS_MODE"))
+        .collect::<MsResult<Vec<_>>>()?;
     let mut ids = Vec::new();
-    for raw_part in value.split(',') {
-        let part = raw_part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some((start, end)) = parse_numeric_range(part) {
-            ids.extend(start..=end);
-            continue;
-        }
-        if let Ok(id) = part.parse::<i32>() {
-            ids.push(id);
-            continue;
-        }
-        let mut matched = false;
-        for row in 0..state.row_count() {
-            let obs_mode = state.string(row, "OBS_MODE")?;
-            let is_match = if part.contains('*') {
-                matches_simple_glob(part, &obs_mode)
-            } else {
-                obs_mode == part
-            };
-            if is_match {
-                ids.push(row as i32);
-                matched = true;
+    for selector in super::syntax::parse_intent_selector(value) {
+        match &selector {
+            super::syntax::IntentSelector::State(id) => ids.push(*id),
+            super::syntax::IntentSelector::Mode(pattern) => {
+                let before = ids.len();
+                ids.extend(
+                    modes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, mode)| selector.matches(mode))
+                        .map(|(row, _)| row as i32),
+                );
+                if ids.len() == before {
+                    return Err(MsError::VersionError(format!(
+                        "intent selector {pattern:?} did not match any STATE rows"
+                    )));
+                }
             }
-        }
-        if !matched {
-            return Err(MsError::VersionError(format!(
-                "intent selector {part:?} did not match any STATE rows"
-            )));
         }
     }
     Ok(dedup_i32(ids))
@@ -951,15 +1261,7 @@ fn resolve_antenna_ref(ms: &MeasurementSet, value: &str) -> MsResult<i32> {
     )))
 }
 
-fn dedup_strings(values: Vec<String>) -> Vec<String> {
-    values
-        .into_iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn matches_simple_glob(pattern: &str, candidate: &str) -> bool {
+pub(super) fn matches_simple_glob(pattern: &str, candidate: &str) -> bool {
     if !pattern.contains('*') {
         return pattern == candidate;
     }

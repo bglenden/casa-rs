@@ -69,52 +69,274 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
             json!({ "imsize": 128, "fitspw": "0:0;31", "fitorder": 1 }),
         ),
     ] {
-        let cube = |name: &str, memory: u64, route: SourceRoute| {
+        let cube = |name: &str, memory: u64| {
             let image_name = root.path().join(format!("{label}-{name}"));
-            let mut imaging = line_cube(&measurement_set, &image_name, overrides.clone());
-            imaging.source_route = route;
+            let imaging = line_cube(&measurement_set, &image_name, overrides.clone());
             let outcome =
                 casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
                     .unwrap_or_else(|error| panic!("{label} {name}: {error:?}"));
             (image_name, outcome.planes_per_wave)
         };
-        let (resident, resident_waves) = cube("resident", 4 << 30, SourceRoute::SelectedRows);
+        let (resident, resident_waves) = cube("resident", 4 << 30);
         assert_eq!(resident_waves, None, "{label}: every plane fits 4 GiB");
-        let (waved, waves) = cube("waved", WAVED_MEMORY_BYTES, SourceRoute::SelectedRows);
+        // Each wave binds its channels per partition, from the conversion
+        // factors its times span (#932 step 4).
+        let (waved, waves) = cube("waved", WAVED_MEMORY_BYTES);
         assert!(
             waves.is_some_and(|planes| planes < 30),
             "{label}: the capped cube runs in waves: {waves:?}"
         );
         for suffix in DIRTY_PRODUCT_SUFFIXES {
-            assert_eq!(
-                read_product(&waved, suffix),
-                read_product(&resident, suffix),
-                "{label} {suffix}"
-            );
-        }
-        // The observation-batch route (#932 step 4) binds each wave's
-        // channels per partition, from the conversion factors its times
-        // span: its waves give the resident cube too.
-        let (batches, batch_waves) = cube(
-            "batches",
-            WAVED_MEMORY_BYTES,
-            SourceRoute::ObservationBatches,
-        );
-        assert!(
-            batch_waves.is_some_and(|planes| planes < 30),
-            "{label}: the capped cube runs in waves on batches: {batch_waves:?}"
-        );
-        for suffix in DIRTY_PRODUCT_SUFFIXES {
-            let nrms = route_law::image_nrms(
+            let nrms = product_law::image_nrms(
                 &PathBuf::from(format!("{}{suffix}", resident.display())),
-                &PathBuf::from(format!("{}{suffix}", batches.display())),
+                &PathBuf::from(format!("{}{suffix}", waved.display())),
             )
             .expect("both cubes");
             assert!(
-                nrms <= route_law::TOLERANCE,
-                "{label} {suffix}: the batch route's waves differ by NRMS {nrms:.3e}"
+                nrms <= product_law::TOLERANCE,
+                "{label} {suffix}: the waves differ by NRMS {nrms:.3e}"
             );
         }
+    }
+}
+
+/// The second view supplies the PSF for every wave, with the original
+/// geometry and weights used for the other products.
+#[test]
+fn alternate_mosaic_cube_psf_is_the_same_in_waves() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_mosaic_measurement_set(root.path());
+    let cube = |name: &str, memory: u64| {
+        let path = root.path().join(name);
+        let imaging = line_cube(
+            &measurement_set,
+            &path,
+            json!({
+                "gridder": "mosaic", "imsize": 128, "weighting": "natural",
+                "write_pb": true, "psfphasecenter": "J2000 1.00006rad 0.5rad",
+            }),
+        );
+        let outcome =
+            casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
+                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+        (path, outcome.planes_per_wave)
+    };
+    let (resident, resident_waves) = cube("resident-alternate", 4 << 30);
+    let (waved, waves) = cube("waved-alternate", 16 << 20);
+    assert_eq!(resident_waves, None);
+    assert!(waves.is_some_and(|planes| planes < 30), "waves: {waves:?}");
+    for suffix in [".psf", ".sumwt", ".pb", ".weight", ".residual"] {
+        let (_, a) = read_product(&waved, suffix);
+        let (_, b) = read_product(&resident, suffix);
+        assert_eq!(a, b, "{suffix} must use the same data in every wave");
+    }
+}
+
+/// Channel indices in a converted cube refer to a frequency grid built
+/// at the PSF's own direction, including when the PSF is read on restart.
+#[test]
+fn alternate_mosaic_cube_psf_uses_its_own_frequency_grid() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_mosaic_measurement_set(root.path());
+    let alternate = "J2000 1.00006rad 0.5rad";
+    let run = |label: &str, extra: serde_json::Value| {
+        let path = root.path().join(label);
+        let mut values = json!({"imsize": 128, "gridder": "mosaic", "weighting": "natural", "outframe": "LSRK", "write_pb": true});
+        values
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let imaging = line_cube(&measurement_set, &path, values)
+            .with_tclean_restart()
+            .expect("select tclean continuation behavior");
+        casa_imaging_application::execute(&imaging, context_with(memory_policy(4 << 30)))
+            .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+        PagedImage::<f32>::open(path.with_extension("psf")).unwrap()
+    };
+    let ordinary = run("ordinary-frequency", json!({}));
+    let shifted = run("alternate-frequency", json!({"phasecenter": alternate}));
+    let separate = run("separate-frequency", json!({"psfphasecenter": alternate}));
+    let frequencies = |image: &PagedImage<f32>| {
+        let spectral = image.coordinates().coordinate(2);
+        (spectral.reference_value()[0], spectral.increment()[0])
+    };
+    let expected = frequencies(&shifted);
+    assert!((frequencies(&ordinary).0 - expected.0).abs() > 1.0);
+    assert_eq!(
+        frequencies(&separate),
+        expected,
+        "alternate PSF spectral grid"
+    );
+    let pixels = separate.get().unwrap();
+    assert_eq!(
+        pixels,
+        shifted.get().unwrap(),
+        "alternate PSF plane samples"
+    );
+    let (_, main_sums) = read_product(&root.path().join("separate-frequency"), ".sumwt");
+    assert!(
+        main_sums[[0, 0, 0, 29]] > 0.0,
+        "last plane still has main data"
+    );
+    assert!(
+        pixels
+            .index_axis(ndarray::Axis(3), 29)
+            .iter()
+            .all(|&value| value == 0.0)
+    );
+    drop(separate);
+    let reused = run("separate-frequency", json!({"calcpsf": false}));
+    assert_eq!(frequencies(&reused), expected);
+    assert_eq!(reused.get().unwrap(), pixels);
+
+    let reverse = run(
+        "reverse-frequency",
+        json!({"phasecenter": alternate, "psfphasecenter": "J2000 1rad 0.5rad"}),
+    );
+    assert_eq!(frequencies(&reverse), frequencies(&ordinary));
+    assert_eq!(
+        reverse.get().unwrap(),
+        ordinary.get().unwrap(),
+        "read the alternate native channels"
+    );
+}
+
+/// A direction-dependent Doppler shift wider than a native channel
+/// selects a different set of samples for the two imaging passes.
+#[test]
+fn each_mosaic_cube_psf_reads_its_own_native_channels() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_mosaic_measurement_set(root.path());
+    let mut ms = MeasurementSet::open(&measurement_set).unwrap();
+    let mut window = ms.spectral_window_mut().unwrap();
+    let frequencies = (0..32)
+        .map(|channel| 44.0e9 + f64::from(channel) * 100.0)
+        .collect();
+    window
+        .set_array(
+            0,
+            "CHAN_FREQ",
+            ArrayValue::Float64(ArrayD::from_shape_vec(vec![32], frequencies).unwrap()),
+        )
+        .unwrap();
+    for column in ["CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"] {
+        window
+            .set_array(
+                0,
+                column,
+                ArrayValue::Float64(ArrayD::from_shape_vec(vec![32], vec![100.0; 32]).unwrap()),
+            )
+            .unwrap();
+    }
+    window.set_f64(0, "TOTAL_BANDWIDTH", 3_200.0).unwrap();
+    ms.save().unwrap();
+    drop(ms);
+
+    let alternate = "J2000 1.00006rad 0.5rad";
+    let run = |label, phase, alternate_psf| {
+        let path = root.path().join(label);
+        let imaging = line_cube(
+            &measurement_set,
+            &path,
+            json!({
+                "imsize": 128, "gridder": "mosaic", "weighting": "natural",
+                "outframe": "LSRK", "spw": "0", "start": "11", "channel_start": 11,
+                "channel_count": 6, "phasecenter": phase, "psfphasecenter": alternate_psf,
+            }),
+        );
+        let outcome =
+            casa_imaging_application::execute(&imaging, context_with(memory_policy(4 << 30)))
+                .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+        let selection = outcome
+            .problem
+            .observation_transaction()
+            .read_set()
+            .sources()[0]
+            .selection()
+            .spectral_windows()[0]
+            .channel_indices()
+            .to_vec();
+        (selection, read_product(&path, ".psf").1)
+    };
+    let (main_selection, _) = run("narrow-main", "J2000 1rad 0.5rad", None::<&str>);
+    let (alternate_selection, expected) = run("narrow-alternate", alternate, None::<&str>);
+    assert_ne!(
+        main_selection, alternate_selection,
+        "the conversion must change the input selection"
+    );
+    let (retained_main, separate) = run("narrow-separate", "J2000 1rad 0.5rad", Some(alternate));
+    assert_eq!(
+        retained_main, main_selection,
+        "the main view retains its native selection"
+    );
+    assert_eq!(separate, expected, "read the alternate native channels");
+}
+
+/// A source-defined LSRK grid and the waves that read it use the same
+/// frequency frame, although the published image is TOPO (#1198).
+#[test]
+fn source_lsrk_cube_waves_equal_the_resident_cube() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    let mut ms = MeasurementSet::open(&measurement_set).expect("open MS");
+    let mut spw = ms.spectral_window_mut().unwrap();
+    spw.set_i32(0, "MEAS_FREQ_REF", 1).unwrap();
+    let frequencies = (0..32)
+        .map(|channel| 44.0e9 + f64::from(channel) * 1000.0)
+        .collect();
+    spw.set_array(
+        0,
+        "CHAN_FREQ",
+        ArrayValue::Float64(ArrayD::from_shape_vec(vec![32], frequencies).unwrap()),
+    )
+    .unwrap();
+    for column in ["CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"] {
+        spw.set_array(
+            0,
+            column,
+            ArrayValue::Float64(ArrayD::from_shape_vec(vec![32], vec![1000.0; 32]).unwrap()),
+        )
+        .unwrap();
+    }
+    spw.set_f64(0, "TOTAL_BANDWIDTH", 32_000.0).unwrap();
+    ms.save().expect("save LSRK frame");
+    drop(ms);
+    let cube = |name: &str, memory: u64| {
+        let image_name = root.path().join(name);
+        let imaging = line_cube(
+            &measurement_set,
+            &image_name,
+            json!({
+                "imsize": 128, "spw": "0", "channel_start": 0,
+                "channel_count": 32, "start": "0", "weighting": "natural",
+            }),
+        );
+        let outcome =
+            casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
+                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+        (image_name, outcome.planes_per_wave)
+    };
+    let (resident, resident_waves) = cube("source-lsrk-resident", 4 << 30);
+    assert_eq!(resident_waves, None);
+    assert!(
+        read_product(&resident, ".sumwt")
+            .1
+            .iter()
+            .any(|value| *value > 0.0)
+    );
+    let (waved, waves) = cube("source-lsrk-waved", WAVED_MEMORY_BYTES);
+    assert!(waves.is_some_and(|planes| planes < 32), "waves: {waves:?}");
+    for suffix in DIRTY_PRODUCT_SUFFIXES {
+        let nrms = product_law::image_nrms(
+            &PathBuf::from(format!("{}{suffix}", resident.display())),
+            &PathBuf::from(format!("{}{suffix}", waved.display())),
+        )
+        .expect("both cubes");
+        assert!(nrms <= product_law::TOLERANCE, "{suffix}: NRMS {nrms:.3e}");
     }
 }
 
@@ -194,8 +416,12 @@ fn flag_channels(measurement_set: &Path, channels: &[usize]) {
 const WAVED_MEMORY_BYTES: u64 = 8 << 20;
 
 /// Admission: a memory ceiling that cannot hold the cube is refused, typed,
-/// before anything is written; a ceiling just above one plane of the pass
-/// runs it one plane per wave.
+/// before anything is written; the least ceiling that admits it runs the
+/// cube in waves. When the pass sets that least, a ceiling just above one
+/// plane of it runs one plane per wave; when the products do (#932: their
+/// restoring convolution can hold more than a plane of a cheap pass), the
+/// ceiling just below is refused at the products, before any pass, and the
+/// pass takes as many planes as fit beside them.
 #[test]
 fn a_memory_ceiling_refuses_what_cannot_fit_and_one_plane_runs_one_plane_waves() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -209,40 +435,72 @@ fn a_memory_ceiling_refuses_what_cannot_fit_and_one_plane_runs_one_plane_waves()
         names.sort();
         names
     };
-    let before = entries();
     let imaging = line_cube(
         &measurement_set,
         &root.path().join("admitted"),
         json!({ "imsize": 128 }),
     );
+    // A refused run writes nothing: the directory is as it was before it.
     let run = |memory: u64| {
-        casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
+        let before = entries();
+        let result =
+            casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)));
+        if result.is_err() {
+            assert_eq!(entries(), before, "a refused run writes nothing");
+        }
+        result
     };
     // Raise the ceiling by what each refusal reports missing until the pass
     // itself is admitted. Each phase admitted before the pass also takes a
     // share of a higher ceiling (the cube cache a quarter of what is free),
     // so each step adds a third more than the gap.
     let mut memory = 64 << 10;
+    let mut refused = memory;
     let mut refusals = 0;
-    let waves = loop {
-        match run(memory) {
-            Ok(outcome) => break outcome.planes_per_wave,
-            Err(ApplicationDispatchError::Admission(Admission {
-                required,
-                available,
-                ..
-            })) => {
-                assert_eq!(entries(), before, "a refused run writes nothing");
-                let gap = required - available;
+    let admitted = |result: Result<_, _>| match result {
+        Ok(outcome) => Ok(outcome),
+        Err(ApplicationDispatchError::Admission(Admission {
+            phase,
+            required,
+            available,
+        })) => Err((phase, required - available)),
+        Err(error) => panic!("only admission refuses a small ceiling: {error}"),
+    };
+    let mut refused_at = "";
+    let mut outcome = loop {
+        match admitted(run(memory)) {
+            Ok(outcome) => break outcome,
+            Err((phase, gap)) => {
+                (refused, refused_at) = (memory, phase);
                 memory += gap + gap.div_ceil(3);
                 refusals += 1;
                 assert!(refusals < 32, "the ceiling converges");
             }
-            Err(error) => panic!("only admission refuses a small ceiling: {error}"),
         }
     };
     assert!(refusals > 0, "64 KiB holds no line cube");
-    assert_eq!(waves, Some(1), "a ceiling just above one plane");
+    // The last step overshoots by a third of its gap: the smallest ceiling
+    // admitted, to a kibibyte.
+    while memory - refused > 1 << 10 {
+        let middle = refused + (memory - refused) / 2;
+        match admitted(run(middle)) {
+            Ok(smaller) => (memory, outcome) = (middle, smaller),
+            Err((phase, _)) => (refused, refused_at) = (middle, phase),
+        }
+    }
+    if refused_at == "products" {
+        assert!(
+            outcome.planes_per_wave.is_some_and(|planes| planes < 30),
+            "the least ceiling ({memory} bytes) runs in waves: {:?}",
+            outcome.planes_per_wave
+        );
+    } else {
+        assert_eq!(
+            outcome.planes_per_wave,
+            Some(1),
+            "a ceiling just above one plane ({memory} bytes; refused below at {refused_at:?})"
+        );
+    }
 }
 
 /// A refused run still leaves its summary when the context names one: the

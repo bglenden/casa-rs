@@ -3,6 +3,7 @@
   "tasks": [
     "applycal",
     "bandpass",
+    "concat",
     "exportfits",
     "feather",
     "flagdata",
@@ -22,8 +23,11 @@
     "imsubimage",
     "mstransform",
     "plotms",
+    "simalma",
+    "simanalyze",
     "simobserve",
     "split",
-    "tclean"
+    "tclean",
+    "tsdimaging"
   ]
 }

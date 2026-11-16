@@ -6,13 +6,12 @@
 //! line, Python, and providers to resolve the same self-contained surface
 //! bundle.
 
+mod casa_type_diagnostics;
 mod cli;
 mod completion;
 mod diagnostic;
 mod front_end;
 mod invocation;
-mod migrate;
-mod migration_list;
 mod normalize;
 mod overrides;
 mod profile;
@@ -39,7 +38,10 @@ pub use front_end::{
     format_profile_error, format_session_error, render_session, task_command_line_help,
     validate_profile_text,
 };
-pub use invocation::{ProviderInvocationError, project_provider_invocation};
+pub use invocation::{
+    ProviderInvocationError, project_provider_invocation,
+    project_provider_invocation_with_originals,
+};
 pub use normalize::{NormalizationError, normalize_value, semantic_eq, validate_value};
 pub use profile::{
     PROFILE_FORMAT_VERSION, ParameterProfile, ProfileError, ProfileHeader, ResolvedProfile,

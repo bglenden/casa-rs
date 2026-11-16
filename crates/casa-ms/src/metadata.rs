@@ -5,8 +5,15 @@ use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
 use crate::column_def::ColumnDef;
 
+/// Whether `def` is one of casacore's Muvw columns, `UVW` and `UVW2`
+/// (`MeasurementSet.cc`'s `colMapDef` measure "uvw"), which `MeasureType`
+/// does not model. Like a position, a uvw has three components in metres.
+fn is_uvw(def: &ColumnDef) -> bool {
+    matches!(def.name, "UVW" | "UVW2")
+}
+
 pub(crate) fn quantum_units_for(def: &ColumnDef) -> Option<Vec<String>> {
-    if def.name == "UVW" && !def.unit.is_empty() {
+    if is_uvw(def) && !def.unit.is_empty() {
         return Some(vec![
             def.unit.to_string(),
             def.unit.to_string(),
@@ -30,7 +37,7 @@ pub(crate) fn quantum_units_for(def: &ColumnDef) -> Option<Vec<String>> {
 }
 
 pub(crate) fn measure_type_name_for(def: &ColumnDef) -> Option<String> {
-    if def.name == "UVW" {
+    if is_uvw(def) {
         Some("uvw".to_string())
     } else {
         def.measure_type

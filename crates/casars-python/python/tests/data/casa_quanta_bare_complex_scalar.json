@@ -1,0 +1,74 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "kind": "python",
+      "method": "quantity",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "kind": "python",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "kind": "python",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "kind": "complex64",
+      "method": "quantity",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "kind": "complex64",
+      "method": "getunit",
+      "result": ""
+    },
+    {
+      "kind": "complex64",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator+ unequal units ', 'm'"
+      }
+    },
+    {
+      "kind": "complex128",
+      "method": "quantity",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "kind": "complex128",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "kind": "complex128",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    }
+  ]
+}

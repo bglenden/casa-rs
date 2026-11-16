@@ -378,8 +378,6 @@ mod tests {
                 .len(),
             2
         );
-        let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
-        assert_eq!(form["command_id"], "msexplore");
     }
 
     #[test]

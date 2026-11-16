@@ -1,0 +1,295 @@
+{
+ "work_issue": 1298,
+ "date": "2026-11-14",
+ "casa_version": "6.7.6.14",
+ "source_revision": "9ed0aa22b21dc40b6f690118fada460c17d31389",
+ "scope": "Time-dependent-frame MosaicFT prediction: visibility-buffer epoch rotations, independent array pointing conversion and per-domain image coverage. JMEAN, APP, AZEL, HADEC; nonzero references, offset zero, all fields and a buffer-boundary track.",
+ "fixture": "crates/casa-simulation/tests/data/sm_frame_mosaics_casa.json.gz",
+ "cases": [
+  {
+   "name": "frame_jmean_mosaic_at_array",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 2.070363854739188e-07,
+    "3": 2.070363854739188e-07
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 3.87169e-07,
+    "3": 3.87169e-07
+   }
+  },
+  {
+   "name": "frame_app_mosaic_at_array",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 2.061129367101069e-07,
+    "3": 2.061129367101069e-07
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 3.87169e-07,
+    "3": 3.87169e-07
+   }
+  },
+  {
+   "name": "frame_azel_mosaic_at_array",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 1.4430061025595928e-06,
+    "3": 1.4430061025595928e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 3.76225e-06,
+    "3": 3.76225e-06
+   }
+  },
+  {
+   "name": "frame_hadec_mosaic_at_array",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 1.689784851049279e-06,
+    "3": 1.689784851049279e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 4.17077e-06,
+    "3": 4.17077e-06
+   }
+  },
+  {
+   "name": "frame_hadec_mosaic_at_alma",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 0.0,
+    "3": 0.0
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 0.0,
+    "3": 0.0
+   }
+  },
+  {
+   "name": "frame_hadec_mosaic_at_array_all_fields",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 1.689784851049279e-06,
+    "3": 1.689784851049279e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 4.17077e-06,
+    "3": 4.17077e-06
+   }
+  },
+  {
+   "name": "frame_hadec_mosaic_at_array_long",
+   "rows": 180,
+   "data_nrms_by_workers": {
+    "1": 1.729407769682599e-06,
+    "3": 1.729407769682599e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 4.17077e-06,
+    "3": 4.17077e-06
+   }
+  },
+  {
+   "name": "frame_hadec_mosaic_at_array_selected_antenna",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 4.4878629116788623e-08,
+    "3": 4.4878629116788623e-08
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 1.71156e-06,
+    "3": 1.71156e-06
+   }
+  },
+  {
+   "name": "frame_hadec_mosaic_at_array_reordered",
+   "rows": 144,
+   "data_nrms_by_workers": {
+    "1": 1.689784851049269e-06,
+    "3": 1.689784851049269e-06
+   },
+   "cpp_max_row_nrms_by_workers": {
+    "1": 4.17077e-06,
+    "3": 4.17077e-06
+   }
+  }
+ ],
+ "data_nrms_limit": 0.001,
+ "cpp_row_nrms_limit": 0.001,
+ "maximum_data_nrms": 1.729407769682599e-06,
+ "maximum_cpp_row_nrms": 4.17077e-06,
+ "native_outputs": 18,
+ "cpp_reads_and_reopens": 18,
+ "cpu_workers": [
+  1,
+  3
+ ],
+ "actual_oracle_commands": [
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--constant-frequency",
+   "100000000000",
+   "--case",
+   "frame_jmean_mosaic",
+   "--location",
+   "ARRAY",
+   "--out",
+   "/workspace/casa-rs/target/1298-frames-casa/jmean",
+   "--fixture",
+   "/workspace/casa-rs/target/1298-frames-casa/jmean.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--constant-frequency",
+   "100000000000",
+   "--case",
+   "frame_app_mosaic",
+   "--location",
+   "ARRAY",
+   "--out",
+   "/workspace/casa-rs/target/1298-frames-casa/app",
+   "--fixture",
+   "/workspace/casa-rs/target/1298-frames-casa/app.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--constant-frequency",
+   "100000000000",
+   "--case",
+   "frame_azel_mosaic",
+   "--location",
+   "ARRAY",
+   "--out",
+   "/workspace/casa-rs/target/1298-frames-casa/azel",
+   "--fixture",
+   "/workspace/casa-rs/target/1298-frames-casa/azel.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--constant-frequency",
+   "100000000000",
+   "--case",
+   "frame_hadec_mosaic",
+   "--location",
+   "ARRAY",
+   "--out",
+   "/workspace/casa-rs/target/1298-frames-casa/hadec",
+   "--fixture",
+   "/workspace/casa-rs/target/1298-frames-casa/hadec.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--constant-frequency",
+   "100000000000",
+   "--case",
+   "frame_hadec_mosaic",
+   "--location",
+   "ALMA",
+   "--out",
+   "/workspace/casa-rs/target/1298-frames-casa/hadec-alma",
+   "--fixture",
+   "/workspace/casa-rs/target/1298-frames-casa/hadec-alma.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--constant-frequency",
+   "100000000000",
+   "--case",
+   "frame_hadec_mosaic",
+   "--location",
+   "ARRAY",
+   "--all-fields",
+   "--out",
+   "/workspace/casa-rs/target/1298-frames-casa/hadec-all",
+   "--fixture",
+   "/workspace/casa-rs/target/1298-frames-casa/hadec-all.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--case",
+   "frame_hadec_mosaic",
+   "--location",
+   "ARRAY",
+   "--constant-frequency",
+   "100000000000",
+   "--long-track",
+   "--out",
+   "/workspace/casa-rs/target/1298-long-casa/hadec-long",
+   "--fixture",
+   "/workspace/casa-rs/target/1298-long-casa/hadec-long.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--constant-frequency",
+   "100000000000",
+   "--case",
+   "frame_hadec_mosaic",
+   "--location",
+   "ARRAY",
+   "--msselect",
+   "ANTENNA1==4",
+   "--out",
+   "/workspace/casa-rs/target/1298-review-casa/hadec-antenna",
+   "--fixture",
+   "/workspace/casa-rs/target/1298-review-casa/hadec-antenna.json.gz"
+  ],
+  [
+   "/workspace/simulation-casa/bin/python",
+   "tools/simulation/sm_image_layouts_oracle.py",
+   "--constant-frequency",
+   "100000000000",
+   "--case",
+   "frame_hadec_mosaic",
+   "--location",
+   "ARRAY",
+   "--reverse-integrations",
+   "--out",
+   "/workspace/casa-rs/target/1298-review-casa/hadec-reordered",
+   "--fixture",
+   "/workspace/casa-rs/target/1298-review-casa/hadec-reordered.json.gz"
+  ]
+ ],
+ "commands": {
+  "oracle": "CASAPY tools/simulation/sm_frame_mosaics_oracle.py --out OUT --fixture crates/casa-simulation/tests/data/sm_frame_mosaics_casa.json.gz --inputs crates/casa-simulation/tests/data/sm_frame_mosaics",
+  "native": "CASA_RS_IMAGE_FRAMES_OUT=EXPORT cargo test -p casa-simulation --test image_frame_combinations time_dependent_mosaics_match_casa -- --nocapture",
+  "cpp": "CASAPY tools/simulation/sm_existing_append_readback.py --native EXPORT --fixture crates/casa-simulation/tests/data/sm_frame_mosaics_casa.json.gz",
+  "regression": "cargo test -p casa-simulation --test image_frame_combinations --test ft_modes --test predict_mosaic --test mosaic_coverage --test telescope_beams",
+  "runtime": "cargo test -p casa-imaging-runtime --test pass_laws prediction:: -- --nocapture",
+  "memory": "cargo test -p casa-simulation --test session_memory mosaic:: -- --nocapture",
+  "clippy": "cargo clippy -p casa-simulation -p casa-imaging-runtime -p casa-imaging-application --all-targets -- -D warnings",
+  "architecture": "bash scripts/arch-check.sh"
+ },
+ "baseline": "All six initial controls fail before implementation at the explicit #1298 refusal. Refreshing axes each integration passes an aggregate test but fails the unchanged strict C++ row check at row43 (0.0070667). CASA visibility-buffer epochs reduce that row error below4.18e-6. The seventh raw CASA reference crosses the101-row boundary after noncontiguous scans.",
+ "oracle_cleanup": "CASA MosaicFT may abort in its destructor after recording complete successful prediction DATA. Producer accepts only exit0, or exit-6 with the exact known pure-virtual marker and a complete fixture whose prediction returnedTrue. All numerical and C++ checks are independent of this cleanup status.",
+ "limits": "No new Metal execution on this Linux host. New cases select Metal automatically when available; the per-domain mask uses the existing shared flag/placement path. Delivered SIM-11 actual CPU/Metal, W-project and operator evidence is retained. No new throughput claim.",
+ "review": "One fresh-context Astra xhigh review found P1 buffer-first antenna observer and P2 TIME-order membership. Both fixed with independent CASA regressions failing before/passing after at unchanged1e-3; fixes not re-reviewed.",
+ "review_regressions": {
+  "selected_antenna": {
+   "before_nrms": 0.007469192014970232,
+   "after_nrms": 4.4878629116788623e-08
+  },
+  "reordered_integrations": {
+   "before_nrms": 1.0,
+   "after_nrms": 1.689784851049269e-06
+  }
+ },
+ "evidence_reuse": {
+  "revision": "99ea70f2fcf31ff6dabbf7cf5b3e3094621884a8",
+  "scope": "Nine affected existing integration tests, five executed CPU prediction laws and three parent mosaic memory laws passed. Observer and unordered-input fixes affect only timed mosaics; all9 independent scientific cases and all18 C++ outputs rerun after fixes, plus the4096-context retention law extended to reversed JMEAN times. Ordinary fixed-frame/backend/operator results are retained."
+ },
+ "memory": {
+  "parent_tests": 3,
+  "max_transient_excess_bytes": 30088,
+  "allowance_bytes": 524288,
+  "scope": "Fixed/JMEAN one/shared/distinct4096contexts, now including unordered JMEAN shared scans. Final retention law passes; predict retains what is charged. Other unchanged dish-screen/common4/4096channel laws retain their green evidence. Ordered input keeps only per-context clocks; unordered input temporarily sorts admitted scalar headers and retains one admitted descriptor per CASA buffer, without visibility payloads."
+ }
+}

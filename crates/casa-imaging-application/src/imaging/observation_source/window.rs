@@ -3,14 +3,13 @@
 //! output-frame frequencies reach the wave's planes at some selected time,
 //! with both linear-interpolation partners at each edge.
 //!
-//! The selected-observation route decides this per block, converting each
-//! row's channels at the row's time and field and keeping the union of the
-//! rows' windows. A batch traversal binds its channels before it reads a
-//! batch, so the batch route decides per partition, from the range of
-//! conversion factors its selected (field, time)s span: a channel reaches
-//! the planes when its frequency times some factor of the range does.
-//! That window holds every channel any time's would; the extra channels a
-//! wider range adds reach no plane of the wave and place nothing.
+//! A traversal binds its channels before it reads a batch, so the window
+//! is decided per partition, from the range of conversion factors its
+//! selected (field, time)s span: a channel reaches the planes when its
+//! frequency times some factor of the range does. That window holds every
+//! channel any one time's would (each row's channels converted at its own
+//! time and field); the extra channels a wider range adds reach no plane of
+//! the wave and place nothing.
 
 use std::ops::Range;
 
@@ -65,10 +64,9 @@ impl FactorRange {
 /// bounds, and both channels of an adjacent pair whose spans together
 /// straddle a bound. `None` when no channel reaches the wave.
 ///
-/// This is the selected-observation route's rule
-/// (`selected_observation/access/channel_window.rs`) with each channel's
-/// frequency at one time replaced by its span over the partition's times,
-/// so it holds every channel that rule keeps at any time.
+/// This is the rule for one time's channels with each channel's frequency
+/// at that time replaced by its span over the partition's times, so it
+/// holds every channel the one-time rule keeps at any time.
 pub(super) fn wave_window(
     frequencies_hz: &[f64],
     factors: FactorRange,
@@ -101,9 +99,50 @@ pub(super) fn wave_window(
     window.map(|(first, last)| first..last + 1)
 }
 
+/// Runs of `channels`, as ordinals of it, each holding no more channels than
+/// `selected` and spanning no more native channels than `selected` does.
+pub(super) fn density_runs(channels: &[u32], selected: &[u32]) -> Vec<Range<usize>> {
+    if channels.is_empty() {
+        return Vec::new();
+    }
+    let (first, last) = (selected[0], selected[selected.len() - 1]);
+    let (count, span) = (selected.len(), last - first);
+    let mut runs = Vec::new();
+    let mut start = 0;
+    for (ordinal, channel) in channels.iter().enumerate() {
+        if ordinal - start == count || channel - channels[start] > span {
+            runs.push(start..ordinal);
+            start = ordinal;
+        }
+    }
+    runs.push(start..channels.len());
+    runs
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FactorRange, wave_window};
+    use super::{FactorRange, density_runs, wave_window};
+
+    /// A partition's runs of density channels hold every channel once, in
+    /// order, and no run is wider than its selection, in channels or in span.
+    #[test]
+    fn density_runs_stay_within_what_a_partition_selects() {
+        let check = |channels: &[u32], selected: &[u32], expected: &[std::ops::Range<usize>]| {
+            let runs = density_runs(channels, selected);
+            assert_eq!(runs, expected);
+            assert_eq!(
+                runs.iter().map(|run| run.len()).sum::<usize>(),
+                channels.len()
+            );
+        };
+        let all = (0..20).collect::<Vec<_>>();
+        check(&all, &[0, 1, 2, 3, 4], &[0..5, 5..10, 10..15, 15..20]);
+        check(&all[..7], &[3, 4, 5], &[0..3, 3..6, 6..7]);
+        check(&[0, 1, 2], &[7], &[0..1, 1..2, 2..3]);
+        // Two selected channels span six; a gap ends a run at the span.
+        check(&[0, 1, 2, 9, 10], &[3, 8], &[0..2, 2..3, 3..5]);
+        check(&[0, 5, 6, 7], &[0, 1, 2, 4], &[0..1, 1..4]);
+    }
 
     fn range(factors: &[f64]) -> FactorRange {
         factors
@@ -111,8 +150,8 @@ mod tests {
             .fold(FactorRange::EMPTY, |range, factor| range.with(*factor))
     }
 
-    /// One factor gives the selected-observation route's window: the
-    /// channels inside the bounds and the straddling partner at each edge.
+    /// One factor gives one time's window: the channels inside the bounds
+    /// and the straddling partner at each edge.
     #[test]
     fn one_factor_keeps_both_partners_at_each_edge() {
         let channels = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];

@@ -141,6 +141,10 @@ pub struct Velocity {
 /// when stated, one validity interval (MSv2: one `SOURCE` row).
 #[derive(Clone, Debug)]
 pub struct SourceRecord {
+    /// An opaque source-model record, when the store supplies one (MSv2
+    /// `SOURCE_MODEL`). Concatenation carries the retained row's record;
+    /// it is not used to decide whether two sources describe the same sky.
+    pub model: Option<std::sync::Arc<casa_types::RecordValue>>,
     /// The window the record's lines are for.
     pub window: SourceWindow,
     /// The centre of the record's validity interval (`TIME`).
@@ -358,6 +362,7 @@ mod tests {
 
     fn record(window: SourceWindow, rest_hz: f64) -> SourceRecord {
         SourceRecord {
+            model: None,
             window,
             time: None,
             interval_s: None,

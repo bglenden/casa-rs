@@ -1,0 +1,25 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "case": "nan",
+      "returncode": -11,
+      "output": ""
+    },
+    {
+      "case": "inf",
+      "returncode": -11,
+      "output": ""
+    },
+    {
+      "case": "cycle",
+      "returncode": -11,
+      "output": ""
+    },
+    {
+      "case": "depth",
+      "returncode": 0,
+      "output": "CASA_CHILD=[1]"
+    }
+  ]
+}

@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The measurement operator, spectral resampler and weighting rule of one
-//! compiled problem: plan section 5.3 projected from `CompiledProblem`.
+//! compiled problem, projected from `CompiledProblem`.
 
 use casa_imaging_model::{
-    AntennaResponseClass, CompiledImageDomain, CompiledProblem, InstrumentModel,
-    ReconstructionBasis, SpectralKernel, SpectralWcs, WeightDensityScope,
+    AntennaResponseClass, CompiledImageDomain, CompiledProblem, DensityCells, FrequencyFrame,
+    InstrumentModel, ReconstructionBasis, SpectralKernel, SpectralWcs,
 };
 use casa_imaging_operator::{
-    AiryDish, AwCatalog, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet, DensityCellRule,
-    DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
-    MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting, SpectralAxis,
-    SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    AiryDish, AwCatalog, Awp2Sampling, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet,
+    DensityCellRule, DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent,
+    MeasurementOperator, MosaicBufferBand, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor,
+    PolarizationRouting, PrimaryBeam, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount,
+    WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -19,7 +20,8 @@ use casa_imaging_runtime::{
 use casa_types::Correlation;
 
 use super::ImagingError;
-use crate::AwCatalogDeployment;
+use super::observation_source::StoreKeys;
+use crate::{AwCatalogDeployment, Awp2Deployment};
 
 /// The operator of one image domain and the resampler that places rows on
 /// its planes.
@@ -52,6 +54,14 @@ enum Kernels {
 }
 
 impl DomainOperator {
+    /// The charge held with an already-admitted kernel set.
+    pub(crate) fn retained_kernel_bytes(&self) -> u64 {
+        match &self.kernels {
+            Kernels::Admitted { _charge } => _charge.memory(),
+            Kernels::Catalog { .. } => 0,
+        }
+    }
+
     /// Bytes the kernel set still to be admitted holds for passes on
     /// `workers` streaming workers, at most the ceiling it was opened for,
     /// at its cache's bound now; zero for a set already admitted.
@@ -105,7 +115,7 @@ impl DomainOperator {
 }
 
 /// Correlation types every block delivers, in block order: the first
-/// source's selection, which every source must share.
+/// source's selection, which every partition of every source must share.
 pub(crate) fn selected_correlations(
     problem: &CompiledProblem,
 ) -> Result<Vec<Correlation>, ImagingError> {
@@ -114,7 +124,7 @@ pub(crate) fn selected_correlations(
         .read_set()
         .sources()
         .iter()
-        .flat_map(|source| source.selection().correlations())
+        .flat_map(|source| source.selection().partitions())
         .map(|selection| {
             selection
                 .products()
@@ -127,7 +137,7 @@ pub(crate) fn selected_correlations(
     })?;
     if layouts.any(|layout| layout != first) {
         return Err(ImagingError::Unsupported {
-            reason: "selected polarization setups differ in their correlations",
+            reason: "selected partitions differ in their correlations",
         });
     }
     Ok(first)
@@ -168,14 +178,13 @@ pub(crate) fn reference_frequency_hz(problem: &CompiledProblem) -> Result<f64, I
             reference_frequency_hz,
             ..
         } => Ok(*reference_frequency_hz),
-        SpectralWcs::Tabular { .. } => Err(ImagingError::Unsupported {
-            reason: "a tabular spectral axis has no uniform channel width",
-        }),
+        SpectralWcs::Tabular {
+            channel_centres_hz, ..
+        } => Ok(channel_centres_hz[0]),
     }
 }
 
-/// The grid precision: the requested one, else plan decision D2's rule as
-/// the owner amended it on 2026-10-15 (`gridprecision = auto`): f64 on the
+/// The grid precision: the requested one, else (`gridprecision = auto`) f64 on the
 /// CPU for every basis, since CASA accumulates its grids in double
 /// (`useDoublePrec`, `SynthesisUtilMethods.cc:3722`), and f32 on Metal,
 /// which accumulates in `f32` only.
@@ -202,6 +211,17 @@ pub(crate) fn standard_kernel_set(problem: &CompiledProblem) -> bool {
     kernel_set_kind(problem) == KernelSetKind::Standard
 }
 
+/// Whether the installed gridder images polarized Taylor families.
+pub(crate) fn polarized_taylor_kernel_set(problem: &CompiledProblem) -> bool {
+    matches!(
+        kernel_set_kind(problem),
+        KernelSetKind::Standard
+            | KernelSetKind::Mosaic
+            | KernelSetKind::WPlanes
+            | KernelSetKind::Aw
+    )
+}
+
 /// Whether the Metal backend grids the problem's kernel set: the standard
 /// spheroidal set, and the mosaic primary beams (#787). The mosaic's PSF
 /// and prediction cells are its imaging cells, and its weight cells share
@@ -212,9 +232,33 @@ pub(crate) fn standard_kernel_set(problem: &CompiledProblem) -> bool {
 /// (`casa_imaging_metal::kernel_bytes`, #793 review). W-planes and the AW
 /// catalog run on the CPU until #653's rows for them.
 pub(crate) fn metal_kernel_set(problem: &CompiledProblem) -> bool {
+    match kernel_set_kind(problem) {
+        KernelSetKind::Standard => true,
+        // Metal predicts with the cells it grids with, which a mosaic's
+        // conjugate beams part.
+        KernelSetKind::Mosaic => !mosaic_conjugate_beams(problem),
+        KernelSetKind::WPlanes | KernelSetKind::Aw | KernelSetKind::Awp2 => false,
+    }
+}
+
+/// Whether the problem's mosaic grids with its conjugate beams.
+fn mosaic_conjugate_beams(problem: &CompiledProblem) -> bool {
+    problem
+        .science()
+        .measurement_equation()
+        .mosaic_conjugate_beams()
+}
+
+/// Whether the problem's kernel set grids several MeasurementSets: the
+/// standard set and the W planes, which key no row on its MeasurementSet,
+/// and the mosaic set, which keys its beams on each row's window key and
+/// dish classes over every MeasurementSet ([`StoreKeys`]). The AW catalog
+/// keys its cells on the first MeasurementSet's frequencies and first
+/// cross-correlation sample.
+pub(crate) fn multi_store_kernel_set(problem: &CompiledProblem) -> bool {
     matches!(
         kernel_set_kind(problem),
-        KernelSetKind::Standard | KernelSetKind::Mosaic
+        KernelSetKind::Standard | KernelSetKind::WPlanes | KernelSetKind::Mosaic
     )
 }
 
@@ -230,6 +274,8 @@ enum KernelSetKind {
     Mosaic,
     /// The AW catalog (`AWProjectFT`).
     Aw,
+    /// The resident AWPLPG kernels.
+    Awp2,
 }
 
 fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
@@ -238,9 +284,19 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
         KernelSetKind::Aw
     } else if equation.w_projection().is_some() {
         KernelSetKind::WPlanes
-    } else if problem.science().instrument_model()
-        == Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1)
-    {
+    } else if matches!(
+        problem.science().instrument_model(),
+        Some(InstrumentModel::CasaVlaAwplpg | InstrumentModel::CasaVlaAwplpgSquint)
+    ) {
+        KernelSetKind::Awp2
+    } else if matches!(
+        problem.science().instrument_model(),
+        Some(
+            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                | InstrumentModel::CasaEvlaCommonInterferometricResponseV1
+                | InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1
+        )
+    ) {
         KernelSetKind::Mosaic
     } else {
         KernelSetKind::Standard
@@ -252,10 +308,11 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
 /// standard spheroidal set, W-projection planes sized by the W contract,
 /// the mosaic primary beams of the selected windows, or the AW catalog of
 /// `aw_catalog`, in the requested precision or the one `backend` grids at.
-/// The mosaic set takes one dish per selected aperture class in
-/// `dish_classes` (`HetArrayConvFunc::findAntennaSizes`), the order the
-/// rows' antenna types index. Mosaic and AW grid without padding (CASA
-/// `MosaicFT`, `AWProjectFT`); the others on CASA's composite-padded grid.
+/// The mosaic set takes one dish per aperture class of `keys`
+/// (`HetArrayConvFunc::findAntennaSizes`), the order the rows' antenna
+/// types index, and the beams of each window under its key. Mosaic and AW
+/// grid without padding (CASA `MosaicFT`, `AWProjectFT`); the others on
+/// CASA's composite-padded grid.
 /// The kernel set is admitted as [`kernel_set`] says, and its charge lives
 /// with the operator.
 #[allow(clippy::too_many_arguments)]
@@ -265,32 +322,48 @@ pub(crate) fn domain_operator(
     correlations: &[Correlation],
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
-    aw_catalog: Option<&AwCatalogDeployment>,
-    dish_classes: &[AntennaResponseClass],
+    requested_padding: Option<PaddingFactor>,
+    deployment: (Option<(&AwCatalogDeployment, f64)>, Option<&Awp2Deployment>),
+    keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<DomainOperator, ImagingError> {
     let kind = kernel_set_kind(problem);
     // Each CASA facet's GridFT pads its own facet grid.
     let padding = match kind {
-        KernelSetKind::Standard | KernelSetKind::WPlanes => {
-            GridPadding::CasaComposite(PaddingFactor::TCLEAN)
+        KernelSetKind::Standard => {
+            GridPadding::CasaComposite(requested_padding.unwrap_or(PaddingFactor::TCLEAN))
         }
-        KernelSetKind::Mosaic | KernelSetKind::Aw => GridPadding::None,
+        KernelSetKind::WPlanes => GridPadding::CasaComposite(PaddingFactor::TCLEAN),
+        KernelSetKind::Mosaic | KernelSetKind::Aw | KernelSetKind::Awp2 => GridPadding::None,
     };
     let geometry = GridGeometry::new(extent, padding)?;
     let polarization = PolarizationRouting::compile(
         correlations,
         problem.reconstruction().polarization().coordinates(),
     )?;
-    // An AW cube is refused by the gate (`Unsupported::CubeAwProjection`).
     let basis = basis(problem)?;
-    let resampler = resampler(problem, basis)?;
+    let mut resampler = resampler(problem, basis)?;
+    if super::rest_aw_uses_native_wavelengths(problem)
+        && problem.weighting().casa_cube_density_padding().is_some()
+    {
+        resampler = resampler.with_rest_aw_density();
+    }
+    // The catalog uses a scaled BARY axis. Restore the reporting LSRK
+    // frequency for CASA's Float rounding and retain our projected uvw.
+    let spectral = problem.geometry().spectral();
+    if let Some((_, scale)) = deployment.0
+        && spectral.source_frame() == FrequencyFrame::Lsrk
+        && spectral.output_frame() == FrequencyFrame::Barycentric
+        && problem.science().spectral().sampling().kernel() == SpectralKernel::Cubic
+    {
+        resampler = resampler.with_density_wavelength_scale(scale);
+    }
     let (cf, kernels) = kernel_set(
         problem,
         kind,
         (&geometry, &polarization),
-        aw_catalog,
-        dish_classes,
+        deployment,
+        keys,
         admission,
     )?;
     Ok(DomainOperator {
@@ -302,7 +375,10 @@ pub(crate) fn domain_operator(
             precision(backend, requested_precision),
         ),
         resampler,
-        weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
+        weight_image: matches!(
+            kind,
+            KernelSetKind::Mosaic | KernelSetKind::Aw | KernelSetKind::Awp2
+        ),
         kernels,
     })
 }
@@ -324,6 +400,31 @@ impl KernelAdmission<'_> {
     }
 }
 
+/// Build one chart's W kernels and retain their exact resident charge.
+fn w_kernel_set(
+    geometry: &GridGeometry,
+    polarization: &PolarizationRouting,
+    count: WPlaneCount,
+    admission: KernelAdmission<'_>,
+) -> Result<(WPlanes, Kernels), ImagingError> {
+    let screening = admission.admit(
+        "W-projection screens",
+        WPlanes::screens_bytes(geometry, count)?,
+    )?;
+    let screens = WPlanes::screens(geometry, polarization, count)?;
+    let mut kernels = admission.admit("convolution functions", screens.kernel_bytes())?;
+    let set = screens.finish()?;
+    drop(screening);
+    kernels.retain(set.resident_bytes());
+    tracing::debug!(
+        target: "casa_imaging_application::w_kernel_charge",
+        resident_bytes = set.resident_bytes(),
+        reserved_bytes = kernels.memory(),
+        "W-projection kernels retained"
+    );
+    Ok((set, Kernels::Admitted { _charge: kernels }))
+}
+
 /// The kernel set of `kind` on `geometry` routing `polarization`, with the
 /// charge of what it holds, admitted before it is built. W-projection and
 /// mosaic sets are built in two stages, their screens and then the kernels
@@ -337,8 +438,8 @@ fn kernel_set(
     problem: &CompiledProblem,
     kind: KernelSetKind,
     (geometry, polarization): (&GridGeometry, &PolarizationRouting),
-    aw_catalog: Option<&AwCatalogDeployment>,
-    dish_classes: &[AntennaResponseClass],
+    (aw_catalog, awp2): (Option<(&AwCatalogDeployment, f64)>, Option<&Awp2Deployment>),
+    keys: &StoreKeys,
     admission: KernelAdmission<'_>,
 ) -> Result<(Box<dyn ConvolutionFunctionSet>, Kernels), ImagingError> {
     const PHASE: &str = "convolution functions";
@@ -369,38 +470,40 @@ fn kernel_set(
                     });
                 }
             };
-            let screening = admission.admit(
-                "W-projection screens",
-                WPlanes::screens_bytes(geometry, count)?,
-            )?;
-            let screens = WPlanes::screens(geometry, polarization, count)?;
-            let mut kernels = admission.admit(PHASE, screens.kernel_bytes())?;
-            let set = screens.finish()?;
-            drop(screening);
-            kernels.retain(set.resident_bytes());
-            (Box::new(set), Kernels::Admitted { _charge: kernels })
+            let (set, kernels) = w_kernel_set(geometry, polarization, count, admission)?;
+            (Box::new(set), kernels)
         }
         KernelSetKind::Mosaic => {
-            if dish_classes.is_empty() {
+            if keys.dish_classes.is_empty() {
                 return Err(ImagingError::Unsupported {
-                    reason: "the mosaic set needs ALMA or ACA dishes in the selection",
+                    reason: "the mosaic set needs the dishes of its instrument model",
                 });
             }
-            let dishes = dish_classes
+            let dishes = keys
+                .dish_classes
                 .iter()
-                .map(|class| {
-                    AiryDish::casa_alma(
-                        match class {
-                            AntennaResponseClass::CasaAlma12m => 12.0,
-                            AntennaResponseClass::CasaAca7m => 7.0,
-                        },
-                        geometry,
-                    )
+                .map(|class| match class {
+                    AntennaResponseClass::CasaAlma12m => AiryDish::casa_alma(12.0, geometry).into(),
+                    AntennaResponseClass::CasaAca7m => AiryDish::casa_alma(7.0, geometry).into(),
+                    AntennaResponseClass::CasaEvla => {
+                        keys.mosaic_voltage_pattern.unwrap_or(PrimaryBeam::Evla)
+                    }
+                    AntennaResponseClass::CasaAiry {
+                        dish_diameter_m_bits,
+                    } => AiryDish::casa_airy(f64::from_bits(*dish_diameter_m_bits)).into(),
                 })
                 .collect::<Vec<_>>();
             let frequency_hz = reference_frequency_hz(problem)?;
-            let windows = mosaic_windows(problem)?;
-            let rules = MosaicRules::Tclean;
+            let rest = problem.geometry().spectral().output_frame() == FrequencyFrame::Rest;
+            let rest_resampler = rest
+                .then(|| resampler(problem, basis(problem)?))
+                .transpose()?;
+            let windows = mosaic_windows(problem, keys, rest_resampler.as_ref())?;
+            let rules = if mosaic_conjugate_beams(problem) {
+                MosaicRules::TcleanConjugateBeams
+            } else {
+                MosaicRules::Tclean
+            };
             let screening = admission.admit(
                 "mosaic screens",
                 MosaicPb::screens_bytes(rules, geometry, frequency_hz, &dishes, &windows)?,
@@ -419,17 +522,64 @@ fn kernel_set(
             kernels.retain(set.resident_bytes());
             (Box::new(set), Kernels::Admitted { _charge: kernels })
         }
-        KernelSetKind::Aw => {
-            let deployment = aw_catalog.ok_or(ImagingError::Unsupported {
-                reason: "an A-projection run needs its convolution-function catalog",
+        KernelSetKind::Awp2 => {
+            let deployment = awp2.ok_or(ImagingError::Unsupported {
+                reason: "AWP2 requires a VLA dish surface and beam frequencies",
             })?;
+            let sampling = if deployment.pa_centres.is_empty() {
+                Awp2Sampling::new(geometry, deployment.single_field)?
+            } else if [Correlation::RR, Correlation::LL]
+                .iter()
+                .all(|hand| polarization.correlations().contains(hand))
+            {
+                Awp2Sampling::squinted(geometry)?
+            } else {
+                return Err(ImagingError::Unsupported {
+                    reason: "AWP2 squint requires RR and LL data (#1071)",
+                });
+            };
+            let screen_charge = admission.admit(
+                "AWP2 aperture screens",
+                sampling.screens_bytes(
+                    deployment.frequencies_hz.len(),
+                    deployment.w_planes.len(),
+                    deployment.pa_centres.len(),
+                ),
+            )?;
+            let screens = sampling.screens(
+                &deployment.frequencies_hz,
+                deployment.surface.clone(),
+                deployment.legacy_vla,
+                &deployment.w_planes,
+                &deployment.pa_centres,
+            )?;
+            let mut kernels = admission.admit(PHASE, screens.kernel_bytes(geometry))?;
+            let set = screens.finish(
+                geometry,
+                polarization,
+                deployment.frequencies_hz.clone(),
+                deployment.w_planes.clone(),
+                deployment.row_frequency_hz,
+                (deployment.pa_centres.clone(), deployment.feed_angle_rad),
+            );
+            drop(screen_charge);
+            kernels.retain(set.resident_bytes());
+            (Box::new(set), Kernels::Admitted { _charge: kernels })
+        }
+        KernelSetKind::Aw => {
+            let (deployment, gridding_frequency_scale) =
+                aw_catalog.ok_or(ImagingError::Unsupported {
+                    reason: "an A-projection run needs its convolution-function catalog",
+                })?;
             let catalog = AwCatalog::open_casa(
                 &deployment.root,
-                deployment.indexing,
+                deployment.indexing.clone(),
                 geometry,
                 polarization,
                 deployment.resident_bytes,
-            )?;
+            )?
+            .with_prediction_frequency_scale(gridding_frequency_scale)
+            .with_native_prediction_frequency(super::rest_aw_uses_native_wavelengths(problem));
             let kernels = Kernels::Catalog {
                 charge: catalog.cache_charge(),
                 bound: catalog.cache_bound(),
@@ -441,40 +591,63 @@ fn kernel_set(
     })
 }
 
-/// The selected spectral windows as the mosaic set keys them: every
+/// The selected spectral windows of every store under their keys
+/// (`keys`), as the mosaic set keys them (CASA's `msId_spw`): every
 /// channel of the window, its first channel width and the selected
-/// channels' frequencies (`HetArrayConvFunc` beams per window).
-fn mosaic_windows(problem: &CompiledProblem) -> Result<Vec<MosaicWindow>, ImagingError> {
+/// channels at its first visibility buffer in the beam selection frame.
+/// For tracked cubes, use the frequencies passed by `MosaicFT::put`
+/// after `FTMachine::interpolateFrequencyTogrid` in REST.
+fn mosaic_windows(
+    problem: &CompiledProblem,
+    keys: &StoreKeys,
+    rest_resampler: Option<&SpectralResampler>,
+) -> Result<Vec<MosaicWindow>, ImagingError> {
     let mut windows = Vec::new();
-    for source in problem.observation_transaction().read_set().sources() {
+    let sources = problem.observation_transaction().read_set().sources();
+    for (store, source) in sources.iter().enumerate() {
         for window in source.selection().spectral_windows() {
-            if windows
-                .iter()
-                .any(|known: &MosaicWindow| known.spectral_window == window.spectral_window_id())
-            {
-                continue;
-            }
             let catalog = window
                 .coordinate_catalog()
                 .ok_or(ImagingError::Unsupported {
                     reason: "the mosaic set needs every window's channel frequencies",
                 })?;
+            let [factor, topo] =
+                window
+                    .first_buffer_beam_factors()
+                    .ok_or(ImagingError::Unsupported {
+                        reason: "the mosaic set needs every window's LSRK factor",
+                    })?;
             let selected = window
                 .channel_indices()
                 .iter()
                 .map(|index| {
                     catalog
                         .channel_frequency_hz(*index as usize)
+                        .map(|hz| hz * factor)
                         .ok_or(ImagingError::Unsupported {
                             reason: "a selected channel lies outside its window",
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let (selected, buffer_band) = if let Some(resampler) = rest_resampler {
+                let native_band = MosaicBufferBand {
+                    channels: selected.len(),
+                    lowest_topocentric_hz: selected.iter().copied().fold(f64::INFINITY, f64::min)
+                        * (topo / factor),
+                };
+                (
+                    resampler.mosaic_buffer_frequencies(selected),
+                    Some(native_band),
+                )
+            } else {
+                (selected, None)
+            };
             windows.push(MosaicWindow {
-                spectral_window: window.spectral_window_id(),
+                spectral_window: keys.window(store, window.spectral_window_id()),
                 window_frequencies_hz: catalog.channel_frequencies_hz().to_vec(),
                 channel_width_hz: catalog.first_channel_width_hz(),
                 selected_frequencies_hz: selected,
+                buffer_band,
             });
         }
     }
@@ -506,33 +679,59 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
     let Basis::ChannelLocal { planes } = basis else {
         return Ok(SpectralResampler::direct(basis)?);
     };
-    let SpectralWcs::Linear {
-        reference_pixel,
-        reference_frequency_hz,
-        increment_hz,
-        ..
-    } = problem.geometry().spectral().wcs()
-    else {
-        return Err(ImagingError::Unsupported {
-            reason: "a tabular spectral axis has no uniform channel width",
-        });
-    };
     let kernel = match problem.science().spectral().sampling().kernel() {
         SpectralKernel::Nearest | SpectralKernel::Identity => {
             casa_imaging_operator::SpectralKernel::Nearest
         }
         SpectralKernel::Linear => casa_imaging_operator::SpectralKernel::Linear,
-        SpectralKernel::Cubic | SpectralKernel::ChannelIntegration { .. } => {
+        SpectralKernel::Cubic => casa_imaging_operator::SpectralKernel::Cubic,
+        SpectralKernel::ChannelIntegration { .. } => {
             return Err(ImagingError::Unsupported {
-                reason: "cube interpolation is nearest or linear",
+                reason: "cube interpolation is nearest, linear or cubic",
             });
         }
     };
-    let first_hz = reference_frequency_hz - reference_pixel * increment_hz;
-    Ok(SpectralResampler::channel_local(
-        SpectralAxis::new(first_hz, *increment_hz, planes)?,
-        kernel,
-    ))
+    let spectral = problem.geometry().spectral();
+    let mut axis = match spectral.wcs() {
+        SpectralWcs::Tabular {
+            channel_centres_hz,
+            channel_boundaries_hz,
+        } => {
+            let step = match channel_centres_hz.as_slice() {
+                [_, second, ..] => *second - channel_centres_hz[0],
+                _ => channel_boundaries_hz[1] - channel_boundaries_hz[0],
+            };
+            SpectralAxis::tabular(channel_centres_hz, step)?
+        }
+        SpectralWcs::Linear { .. } => {
+            let [reference_pixel, reference_hz, increment_hz] =
+                spectral.linear_grid().expect("a linear spectral grid");
+            SpectralAxis::new(
+                reference_hz - reference_pixel * increment_hz,
+                increment_hz,
+                planes,
+            )?
+        }
+    };
+    if let Some([to_lsrk, to_reporting]) = spectral.reporting_conversions()
+        && let SpectralWcs::Linear {
+            reference_pixel,
+            reference_frequency_hz,
+            increment_hz,
+            ..
+        } = spectral.wcs()
+    {
+        axis = axis.with_reporting_conversion(
+            [*reference_pixel, *reference_frequency_hz, *increment_hz],
+            to_lsrk,
+            to_reporting,
+        );
+        if spectral.source_frame() == casa_imaging_model::FrequencyFrame::Lsrk {
+            axis = axis.with_exact_width_from_below();
+        }
+    }
+    Ok(SpectralResampler::channel_local(axis, kernel)
+        .with_terminal_plane_outside(spectral.terminal_plane_outside()))
 }
 
 /// The widest spacing between adjacent selected native channels of any
@@ -565,46 +764,213 @@ pub(crate) fn native_spacing_hz(problem: &CompiledProblem) -> f64 {
 }
 
 /// Shape of the weight-density grid of `domain`: one global plane on CASA's
-/// `VisImagingWeight` cells, or one plane per output channel, plus the
-/// compiled padding planes on each side, on `BriggsCubeWeightor` cells.
+/// `VisImagingWeight` cells, or one plane per output channel plus the
+/// compiled padding planes on each side on `BriggsCubeWeightor` cells;
+/// under `mosweight` those planes for each of its fields.
 pub(crate) fn density_shape(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
 ) -> Result<DensityGridShape, ImagingError> {
     let [width, height] = domain.shape().pixels();
-    let (planes, padding, rule) = match problem.weighting().density_scope() {
-        WeightDensityScope::PerOutputChannel => {
-            // CASA always pads the cube density axis
-            // (`BriggsCubeWeightor::estimateSwingChanPad`); a contract without
-            // the padding cannot reproduce it.
-            let padding = problem.weighting().casa_cube_density_padding().ok_or(
-                ImagingError::Unsupported {
-                    reason: "a per-channel weight density needs its compiled padding",
-                },
-            )?;
-            let planes = padding
-                .checked_mul(2)
-                .and_then(|padding| {
-                    padding.checked_add(problem.geometry().spectral().output_channels())
-                })
-                .ok_or(ImagingError::Unsupported {
-                    reason: "the padded density axis overflows",
-                })?;
-            let padding = u32::try_from(padding).map_err(|_| ImagingError::Unsupported {
-                reason: "the padded density axis overflows",
-            })?;
-            (planes, padding, DensityCellRule::Cube)
-        }
-        WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-            (1, 0, DensityCellRule::Standard)
-        }
+    let scope = problem.weighting().density_scope();
+    let (planes, padding, rule) = if scope.is_per_channel() {
+        let (planes, padding) = padded_channel_planes(problem)?;
+        (planes, padding, DensityCellRule::Cube)
+    } else {
+        (1, 0, DensityCellRule::Standard)
     };
+    let fields = scope.fields().cloned();
+    let increment = domain.direction().increment_rad();
+    let cells = problem.weighting().density_cells();
+    let ([width, height], increment_rad, box_half_width) =
+        density_cells(cells, rule, [width, height], increment);
+    // The grid is charged by its bytes ([`DensityGridShape::bytes`]): every
+    // field's planes, each numbered in `u32`.
+    fields
+        .as_ref()
+        .map_or(Some(planes), |fields| planes.checked_mul(fields.count()))
+        .filter(|planes| u32::try_from(*planes).is_ok())
+        .and_then(|planes| {
+            width
+                .checked_mul(height)
+                .and_then(|plane| plane.checked_mul(planes))
+                .and_then(|cells| cells.checked_add(planes))
+        })
+        .and_then(|values| values.checked_mul(size_of::<f64>()))
+        .ok_or(ImagingError::Unsupported {
+            reason: "the weight-density grid overflows",
+        })?;
     Ok(DensityGridShape {
         width,
         height,
         planes,
         padding,
-        increment_rad: domain.direction().increment_rad(),
+        box_half_width,
+        increment_rad,
         rule,
+        fields,
     })
+}
+
+/// The planes of one per-channel density and the padding planes on each
+/// side among them: CASA always pads the cube density axis
+/// (`BriggsCubeWeightor::estimateSwingChanPad`, or a fixed swing pad under
+/// `multiField`), and a contract without the padding cannot reproduce it.
+fn padded_channel_planes(problem: &CompiledProblem) -> Result<(usize, u32), ImagingError> {
+    let overflow = || ImagingError::Unsupported {
+        reason: "the padded density axis overflows",
+    };
+    let padding =
+        problem
+            .weighting()
+            .casa_cube_density_padding()
+            .ok_or(ImagingError::Unsupported {
+                reason: "a per-channel weight density needs its compiled padding",
+            })?;
+    let planes = padding
+        .checked_mul(2)
+        .and_then(|padding| padding.checked_add(problem.geometry().spectral().output_channels()))
+        .ok_or_else(overflow)?;
+    Ok((planes, u32::try_from(padding).map_err(|_| overflow())?))
+}
+
+/// The cells, cell increments and box half-width of a density grid over an
+/// image of `pixels` and `increment` (`SynthesisImagerVi2::weight`). CASA's
+/// continuum uniform and Briggs density (`VisImagingWeight`) has `n` cells
+/// a side for `npixels = n`, else the image's, each `(n·Δ)/n` wide;
+/// superuniform's box and the cube weightor's keep the image's cells and
+/// increments.
+fn density_cells(
+    cells: DensityCells,
+    rule: DensityCellRule,
+    pixels: [usize; 2],
+    increment: [f64; 2],
+) -> ([usize; 2], [f64; 2], usize) {
+    let visimagingweight = |[nx, ny]: [usize; 2]| {
+        [
+            DensityGridShape::visimagingweight_increment(nx, increment[0]),
+            DensityGridShape::visimagingweight_increment(ny, increment[1]),
+        ]
+    };
+    match (cells, rule) {
+        (DensityCells::Box(half_width), _) => (pixels, increment, half_width.get()),
+        (DensityCells::Square(side), _) => {
+            let side = [side.get(); 2];
+            (side, visimagingweight(side), 0)
+        }
+        (DensityCells::Image, DensityCellRule::Standard) => (pixels, visimagingweight(pixels), 0),
+        (DensityCells::Image, DensityCellRule::Cube) => (pixels, increment, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroUsize;
+
+    use super::*;
+
+    /// Every W-facet owns and charges its own retained kernel set (#1063).
+    #[test]
+    fn each_w_facet_retains_its_kernel_set_charge() {
+        let host = HostResources {
+            threads: 2,
+            performance_cores: 2,
+            available_memory: 1 << 40,
+            metal: false,
+        };
+        let policy = ResourcePolicy::Exclusive;
+        let admission = KernelAdmission {
+            host: &host,
+            policy: &policy,
+            workers: 1,
+        };
+        let geometry = GridGeometry::new(
+            ImageExtent {
+                shape: [64, 64],
+                increment_rad: [-0.001, 0.001],
+                reference_pixel: [32, 32],
+            },
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
+        )
+        .unwrap();
+        let pol = PolarizationRouting::compile(
+            &[Correlation::XX, Correlation::YY],
+            &[casa_imaging_model::PolarizationCoordinate::StokesI],
+        )
+        .unwrap();
+        let mut owners = Vec::new();
+        for _ in 0..4 {
+            let (set, charge) = w_kernel_set(&geometry, &pol, WPlaneCount::Fixed(4), admission)
+                .expect("W kernels fit");
+            let Kernels::Admitted { ref _charge } = charge else {
+                panic!("W set is admitted")
+            };
+            assert!(set.resident_bytes() > 0);
+            assert_eq!(_charge.memory(), set.resident_bytes());
+            owners.push((set, charge));
+        }
+        let charged: u64 = owners
+            .iter()
+            .map(|(_, charge)| match charge {
+                Kernels::Admitted { _charge } => _charge.memory(),
+                Kernels::Catalog { .. } => unreachable!(),
+            })
+            .sum();
+        assert_eq!(
+            charged,
+            owners
+                .iter()
+                .map(|(set, _)| set.resident_bytes())
+                .sum::<u64>()
+        );
+    }
+
+    /// `SynthesisImagerVi2::weight`: `npixels = n` makes the continuum
+    /// density `n × n` whatever the image's shape, each cell `(n·Δ)/n`; the
+    /// image's own size takes the same arithmetic; superuniform's box and the
+    /// cube weightor keep the image's cells and increments.
+    #[test]
+    fn density_cells_size_casas_grids() {
+        let cells = |count| NonZeroUsize::new(count).expect("non-zero");
+        // A 0.1-radian cell: in double, (3·0.1)/3 is 0.10000000000000002.
+        let increment = [-0.1, 0.1];
+        let casa = 0.100_000_000_000_000_02;
+        let image = [100, 60];
+        for (side, expected) in [(3, casa), (4, 0.1)] {
+            assert_eq!(
+                density_cells(
+                    DensityCells::Square(cells(side)),
+                    DensityCellRule::Standard,
+                    image,
+                    increment
+                ),
+                ([side, side], [-expected, expected], 0),
+                "{side}"
+            );
+        }
+        assert_eq!(
+            density_cells(
+                DensityCells::Image,
+                DensityCellRule::Standard,
+                [3, 3],
+                increment
+            ),
+            ([3, 3], [-casa, casa], 0)
+        );
+        for rule in [DensityCellRule::Standard, DensityCellRule::Cube] {
+            assert_eq!(
+                density_cells(DensityCells::Box(cells(3)), rule, image, increment),
+                (image, increment, 3)
+            );
+        }
+        assert_eq!(
+            density_cells(
+                DensityCells::Image,
+                DensityCellRule::Cube,
+                [3, 3],
+                increment
+            ),
+            ([3, 3], increment, 0)
+        );
+    }
 }

@@ -23,7 +23,8 @@ use casa_task_runtime::{
     BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
     ParameterRuntime, ParameterRuntimeError, ParameterSession, ParameterSessionError, ProfileError,
     ResolutionPatch, format_profile_error, format_session_error, parse_profile,
-    project_provider_invocation, render_documented_template, write_parameter_profile_atomic,
+    project_provider_invocation_with_originals, render_documented_template,
+    write_parameter_profile_atomic,
 };
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -31,7 +32,7 @@ use pyo3::types::{PyDict, PyString};
 use serde::Serialize;
 
 use self::contract::{BundleView, CatalogEnvelopeView, snake_case_debug};
-use self::values::{parameter_values, serialize_native};
+use self::values::{parameter_values, serialize_native, value_to_python};
 
 /// The `ValueError` a failed runtime call raises: `reason='...'`.
 pub(crate) fn reason_error(py: Python<'_>, reason: impl AsRef<str>) -> PyErr {
@@ -383,19 +384,31 @@ pub(crate) struct InvocationView {
 
 /// Project one complete task invocation: the task binary's `--json-run -`
 /// with the values set.
+#[cfg(test)]
 pub(crate) fn provider_invocation(
     surface_id: &str,
     values: BTreeMap<String, ParameterValue>,
+) -> ServiceResult<InvocationView> {
+    provider_invocation_with_originals(surface_id, values, BTreeMap::new())
+}
+
+fn provider_invocation_with_originals(
+    surface_id: &str,
+    values: BTreeMap<String, ParameterValue>,
+    originals: BTreeMap<String, ParameterValue>,
 ) -> ServiceResult<InvocationView> {
     let session = session_from_values(surface_id, values)?;
     session
         .render_sparse()
         .map_err(|error| parameter_error("validate provider invocation parameters", error))?;
-    let invocation = project_provider_invocation(&session)
+    let invocation = project_provider_invocation_with_originals(&session, &originals)
         .map_err(|error| parameter_error("project provider invocation", error))?;
     let descriptor = match session.bundle().surface.provider_family() {
         "imager" => Some(casars_imager::imager_protocol_descriptor()),
+        "single_dish" => Some(casars_imager::single_dish::tsdimaging_task_schema_bundle().protocol),
         "simobserve" => Some(casars_simulation::simobserve_protocol_descriptor()),
+        "simanalyze" => Some(casars_simulation::simanalyze_protocol_descriptor()),
+        "simalma" => Some(casars_simulation::simalma_protocol_descriptor()),
         _ => None,
     };
     Ok(InvocationView {
@@ -453,7 +466,33 @@ pub(crate) fn parameter_last<'py>(
     let snapshot = py
         .detach(|| last(surface_id, &workspace, successful))
         .map_err(|reason| reason_error(py, reason))?;
-    to_python(py, &snapshot)
+    match snapshot {
+        Some(snapshot) => snapshot_to_python(py, &snapshot),
+        None => Ok(py.None().into_bound(py)),
+    }
+}
+
+fn snapshot_to_python<'py>(
+    py: Python<'py>,
+    snapshot: &SnapshotView,
+) -> PyResult<Bound<'py, PyAny>> {
+    let result = to_python(py, snapshot)?;
+    let states = result
+        .cast::<PyDict>()?
+        .get_item("states")?
+        .expect("snapshot states");
+    let states = states.cast::<PyDict>()?;
+    for (name, state) in &snapshot.states {
+        if let Some(value) = &state.value
+            && value.requires_typed_transport()
+        {
+            let state = states.get_item(name)?.expect("snapshot state");
+            state
+                .cast::<PyDict>()?
+                .set_item("value", value_to_python(py, value)?)?;
+        }
+    }
+    Ok(result)
 }
 
 /// Resolve explicit values and unset names over one base source.
@@ -481,7 +520,7 @@ pub(crate) fn parameter_resolve<'py>(
             )
         })
         .map_err(|failure| failure.into_python(py))?;
-    to_python(py, &snapshot)
+    snapshot_to_python(py, &snapshot)
 }
 
 /// Resolved values as a sparse current-contract TOML profile.
@@ -497,14 +536,20 @@ pub(crate) fn parameter_render_toml(
 
 /// The provider invocation of resolved values.
 #[pyfunction]
+#[pyo3(signature = (surface_id, values, originals = None))]
 pub(crate) fn parameter_provider_invocation<'py>(
     py: Python<'py>,
     surface_id: &str,
     values: &Bound<'py, PyDict>,
+    originals: Option<&Bound<'py, PyDict>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let values = parameter_values(values)?;
-    let invocation =
-        provider_invocation(surface_id, values).map_err(|reason| reason_error(py, reason))?;
+    let originals = originals
+        .map(parameter_values)
+        .transpose()?
+        .unwrap_or_default();
+    let invocation = provider_invocation_with_originals(surface_id, values, originals)
+        .map_err(|reason| reason_error(py, reason))?;
     to_python(py, &invocation)
 }
 

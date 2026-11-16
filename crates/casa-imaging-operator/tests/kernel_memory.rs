@@ -20,11 +20,15 @@ use casa_imaging_model::{
     PolarizationCoordinate,
 };
 use casa_imaging_operator::{
-    AiryDish, AwCatalog, AwIndexing, CellHold, CfKey, ConvolutionFunctionSet, GridGeometry,
-    GridPadding, ImageExtent, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor,
-    PolarizationRouting, Spheroidal, WPlaneCount, WPlanes,
+    AiryDish, AwCatalog, AwIndexing, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend,
+    GridBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator, Mode,
+    ModeSet, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, Placement, PlaneRange,
+    PolarizationRouting, RowContext, SampleBuffer, Spheroidal, TapLayout, WPlaneCount, WPlanes,
+    Work,
 };
+use casa_numerics::PrimaryBeam;
 use casa_types::Correlation;
+use num_complex::Complex32;
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -251,35 +255,53 @@ fn mosaic_stages_hold_at_most_what_they_state() {
     }
     let routing = routing();
     let geometry = geometry(64, 2.0e-5, GridPadding::None);
-    let tclean = [
-        AiryDish::casa_alma(12.0, &geometry),
-        AiryDish::casa_alma(7.0, &geometry),
+    let tclean: [PrimaryBeam; 2] = [
+        AiryDish::casa_alma(12.0, &geometry).into(),
+        AiryDish::casa_alma(7.0, &geometry).into(),
     ];
-    let simulator = [
-        AiryDish::casa_alma_simulator(12.0),
-        AiryDish::casa_alma_simulator(7.0),
+    let simulator: [PrimaryBeam; 2] = [
+        AiryDish::casa_alma_simulator(12.0).into(),
+        AiryDish::casa_alma_simulator(7.0).into(),
     ];
+    // CASA's common EVLA beam holds no table.
+    let evla = [PrimaryBeam::Evla];
     let window = |spectral_window, selected: Vec<f64>, top: f64| MosaicWindow {
         spectral_window,
         window_frequencies_hz: vec![top - 2.0e9, top],
         channel_width_hz: 1.0e6,
         selected_frequencies_hz: selected,
+        buffer_band: None,
     };
     let eight = (0..8)
         .map(|channel| 98.0e9 + 0.25e9 * f64::from(channel))
         .collect::<Vec<_>>();
     let windows = [window(0, vec![1.0e11], 1.0e11), window(1, eight, 101.0e9)];
+    // The EVLA at S band, whose 15′ beam fills the screen.
+    let s_band = [window(0, vec![2.9e9, 3.0e9, 3.1e9], 3.1e9)];
     let cases = [
-        (MosaicRules::Tclean, &tclean[..1]),
-        (MosaicRules::Tclean, &tclean[..]),
-        (MosaicRules::Simulator, &simulator[..]),
+        (MosaicRules::Tclean, &tclean[..1], 1.0e11, &windows[..]),
+        (MosaicRules::Tclean, &tclean[..], 1.0e11, &windows[..]),
+        (MosaicRules::Simulator, &simulator[..], 1.0e11, &windows[..]),
+        (MosaicRules::Tclean, &evla[..], 3.0e9, &s_band[..]),
+        (
+            MosaicRules::TcleanConjugateBeams,
+            &tclean[..],
+            1.0e11,
+            &windows[..],
+        ),
+        (
+            MosaicRules::TcleanConjugateBeams,
+            &evla[..],
+            3.0e9,
+            &s_band[..],
+        ),
     ];
-    for (rules, dishes) in cases {
+    for (rules, dishes, frequency_hz, windows) in cases {
         let label = format!("{rules:?}, {} dish classes", dishes.len());
-        let stated = MosaicPb::screens_bytes(rules, &geometry, 1.0e11, dishes, &windows)
+        let stated = MosaicPb::screens_bytes(rules, &geometry, frequency_hz, dishes, windows)
             .expect("screens bytes");
         let screens = || {
-            MosaicPb::screens(rules, &geometry, &routing, 1.0e11, dishes, &windows)
+            MosaicPb::screens(rules, &geometry, &routing, frequency_hz, dishes, windows)
                 .expect("screens")
         };
         // FFTW's plan for the screen joins the process's plan cache, which
@@ -307,6 +329,90 @@ fn mosaic_stages_hold_at_most_what_they_state() {
             set.resident_bytes() as i64,
             "{label}: the set holds what it says once its screens are freed"
         );
+    }
+}
+
+/// A CPU gridding call that clips a mosaic sample's support to the grid
+/// (`GridEdge::Clipped`) holds one block of the set's widest support beside
+/// its accumulator, in either precision: what `CpuBackend::clip_bytes`
+/// states, which the wave charges each CPU owner.
+#[test]
+fn clipped_spreads_hold_at_most_their_charge() {
+    if !alone("clipped_spreads_hold_at_most_their_charge") {
+        return;
+    }
+    let routing = routing();
+    let geometry = geometry(64, 2.0e-5, GridPadding::None);
+    let dishes = [PrimaryBeam::from(AiryDish::casa_alma(12.0, &geometry))];
+    let window = MosaicWindow {
+        spectral_window: 0,
+        window_frequencies_hz: vec![0.98e11, 1.0e11],
+        channel_width_hz: 1.0e6,
+        selected_frequencies_hz: vec![1.0e11],
+        buffer_band: None,
+    };
+    for precision in [GridPrecision::F32, GridPrecision::F64] {
+        let set = MosaicPb::new(
+            MosaicRules::Tclean,
+            &geometry,
+            &routing,
+            1.0e11,
+            &dishes,
+            std::slice::from_ref(&window),
+        )
+        .expect("mosaic set");
+        let stated = CpuBackend::clip_bytes(&set, precision);
+        assert!(stated > 0, "a mosaic set clips");
+        let operator = MeasurementOperator::new(
+            geometry.clone(),
+            Basis::Constant,
+            routing.clone(),
+            Box::new(set),
+            precision,
+        );
+        let key = CfKey { group: 0, cube: 0 };
+        // A sample anchored on the grid's last column, whose support
+        // overruns it.
+        let cell = 1.0 / geometry.scale()[0];
+        let mut block = SampleBuffer::new(2);
+        block.push(
+            Placement {
+                u: 31.0 * cell,
+                v: 0.0,
+                w: 0.0,
+                prediction_w_positive: false,
+                phase: 0.0,
+                plane: 0,
+                spectral: 0.0,
+                cf: key,
+                gradient: [0.0, 0.0],
+            },
+            &[Complex32::new(1.0, 0.0); 2],
+            &[1.0; 2],
+        );
+        let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::ALL);
+        let mut backend = CpuBackend::new();
+        let mut grid = |acc: &mut _| {
+            backend.apply(
+                &block.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode: Mode::Data,
+                    acc,
+                },
+            )
+        };
+        // The first call grows what the accumulator and the backend keep
+        // (an f32 grid's rounding-loss cells, a power per term); the law
+        // measures a second.
+        grid(&mut acc).expect("grid");
+        let (peak, left, result) = measure(|| grid(&mut acc));
+        result.expect("grid");
+        assert!(
+            peak <= stated,
+            "{precision:?}: the clipped spread held {peak}, stated {stated}"
+        );
+        assert_eq!(left, 0, "{precision:?}: the call keeps nothing");
     }
 }
 
@@ -480,6 +586,9 @@ fn aw_open(root: &std::path::Path, bound: usize) -> AwCatalog {
     let indexing = AwIndexing {
         conjugate_beams: false,
         image_reference_hz: 1.5e9,
+        pa_tolerance_rad: 360.0_f32.to_radians(),
+        feed_zero_angles_rad: None,
+        rotation: None,
     };
     let geometry = geometry(64, 1.0e-4, GridPadding::None);
     AwCatalog::open_casa(root, indexing, &geometry, &routing, bound).expect("open")
@@ -576,4 +685,253 @@ fn concurrent_holders_hold_at_most_their_charge() {
         peak <= charge,
         "{WORKERS} workers held {peak}, charged {charge}"
     );
+}
+
+#[test]
+fn awp2_stages_hold_at_most_what_they_state() {
+    if !alone("awp2_stages_hold_at_most_what_they_state") {
+        return;
+    }
+    for (side, cell_arcsec, single_field, frequencies, w_planes) in [
+        (100, 8.0_f64, true, &[1.0e9, 1.5e9][..], &[0.0][..]),
+        (512, 10.0_f64, false, &[1.5e9][..], &[0.0][..]),
+        (
+            1200,
+            1.6_f64,
+            false,
+            &[1.2e9, 1.3e9, 1.4e9, 1.5e9, 1.6e9][..],
+            &[0.0, 2_152.12, 8_608.48, 19_369.08, 34_433.92, 53_803.0][..],
+        ),
+    ] {
+        let geometry = geometry(side, cell_arcsec.to_radians() / 3600.0, GridPadding::None);
+        check_awp2_stages(&geometry, single_field, frequencies, w_planes, &[]);
+    }
+}
+
+#[test]
+fn awp2_squint_groups_hold_at_most_what_they_state() {
+    if !alone("awp2_squint_groups_hold_at_most_what_they_state") {
+        return;
+    }
+    let geometry = geometry(1200, 1.6_f64.to_radians() / 3600.0, GridPadding::None);
+    check_awp2_stages(
+        &geometry,
+        false,
+        &[1.2e9, 1.5e9],
+        &[0.0, 53_803.0],
+        &[-3.0, -1.5, 0.0, 1.5, 3.0],
+    );
+}
+
+fn check_awp2_stages(
+    geometry: &GridGeometry,
+    single_field: bool,
+    frequencies: &[f64],
+    w_planes: &[f64],
+    pa_centres: &[f64],
+) {
+    let sampling = if pa_centres.is_empty() {
+        casa_imaging_operator::Awp2Sampling::new(geometry, single_field)
+    } else {
+        casa_imaging_operator::Awp2Sampling::squinted(geometry)
+    }
+    .unwrap();
+    let surface = EvlaDishSurface::new(
+        (0..=1250)
+            .map(|i| {
+                let r = f64::from(i) / 100.0;
+                [r, 0.028 * r * r, 0.056 * r]
+            })
+            .collect(),
+    )
+    .unwrap();
+    let screens_bytes = sampling.screens_bytes(frequencies.len(), w_planes.len(), pa_centres.len());
+    let (screen_peak, _, screens) = measure(|| {
+        sampling
+            .screens(frequencies, surface, single_field, w_planes, pa_centres)
+            .unwrap()
+    });
+    assert!(
+        screen_peak <= screens_bytes,
+        "aperture scratch {screen_peak} exceeds {screens_bytes}"
+    );
+    let kernel_bytes = screens.kernel_bytes(geometry);
+    let polarization = if pa_centres.is_empty() {
+        routing()
+    } else {
+        PolarizationRouting::compile(
+            &[Correlation::RR, Correlation::LL],
+            &[
+                PolarizationCoordinate::StokesI,
+                PolarizationCoordinate::StokesV,
+            ],
+        )
+        .unwrap()
+    };
+    let (peak, _, set) = measure(|| {
+        screens.finish(
+            geometry,
+            &polarization,
+            frequencies.into(),
+            w_planes.into(),
+            1.5e9,
+            (pa_centres.into(), 0.0),
+        )
+    });
+    assert!(
+        peak <= kernel_bytes,
+        "kernel construction {peak} exceeds {kernel_bytes}"
+    );
+    if !pa_centres.is_empty() {
+        check_awp2_squint_routing(&set);
+    } else if w_planes.len() > 1 {
+        check_awp2_routing(&set);
+    }
+    // The screens were already live at the start of construction. Take
+    // another baseline after dropping the set to measure its retained heap.
+    let before_drop = LIVE.load(Ordering::Relaxed);
+    let resident = set.resident_bytes();
+    drop(set);
+    let measured = before_drop - LIVE.load(Ordering::Relaxed);
+    assert_eq!(
+        measured, resident,
+        "all resident AWP2 data and weight taps stay charged"
+    );
+    eprintln!(
+        "AWP2 aperture {screen_peak}/{screens_bytes} B, kernel construction {peak}/{kernel_bytes} B, resident {resident} B"
+    );
+}
+
+fn check_awp2_routing(set: &casa_imaging_operator::Awp2) {
+    let row = RowContext {
+        native_frequency_ratio: 1.0,
+        original_uvw_m: None,
+        time_s: 0.0,
+        antennas: [0, 1],
+        antenna_types: [0; 2],
+        parallactic_angle_rad: [0.0; 2],
+        field: 0,
+        spectral_window: 0,
+    };
+    let lo = set.key(&row, 1.2e9, 5_800.0 * 1.2 / 1.5);
+    let hi = set.key(&row, 1.6e9, -5_800.0 * 1.6 / 1.5);
+    assert_eq!(
+        (lo.group, hi.group),
+        (2, 2),
+        "W uses the row mean frequency"
+    );
+    assert_eq!((lo.cube, hi.cube), (0, 4), "A uses the sample frequency");
+    let set_tap = |key: CfKey, psf: bool| {
+        let mut hold = CellHold::new();
+        let layout = if psf {
+            set.psf_taps(key, &mut hold)
+        } else {
+            set.taps(key, &mut hold)
+        };
+        let TapLayout::Dense { data, .. } = layout else {
+            panic!("AWP2 uses dense taps");
+        };
+        data.iter().map(|v| f64::from(v.im).abs()).sum::<f64>()
+    };
+    assert_eq!(
+        set_tap(lo, true),
+        set_tap(CfKey { group: 0, ..lo }, false),
+        "PSF uses W=0 imaging taps"
+    );
+    assert_ne!(set_tap(lo, true), set_tap(lo, false));
+}
+
+fn check_awp2_squint_routing(set: &casa_imaging_operator::Awp2) {
+    let row = RowContext {
+        native_frequency_ratio: 1.0,
+        original_uvw_m: None,
+        time_s: 0.0,
+        antennas: [0, 1],
+        antenna_types: [0; 2],
+        parallactic_angle_rad: [2.25; 2],
+        field: 0,
+        spectral_window: 0,
+    };
+    let key = set.key(&row, 1.2e9, 53_803.0);
+    assert_eq!(
+        key,
+        CfKey { group: 1, cube: 6 },
+        "PA tie and half-turn prediction"
+    );
+    let other_pa = set.key(
+        &RowContext {
+            parallactic_angle_rad: [0.0; 2],
+            ..row
+        },
+        1.2e9,
+        53_803.0,
+    );
+    assert_eq!(
+        other_pa,
+        CfKey { group: 5, cube: 0 },
+        "prediction wraps at -π"
+    );
+    let mut hold = CellHold::new();
+    let mut expected_hold = CellHold::new();
+    fn data(layout: TapLayout<'_>) -> &[Complex32] {
+        match layout {
+            TapLayout::Dense { data, .. } => data,
+            _ => panic!("AWP2 uses dense taps"),
+        }
+    }
+    assert_eq!(
+        data(set.prediction_taps(key, &mut hold)),
+        data(set.taps(CfKey { group: 7, cube: 0 }, &mut expected_hold)),
+        "prediction changes PA while retaining frequency and W",
+    );
+    assert_eq!(
+        data(set.psf_taps(other_pa, &mut hold)),
+        data(set.taps(CfKey { group: 4, cube: 0 }, &mut expected_hold)),
+        "PSF uses W=0 at the same PA",
+    );
+    let zero = CfKey { group: 0, ..key };
+    let other_zero = CfKey {
+        group: 4,
+        ..other_pa
+    };
+    assert!(set.adjoint_conjugates(zero, Mode::Data, false));
+    assert!(!set.adjoint_conjugates(other_zero, Mode::Data, true));
+    assert!(set.adjoint_conjugates(key, Mode::Data, true));
+    assert!(!set.adjoint_conjugates(key, Mode::Data, false));
+    assert!(set.adjoint_conjugates(key, Mode::Psf, false));
+    assert!(!set.adjoint_conjugates(other_pa, Mode::Psf, true));
+    assert!(!set.adjoint_conjugates(other_pa, Mode::Weight, true));
+    assert!(set.prediction_conjugates(
+        CfKey {
+            group: 4,
+            ..other_pa
+        },
+        false
+    ));
+    assert!(!set.prediction_conjugates(CfKey { group: 0, ..key }, true));
+
+    let TapLayout::Dense {
+        data,
+        support,
+        mueller_planes,
+        ..
+    } = set.taps(key, &mut hold)
+    else {
+        panic!("AWP2 uses dense taps");
+    };
+    assert_eq!(mueller_planes, 2);
+    let span = usize::from(support[0]) * usize::from(support[1]);
+    assert_ne!(
+        &data[..span],
+        &data[span..2 * span],
+        "beam squint separates RR and LL"
+    );
+    for forward in [false, true] {
+        for positive in [false, true] {
+            assert_eq!(
+                set.mueller().table(positive, forward),
+                &[vec![Some(0), None], vec![None, Some(1)]],
+            );
+        }
+    }
 }

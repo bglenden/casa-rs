@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Normal states assembled from major-cycle pass images.
 //!
-//! A major-cycle pass yields unnormalised dirty or residual images, PSF
+//! A gridding pass yields unnormalised dirty or residual images, PSF
 //! moments and `sumwt` per output channel. [`PassNormalState`] writes them
 //! into the normal-state representation the minor cycle and products read:
 //! resident coefficient families for the constant and Taylor bases, paged
-//! channel planes for a channel-local basis. A refresh keeps the previous
-//! state's PSF, `sumwt` and validity and replaces only the residual.
+//! channel planes for a channel-local basis. A refresh replaces the residual
+//! and keeps the previous PSF, `sumwt` and validity. A standard MFS restart can
+//! refill an unfilled scalar sum from the same residual pass.
 
 use std::ops::Range;
 
@@ -20,7 +21,7 @@ use super::{
 };
 use crate::FinalNormalState;
 
-/// Unnormalised images of one image domain from one pass over a contiguous
+/// Images of one image domain from one pass over a contiguous
 /// range of output channels.
 ///
 /// Planes are x-major (`index = x · height + y`), the layout every
@@ -40,6 +41,8 @@ pub struct PassImages {
     /// Dirty or residual planes, one per data term.
     pub residual: Vec<f32>,
     /// PSF moment planes on an initial pass; `None` on a residual pass.
+    /// Gridding supplies raw PSFs. A restart reusing a single-term PSF
+    /// supplies its saved image values.
     pub psf: Option<Vec<f32>>,
     /// `sumwt` of the PSF gridding per PSF-moment plane on an initial pass;
     /// empty otherwise. It normalises the PSF and weight planes.
@@ -122,14 +125,15 @@ impl PassNormalState {
     /// A residual refresh of `previous`, with `previous`'s imaging weights:
     /// the PSF, `sumwt` and validity carry over; every residual plane must be
     /// appended again, and [`Self::finish`] requires the refresh to have
-    /// placed the samples `previous` placed.
+    /// placed the samples `previous` placed, when a pass placed them (a
+    /// state read from products placed none).
     pub(crate) fn refresh(
         problem: &CompiledProblem,
         previous: FinalNormalState,
         storage: NormalStoragePlan,
     ) -> Result<Self, NormalStateError> {
         let mut state = Self::initial(problem, storage)?;
-        state.refreshed_samples = Some(previous.sample_count());
+        state.refreshed_samples = Some(previous.sample_count()).filter(|&samples| samples > 0);
         match previous.primitives() {
             NormalStatePrimitives::ChannelLocal(domains) => {
                 for (target, domain) in state.domains.iter_mut().zip(domains.iter()) {
@@ -156,6 +160,15 @@ impl PassNormalState {
         Ok(state)
     }
 
+    pub(crate) fn needs_scalar_weight(&self) -> bool {
+        self.basis == SpectralBasisPlan::Constant
+            && self.polarizations == 1
+            && self.domains.iter().any(|state| {
+                matches!(state, DomainState::Coupled { domain, .. }
+                if domain.primitives.published_sum_weights[0] <= 0.0)
+            })
+    }
+
     /// Add one pass's images of one domain.
     ///
     /// A non-finite image value or `sumwt` is a generated non-finite value,
@@ -163,15 +176,28 @@ impl PassNormalState {
     /// policies differ only on non-finite inputs, which the source flags or
     /// rejects before gridding. Nothing is changed when an append fails
     /// validation.
-    pub(crate) fn append(&mut self, images: PassImages) -> Result<(), NormalStateError> {
+    pub(crate) fn append(
+        &mut self,
+        images: PassImages,
+        gridded_scalar_weight: Option<f64>,
+    ) -> Result<(), NormalStateError> {
         let index = images.domain;
         if self.shapes.get(index) != Some(&images.shape)
             || images.polarizations != self.polarizations
         {
             return Err(NormalStateError::ProblemMismatch);
         }
-        if !all_finite(&images) {
+        if !all_finite(&images)
+            || gridded_scalar_weight.is_some_and(|weight| !(weight as f32).is_finite())
+        {
             return Err(NormalStateError::GeneratedNonfinite);
+        }
+        if gridded_scalar_weight.is_some()
+            && (self.basis != SpectralBasisPlan::Constant
+                || self.polarizations != 1
+                || !matches!(self.domains[index], DomainState::Coupled { .. }))
+        {
+            return Err(NormalStateError::ProblemMismatch);
         }
         if let DomainState::Channels {
             domain,
@@ -191,6 +217,15 @@ impl PassNormalState {
             let primitives = &mut domain.primitives;
             if images.psf.is_some() || images.residual.len() != primitives.dirty.len() {
                 return Err(NormalStateError::ProblemMismatch);
+            }
+            if let Some(sum) = gridded_scalar_weight
+                && primitives.published_sum_weights[0] <= 0.0
+            {
+                let sum = f64::from(sum as f32);
+                primitives.sum_weights[0] = sum;
+                primitives.published_sum_weights[0] = sum;
+                primitives.validity[0] = validity(sum, sum);
+                domain.refilled_sum_weight = true;
             }
             primitives.dirty = widen(&images.residual);
             *refreshed = true;
@@ -214,6 +249,13 @@ impl PassNormalState {
                 Ok(())
             }
         }
+    }
+
+    /// The completed state of images read rather than gridded, and the
+    /// samples it stands for: those of the state it refreshed, or none.
+    pub(crate) fn finish_read(mut self) -> Result<(NormalStatePrimitives, u64), NormalStateError> {
+        let samples = self.refreshed_samples.take().unwrap_or(0);
+        Ok((self.finish(samples)?, samples))
     }
 
     /// The completed state of a pass that placed `samples`. Every domain's
@@ -285,7 +327,11 @@ impl PassNormalState {
         {
             return Err(NormalStateError::InvalidSlab);
         }
-        let validity = sum_weights.iter().map(|weight| validity(*weight)).collect();
+        let validity = sum_weights
+            .iter()
+            .zip(&published_sum_weights)
+            .map(|(weight, published)| validity(*weight, *published))
+            .collect();
         Ok(SpectralDomainPrimitives::new(
             domain,
             self.roles[domain].clone(),
@@ -364,7 +410,8 @@ impl PassNormalState {
         };
         let validity = sum_weights[..polarizations]
             .iter()
-            .map(|weight| validity(*weight))
+            .zip(&published_sum_weights[..polarizations])
+            .map(|(weight, published)| validity(*weight, *published))
             .collect();
         Ok(SpectralDomainPrimitives::new(
             domain,
@@ -405,9 +452,11 @@ fn all_finite(images: &PassImages) -> bool {
 }
 
 /// A plane whose accumulated weight is zero is unmapped whether or not
-/// samples reached it: nothing downstream distinguishes the two cases.
-fn validity(sum_weight: f64) -> SpectralChannelValidity {
-    if sum_weight > 0.0 {
+/// samples reached it: nothing downstream distinguishes the two cases. So
+/// is a plane whose published `.sumwt` is at most CASA's empty-plane bound,
+/// which CASA zeroes rather than divides ([`super::casa_divides_plane`]).
+fn validity(sum_weight: f64, published_sum_weight: f64) -> SpectralChannelValidity {
+    if sum_weight > 0.0 && super::casa_divides_plane(published_sum_weight) {
         SpectralChannelValidity::Valid
     } else {
         SpectralChannelValidity::Unmapped
@@ -424,21 +473,21 @@ fn widen(values: &[f32]) -> Box<[Complex64]> {
 /// The coefficient basis of `problem`. A constant or Taylor basis needs a
 /// linear spectral axis, whose reference frequency it expands about.
 fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, NormalStateError> {
-    let polynomial = |terms: usize| {
-        if matches!(
+    let basis = problem.reconstruction().basis();
+    if !matches!(basis, ReconstructionBasis::ChannelLocal { .. })
+        && matches!(
             problem.geometry().spectral().wcs(),
             SpectralWcs::Tabular { .. }
-        ) {
-            return Err(NormalStateError::UnsupportedProblem);
-        }
-        terms
-            .checked_mul(2)
-            .map(|_| SpectralBasisPlan::Polynomial { terms })
-            .ok_or(NormalStateError::ResidencyOverflow)
-    };
-    match problem.reconstruction().basis() {
+        )
+    {
+        return Err(NormalStateError::UnsupportedProblem);
+    }
+    match basis {
         ReconstructionBasis::ChannelLocal { .. } => Ok(SpectralBasisPlan::ChannelLocal),
-        ReconstructionBasis::Constant => polynomial(1),
-        ReconstructionBasis::Taylor { terms } => polynomial(terms),
+        ReconstructionBasis::Constant => Ok(SpectralBasisPlan::Constant),
+        ReconstructionBasis::Taylor { terms } => terms
+            .checked_mul(2)
+            .map(|_| SpectralBasisPlan::Taylor { terms })
+            .ok_or(NormalStateError::ResidencyOverflow),
     }
 }

@@ -1,0 +1,416 @@
+{
+ "schema": "simobserve-casa-suite-receipt/1",
+ "work_issue": 1053,
+ "date": "2026-11-03",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "host": "bg-mac-mini, macOS arm64",
+ "test_file": "casatasks/tests/tasks/test_task_simobserve.py (CASA 6.7.6.14 source)",
+ "command": "CASAPY tools/simulation/simobserve_casa_suite.py --test-file ... --casatestdata ... --casars-bin TARGET/release/simobserve --out OUT",
+ "summary": {
+  "casa": {
+   "passed": 54,
+   "failed": 23,
+   "skipped": 16
+  },
+  "casa-rs": {
+   "passed": 45,
+   "failed": 32,
+   "skipped": 16
+  }
+ },
+ "tests": {
+  "simobserve_badinputs::testBad_Tground": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_badinputs::testBad_Tsky": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_badinputs::testBad_antennalist": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_caldirection": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: None",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: None"
+  },
+  "simobserve_badinputs::testBad_calflux": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_comp_nchan": {
+   "casa": "passed",
+   "casa-rs": "failed: RuntimeError: parameter \"comp_nchan\": invalid parameter type: value Float(-1.0) does not match Integer | AssertionError: -1 == -1 : Unexpected exception was thrown: parameter \"comp_nchan\": invalid parameter type: value Float(-1.0) does not match Integer"
+  },
+  "simobserve_badinputs::testBad_complist": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_badinputs::testBad_compwidth": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_direction": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: None",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: None"
+  },
+  "simobserve_badinputs::testBad_graphics": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_badinputs::testBad_hourangle": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_inbright": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_incell": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_incenter": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: None",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: None"
+  },
+  "simobserve_badinputs::testBad_indirection": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: None",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: None"
+  },
+  "simobserve_badinputs::testBad_integration": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_inwidth": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: None",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: None"
+  },
+  "simobserve_badinputs::testBad_leakage": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_badinputs::testBad_mapsize": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_maptype": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_badinputs::testBad_noisetype": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_badinputs::testBad_obsmode": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_badinputs::testBad_ptgfile": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_pwv": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_badinputs::testBad_refdate": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: KeyError: 'm0' | AssertionError: -1 == -1 : Unexpected exception was thrown: 'm0'"
+  },
+  "simobserve_badinputs::testBad_sdant": {
+   "casa": "passed",
+   "casa-rs": "failed: RuntimeError: parameter \"sdant\": invalid parameter type: value String(\"badname\") does not match Integer | AssertionError: -1 == -1 : Unexpected exception was thrown: parameter \"sdant\": invalid parameter type: value String(\"badname\") does not match Integer"
+  },
+  "simobserve_badinputs::testBad_sdantlist": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_skymodel": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_badinputs::testBad_spacing": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::testBad_tau0": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_badinputs::testBad_totaltime": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::test_default": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_badinputs::test_noProject": {
+   "casa": "passed",
+   "casa-rs": "failed: RuntimeError: : No such file or directory (os error 2) | AssertionError: -1 == -1 : Unexpected exception was thrown: : No such file or directory (os error 2)"
+  },
+  "simobserve_badinputs::test_notComp": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::test_notImage": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::test_notPtgfile": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_comp::testComp_almaptg": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_comp::testComp_complist": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_comp::testComp_hexptg": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_comp::testComp_intAll": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_comp::testComp_intLeak": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_comp::testComp_intNchan": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_comp::testComp_intObs": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_comp::testComp_plp": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_comp::testComp_sdAll": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_comp::testComp_sdObs": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_comp::testComp_sqptg": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ACA::test_correlator_ACASpec_With_ACA": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ACA::test_correlator_ACA_With_ACA": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ACA::test_correlator_BLC_4x4bit_With_ACA": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ACA::test_correlator_BLC_With_ACA": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ALMA::test_correlator_ACASpec_With_ALMA": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ALMA::test_correlator_ACA_With_ALMA": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ALMA::test_correlator_BLC_4x4bit_With_ALMA": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ALMA::test_correlator_BLC_With_ALMA": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ALMASD::test_correlator_ACASpec_With_ALMASD": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ALMASD::test_correlator_ACA_With_ALMASD": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ALMASD::test_correlator_BLC_4x4bit_With_ALMASD": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_correlator_ALMASD::test_correlator_BLC_With_ALMASD": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_noise::testNZ_intAtm": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_noise::testNZ_intMan": {
+   "casa": "passed",
+   "casa-rs": "failed: AssertionError: np.False_ is not true : The noise level differs from the previous value: 9.220253 (previous: 9.784518)"
+  },
+  "simobserve_noise::testNZ_intMan_Leak": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_noise::testNZ_sdAtm": {
+   "casa": "passed",
+   "casa-rs": "failed: AssertionError: np.False_ is not true : The noise level differs from the previous value: 1.121621 (previous: 1.067681)"
+  },
+  "simobserve_noise::testNZ_sdAtm_dnu": {
+   "casa": "passed",
+   "casa-rs": "failed: AssertionError: np.False_ is not true : The noise level differs from the previous value: 3.552916 (previous: 3.382055)"
+  },
+  "simobserve_noise::testNZ_sdAtm_el": {
+   "casa": "passed",
+   "casa-rs": "failed: AssertionError: np.False_ is not true : The noise level differs from the previous value: 1.202959 (previous: 1.145133)"
+  },
+  "simobserve_noise::testNZ_sdAtm_pwv": {
+   "casa": "passed",
+   "casa-rs": "failed: AssertionError: np.False_ is not true : The noise level differs from the previous value: 1.600239 (previous: 1.523367)"
+  },
+  "simobserve_noise::testNZ_sdAtm_tint": {
+   "casa": "passed",
+   "casa-rs": "failed: AssertionError: np.False_ is not true : The noise level differs from the previous value: 1.585878 (previous: 1.509632)"
+  },
+  "simobserve_noise::testNZ_sdMan": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_noise::testNZ_sdMan_dnu": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_noise::testNZ_sdMan_el": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_noise::testNZ_sdMan_tau": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_noise::testNZ_sdMan_tint": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_sky::testSky_almaptg": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_sky::testSky_hexptg": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_sky::testSky_intAll": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_sky::testSky_intLeak": {
+   "casa": "failed: AssertionError: False != True : MS statistic 'firstquartile' does not match: -0.0008169009815901518 (expected: -0.0008290240075439215)",
+   "casa-rs": "failed: AssertionError: False != True : MS statistic 'mean' does not match: -7.147832642964901e-06 (expected: -9.716108493011746e-06)"
+  },
+  "simobserve_sky::testSky_intLeak_noise": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_sky::testSky_intObs": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_sky::testSky_intObs_namedAntlist": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_sky::testSky_sdAll": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_sky::testSky_sdObs": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_sky::testSky_sdObs_noise": {
+   "casa": "failed: AssertionError: False != True : output file /Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-data/casatestdata-local/unittest/simobserve/ref_sky/ref_sky.aca.tp.noisy.sd.ms was not created because of the task failure",
+   "casa-rs": "failed: AssertionError: False != True : output file /Volumes/Extra Storage (not encrypted)/SoftwareProjects/casa-rs-data/casatestdata-local/unittest/simobserve/ref_sky/ref_sky.aca.tp.noisy.sd.ms was not created because of the task failure"
+  },
+  "simobserve_sky::testSky_skymodel": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_sky::testSky_sqptg": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_skycomp::testSC_almaptg": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_skycomp::testSC_hexptg": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_skycomp::testSC_intAll": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_skycomp::testSC_intLeak": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_skycomp::testSC_intObs": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_skycomp::testSC_sdAll": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_skycomp::testSC_sdObs": {
+   "casa": "skipped",
+   "casa-rs": "skipped"
+  },
+  "simobserve_skycomp::testSC_skymodel": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_skycomp::testSC_sqptg": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  }
+ },
+ "data": "casatestdata unittest/simobserve, copied to local disk (casatools cannot lock the NAS share)",
+ "classification": {
+  "both_pass": 45,
+  "both_fail": 23,
+  "both_skipped": 16,
+  "casa_only_pass": {
+   "refusal_wording": [
+    "simobserve_badinputs::test_noProject (CASA: \"No such file or directory: ''\")",
+    "simobserve_badinputs::testBad_comp_nchan and testBad_sdant (CASA: \"must be of cInt type\")"
+   ],
+   "noise_level": [
+    "simobserve_noise::testNZ_intMan: tsys-manual interferometer noise 5.8% below CASA's recorded value (limit 5%)",
+    "simobserve_noise::testNZ_sdAtm and its pwv, dnu, tint and el variants: tsys-atm single-dish noise 5.05% above CASA's recorded value in all five (limit 5%)"
+   ]
+  },
+  "note": "casa-rs refuses the bad inputs as CASA does, in its own words. The noise differences are not yet attributed; candidates are the recorded tsys-manual and tsys-atm deviations (stale airmass with tau0=1, the atmosphere half a band below each channel)."
+ }
+}

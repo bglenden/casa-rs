@@ -1,0 +1,96 @@
+{
+  "source": {
+    "purpose": "Joint Clark over Stokes and a blank channel, compared with CASA 6.7.6.14 (issue 1140)."
+  },
+  "inputs": {
+    "refim_point_linRL.ms": "unittest/tclean/refim_point_linRL.ms"
+  },
+  "common": {},
+  "cases": {
+    "healthy_clark_i": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "im",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "gain": 0.17,
+        "stokes": "I",
+        "specmode": "cube",
+        "nchan": 1,
+        "niter": 20,
+        "deconvolver": "clark",
+        "start": 1,
+        "width": 1
+      },
+      "note": "Healthy channel Clark, Stokes I (#1140)"
+    },
+    "healthy_clark_iv": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "im",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "gain": 0.17,
+        "stokes": "IV",
+        "specmode": "cube",
+        "nchan": 1,
+        "niter": 20,
+        "deconvolver": "clark",
+        "start": 1,
+        "width": 1
+      },
+      "note": "Healthy channel Clark, Stokes IV (#1140)"
+    },
+    "healthy_clark_iquv_one": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "im",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "gain": 0.17,
+        "stokes": "IQUV",
+        "specmode": "cube",
+        "nchan": 1,
+        "niter": 1,
+        "deconvolver": "clark",
+        "start": 1,
+        "width": 1
+      },
+      "note": "One joint Clark component over IQUV (#1140)"
+    },
+    "healthy_plus_blank": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "im",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "gain": 0.17,
+        "stokes": "IV",
+        "specmode": "cube",
+        "nchan": 2,
+        "niter": 20,
+        "deconvolver": "clark",
+        "start": 1,
+        "width": 2
+      },
+      "note": "Joint IV Clark with an out-of-band blank channel (#1140)"
+    },
+    "healthy_clark_iquv_twenty": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "im",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "gain": 0.17,
+        "stokes": "IQUV",
+        "specmode": "cube",
+        "nchan": 1,
+        "niter": 20,
+        "deconvolver": "clark",
+        "start": 1,
+        "width": 1
+      },
+      "note": "Twenty joint Clark iterations over IQUV (#1140)"
+    }
+  }
+}

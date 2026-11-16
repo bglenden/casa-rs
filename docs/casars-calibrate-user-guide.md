@@ -12,7 +12,7 @@ application catalog exposes it as these task surfaces:
   `export_corrected_data`, `fluxscale`, `gencal`, `solve_bandpass`,
   `solve_gain`, `stats`, or `summary`
 - `gaincal`, `bandpass`, `applycal`, `fluxscale`, `gencal`: CASA's tasks,
-  with CASA 6.7.6's parameters, defaults and values (#931)
+  with CASA 6.7.6's parameters, defaults and values
 
 Every surface is a one-shot task. Run it as `calibrate <surface>`
 (`calibrate bandpass --ms ...`; `calibrate` alone is the general surface),
@@ -42,7 +42,7 @@ Recommended reference antenna: `VA15`.
 
 ```bash
 workdir=$(mktemp -d /tmp/casars-cal.XXXXXX)
-cp -R "$HOME/SoftwareProjects/casatestdata/measurementset/vla/ngc5921.ms" "$workdir/ngc5921.ms"
+cp -R /path/to/casatestdata/measurementset/vla/ngc5921.ms "$workdir/ngc5921.ms"
 cd "$workdir"
 ```
 
@@ -135,5 +135,3 @@ existing caltable, is [#945](https://github.com/bglenden/casa-rs/issues/945).
 ## Current limitations
 
 - there is not yet a dedicated `setjy` task
-- multi-field role assignment and more sophisticated workflows need more
-  polish than the basic `ngc5921.ms` path

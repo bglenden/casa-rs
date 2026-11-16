@@ -1,0 +1,39 @@
+{
+  "casa_version": "6.7.6-14",
+  "record": {
+    "bool": {
+      "dtype": "bool",
+      "shape": [
+        0
+      ]
+    },
+    "complex": {
+      "dtype": "complex128",
+      "shape": [
+        2,
+        0,
+        3
+      ]
+    },
+    "float": {
+      "dtype": "float64",
+      "shape": [
+        2,
+        0
+      ]
+    },
+    "int": {
+      "dtype": "int64",
+      "shape": [
+        0,
+        2
+      ]
+    },
+    "string": {
+      "dtype": "<U5",
+      "shape": [
+        0
+      ]
+    }
+  }
+}

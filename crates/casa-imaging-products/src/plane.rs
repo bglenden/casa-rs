@@ -17,9 +17,6 @@ use crate::normalization::{MosaicSensitivity, normalize_plane, normalized_psf_va
 use crate::plan::{AnalyticPrimaryBeamModel, PlannedMember};
 use crate::restore::{rescale_residual_to_beam, restore_model_plane};
 use crate::source::ContinuumProductInputs;
-use crate::taylor::{
-    analytic_alma_airy_primary_beam, analytic_evla_primary_beam, analytic_vla_primary_beam,
-};
 
 pub(crate) struct PlaneMemberRequest<'request, 'inputs, 'plane> {
     pub(crate) member: &'request PlannedMember,
@@ -27,6 +24,9 @@ pub(crate) struct PlaneMemberRequest<'request, 'inputs, 'plane> {
     pub(crate) plane: &'request FinalNormalPlaneReader<'plane>,
     pub(crate) domain_ordinal: usize,
     pub(crate) polarization: usize,
+    pub(crate) reuses_single_psf: bool,
+    pub(crate) saved_weighted_residual: bool,
+    pub(crate) saved_cube_model_plane: Option<&'request ndarray::ArrayD<f32>>,
     pub(crate) fitted_beam: Option<RestoringBeam>,
     pub(crate) restoring_beam: Option<RestoringBeam>,
     pub(crate) primary_beam_model: Option<AnalyticPrimaryBeamModel>,
@@ -53,16 +53,22 @@ pub(crate) fn produce_plane_member(
     match member.role {
         ProductRole::Psf(casa_imaging_model::ProductTerm::Single)
         | ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(0)) => {
-            if valid {
-                let mut values = psf_real_plane(plane)?;
-                let peak = psf_peak(values.iter().copied())?;
-                for value in &mut values {
-                    *value = normalized_psf_value(*value, peak);
-                }
-                Ok(values)
-            } else {
-                Ok(vec![0.0; cells])
+            // `SIImageStore::normPSF` divides each plane by its own peak, or
+            // zeroes it when the peak is at most 1e-7, whatever the plane's
+            // `sumwt`: a Stokes plane no correlation feeds keeps the PSF its
+            // conversion gives it (Stokes I's).
+            let mut values = psf_real_plane(plane)?;
+            if request.reuses_single_psf {
+                return Ok(values);
             }
+            let peak = psf_peak(values.iter().copied())?;
+            if !psf_normalizes(peak) {
+                return Ok(vec![0.0; cells]);
+            }
+            for value in &mut values {
+                *value = normalized_psf_value(*value, peak);
+            }
+            Ok(values)
         }
         ProductRole::Residual(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
@@ -104,28 +110,44 @@ pub(crate) fn produce_plane_member(
             .collect()),
         ProductRole::RestoredImage(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        ) => {
-            if !valid {
-                return Ok(invalid_residual());
-            }
-            restored_plane(request)
-        }
+        ) => restored_plane(request, valid),
         ProductRole::PrimaryBeam(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        ) => primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane),
+        ) => primary_beam_plane(
+            primary_beam_model,
+            inputs,
+            member.axes().domain(),
+            plane,
+            request.polarization,
+        ),
         ProductRole::PbCorrectedImage(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => {
-            if !valid {
-                return Ok(invalid_residual());
+            // `SIImageStore::pbcor` leaves a plane zero only where the PB's
+            // peak is: a blank plane's restored start model is corrected.
+            let restored = restored_plane(request, valid)?;
+            if let Some(beam) = inputs.saved_mosaic_beam() {
+                // `SIImageStore::pbcor` uses the saved PB values, testing
+                // positivity rather than the new residual's pblimit.
+                let values = beam.read_values(plane.output_channel(), request.polarization)?;
+                return correct_primary_beam(&restored, &values, 0.0);
             }
-            let restored = restored_plane(request)?;
-            let primary_beam =
-                primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane)?;
+            let primary_beam = primary_beam_plane(
+                primary_beam_model,
+                inputs,
+                member.axes().domain(),
+                plane,
+                request.polarization,
+            )?;
             correct_primary_beam(
                 &restored,
                 &primary_beam,
-                inputs.problem().products().validity().primary_beam(),
+                inputs
+                    .problem()
+                    .products()
+                    .validity()
+                    .primary_beam()
+                    .cutoff(),
             )
         }
         role => Err(ProductsError::UnsupportedProductRole { role }),
@@ -140,56 +162,84 @@ fn normalize_domain_plane(
 ) -> Result<Vec<f32>, ProductsError> {
     match normalization {
         ProductNormalization::UnitResponse => Ok(normalize_plane(values, plane.sum_weight())),
-        ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
-            MosaicSensitivity::new(&plane.read_sensitivity()?)?.normalize(
+        ProductNormalization::FlatNoise
+        | ProductNormalization::FlatSky
+        | ProductNormalization::PbSquare => MosaicSensitivity::new(&plane.read_sensitivity()?)?
+            .normalize(
                 values,
                 normalization,
                 inputs.problem().products().validity().primary_beam(),
-            )
-        }
+            ),
     }
 }
 
-/// The model in the units CASA restores and publishes: under flat-noise
-/// with a direction-dependent sensitivity the apparent model, the physical
-/// model the lifecycle holds times the unit-peak beam and zero outside its
-/// support (`SynthesisNormalizer::multiplyModelByWeight` after every major
-/// cycle); the physical model otherwise (flat-sky, or a scalar
-/// sensitivity).
+/// The model in the units CASA restores and publishes: under flat noise or
+/// pbsquare with a direction-dependent sensitivity the apparent model, the
+/// physical model the lifecycle holds through the unit-peak PB (flat
+/// noise) or PB² (pbsquare) and zero outside its support
+/// (`SynthesisNormalizer::multiplyModelByWeight` after every major cycle);
+/// the physical model otherwise (flat-sky, or a scalar sensitivity).
 pub(crate) fn apparent_model(
     model: Vec<f32>,
     plane: &FinalNormalPlaneReader<'_>,
     normalization: ProductNormalization,
     policy: casa_imaging_model::PrimaryBeamValidityPolicy,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    saved: Option<&ndarray::ArrayD<f32>>,
 ) -> Result<Vec<f32>, ProductsError> {
     if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         || !matches!(
             normalization,
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+            ProductNormalization::FlatNoise
+                | ProductNormalization::FlatSky
+                | ProductNormalization::PbSquare
         )
     {
         return Ok(model);
     }
+    // A Stokes plane no correlation feeds holds no model; CASA leaves it as
+    // it is: the mosaic's sensitivity is shared by every Stokes plane, but
+    // such a plane's sum of weights is zero (`StokesImageUtil::ToStokesSumWt`).
+    let sum_weight = plane.sum_weight();
+    if !sum_weight.is_finite() || sum_weight <= 0.0 {
+        return Ok(model);
+    }
+    // Nor does a plane no sample reached.
     let sensitivity = plane.read_sensitivity()?;
-    // A plane no sample reached holds no model; CASA leaves it as it is.
     let Some(response) = MosaicSensitivity::try_new(&sensitivity)? else {
         return Ok(model);
     };
-    let response = response.with_normal_sum_weight(plane.sum_weight())?;
+    let response = response.with_normal_sum_weight(sum_weight)?;
     model
         .into_iter()
         .enumerate()
         .map(|(index, value)| {
-            Ok(
-                response.physical_to_apparent(f64::from(value), index, normalization, policy)?
-                    as f32,
-            )
+            Ok(response.physical_to_apparent_or(
+                f64::from(value),
+                index,
+                normalization,
+                policy,
+                || {
+                    saved.map_or(0.0, |saved| {
+                        let height = plane.shape()[1];
+                        f64::from(saved[&[index / height, index % height, 0, 0][..]])
+                    })
+                },
+            )? as f32)
         })
         .collect()
 }
 
-fn restored_plane(request: &PlaneMemberRequest<'_, '_, '_>) -> Result<Vec<f32>, ProductsError> {
+/// The restored plane: the model convolved with the restoring beam plus
+/// the residual rescaled to it. A plane without valid weights has no
+/// residual, and its restored image is the model convolved with its
+/// restoring beam where it has one, as `SIImageStore::restore` restores
+/// every plane whatever its weights: a start model regridded onto a
+/// channel no sample reaches is restored there. Without a beam it is zero.
+fn restored_plane(
+    request: &PlaneMemberRequest<'_, '_, '_>,
+    valid: bool,
+) -> Result<Vec<f32>, ProductsError> {
     let PlaneMemberRequest {
         member,
         inputs,
@@ -200,37 +250,52 @@ fn restored_plane(request: &PlaneMemberRequest<'_, '_, '_>) -> Result<Vec<f32>, 
         restoring_beam,
         primary_beam_model,
         fft_threads,
+        ..
     } = *request;
     let unfitted = || {
         ProductsError::BeamFitFailed(
             "restoration requires a fitted beam for every valid plane".to_string(),
         )
     };
-    let beam = restoring_beam.ok_or_else(unfitted)?;
-    let fitted_beam = fitted_beam.ok_or_else(unfitted)?;
-    let model = apparent_model(
-        model_real_plane(
-            inputs.final_model(),
-            domain_ordinal,
-            plane.output_channel(),
-            polarization,
-            plane.shape(),
-        )?,
-        plane,
-        required_normalization(member),
-        inputs.problem().products().validity().primary_beam(),
-        primary_beam_model,
+    let cells = plane.shape()[0] * plane.shape()[1];
+    let beam = match (restoring_beam, valid) {
+        (Some(beam), _) => beam,
+        (None, false) => return Ok(vec![0.0; cells]),
+        (None, true) => return Err(unfitted()),
+    };
+    let model = model_real_plane(
+        inputs.final_model(),
+        domain_ordinal,
+        plane.output_channel(),
+        polarization,
+        plane.shape(),
     )?;
+    let model = if request.saved_weighted_residual {
+        model
+    } else {
+        apparent_model(
+            model,
+            plane,
+            required_normalization(member),
+            inputs.problem().products().validity().primary_beam(),
+            primary_beam_model,
+            request.saved_cube_model_plane,
+        )?
+    };
     let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain());
-    let residual = normalize_domain_plane(
-        &residual_real_plane(plane)?,
-        required_normalization(member),
-        plane,
-        inputs,
-    )?;
-    let residual =
+    let residual = if valid {
+        let fitted_beam = fitted_beam.ok_or_else(unfitted)?;
+        let residual = residual_real_plane(plane)?;
+        let residual = if request.saved_weighted_residual {
+            residual
+        } else {
+            normalize_domain_plane(&residual, required_normalization(member), plane, inputs)?
+        };
         rescale_residual_to_beam(&residual, plane.shape(), cell_size, fitted_beam, beam)?
-            .into_values();
+            .into_values()
+    } else {
+        vec![0.0; cells]
+    };
     Ok(restore_model_plane(
         &model,
         residual,
@@ -242,17 +307,22 @@ fn restored_plane(request: &PlaneMemberRequest<'_, '_, '_>) -> Result<Vec<f32>, 
     ))
 }
 
-/// The CLEAN mask's support on one domain: 1 where the minor cycle could
-/// clean, else 0; everywhere 1 without a mask.
+/// The CLEAN mask's support on one plane of one domain, channel `channel`
+/// and polarization `polarization`: 1 where the minor cycle could clean,
+/// else 0; everywhere 1 without a mask.
 pub(crate) fn reconstruction_support_plane(
     inputs: &ContinuumProductInputs<'_>,
     role: &ImageDomainRole,
+    (channel, polarization): (usize, usize),
     cells: usize,
 ) -> Vec<f32> {
-    let mask = reconstruction_mask_for_domain(inputs, role);
+    let plane = reconstruction_mask_for_domain(inputs, role).map(|mask| {
+        mask.plane(channel, polarization)
+            .expect("the run's reconstruction mask covers every plane of its domain")
+    });
     (0..cells)
         .map(|index| {
-            if mask.is_none_or(|mask| mask.support()[index]) {
+            if plane.is_none_or(|plane| plane[index]) {
                 1.0
             } else {
                 0.0
@@ -288,9 +358,18 @@ fn required_normalization(member: &PlannedMember) -> ProductNormalization {
         .expect("the product list normalizes residual, image and pbcor members")
 }
 
+/// Whether `SIImageStore::normPSF` divides a PSF plane by its `peak`
+/// rather than zeroing it: a Float peak above 1e-7.
+pub(crate) fn psf_normalizes(peak: f32) -> bool {
+    f64::from(peak) > casa_imaging_deconvolution::EMPTY_PLANE_SUM_WEIGHT
+}
+
 pub(crate) fn psf_real_plane(
     plane: &FinalNormalPlaneReader<'_>,
 ) -> Result<Vec<f32>, ProductsError> {
+    if let Some(real) = plane.read_psf_real()? {
+        return Ok(real.into_owned());
+    }
     Ok(plane
         .read_psf()?
         .iter()
@@ -299,6 +378,9 @@ pub(crate) fn psf_real_plane(
 }
 
 fn residual_real_plane(plane: &FinalNormalPlaneReader<'_>) -> Result<Vec<f32>, ProductsError> {
+    if let Some(real) = plane.read_residual_real()? {
+        return Ok(real.into_owned());
+    }
     Ok(plane
         .read_residual()?
         .iter()
@@ -311,7 +393,7 @@ pub(crate) fn product_plane_validity(
     plane: &FinalNormalPlaneReader<'_>,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     inputs: &ContinuumProductInputs<'_>,
-    domain_role: &ImageDomainRole,
+    (domain_role, polarization): (&ImageDomainRole, usize),
 ) -> Result<Vec<bool>, ProductsError> {
     let shape = plane.shape();
     match rule {
@@ -323,8 +405,11 @@ pub(crate) fn product_plane_validity(
             Ok(vec![valid; shape[0] * shape[1]])
         }
         ProductValidityRule::PrimaryBeam(policy) => {
+            if let Some(beam) = inputs.saved_mosaic_beam() {
+                return beam.read_mask(plane.output_channel(), polarization);
+            }
             Ok(
-                primary_beam_plane(primary_beam_model, inputs, domain_role, plane)?
+                primary_beam_plane(primary_beam_model, inputs, domain_role, plane, polarization)?
                     .into_iter()
                     .map(|value| match policy.comparison() {
                         ProductSupportComparison::StrictlyGreater => value > policy.cutoff(),
@@ -340,66 +425,54 @@ pub(crate) fn product_plane_validity(
     }
 }
 
-fn primary_beam_plane(
+pub(crate) fn primary_beam_plane(
     model: Option<AnalyticPrimaryBeamModel>,
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &ImageDomainRole,
     plane: &FinalNormalPlaneReader<'_>,
+    polarization: usize,
 ) -> Result<Vec<f32>, ProductsError> {
-    match model {
-        Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
-            analytic_evla_primary_beam(inputs, domain_role, plane.shape(), plane.output_channel())
-        }
-        Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
-            analytic_vla_primary_beam(inputs, domain_role, plane.shape(), plane.output_channel())
-        }
-        Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => analytic_alma_airy_primary_beam(
-            inputs,
-            domain_role,
-            plane.shape(),
-            plane.output_channel(),
-            10.7,
-        ),
-        Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => analytic_alma_airy_primary_beam(
-            inputs,
-            domain_role,
-            plane.shape(),
-            plane.output_channel(),
-            6.25,
-        ),
-        Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
-            let shape = plane.shape();
-            Ok(
-                MosaicSensitivity::try_new(&plane.read_sensitivity()?)?.map_or_else(
-                    || vec![0.0; shape[0] * shape[1]],
-                    |sensitivity| sensitivity.primary_beam(),
-                ),
-            )
-        }
-        None => unreachable!("planning refuses a PB product or mask without a primary-beam model"),
+    if let Some(beam) = inputs.saved_mosaic_beam() {
+        return beam.read_values(plane.output_channel(), polarization);
     }
+    let model = model.expect("planning refuses a PB product or mask without a primary-beam model");
+    if let Some(beam) = inputs.analytic_primary_beam(model) {
+        return beam.plane(domain_role, plane.output_channel());
+    }
+    let shape = plane.shape();
+    // A Stokes plane no correlation feeds has a zero sum of weights:
+    // CASA's weight image, and so its PB and the pixel mask taken from it,
+    // are zero there, though the sensitivity is shared.
+    let sum_weight = plane.sum_weight();
+    if !sum_weight.is_finite() || sum_weight <= 0.0 {
+        return Ok(vec![0.0; shape[0] * shape[1]]);
+    }
+    Ok(
+        MosaicSensitivity::try_new(&plane.read_sensitivity()?)?.map_or_else(
+            || vec![0.0; shape[0] * shape[1]],
+            |sensitivity| sensitivity.primary_beam(),
+        ),
+    )
 }
 
-fn correct_primary_beam(
+pub(crate) fn correct_primary_beam(
     values: &[f32],
     primary_beam: &[f32],
-    policy: casa_imaging_model::PrimaryBeamValidityPolicy,
+    cutoff: f32,
 ) -> Result<Vec<f32>, ProductsError> {
     values
         .iter()
         .zip(primary_beam)
         .map(|(value, beam)| {
-            let valid = match policy.comparison() {
-                ProductSupportComparison::StrictlyGreater => *beam > policy.cutoff(),
-            };
-            if !valid {
-                return Ok(0.0);
+            if *beam > cutoff {
+                let corrected = *value / *beam;
+                corrected
+                    .is_finite()
+                    .then_some(corrected)
+                    .ok_or(ProductsError::GeneratedNonfinite)
+            } else {
+                Ok(0.0)
             }
-            let corrected = *value / *beam;
-            corrected
-                .is_finite()
-                .then_some(corrected)
-                .ok_or(ProductsError::GeneratedNonfinite)
         })
         .collect()
 }

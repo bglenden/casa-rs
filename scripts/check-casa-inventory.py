@@ -7,7 +7,11 @@ casa-rs mimics, as `tools/casa-compat/dump_casa_task_inventory.py` read it
 from CASA 6.7.6.14 (#931 4a). This script needs no CASA. It checks that the
 fixtures are complete and well formed, that every CASA-named casa-rs surface
 has its task among them, and that `docs/reference/casa-compatibility.md`,
-which compares each surface with its task, is current.
+which compares each surface with its task, is current. The report also
+lists each CASA class casa-rs presents in Python (the tools and `simutil`),
+from the signatures `tools/simulation/dump_casa_tool_signatures.py` recorded
+from CASA, with the reviewed method status of those that have a file under
+`resources/casa-compat/semantics/tools/`.
 
     python3 scripts/check-casa-inventory.py           # check (CI)
     python3 scripts/check-casa-inventory.py --write   # regenerate the report
@@ -25,16 +29,25 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import casa_compat_semantics
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CASA_VERSION = "6.7.6.14"
 INVENTORY = REPO_ROOT / "resources" / "casa-compat" / f"casa-{CASA_VERSION}"
 SURFACES = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources" / "parameter-surfaces.json"
 REPORT = REPO_ROOT / "docs" / "reference" / "casa-compatibility.md"
+DIRECT_TYPES = REPO_ROOT / "crates" / "casa-task-runtime" / "resources" / "casa-direct-types.json"
+SINGLE_REQUIRED_PATHS = REPO_ROOT / "crates" / "casa-task-runtime" / "resources" / "casa-single-required-paths.json"
+SEMANTICS = REPO_ROOT / "resources" / "casa-compat" / "semantics"
+TOOL_SIGNATURES = REPO_ROOT / "crates" / "casars-python" / "python" / "tests" / "data"
+# The CASA classes casa-rs presents outside `casars.tools`: `simutil` is a
+# Python helper class of CASA's tasks, not a tool.
+TOOL_MODULES = {"simutil": "casars.simutil"}
 
 # The CASA task each casa-rs surface mimics is its contract's `casa_task`, or
-# its own name. calibrate and msexplore are casa-rs tasks with no CASA
-# counterpart.
-CASA_RS_ONLY = frozenset({"calibrate", "msexplore"})
+# its own name. calibrate, msconvert and msexplore are casa-rs tasks with no
+# CASA counterpart.
+CASA_RS_ONLY = frozenset({"calibrate", "msconvert", "msexplore"})
 # plotms waits for its own decision (#931): casaplotms is a GUI program.
 PENDING = {"plotms": "plotms waits for its own decision (#931): CASA's is the casaplotms GUI"}
 
@@ -201,7 +214,40 @@ def task_section(surface_id: str, record: dict[str, Any], result: dict[str, Any]
     return [*lines, ""]
 
 
-def render(tasks: dict[str, dict[str, Any]], surfaces: dict[str, dict[str, Any]]) -> str:
+def load_tool_signatures() -> dict[str, dict[str, Any]]:
+    """Each CASA class's recorded signatures, by its name."""
+    tools = {}
+    for path in sorted(TOOL_SIGNATURES.glob("casa_*_signatures.json")):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if record.get("casa_version", "").replace("-", ".") != CASA_VERSION:
+            raise InventoryError(f"{path} records CASA {record.get('casa_version')}, not {CASA_VERSION}")
+        if path.name != f"casa_{record['tool']}_signatures.json":
+            raise InventoryError(f"{path} records the class {record['tool']}")
+        tools[record["tool"]] = record
+    return tools
+
+
+def render_tools(tools: dict[str, dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """The summary rows and the reviewed sections of the CASA classes."""
+    statuses = casa_compat_semantics.TOOL_STATUSES
+    rows, sections = [], []
+    for tool, record in sorted(tools.items()):
+        data = casa_compat_semantics.load_tool(REPO_ROOT, tool)
+        module = TOOL_MODULES.get(tool, "casars.tools")
+        if data is None:
+            rows.append(f"| {tool} | `{module}` | {len(record['methods'])} | no |" + " |" * len(statuses))
+            continue
+        counts = casa_compat_semantics.tool_counts(data)
+        rows.append(
+            f"| [{tool}](#{tool}) | `{module}` | {len(record['methods'])} | yes | "
+            + " | ".join(str(counts[status]) for status in statuses) + " |"
+        )
+        sections.extend([f"### {tool}", ""])
+        sections.extend(casa_compat_semantics.render_tool(data, record))
+    return rows, sections
+
+
+def render(tasks: dict[str, dict[str, Any]], surfaces: dict[str, dict[str, Any]], tools: dict[str, dict[str, Any]]) -> str:
     rows, sections = [], []
     covered = set()
     for surface_id in sorted(surfaces):
@@ -213,6 +259,12 @@ def render(tasks: dict[str, dict[str, Any]], surfaces: dict[str, dict[str, Any]]
         covered.add(task)
         result = None if surface_id in PENDING else compare(surfaces[surface_id], tasks[task])
         sections.extend(task_section(surface_id, tasks[task], result))
+        if (SEMANTICS / f"{task}.json").is_file():
+            catalog = json.loads((REPO_ROOT / "crates/casa-provider-contracts/resources/parameter-catalog.json").read_text())
+            concepts = {(item["id"], item["semantic_revision"]): item for item in catalog["concepts"]}
+            sections.extend(casa_compat_semantics.render(
+                casa_compat_semantics.load(REPO_ROOT, task), tasks[task], surfaces[surface_id], concepts, rs_default,
+            ))
         if result is None:
             rows.append(f"| {surface_id} | {task} | pending | {len(tasks[task]['parameters'])} | pending | | | | |")
             continue
@@ -224,28 +276,63 @@ def render(tasks: dict[str, dict[str, Any]], surfaces: dict[str, dict[str, Any]]
     unused = sorted(set(tasks) - covered)
     if unused:
         raise InventoryError(f"the inventory records tasks no surface mimics: {unused}")
+    tool_rows, tool_sections = render_tools(tools)
+    statuses = casa_compat_semantics.TOOL_STATUSES
+    tool_part = [
+        "## Tools",
+        "",
+        "Each CASA class casa-rs presents in Python, against the signatures recorded from CASA "
+        f"{CASA_VERSION} (`crates/casars-python/python/tests/data/casa_<class>_signatures.json`), "
+        "which the Python tests hold the classes to. A reviewed class has a file under "
+        "`resources/casa-compat/semantics/tools/` giving each method's status, scope and "
+        "evidence; the others are not reviewed yet. The simulation classes (`simulator`, "
+        "`componentlist`, `measures`, `quanta` and `simutil`) are reviewed in #1053, and "
+        "`image`, `coordsys`, `table`, `msmetadata` and `ms` in #1025.",
+        "",
+        "| Class | Python | CASA methods | Reviewed | " + " | ".join(statuses) + " |",
+        "|---|---|---:|---|" + "---:|" * len(statuses),
+        *tool_rows,
+        "",
+        *tool_sections,
+    ]
     header = [
-        "# casa-rs and CASA 6.7.6.14 tasks",
+        "# casa-rs and CASA 6.7.6.14 tasks and tools",
         "",
         "Truth class: generated reference",
         "Generated by: `scripts/check-casa-inventory.py --write`",
         f"Sources: `resources/casa-compat/casa-{CASA_VERSION}/` (read from CASA by "
         "`tools/casa-compat/dump_casa_task_inventory.py`), "
-        "`crates/casa-provider-contracts/resources/parameter-surfaces.json`",
+        "`crates/casa-provider-contracts/resources/parameter-surfaces.json`, "
+        "`parameter-catalog.json`, the CASA class signatures in "
+        "`crates/casars-python/python/tests/data/`, and reviewed `resources/casa-compat/semantics/`",
         "",
-        "> Do not edit this file by hand. Regenerate it after changing the inventory or a surface.",
+        "> Do not edit this file by hand. Regenerate it after changing the inventory, a surface, "
+        "a recorded class signature or a reviewed file.",
         "",
         "Each casa-rs task that mimics a CASA task (#931) against that task as CASA "
         f"{CASA_VERSION} defines it: whether it presents CASA's signature, the CASA parameters "
         "casa-rs does not take yet, those it takes but accepts only at CASA's default, the "
         "parameters casa-rs takes that CASA does not (casa-rs names for CASA concepts, or "
         "casa-rs-only controls), whether the shared parameters keep CASA's order, and the "
-        "defaults that differ. `calibrate` and `msexplore` are casa-rs tasks with no CASA "
-        "counterpart.",
+        "defaults that differ. `calibrate`, `msconvert` and `msexplore` are casa-rs tasks with "
+        "no CASA counterpart.",
         "",
         "The CASA parameters casa-rs lacks or accepts only at their defaults are tracked by "
         "family: images in #977, MeasurementSet and flagging in #978, calibration in #979 and "
         "`tclean` in #980.",
+        "",
+        "For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the recorded "
+        "coercions, a value both implementations reject for type reports CASA's wording, "
+        "unless a narrower unimplemented-form diagnostic applies. "
+        "Direct `cBoolVec`, `cFloatVec`, `cIntVec`, `cPathVec` and `cStrVec` schemas are "
+        "also covered where the recorded vector coercions apply. "
+        "Float-shaped `cIntVec` inputs keep the native diagnostic because a JSON integer "
+        "outside the native range may lose its original spelling. "
+        "For explicit scalar inputs checked by the task, a missing absolute or explicitly "
+        "relative path gets CASA's wording when the schema has one direct required path. "
+        "Other required-path cases, unions and variants retain casa-rs's diagnostics (#1099). "
+        "CASA accepts booleans as integers and coerces them to floats; where casa-rs refuses "
+        "one, it keeps its own message. Exception classes follow the casa-rs Python contract.",
         "",
         "## Summary",
         "",
@@ -257,7 +344,7 @@ def render(tasks: dict[str, dict[str, Any]], surfaces: dict[str, dict[str, Any]]
         "## Tasks",
         "",
     ]
-    return "\n".join([*header, *sections]).rstrip() + "\n"
+    return "\n".join([*header, *sections, *tool_part]).rstrip() + "\n"
 
 
 def main() -> int:
@@ -266,8 +353,51 @@ def main() -> int:
     args = parser.parse_args()
     try:
         tasks = load_inventory()
-        text = render(tasks, load_surfaces())
-    except InventoryError as error:
+        # Only the direct validators and coercions the runtime knows.
+        # Union, required-path and variant rules need their own work.
+        supported = {"cInt": None, "cBool": None, "cFloat": "to_float",
+                     "cStr": "to_str", "cPath": "expand_path",
+                     "cStrVec": ["to_list", "to_strvec"],
+                     "cFloatVec": ["to_list", "to_floatvec"],
+                     "cIntVec": ["to_list", "to_intvec"],
+                     "cBoolVec": ["to_list", "to_boolvec"],
+                     "cPathVec": ["to_list", "expand_pathvec"]}
+        direct_types = {
+            name: {parameter["name"]: parameter["schema"]["type"]
+                   for parameter in task["parameters"]
+                   if parameter["schema"].get("type") in supported
+                   and parameter["schema"].get("coerce") == supported[parameter["schema"]["type"]]}
+            for name, task in sorted(tasks.items())
+        }
+        direct_types = {name: values for name, values in direct_types.items() if values}
+        direct_text = json.dumps(direct_types, indent=2, ensure_ascii=False) + "\n"
+        if args.write:
+            DIRECT_TYPES.write_text(direct_text, encoding="utf-8")
+        elif not DIRECT_TYPES.is_file() or DIRECT_TYPES.read_text(encoding="utf-8") != direct_text:
+            raise InventoryError(f"{DIRECT_TYPES.relative_to(REPO_ROOT)} is stale; run scripts/check-casa-inventory.py --write")
+        def requires_path(schema: Any) -> bool:
+            if isinstance(schema, dict):
+                return schema.get("type") in ("cReqPath", "cReqPathVec") or any(
+                    requires_path(value) for value in schema.values()
+                )
+            return isinstance(schema, list) and any(requires_path(value) for value in schema)
+
+        # CASA's combined path errors can pair a different parameter and value
+        # when several required paths fail, so exclude those task schemas.
+        required_paths = {}
+        for name, task in sorted(tasks.items()):
+            candidates = [parameter for parameter in task["parameters"] if requires_path(parameter["schema"])]
+            if len(candidates) == 1:
+                candidate = candidates[0]
+                if candidate["schema"].get("type") == "cReqPath" and candidate["schema"].get("coerce") == "expand_path":
+                    required_paths[name] = candidate["name"]
+        required_text = json.dumps(required_paths, indent=2, ensure_ascii=False) + "\n"
+        if args.write:
+            SINGLE_REQUIRED_PATHS.write_text(required_text, encoding="utf-8")
+        elif not SINGLE_REQUIRED_PATHS.is_file() or SINGLE_REQUIRED_PATHS.read_text(encoding="utf-8") != required_text:
+            raise InventoryError(f"{SINGLE_REQUIRED_PATHS.relative_to(REPO_ROOT)} is stale; run scripts/check-casa-inventory.py --write")
+        text = render(tasks, load_surfaces(), load_tool_signatures())
+    except (InventoryError, ValueError, KeyError) as error:
         print(f"casa-inventory: {error}", file=sys.stderr)
         return 1
     if args.write:

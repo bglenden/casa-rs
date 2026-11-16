@@ -9,6 +9,9 @@
 //! | `long2xyz(lon, lat, elevation, datum)` | [`geodetic_to_xyz`] |
 //! | `utm2xyz(easting, northing, elevation, zone, datum, nors)` | [`utm_to_xyz`] |
 //! | `xyz2long(x, y, z, datum)` | [`xyz_to_geodetic`] |
+//! | `xyz2long_old(x, y, z, datum)` | [`xyz_to_geodetic_old`] |
+//! | `tconpc(sf, orlim, er, esq, rf)` | [`zone_constants`] |
+//! | `tmgeod(n, e, eps, cm, fe, sf, so, r, v0, v2, v4, v6, fn, er, esq)` | [`grid_to_geodetic`] |
 //! | `locxyz2itrf(lat, longitude, alt, locx, locy, locz)` | [`local_to_itrf`] |
 //!
 //! The arithmetic follows CASA's Python operation by operation (including
@@ -267,9 +270,8 @@ struct Projection {
 }
 
 /// `tmgeod`: grid coordinates to geodetic latitude and west-positive
-/// longitude, radians. (CASA also computes the convergence and the point
-/// scale factor, which it only logs; they are omitted.)
-fn tmgeod(n: f64, e: f64, zone: &ZoneConstants, p: &Projection) -> (f64, f64) {
+/// longitude, radians, with the convergence and the point scale factor.
+fn tmgeod(n: f64, e: f64, zone: &ZoneConstants, p: &Projection) -> [f64; 4] {
     let [v0, v2, v4, v6] = zone.v;
     let om = (n - p.fn_ + zone.so) / (zone.r * p.sf);
     let cosom = om.cos();
@@ -295,7 +297,66 @@ fn tmgeod(n: f64, e: f64, zone: &ZoneConstants, p: &Projection) -> (f64, f64) {
     let lat = foot + b2 * qs * (1.0 + qs * (b4 + b6 * qs));
     let l = b1 * q * (1.0 + qs * (b3 + qs * (b5 + b7 * qs)));
     let lon = -l / cosf + p.cm;
-    (lat, lon)
+    // The convergence and the point scale factor, at the point found.
+    let (sinfi, cosfi) = lat.sin_cos();
+    let l1 = (lon - p.cm) * cosfi;
+    let ls = l1 * l1;
+    let tn = sinfi / cosfi;
+    let ts = tn * tn;
+    let c3 = (1.0 + 3.0 * ets + 2.0 * ets.powf(2.0)) / 3.0;
+    let c5 = (2.0 - ts) / 15.0;
+    let conv = -tn * l1 * (1.0 + ls * (c3 + c5 * ls));
+    let f2 = (1.0 + ets) / 2.0;
+    let f4 = (5.0 - 4.0 * ts + ets * (9.0 - 24.0 * ts)) / 12.0;
+    let kp = p.sf * (1.0 + f2 * ls * (1.0 + f4 * ls));
+    [lat, lon, conv, kp]
+}
+
+/// CASA's `tconpc(sf, orlim, er, esq, rf)`: the transverse Mercator zone
+/// constants `[eps, r, so, v0, v2, v4, v6]` for scale factor `sf`,
+/// southernmost parallel `orlim` (radians), equatorial radius `er`,
+/// eccentricity squared `esq` and reciprocal flattening `rf`.
+#[must_use]
+pub fn zone_constants(sf: f64, orlim: f64, er: f64, esq: f64, rf: f64) -> [f64; 7] {
+    let zone = tconpc(sf, orlim, er, esq, rf);
+    let [v0, v2, v4, v6] = zone.v;
+    [zone.eps, zone.r, zone.so, v0, v2, v4, v6]
+}
+
+/// CASA's `tmgeod(n, e, eps, cm, fe, sf, so, r, v0, v2, v4, v6, fn, er,
+/// esq)`: northing `n` and easting `e` to `[lat, lon, conv, kp]`, the
+/// geodetic latitude and west-positive longitude (radians), the
+/// convergence and the point scale factor, with the zone constants of
+/// [`zone_constants`] and central meridian `cm`, false easting `fe`, false
+/// northing `fn`, scale factor `sf`, equatorial radius `er` and
+/// eccentricity squared `esq`.
+// CASA's signature: one value each.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn grid_to_geodetic(
+    n: f64,
+    e: f64,
+    eps: f64,
+    cm: f64,
+    fe: f64,
+    sf: f64,
+    so: f64,
+    r: f64,
+    v: [f64; 4],
+    fn_: f64,
+    er: f64,
+    esq: f64,
+) -> [f64; 4] {
+    let zone = ZoneConstants { eps, r, so, v };
+    let projection = Projection {
+        cm,
+        fe,
+        fn_,
+        sf,
+        er,
+        esq,
+    };
+    tmgeod(n, e, &zone, &projection)
 }
 
 /// Convert UTM coordinates to geodetic longitude and latitude (CASA's
@@ -344,7 +405,7 @@ pub fn utm_to_geodetic(east: f64, north: f64, zone: i64, datum: &Datum, south: b
         er,
         esq,
     };
-    let (lat, lon) = tmgeod(north, east, &constants, &projection);
+    let [lat, lon, _, _] = tmgeod(north, east, &constants, &projection);
     // CASA: "convert to more usual convention of negative lon = W".
     (-lon, lat)
 }
@@ -435,6 +496,47 @@ pub fn xyz_to_geodetic(x: f64, y: f64, z: f64, datum: &Datum) -> Option<(f64, f6
         lat = -lat;
     }
     Some((lon, lat, height))
+}
+
+/// Convert Earth-centred x, y, z to geodetic longitude and latitude on a
+/// datum by CASA's older iteration (`xyz2long_old`): three Newton steps on
+/// the eccentricity term, then `atan2` for each angle. Returns
+/// `(longitude_rad, latitude_rad)`.
+///
+/// One correction to CASA: CASA's second term subtracts the x offset from
+/// z (`(z − dx)²`) where the rest of the function subtracts `dz`; this
+/// subtracts `dz` (`docs/CASA (C++) bugs.md`). The two agree for WGS 84.
+#[must_use]
+pub fn xyz_to_geodetic_old(x: f64, y: f64, z: f64, datum: &Datum) -> (f64, f64) {
+    let er = datum.ellipsoid.equatorial_radius_m;
+    let f = 1.0 / datum.ellipsoid.inverse_flattening;
+    let (dx, dy, dz) = (datum.dx_m, datum.dy_m, datum.dz_m);
+    let b = ((x - dx).powf(2.0) + (y - dy).powf(2.0)) / er.powf(2.0);
+    let c = (z - dz).powf(2.0) / er.powf(2.0);
+    let esq = 2.0 * f - f.powf(2.0);
+    let a0 = c * (1.0 - esq);
+    let a1 = 2.0 * a0;
+    let efth = esq.powf(2.0);
+    let a2 = a0 + b - efth;
+    let a3 = -2.0 * efth;
+    let a4 = -efth;
+    let b0 = 4.0 * a0;
+    let b1 = 3.0 * a1;
+    let b2 = 2.0 * a2;
+    let b3 = a3;
+    let mut nlqk = esq;
+    for _ in 0..3 {
+        let nlqks = nlqk * nlqk;
+        let nlqkc = nlqk * nlqks;
+        let nlf = a0 * nlqks * nlqks + a1 * nlqkc + a2 * nlqks + a3 * nlqk + a4;
+        let nlfprm = b0 * nlqkc + b1 * nlqks + b2 * nlqk + b3;
+        nlqk -= nlf / nlfprm;
+    }
+    let y0 = (1.0 + nlqk) * (z - dz);
+    let x0 = ((x - dx).powf(2.0) + (y - dy).powf(2.0)).sqrt();
+    let lat = y0.atan2(x0);
+    let lon = (y - dy).atan2(x - dx);
+    (lon, lat)
 }
 
 /// Convert local tangent-plane offsets to Earth-centred x, y, z (CASA's

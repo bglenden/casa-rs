@@ -208,6 +208,7 @@ impl<'o> BatchSource<'o> {
                 // folded into the flags, which the validity rule reads.
                 row_flag: false,
                 context: RowContext {
+                    native_frequency_ratio: 1.0,
                     original_uvw_m: None,
                     time_s: batch.time.seconds_since(sample / per_time, mjd_zero),
                     antennas: [
@@ -227,6 +228,7 @@ impl<'o> BatchSource<'o> {
             // The image is centred on the field's phase centre, so the
             // projection is the stored UVW with no shift.
             let projection = [DomainProjection {
+                row_flag: false,
                 uvw_m: uvw.metres_at(sample),
                 phase_shift_m: 0.0,
                 pointing_offset_rad: [0.0; 2],

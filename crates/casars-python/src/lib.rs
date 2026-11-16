@@ -10,7 +10,7 @@ mod tools;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use casa_coordinates::{CoordinateType, FitsValue, fits::to_fits_header};
+use casa_coordinates::{CoordinateType, FitsValue, fits::try_to_fits_header};
 use casa_images::{AnyPagedImage, ImageError, ImagePixelType};
 use casa_tables::{RowRange, Table as CasaTable, TableError, TableOptions};
 use casa_types::{
@@ -146,7 +146,9 @@ impl PyImage {
             return Ok(None);
         };
         let keywords = PyDict::new(py);
-        for keyword in to_fits_header(coordinates, shape).iter() {
+        let header = try_to_fits_header(coordinates, shape)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        for keyword in header.iter() {
             if matches!(keyword.name.as_str(), "TELESCOP" | "OBSERVER" | "DATE-OBS") {
                 continue;
             }
@@ -981,6 +983,18 @@ where
 }
 
 #[pyfunction]
+fn linearmosaic(
+    py: Python<'_>,
+    pointings: Vec<(PathBuf, PathBuf)>,
+    template: PathBuf,
+    output: PathBuf,
+    output_weight: PathBuf,
+) -> PyResult<()> {
+    py.detach(move || casa_images::linearmosaic(&pointings, &template, &output, &output_weight))
+        .map_err(image_err)
+}
+
+#[pyfunction]
 fn data_protocol_info_json() -> PyResult<String> {
     serde_json::to_string_pretty(&DataObjectProtocolInfo::current())
         .map_err(|error| PyRuntimeError::new_err(format!("serialize data protocol info: {error}")))
@@ -994,7 +1008,7 @@ fn data_schema_bundle_json() -> PyResult<String> {
 }
 
 /// The extension module: the `casars.data` image and table objects, the
-/// CASA tools of `casars.tools` (ADR-0019), and the parameter, plot and task
+/// CASA tools of `casars.tools` (ADR-0017), and the parameter, plot and task
 /// functions that `casars.parameters`, `casars.data` and `casars.tasks` call.
 #[pymodule]
 fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -1010,6 +1024,7 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<tools::msmetadata::PyMsMetadata>()?;
     module.add_class::<tools::ms::PyMsTool>()?;
     module.add_class::<tools::simutil::PySimutil>()?;
+    module.add_function(wrap_pyfunction!(linearmosaic, module)?)?;
     module.add_function(wrap_pyfunction!(data_protocol_info_json, module)?)?;
     module.add_function(wrap_pyfunction!(data_schema_bundle_json, module)?)?;
     module.add_function(wrap_pyfunction!(parameters::parameter_catalog, module)?)?;
@@ -1040,6 +1055,7 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(tasks::application_catalog, module)?)?;
     module.add_function(wrap_pyfunction!(tasks::task_executable, module)?)?;
     module.add_function(wrap_pyfunction!(tasks::task_outcome, module)?)?;
+    module.add_function(wrap_pyfunction!(tasks::task_plot_documents, module)?)?;
     module.add_function(wrap_pyfunction!(plot::build_measurement_set_plot, module)?)?;
     Ok(())
 }

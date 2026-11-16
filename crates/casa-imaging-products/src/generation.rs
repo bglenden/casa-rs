@@ -5,26 +5,27 @@
 
 use std::ops::Range;
 
-use casa_imaging_deconvolution::{NormalBasis, SpectralChannelValidity};
+use casa_imaging_deconvolution::NormalBasis;
 use casa_imaging_model::{
     ProductPixelMask, ProductRole, ProductTerm, ProductValidityRule, RestoringBeamPolicy,
 };
 
-use crate::beam::{RestoringBeam, fit_restoring_beam};
+use crate::beam::{PlaneBeam, RestoringBeam, fit_plane_beam, fixed_restoring_beam, settle_beams};
 use crate::error::ProductsError;
+use crate::normalization::psf_peak;
 use crate::plan::{
     AnalyticPrimaryBeamModel, PlannedContinuumGeneration, PlannedMember,
     PublishedContinuumGeneration,
 };
 use crate::plane::{
-    PlaneMemberRequest, apparent_model, model_real_plane, produce_plane_member,
-    product_plane_validity, psf_real_plane, reconstruction_support_plane,
+    PlaneMemberRequest, apparent_model, model_real_plane, primary_beam_plane, produce_plane_member,
+    product_plane_validity, psf_normalizes, psf_real_plane, reconstruction_support_plane,
     scatter_image_polarization_plane, scatter_polarization_plane_state, zero_invalid_plane_values,
 };
 use crate::source::ContinuumProductInputs;
 use crate::storage::{ProductMemberWriter, ProductWindow, ProductWindowLayout};
 use crate::taylor::TaylorProducts;
-use crate::writer::CasaImageWriter;
+use crate::writer::{CasaImageWriter, SavedPixelMask};
 use crate::{ProductStoragePlan, ProductWindowExecutor};
 
 /// Produce every planned member and write it to `output`'s staging.
@@ -45,6 +46,9 @@ pub fn produce_continuum_members(
     execution: &impl ProductWindowExecutor,
     output: &CasaImageWriter,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
+    if inputs.cube_taylor_primary_beam().is_some() && planned.primary_beam_model.is_none() {
+        return Err(ProductsError::MissingPrimaryBeamModel);
+    }
     let kept = output.staged_count();
     let produced = if inputs.normal_state().basis() == NormalBasis::Taylor {
         produce_taylor_members(planned, inputs, storage_plan, output)
@@ -55,6 +59,43 @@ pub fn produce_continuum_members(
         output.discard_staged_after(kept);
     }
     produced
+}
+
+fn field_residual_mask(
+    planned: &PlannedContinuumGeneration,
+    member: &PlannedMember,
+    output: &CasaImageWriter,
+    policy: crate::plan::FieldResidualMask,
+) -> Result<Option<Option<SavedPixelMask>>, ProductsError> {
+    use crate::plan::FieldResidualMask;
+    let domain = member.axes().domain();
+    let restored = member.role == ProductRole::RestoredImage(ProductTerm::Single);
+    if restored && !planned.rebuilds_field_pb && !output.has_saved_pb(domain) {
+        return Ok(Some(output.existing_mask(domain, ".image", |_| true)?));
+    }
+
+    let mut has_default = false;
+    let mut mask = output.existing_mask(domain, ".residual", |name| {
+        has_default = true;
+        if name == "mask0" {
+            policy != FieldResidualMask::CustomOnly
+        } else {
+            !restored
+        }
+    })?;
+    if !has_default && policy == FieldResidualMask::SavedOrPrimaryBeam {
+        mask = output.existing_mask(domain, ".pb", |name| name == "mask0")?;
+        if mask.is_none() && planned.rebuilds_field_pb {
+            // A newly created PB supplies its generated mask.
+            return Ok(None);
+        }
+    }
+    if restored && mask.is_none() {
+        // With a PB, restore removes an old mask0. It leaves a custom
+        // output mask unless copyMask replaces it with a residual mask0.
+        mask = output.existing_mask(domain, ".image", |name| name != "mask0")?;
+    }
+    Ok(Some(mask))
 }
 
 fn produce_plane_members(
@@ -71,6 +112,13 @@ fn produce_plane_members(
     };
     let restoring_beams = restoring_beams(inputs, &fitted_beams)?;
     for member in &planned.members {
+        if matches!(member.role, ProductRole::SumWeights(_))
+            && planned.rebuilds_field_psfs
+            && output.has_positive_saved_scalar_sum(member.axes().domain())?
+        {
+            continue;
+        }
+        let saved_mask = single_term_member_mask(planned, member, inputs, output)?;
         let windows = MemberWindows::new(
             planned,
             member,
@@ -84,10 +132,69 @@ fn produce_plane_members(
             windows.layout,
             &planned.beams_for_member(member, &fitted_beams, &restoring_beams),
             planned.uses_weight_image,
+            saved_mask
+                .as_ref()
+                .map(|mask| mask.as_ref().map(|mask| mask.name.as_str())),
         )?;
-        windows.write(ProductMemberWriter::new(windows.layout, image), execution)?;
+        windows.write(
+            ProductMemberWriter::new(windows.layout, image),
+            execution,
+            (
+                saved_mask
+                    .as_ref()
+                    .map(|mask| mask.as_ref().map(|mask| mask.pixels.as_slice())),
+                output,
+            ),
+        )?;
     }
     Ok(planned.published(fitted_beams, restoring_beams))
+}
+
+fn single_term_member_mask(
+    planned: &PlannedContinuumGeneration,
+    member: &PlannedMember,
+    inputs: &ContinuumProductInputs<'_>,
+    output: &CasaImageWriter,
+) -> Result<Option<Option<SavedPixelMask>>, ProductsError> {
+    let generated = match member.role {
+        ProductRole::RestoredImage(ProductTerm::Single)
+        | ProductRole::Residual(ProductTerm::Single)
+            if planned.saved_residual_mask_read_bytes.is_some() =>
+        {
+            if let Some(policy) = planned.field_residual_mask {
+                return field_residual_mask(planned, member, output, policy);
+            }
+            Some(output.saved_residual_mask(
+                member.axes().domain(),
+                ProductTerm::Single,
+                matches!(member.role, ProductRole::RestoredImage(_)),
+                false,
+            )?)
+        }
+        ProductRole::PrimaryBeam(ProductTerm::Single) if planned.rebuilds_field_pb => {
+            output.existing_pb_mask(member.axes().domain())?.map(Some)
+        }
+        ProductRole::PbCorrectedImage(ProductTerm::Single) => match planned.saved_cube_pbcor_mask {
+            Some(crate::plan::SavedPbcorMask::Existing(_)) => {
+                Some(output.existing_image_mask(member.axes().domain(), ".image.pbcor")?)
+            }
+            Some(crate::plan::SavedPbcorMask::PrimaryBeam)
+                if inputs
+                    .saved_mosaic_beam()
+                    .is_some_and(|beam| !beam.has_generated_mask()) =>
+            {
+                Some(None)
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    Ok(generated.map(|mask| {
+        mask.map(|pixels| SavedPixelMask {
+            name: "mask0".to_owned(),
+            pixels,
+        })
+    }))
 }
 
 /// Fit a restoring beam to every valid PSF plane, domain by domain, then
@@ -117,21 +224,44 @@ fn fit_beams(
             let ordinal = start + index;
             let domain =
                 &inputs.problem().geometry().domains()[ordinal / (channels * polarizations)];
+            let domain_ordinal = inputs.model_domain_ordinal(domain.role());
+            if let Some(saved) = inputs.saved_psf_beams(domain_ordinal) {
+                return Ok(PlaneBeam::Fitted(
+                    saved[ordinal % (channels * polarizations)],
+                ));
+            }
             let plane = normal_state.read_plane(
                 inputs.model_domain_ordinal(domain.role()),
                 (ordinal / polarizations) % channels,
                 ordinal % polarizations,
             )?;
-            if plane.validity() != SpectralChannelValidity::Valid {
-                return Ok(None);
+            // A freshly formed PSF is normalized before CASA fits the beam,
+            // so normPSF zeros a sub-threshold peak. A reused PSF is already
+            // in image units: CASA attempts the fit for every positive peak,
+            // and FitGaussianPSF refuses positive peaks below 1e-7.
+            let psf = psf_real_plane(&plane)?;
+            let peak = psf_peak(psf.iter().copied())?;
+            if !psf_normalizes(peak) {
+                // The alternate PSF can be blank where the main cube still
+                // has data. CASA's makeImageBeamSet supplies the largest
+                // fitted beam for that channel without blanking the residual.
+                let sum = plane.sum_weight();
+                let supported = plane.validity()
+                    == casa_imaging_deconvolution::SpectralChannelValidity::Valid
+                    && sum.is_finite()
+                    && sum > 0.0;
+                return Ok(if supported || (planned.reuses_single_psf && peak > 0.0) {
+                    PlaneBeam::Refused
+                } else {
+                    PlaneBeam::Blank
+                });
             }
-            fit_restoring_beam(
-                &psf_real_plane(&plane)?,
+            fit_plane_beam(
+                &psf,
                 plane.shape(),
                 inputs.cell_size_rad_for_domain(domain.role()),
                 planned.psf_cutoff(),
             )
-            .map(Some)
         })?;
         fitted.extend(
             slots
@@ -139,19 +269,58 @@ fn fit_beams(
                 .map(|slot| slot.expect("the executor fills every slot")),
         );
     }
-    Ok(fitted.into_boxed_slice())
+    Ok(settle_beams(&fitted, channels * polarizations))
 }
 
 /// The beams each plane is restored with, by the problem's restoring-beam
-/// policy: none, each plane's fitted beam, or one beam enclosing a domain's
-/// fitted beams.
-fn restoring_beams(
+/// policy: none, each plane's fitted beam, one beam enclosing a domain's
+/// fitted beams, or the beam the request gives. A plane with no fitted beam
+/// (a blank PSF) restores with its domain's largest restoring beam, as
+/// `SIImageStore::makeImageBeamSet` replaces a null beam by the beam set's
+/// largest (`getMaxAreaBeam`) before `restore` restores every plane: a
+/// start model regridded onto a channel no sample reaches is restored
+/// there. A domain with no fitted beam restores none. A Taylor family's planes
+/// are its polarizations.
+pub(crate) fn restoring_beams(
+    inputs: &ContinuumProductInputs<'_>,
+    fitted_beams: &[Option<RestoringBeam>],
+) -> Result<Box<[Option<RestoringBeam>]>, ProductsError> {
+    let mut beams = policy_restoring_beams(inputs, fitted_beams)?;
+    let normal_state = inputs.normal_state();
+    let planes = normal_state.channel_count() * normal_state.polarization_count();
+    if planes > 0 {
+        for domain_beams in beams.chunks_mut(planes) {
+            let largest = domain_beams
+                .iter()
+                .flatten()
+                .copied()
+                .max_by(|left, right| {
+                    (left.major_fwhm_rad() * left.minor_fwhm_rad())
+                        .total_cmp(&(right.major_fwhm_rad() * right.minor_fwhm_rad()))
+                });
+            for beam in domain_beams.iter_mut().filter(|beam| beam.is_none()) {
+                *beam = largest;
+            }
+        }
+    }
+    Ok(beams)
+}
+
+/// [`restoring_beams`] before blank planes take their domain's largest.
+fn policy_restoring_beams(
     inputs: &ContinuumProductInputs<'_>,
     fitted_beams: &[Option<RestoringBeam>],
 ) -> Result<Box<[Option<RestoringBeam>]>, ProductsError> {
     Ok(match inputs.problem().products().restoring_beam() {
         RestoringBeamPolicy::None => Box::new([]),
         RestoringBeamPolicy::PerPlane => fitted_beams.into(),
+        RestoringBeamPolicy::Fixed(beam) => {
+            let beam = fixed_restoring_beam(beam)?;
+            fitted_beams
+                .iter()
+                .map(|fitted| fitted.map(|_| beam))
+                .collect()
+        }
         RestoringBeamPolicy::Common => {
             let normal_state = inputs.normal_state();
             let planes = normal_state.channel_count() * normal_state.polarization_count();
@@ -220,6 +389,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
         &self,
         mut writer: ProductMemberWriter<'_>,
         execution: &impl ProductWindowExecutor,
+        (saved_mask, output): (Option<Option<&[bool]>>, &CasaImageWriter),
     ) -> Result<(), ProductsError> {
         let channels = self.inputs.normal_state().channel_count();
         let window_channels = self.layout.maximum_channels();
@@ -230,7 +400,11 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                 .collect();
             execution.prepare(&mut slots, &|index| {
                 let start = (wave_start + index) * window_channels;
-                self.window(start..(start + window_channels).min(channels))
+                self.window(
+                    start..(start + window_channels).min(channels),
+                    saved_mask,
+                    output,
+                )
             })?;
             for slot in slots {
                 writer.write(slot.expect("the executor fills every slot"))?;
@@ -240,7 +414,12 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
     }
 
     /// One window: every polarization plane of its channels.
-    fn window(&self, channels: Range<usize>) -> Result<ProductWindow, ProductsError> {
+    fn window(
+        &self,
+        channels: Range<usize>,
+        saved_mask: Option<Option<&[bool]>>,
+        output: &CasaImageWriter,
+    ) -> Result<ProductWindow, ProductsError> {
         let mut window = self.layout.window(channels.clone())?;
         let reconstruction_only = matches!(
             self.member.role,
@@ -250,8 +429,20 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
         for channel in channels.clone() {
             for polarization in 0..self.inputs.normal_state().polarization_count() {
                 let local = channel - channels.start;
+                let saved_model = (self.planned.saved_cube_model_read_bytes > 0
+                    && matches!(
+                        self.member.role,
+                        ProductRole::Model(_)
+                            | ProductRole::RestoredImage(_)
+                            | ProductRole::PbCorrectedImage(_)
+                    ))
+                .then(|| {
+                    output.saved_model_plane(self.member.axes().domain(), channel, polarization)
+                })
+                .transpose()?;
                 if reconstruction_only {
-                    let plane = self.reconstruction_plane(channel, polarization)?;
+                    let plane =
+                        self.reconstruction_plane(channel, polarization, saved_model.as_ref())?;
                     self.scatter(
                         &mut window.payload,
                         &window.shape,
@@ -260,7 +451,12 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                         &plane,
                     );
                 } else {
-                    self.normal_plane(&mut window, channel, polarization, local)?;
+                    self.normal_plane(
+                        &mut window,
+                        (channel, polarization, local),
+                        saved_mask,
+                        saved_model.as_ref(),
+                    )?;
                 }
             }
         }
@@ -291,12 +487,14 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
         &self,
         channel: usize,
         polarization: usize,
+        saved_model: Option<&ndarray::ArrayD<f32>>,
     ) -> Result<Vec<f32>, ProductsError> {
         let [width, height] = self.plane_shape;
         if self.member.role == ProductRole::CleanMask {
             return Ok(reconstruction_support_plane(
                 self.inputs,
                 self.member.axes().domain(),
+                (channel, polarization),
                 width * height,
             ));
         }
@@ -307,7 +505,9 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             polarization,
             self.plane_shape,
         )?;
-        if self.planned.primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
+        if self.planned.primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
+            || self.planned.saved_weighted_residual
+        {
             return Ok(model);
         }
         let plane =
@@ -321,6 +521,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             products.normalization(),
             products.validity().primary_beam(),
             self.planned.primary_beam_model,
+            saved_model,
         )
     }
 
@@ -329,9 +530,9 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
     fn normal_plane(
         &self,
         window: &mut ProductWindow,
-        channel: usize,
-        polarization: usize,
-        local_channel: usize,
+        (channel, polarization, local_channel): (usize, usize, usize),
+        saved_mask: Option<Option<&[bool]>>,
+        saved_model: Option<&ndarray::ArrayD<f32>>,
     ) -> Result<(), ProductsError> {
         let plane =
             self.inputs
@@ -346,6 +547,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             // cancels, as CASA's `divideResidualByWeight` reduces to.
             // A faceted domain publishes each facet store's own sum.
             let facets = self.inputs.facet_sum_weights(self.domain_ordinal);
+            let index = channel * self.inputs.normal_state().polarization_count() + polarization;
             scatter_polarization_plane_state(
                 &mut window.payload,
                 self.member.axes(),
@@ -353,7 +555,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
                 polarization,
                 local_channel,
                 |facet| match facets {
-                    Some(facets) => facets[facet][polarization] as f32,
+                    Some(facets) => facets[facet][index] as f32,
                     None => plane.sum_weight() as f32,
                 },
             );
@@ -369,25 +571,57 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             plane: &plane,
             domain_ordinal: self.domain_ordinal,
             polarization,
+            reuses_single_psf: self.planned.reuses_single_psf,
+            saved_weighted_residual: self.planned.saved_weighted_residual,
+            saved_cube_model_plane: saved_model,
             fitted_beam: self.fitted_beams.get(beam_index).copied().flatten(),
             restoring_beam: self.restoring_beams.get(beam_index).copied().flatten(),
             primary_beam_model: self.planned.primary_beam_model,
             fft_threads: self.fft_threads,
         })?;
+        if matches!(self.member.role, ProductRole::Residual(ProductTerm::Single))
+            && let Some(mean_pb) = self.inputs.cube_taylor_primary_beam()
+        {
+            let channel_pb = primary_beam_plane(
+                self.planned.primary_beam_model,
+                self.inputs,
+                self.member.axes().domain(),
+                &plane,
+                polarization,
+            )?;
+            let cutoff = self
+                .inputs
+                .problem()
+                .products()
+                .validity()
+                .primary_beam()
+                .cutoff();
+            adjust_cube_residual(&mut values, mean_pb, &channel_pb, cutoff)?;
+        }
         let validity = |rule| {
             product_plane_validity(
                 rule,
                 &plane,
                 self.planned.primary_beam_model,
                 self.inputs,
-                self.member.axes().domain(),
+                (self.member.axes().domain(), polarization),
             )
         };
         if self.member.validity != ProductValidityRule::All {
             zero_invalid_plane_values(&mut values, &validity(self.member.validity)?);
         }
-        if let ProductPixelMask::Explicit(rule) = self.member.storage.pixel_mask() {
-            let support = validity(rule)?;
+        let support = match (saved_mask, self.member.storage.pixel_mask()) {
+            (Some(mask), _) => mask.map(|mask| {
+                let cells = self.plane_shape[0] * self.plane_shape[1];
+                let offset = (channel * planes + polarization) * cells;
+                std::borrow::Cow::Borrowed(&mask[offset..offset + cells])
+            }),
+            (None, ProductPixelMask::Explicit(rule)) => {
+                Some(std::borrow::Cow::Owned(validity(rule)?))
+            }
+            (None, ProductPixelMask::Absent) => None,
+        };
+        if let Some(support) = support {
             self.scatter(
                 &mut window.validity,
                 &window.shape,
@@ -407,39 +641,118 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
     }
 }
 
+/// CASA leaves an entire cube residual plane untouched when its published PB
+/// is blank. Otherwise its common/channel PB ratio applies only above the
+/// channel PB cutoff (`SynthesisUtilMethods::removeFreqDepPB`).
+pub(crate) fn adjust_cube_residual(
+    values: &mut [f32],
+    mean_pb: &[f32],
+    channel_pb: &[f32],
+    cutoff: f32,
+) -> Result<(), ProductsError> {
+    if channel_pb.iter().any(|&value| value > cutoff) {
+        for ((value, &common), &channel) in values.iter_mut().zip(mean_pb).zip(channel_pb) {
+            *value = if channel > cutoff {
+                common * *value / channel
+            } else {
+                0.0
+            };
+            if !value.is_finite() {
+                return Err(ProductsError::GeneratedNonfinite);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn produce_taylor_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
     storage_plan: ProductStoragePlan,
     output: &CasaImageWriter,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
-    let products = TaylorProducts::build(inputs, planned.psf_cutoff, planned.primary_beam_model)?;
+    let products = TaylorProducts::build(inputs, planned, output)?;
     let fitted_beams = if planned.requires_beam() {
-        vec![products.fitted_beam()].into_boxed_slice()
+        products.fitted_beams()
     } else {
         Box::new([])
     };
     let restoring_beams = match inputs.problem().products().restoring_beam() {
         RestoringBeamPolicy::None => Box::new([]),
-        RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => {
-            vec![products.restoring_beam()].into_boxed_slice()
-        }
+        RestoringBeamPolicy::PerPlane => products.restoring_beams(),
+        // One beam restores every Stokes plane, and the image records it
+        // alone, as `SDAlgorithmMSMFS::restore` sets one restoring beam.
+        RestoringBeamPolicy::Common | RestoringBeamPolicy::Fixed(_) => products
+            .restoring_beams()
+            .iter()
+            .copied()
+            .find(Option::is_some)
+            .into_iter()
+            .collect(),
     };
+    let refresh_mvc_mask =
+        inputs.taylor_primary_beam().is_some() && inputs.saved_mosaic_beam().is_some();
     for member in &planned.members {
-        let mut payload = products.payload(member.role)?;
-        // As for one plane: a member with a validity rule is zero outside it,
-        // as `SIImageStore::makePBImage` leaves `.pb.tt0` at pblimit.
-        if member.validity != ProductValidityRule::All {
-            zero_invalid_plane_values(&mut payload, &products.validity(member.validity)?);
+        let beams = planned.beams_for_member(member, &fitted_beams, &restoring_beams);
+        if planned.refits_saved_psf_beams && member.role == ProductRole::Psf(ProductTerm::Taylor(0))
+        {
+            output.stage_saved_psf_beam(member, &beams)?;
+            continue;
         }
-        let validity = match member.storage.pixel_mask() {
-            ProductPixelMask::Absent
-            | ProductPixelMask::Explicit(
-                ProductValidityRule::All | ProductValidityRule::FinalNormalState,
-            ) => {
-                vec![true; member.payload_values]
+        let mut payload =
+            if let (ProductRole::SumWeights(ProductTerm::Taylor(moment)), Some(facets)) =
+                (member.role, inputs.facet_sum_weights(0))
+            {
+                facet_moment_weights(
+                    member,
+                    inputs.normal_state().polarization_count(),
+                    moment,
+                    facets,
+                )
+            } else {
+                products.payload(member.role)?
+            };
+        // An ordinary Taylor PB is formed at one frequency and zeroed by
+        // `makePBImage`. MVC's supplied PB is the weighted cube PB: CASA
+        // preserves its values below pblimit while marking those pixels
+        // invalid. The other products still blank outside their support.
+        let supplied_pb = inputs.taylor_primary_beam().is_some()
+            && member.role == ProductRole::PrimaryBeam(ProductTerm::Taylor(0));
+        if member.validity != ProductValidityRule::All && !supplied_pb {
+            zero_invalid_plane_values(
+                &mut payload,
+                &products.validity(member.role, member.validity, refresh_mvc_mask)?,
+            );
+        }
+        let saved_residual_mask = match member.role {
+            ProductRole::RestoredImage(ProductTerm::Taylor(term))
+                if planned.saved_residual_mask_read_bytes.is_some() =>
+            {
+                Some(output.saved_residual_mask(
+                    member.axes().domain(),
+                    ProductTerm::Taylor(term),
+                    true,
+                    false,
+                )?)
             }
-            ProductPixelMask::Explicit(rule) => products.validity(rule)?,
+            _ => None,
+        };
+        let mask_override = saved_residual_mask
+            .as_ref()
+            .map(|mask| mask.as_ref().map(|_| "mask0"));
+        let validity = match (saved_residual_mask, member.storage.pixel_mask()) {
+            (Some(Some(mask)), _) => mask,
+            (Some(None), _)
+            | (None, ProductPixelMask::Absent)
+            | (
+                None,
+                ProductPixelMask::Explicit(
+                    ProductValidityRule::All | ProductValidityRule::FinalNormalState,
+                ),
+            ) => vec![true; member.payload_values],
+            (None, ProductPixelMask::Explicit(rule)) => {
+                products.validity(member.role, rule, refresh_mvc_mask)?
+            }
         };
         if payload.len() != member.payload_values || validity.len() != member.payload_values {
             return Err(ProductsError::PayloadLengthMismatch {
@@ -451,12 +764,54 @@ fn produce_taylor_members(
         let image = output.begin(
             member,
             layout,
-            &planned.beams_for_member(member, &fitted_beams, &restoring_beams),
+            &beams,
             planned.uses_weight_image,
+            mask_override,
         )?;
         let mut writer = ProductMemberWriter::new(layout, image);
         writer.write_coupled(&payload, &validity)?;
         writer.finish()?;
     }
     Ok(planned.published(fitted_beams, restoring_beams))
+}
+
+/// CASA's Taylor sum-weight image has one pixel per facet for this moment.
+fn facet_moment_weights(
+    member: &PlannedMember,
+    polarizations: usize,
+    moment: usize,
+    facets: &[Vec<f64>],
+) -> Vec<f32> {
+    let axes = member.axes();
+    let mut payload = vec![0.0; member.payload_values];
+    for polarization in 0..polarizations {
+        let index = moment * polarizations + polarization;
+        scatter_polarization_plane_state(
+            &mut payload,
+            axes,
+            axes.shape(),
+            polarization,
+            0,
+            |facet| facets[facet][index] as f32,
+        );
+    }
+    payload
+}
+
+#[cfg(test)]
+mod mvc_adjustment_tests {
+    use super::adjust_cube_residual;
+
+    #[test]
+    fn residual_correction_uses_strict_channel_support_and_skips_a_blank_plane() {
+        let mut residual = [1.0, 2.0, 3.0, 4.0];
+        let common = [0.5, 0.6, 0.7, 0.8];
+        adjust_cube_residual(&mut residual, &common, &[0.1, 0.2, 0.4, 1.0], 0.2).unwrap();
+        assert_eq!(residual, [0.0, 0.0, 0.7 * 3.0 / 0.4, 0.8 * 4.0]);
+        let mut blank = [1.0, 2.0, 3.0, 4.0];
+        adjust_cube_residual(&mut blank, &common, &[0.0, 0.1, 0.2, 0.0], 0.2).unwrap();
+        assert_eq!(blank, [1.0, 2.0, 3.0, 4.0]);
+        let mut overflow = [f32::MAX];
+        assert!(adjust_cube_residual(&mut overflow, &[f32::MAX], &[1.0], 0.2).is_err());
+    }
 }

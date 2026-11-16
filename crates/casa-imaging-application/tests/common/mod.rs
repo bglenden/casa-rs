@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    CorrelationProduct, CorrelationSelection, DataDescriptionSelection, FlagPolicy, IdSelection,
-    IntentSelection, ModelBounds, ModelLifecycleRequirements, NumericPrecision,
-    ObservationSelection, ObservationSnapshot, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, RowSelection, SelectedColumns, SelectedMainRow, SelectedRows,
-    SpectralWindowSelection, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    CorrelationProduct, FlagPolicy, IdSelection, IntentSelection, ModelBounds,
+    ModelLifecycleRequirements, NumericPrecision, ObservationSelection, ObservationSnapshot,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance, PartitionId,
+    PartitionSelection, RowSelection, SelectedColumns, SpectralWindowSelection, UvSelection,
+    VisibilityColumn, WeightColumn, compile_observation,
 };
 use casa_types::Correlation;
 
@@ -19,15 +19,14 @@ pub fn model_lifecycle() -> ModelLifecycleRequirements {
 
 pub fn observation() -> ObservationSnapshot {
     let selection = ObservationSelection::new(
-        SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
-            .expect("single selected MAIN row fixture"),
+        1,
         RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
-        vec![DataDescriptionSelection::new(0, 0, 0)],
-        vec![SpectralWindowSelection::new(0, vec![0])],
-        vec![CorrelationSelection::new(
+        vec![PartitionSelection::new(
+            PartitionId(0),
             0,
             vec![CorrelationProduct::new(0, Correlation::I)],
         )],
+        vec![SpectralWindowSelection::new(0, vec![0])],
     );
     compile_observation(ObservationSnapshotInput::new(vec![
         ObservationSourceInput::new(

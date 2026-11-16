@@ -5,6 +5,7 @@
 
 use casa_types::measures::UvwMachine;
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::{MeasFrame, MeasureError};
 
 /// One of CASA's reprojections of rows from one phase centre to an image's
 /// tangent point, built once and applied to every row:
@@ -42,6 +43,74 @@ enum Reprojection {
 }
 
 impl GridFtProjection {
+    /// GridFT's rotation including conversion into the image tangent's frame.
+    ///
+    /// # Errors
+    ///
+    /// The reference conversion is unavailable or lacks required context.
+    pub fn between_directions_with_frame(
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        frame: &MeasFrame,
+    ) -> Result<Self, MeasureError> {
+        Ok(Self {
+            machine: Reprojection::Rotate(UvwMachine::with_frame(
+                tangent_point,
+                phase_centre,
+                frame,
+            )?),
+        })
+    }
+
+    /// MosaicFT's two-stage reprojection into a native image frame.
+    /// The correlator direction is first converted to that frame, as
+    /// `FTMachine::girarUVW` does before constructing its two UVW machines.
+    ///
+    /// # Errors
+    ///
+    /// A direction conversion lacks required epoch or position context.
+    pub fn mosaic_between_directions_with_frame(
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        frame: &MeasFrame,
+    ) -> Result<Self, MeasureError> {
+        let in_field = phase_centre.convert_to(tangent_point.refer(), frame)?;
+        Ok(Self {
+            machine: Reprojection::Girar {
+                frame: UvwMachine::with_frame(&in_field, phase_centre, frame)?,
+                phase: UvwMachine::with_frame(tangent_point, &in_field, frame)?,
+            },
+        })
+    }
+
+    /// Refresh a visibility buffer's frame-dependent rotation while keeping
+    /// the phase centre converted at construction, as `FTMachine` does.
+    ///
+    /// The directions and `initial_frame` are those used at construction;
+    /// `current_frame` supplies the new visibility-buffer epoch.
+    ///
+    /// # Errors
+    ///
+    /// A direction conversion lacks required frame context.
+    pub fn recalculate_with_frame(
+        &mut self,
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        initial_frame: &MeasFrame,
+        current_frame: &MeasFrame,
+    ) -> Result<(), MeasureError> {
+        match &mut self.machine {
+            Reprojection::Rotate(machine) | Reprojection::Faceted(machine) => {
+                machine.recalculate_with_frame(tangent_point, phase_centre, current_frame)
+            }
+            Reprojection::Girar { frame, phase } => {
+                let in_field = phase_centre.convert_to(tangent_point.refer(), initial_frame)?;
+                frame.recalculate_with_frame(&in_field, phase_centre, current_frame)?;
+                phase.recalculate_with_frame(tangent_point, &in_field, current_frame)
+            }
+        }
+    }
+
     /// `GridFT`'s rotation from rows phased on `phase_centre` to an image
     /// whose tangent point is `tangent_point`, both J2000.
     #[must_use]
@@ -75,13 +144,20 @@ impl GridFtProjection {
         phase_centre: &MDirection,
         tangent_point: &MDirection,
     ) -> Self {
+        Self::mosaic_through_shifted_field(phase_centre, phase_centre, tangent_point)
+    }
+
+    /// `FTMachine::girarUVW` with moving tracking: the first machine
+    /// reprojects onto the shifted correlator direction; the image-plane
+    /// machine uses the unshifted correlator direction and fixed image.
+    pub(crate) fn mosaic_through_shifted_field(
+        phase_centre: &MDirection,
+        shifted_field: &MDirection,
+        tangent_point: &MDirection,
+    ) -> Self {
         Self {
             machine: Reprojection::Girar {
-                // `girarUVW` first runs an explicit-output machine from the
-                // correlator direction to the in-field direction. Both are
-                // the phase centre here, and CASA does not collapse this
-                // machine to a no-op.
-                frame: UvwMachine::new(phase_centre, phase_centre),
+                frame: UvwMachine::new(shifted_field, phase_centre),
                 phase: UvwMachine::new(tangent_point, phase_centre),
             },
         }
@@ -203,6 +279,80 @@ mod tests {
             (rotated[0] - uvw[0]).abs() > 0.5 * w_share,
             "{rotated:?} against {uvw:?}"
         );
+    }
+
+    /// The field of a GridFT chart and its phase centre, two VLA fields.
+    const GRIDFT_SOURCE: [f64; 2] = [-1.053_851_618_969_825_7, 0.706_574_731_054_254_4];
+    const GRIDFT_TARGET: [f64; 2] = [-1.058_214_942_099_811_3, 0.702_211_407_924_268_5];
+    const GRIDFT_RAW: [f64; 3] = [
+        27.073_056_790_908_41,
+        -29.672_968_936_171_65,
+        15.993_460_382_965_498,
+    ];
+
+    /// `GridFT`'s reprojection: its `negateUV`, `UVWMachine` and restored-UV
+    /// equations at fixed values, the phase the adjoint's sign, opposite
+    /// CASA's `locuvw` dphase because CASA forms `exp(-i dphase)`.
+    #[test]
+    fn the_gridft_projection_negates_uv_at_its_boundary() {
+        let (uvw_m, phase_shift_m) =
+            GridFtProjection::between_j2000_directions(GRIDFT_SOURCE, GRIDFT_TARGET)
+                .apply(GRIDFT_RAW);
+        for (got, want) in uvw_m.iter().zip([
+            27.209_934_044_771_824,
+            -29.526_408_975_072_36,
+            16.032_371_216_641_046,
+        ]) {
+            assert!((got - want).abs() < 1.0e-12, "{got} against {want}");
+        }
+        assert!((phase_shift_m - -0.038_910_833_675_543_17).abs() < 1.0e-12);
+    }
+
+    /// A faceted chart's reprojection is casacore's
+    /// `UVWMachine(out, in, EW=false, project=true)` after `GridFT`'s
+    /// negate-UV boundary, with the adjoint's sign.
+    #[test]
+    fn a_faceted_projection_reprojects_the_uv_plane() {
+        let [source, target] = [GRIDFT_SOURCE, GRIDFT_TARGET]
+            .map(|[ra, dec]| MDirection::from_angles(ra, dec, DirectionRef::J2000));
+        let (uvw_m, phase_shift_m) =
+            GridFtProjection::faceted_between_directions(&source, &target).apply(GRIDFT_RAW);
+        for (got, want) in uvw_m.iter().zip([
+            27.126_332_109_240_163,
+            -29.603_258_931_514_546,
+            16.032_371_216_641_046,
+        ]) {
+            assert!((got - want).abs() < 1.0e-12, "{got} against {want}");
+        }
+        assert!((phase_shift_m - -0.038_910_833_675_545_334).abs() < 1.0e-12);
+    }
+
+    /// AWProject's offset field takes `girarUVW`'s UVW and phase: synthetic
+    /// widefield values captured with casacore `UVWMachine` and CASA
+    /// `FTMachine::girarUVW`'s row expressions, compiled with
+    /// floating-point contraction disabled. The mosaic phase is the
+    /// gridder's `−dphase`. GridFT's rotation departs from it.
+    #[test]
+    fn an_offset_aw_field_takes_girar_uvw_and_phase() {
+        let source = [3.54, 0.29];
+        let target = [3.55, 0.293];
+        let raw = [-1_200.0, -2_000.0, 1_900.0];
+        let (uvw, shift) =
+            GridFtProjection::mosaic_between_j2000_directions(source, target).apply(raw);
+        for (got, want) in uvw.iter().zip([
+            -1_205.658_949_685_163_6,
+            -1_996.516_890_818_620_8,
+            1_882.388_540_906_844_6,
+        ]) {
+            assert!((got - want).abs() < 1.0e-10, "{got} against {want}");
+        }
+        assert!((shift - 17.514_874_069_400_992).abs() < 1.0e-10, "{shift}");
+        let (gridft, gridft_shift) =
+            GridFtProjection::between_j2000_directions(source, target).apply(raw);
+        assert!((gridft[0] - -1_223.865_279_877_529_5).abs() < 1.0e-10);
+        assert!((gridft_shift - 17.611_459_093_155_094).abs() < 1.0e-10);
+        assert!((uvw[0] - gridft[0]).abs() > 18.0);
+        assert!((shift - gridft_shift).abs() > 0.09);
     }
 
     /// The machines of a VLASS mosaic field match CASA's native bits.

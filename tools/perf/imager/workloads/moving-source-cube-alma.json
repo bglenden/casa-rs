@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "id": "moving-source-cube-alma",
+  "mode_id": "moving-source-cube-alma",
+  "description": "Track Uranus in a 512-square, 16-plane REST cube with the T41 selection and 64 native channels per image plane (#714, #1059).",
+  "dataset": {
+    "key": "alma-ephemobj-icrs",
+    "root_env": "CASA_RS_TESTDATA_ROOT",
+    "relative_path": "measurementset/alma/alma_ephemobj_icrs.ms"
+  },
+  "imaging": {
+    "mode": "dirty",
+    "specmode": "cubesource",
+    "gridder": "standard",
+    "field": "1",
+    "spw": "0",
+    "channel_count": 16,
+    "start": "0",
+    "width": "64",
+    "imsize": 512,
+    "cell_arcsec": 0.1,
+    "weighting": "natural",
+    "deconvolver": "hogbom",
+    "niter": 0,
+    "pblimit": 0.1,
+    "min_psf_fraction": 0.1,
+    "write_pb": true,
+    "parallel": false,
+    "standard_mfs_acceleration": "cpu"
+  },
+  "run": {
+    "ms_staging": "copy",
+    "repeats": 1,
+    "profile_repeats": 1,
+    "skip_profile": "1",
+    "evidence_role": "representative_scientific_acceptance",
+    "env": {
+      "IMAGER_BENCH_PHASECENTER": "TRACKFIELD",
+      "IMAGER_BENCH_OUTFRAME": "REST"
+    }
+  },
+  "comparison": {
+    "mode": "full",
+    "max_elements_per_product": 1000000,
+    "full_chunk_elements": 1000000,
+    "products": [".image", ".residual", ".psf", ".sumwt", ".model", ".pb"],
+    "require_exact_product_inventory": true,
+    "require_direction_wcs_parity": true,
+    "require_metadata_parity": true,
+    "metadata_contract": {
+      "require_shape_parity": true,
+      "require_mask_parity": true,
+      "coordinates": {
+        "excluded_fields": [],
+        "relative_tolerance": 1e-11,
+        "absolute_tolerance": 1e-10
+      },
+      "products": {
+        ".image": {"restoring_beam": {"comparison": "scientific", "left": "present", "right": "present"}},
+        ".psf": {"restoring_beam": {"comparison": "scientific", "left": "present", "right": "present"}},
+        ".model": {"restoring_beam": {"comparison": "presence", "left": "absent", "right": "absent"}},
+        ".pb": {"restoring_beam": {"comparison": "presence", "left": "absent", "right": "absent"}},
+        ".residual": {"restoring_beam": {"comparison": "presence", "left": "absent", "right": "absent"}},
+        ".sumwt": {"restoring_beam": {"comparison": "presence", "left": "absent", "right": "absent"}}
+      }
+    },
+    "tolerances": {
+      "contract_version": 2,
+      "require_full_array": true,
+      "default": {"diff_rms_over_right_rms": 0.001, "require_topology_parity": true},
+      "products": {
+        ".image": {"beam_area_relative": 0.001, "beam_kernel_nrmse": 0.001},
+        ".psf": {"beam_area_relative": 0.001, "beam_kernel_nrmse": 0.001}
+      }
+    }
+  }
+}

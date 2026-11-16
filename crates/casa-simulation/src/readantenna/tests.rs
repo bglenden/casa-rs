@@ -3,23 +3,22 @@
 //! comparison with CASA's own results is `tests/readantenna_casa.rs`.
 
 use casa_types::measures::ObservatoryPosition;
+use casa_types::quanta::unique_prefix_position;
 
 use super::geodesy::{self, WGS84};
 use super::*;
 
-/// An observatory table: case-insensitive exact names, trimmed queries
-/// (as casa-measures-data looks names up). Positions are CASA's.
+/// An observatory table whose names are found as casa-measures-data and
+/// casacore find them (`unique_prefix_position`). Positions are CASA's.
 #[derive(Debug)]
 struct Observatories(Vec<(&'static str, ObservatoryPosition)>);
 
 impl MeasuresProvider for Observatories {
     fn observatory(&self, name: &str) -> Result<Option<ObservatoryPosition>, String> {
-        let name = name.trim();
-        Ok(self
-            .0
-            .iter()
-            .find(|(entry, _)| entry.eq_ignore_ascii_case(name))
-            .map(|(_, position)| position.clone()))
+        Ok(
+            unique_prefix_position(name, &self.0, |(entry, _)| entry)
+                .map(|at| self.0[at].1.clone()),
+        )
     }
 }
 

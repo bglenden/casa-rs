@@ -126,6 +126,7 @@ const WRITTEN: &[Written] = &[
     Written {
         id: SubtableId::Source,
         carried: &[
+            "SOURCE_MODEL",
             "SOURCE_ID",
             "SPECTRAL_WINDOW_ID",
             "NAME",

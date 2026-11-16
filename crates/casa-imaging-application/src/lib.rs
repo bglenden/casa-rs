@@ -10,24 +10,38 @@
 
 pub mod availability;
 mod compile;
-#[doc(hidden)]
-pub mod geometry_law;
 mod imaging;
-mod native;
-mod request;
 #[doc(hidden)]
-pub mod route_law;
+pub mod mask_image_law;
+mod mvc;
+#[cfg(test)]
+mod mvc_compile_law;
+#[doc(hidden)]
+pub mod mvc_view_law;
+mod native;
+#[doc(hidden)]
+pub mod product_law;
+mod request;
+mod restart;
+pub mod restart_mask_law;
+#[doc(hidden)]
+pub mod restart_products_law;
+pub mod single_dish;
 #[doc(hidden)]
 pub mod source_law;
 #[doc(hidden)]
 pub mod start_model_law;
+#[doc(hidden)]
+pub mod store_law;
 mod tclean;
+mod virtual_model;
 
-pub use casa_imaging_deconvolution::CleanStop;
+pub use casa_imaging_deconvolution::{CleanStop, ResidualStatistics};
 pub use casa_imaging_model::{
     HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
 };
 pub use casa_imaging_operator::GridPrecision;
+pub use casa_imaging_runtime::PlaneCycleRow;
 pub use casa_imaging_runtime::pass::{BackendChoice, Cancel};
 pub use casa_imaging_runtime::{
     Admission, Diagnostics, HostResources, Phase, ResourcePolicy, ReturningAllocator, RunStatus,
@@ -36,23 +50,22 @@ pub use casa_imaging_runtime::{
 pub use compile::{OutlierProblem, PrepareError};
 pub use request::{
     AwCfSource, AwProjection, BackendRequest, DataColumn, Deconvolver, Gridder, ImagingRequest,
-    InvalidRequest, NativeAwCachePolicy, SourceRoute, SpecMode, UseMask, Weighting,
+    InvalidRequest, MeasurementSetSelection, NativeAwCachePolicy, SaveModel, SpecMode,
+    SpectralMaskRange, UseMask, UserMaskBox, Weighting,
 };
 pub use tclean::TcleanRefusal;
 
-use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
+use std::{error::Error, fmt, path::PathBuf};
 
 use casa_imaging_deconvolution::MajorCycleCompletion;
 use casa_imaging_model::{
-    CompileProblemError, CompiledProblem, ObservationSelection, ProblemInput,
-    SpectralWindowSelection, compile, compile_observation,
+    CompileProblemError, CompiledProblem, ProblemInput, compile, compile_observation,
 };
 use casa_imaging_products::{
     ContinuumProductControls, PlannedContinuumGeneration, PublishedContinuumGeneration,
     VisibilityProductCompletion,
 };
 use casa_imaging_runtime::run_phase;
-use casa_ms::resolve_selected_observation;
 use native::NativeInput;
 
 /// Boxed application failure accepted by the native application composition.
@@ -81,8 +94,9 @@ pub(crate) struct ApplicationRuntime {
     pub(crate) host: HostResources,
     pub(crate) resource_policy: ResourcePolicy,
     pub(crate) backend: BackendChoice,
-    /// The requested grid precision; `None` is plan decision D2's rule.
+    /// The requested grid precision; `None` is `f64` on the CPU, `f32` on Metal.
     pub(crate) grid_precision: Option<GridPrecision>,
+    pub(crate) ft_padding: Option<casa_imaging_operator::PaddingFactor>,
     pub(crate) cancel: Cancel,
     /// Directory the paged cube state of a channel-local run lives in.
     pub(crate) spill_directory: PathBuf,
@@ -94,6 +108,8 @@ pub(crate) struct ApplicationNative {
     pub(crate) runtime: ApplicationRuntime,
     pub(crate) publication: ApplicationPublication,
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
+    pub(crate) awp2: Option<Awp2Deployment>,
+    pub(crate) mosaic_voltage_pattern: Option<casa_numerics::PrimaryBeam>,
 }
 
 /// The AW catalog a run opens (`AwCatalog::open_casa`): a directory of CASA
@@ -117,11 +133,31 @@ pub(crate) struct AwCatalogDeployment {
     pub(crate) generation_workers: Option<usize>,
 }
 
+/// The observing frequencies and bounded physical data of an AWPLPG run.
+/// The operator owns generating the convolution functions.
+pub(crate) struct Awp2Deployment {
+    pub(crate) single_field: bool,
+    pub(crate) legacy_vla: bool,
+    pub(crate) frequencies_hz: Box<[f64]>,
+    pub(crate) w_planes: Box<[f64]>,
+    pub(crate) row_frequency_hz: f64,
+    pub(crate) pa_centres: Box<[f64]>,
+    pub(crate) feed_angle_rad: f32,
+    pub(crate) surface: casa_imaging_model::EvlaDishSurface,
+    pub(crate) _charge: casa_imaging_runtime::Reservation,
+}
+
 /// Product-generation controls, the analytic primary beam's pointings and
 /// the CASA image writer.
 pub(crate) struct ApplicationPublication {
     pub(crate) controls: ContinuumProductControls,
     pub(crate) primary_beam_centres: Option<casa_imaging_products::PrimaryBeamCentres>,
+    pub(crate) saved_radial_primary_beam:
+        Option<casa_imaging_runtime::Admitted<casa_imaging_products::SavedRadialPrimaryBeam>>,
+    /// Store whose observatory anchors the cube's LSRK beam selection.
+    pub(crate) vla_selection_store: Option<usize>,
+    /// An existing MEM model can stay on disk when the minor cycle leaves it unchanged.
+    pub(crate) saved_mem_model: bool,
     pub(crate) writer: casa_imaging_products::CasaImageWriter,
 }
 
@@ -131,10 +167,19 @@ pub struct ImagingOutcome {
     pub problem: CompiledProblem,
     /// Ordered solve evidence captured before each major-cycle pass.
     pub minor_cycles: Vec<NativeMinorCycleOutcome>,
+    /// Each plane's part of each minor cycle. Like the statistics below, it
+    /// is not part of the persisted run summary.
+    pub plane_rows: PlaneRows,
+    /// Statistics from the final minor-cycle preparation/convergence check.
+    /// Captured even when no minor cycle runs; absent for dirty imaging.
+    /// These in-memory scalars are not part of the persisted run summary.
+    pub final_residual_statistics: Option<ResidualStatistics>,
     /// Why cleaning stopped (CASA's `stopcode`); `None` for a dirty run or
     /// when a minor cycle cleaned nothing.
     pub stop: Option<CleanStop>,
-    /// Number of executed major passes, including the initial pass.
+    /// Number of executed major cycles: the initial pass when it formed the
+    /// residual (none when the run read it, `calcres=False`), and each pass
+    /// after it that formed a residual.
     pub major_cycle_count: usize,
     /// Total component count charged to the reported task/controller budget.
     pub total_minor_iterations: usize,
@@ -156,6 +201,10 @@ pub struct ImagingOutcome {
     pub planned_products: PlannedContinuumGeneration,
     /// Payload-free authorized generation retained after publication.
     pub products: PublishedContinuumGeneration,
+    /// The separately published MVC Taylor-family suffixes.
+    mvc_taylor_names: Vec<String>,
+    /// MVC's reported deconvolution plane is the single Taylor image.
+    mvc_run: bool,
     /// The charge of the memory `scientific` holds resident, released when
     /// the outcome drops.
     _retained: casa_imaging_runtime::Reservation,
@@ -185,6 +234,7 @@ impl ImagingOutcome {
             .members()
             .iter()
             .map(|member| member.name().to_string())
+            .chain(self.mvc_taylor_names.iter().cloned())
             .collect()
     }
 
@@ -193,6 +243,9 @@ impl ImagingOutcome {
     /// its Stokes planes, as CASA's `summaryminor` keys them.
     #[must_use]
     pub fn plane_layout(&self) -> [usize; 3] {
+        if self.mvc_run {
+            return [1, 1, 1];
+        }
         let reconstruction = self.problem.reconstruction();
         let channels = match reconstruction.basis() {
             casa_imaging_model::ReconstructionBasis::ChannelLocal { channels } => channels,
@@ -204,6 +257,16 @@ impl ImagingOutcome {
             reconstruction.polarization().coordinates().len(),
         ]
     }
+}
+
+/// Each plane's part of each minor cycle (CASA's `summaryminor`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlaneRows {
+    /// Each image plane's start-model flux, in `.model`'s units, sorted
+    /// by `[domain, channel, polarization]`; a plane absent starts from zero.
+    pub start_model_flux: Vec<([usize; 3], f64)>,
+    /// Each minor cycle's rows, in order.
+    pub cycles: Vec<Vec<casa_imaging_runtime::PlaneCycleRow>>,
 }
 
 /// Stable application projection of the T21 owner evidence.
@@ -328,6 +391,15 @@ pub fn execute(
             Ok(outcome)
         }
         Err(error) => {
+            // A rejected continuation never replaces the previous successful record.
+            if request.tclean_restart
+                && matches!(
+                    &error,
+                    ApplicationDispatchError::Preparation(PrepareError::Restart { .. })
+                )
+            {
+                return Err(error);
+            }
             let status = match &error {
                 ApplicationDispatchError::Cancelled => RunStatus::Cancelled,
                 error => RunStatus::Failed {
@@ -375,9 +447,10 @@ fn prepare_and_run(
 /// catalogs compiling loads for the run. They are admitted before compile
 /// opens anything, after the process's caches
 /// ([`casa_imaging_runtime::charge_process_caches`]);
-/// the MeasurementSet walks are admitted once its rows are known
-/// ([`compile::prepare`]) and released once the selected observation is
-/// resolved. The device the request resolves to is set in
+/// compile's survey of the observation is admitted once the partitions it
+/// reads are known ([`compile::prepare`]) and released once the problem
+/// compiles. The
+/// device the request resolves to is set in
 /// `resolved_backend` as soon as it is known.
 fn compile_run(
     request: &ImagingRequest,
@@ -397,7 +470,7 @@ fn compile_run(
         .map_err(ApplicationDispatchError::Request)?;
     casa_imaging_runtime::charge_process_caches(&context.host, &context.policy)
         .map_err(ApplicationDispatchError::Admission)?;
-    let resident = casa_imaging_runtime::admit(
+    let mut resident = casa_imaging_runtime::admit(
         &context.host,
         &context.policy,
         &casa_imaging_runtime::Demand {
@@ -410,19 +483,29 @@ fn compile_run(
         PrepareError::Admission(admission) => ApplicationDispatchError::Admission(admission),
         error => ApplicationDispatchError::Preparation(error),
     })?;
-    let resolved = resolve_selected_observation(prepared.observation.clone())
+    // The static restart-mask plan and its clone stay charged through all passes
+    // and publication; ordinary minor-cycle mask charges cover their derived masks.
+    resident.join(prepared.mask_resident);
+    let observation = compile_observation(prepared.snapshot)
         .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
-    let (snapshot, access) = resolved.into_parts();
-    let observation = compile_observation(snapshot)
-        .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
-    drop(prepared.walks);
+    drop(prepared.survey);
+    let model_lifecycle = prepared.model_lifecycle;
     let problem = compile(ProblemInput::new(
         prepared.specification,
         prepared.geometry,
         observation,
-        prepared.model_lifecycle,
+        model_lifecycle,
     ))
     .map_err(ApplicationDispatchError::Compile)?;
+    let psf_view = prepared
+        .psf_view
+        .map(|view| {
+            let view = view.compile(&problem, model_lifecycle)?;
+            // Its writer coordinates remain live through publication.
+            resident.join(view.reservation);
+            Ok::<_, ApplicationDispatchError>(view.value)
+        })
+        .transpose()?;
     let backend = availability::resolve_backend(
         &problem,
         request.backend,
@@ -437,60 +520,25 @@ fn compile_run(
         .deploy(backend)
         .map_err(ApplicationDispatchError::Preparation)?;
     let input = NativeInput {
+        mvc_taylor: prepared.mvc_taylor,
+        psf_view,
         observation: prepared.observation,
-        initial_access: access,
-        source_route: request.source_route,
         write_model_column: prepared.write_model_column,
+        predicts_final_model: prepared.predicts_final_model,
         write_corrected_data: prepared.write_corrected_data,
+        virtual_model: prepared.virtual_model,
         masks: prepared.masks,
         start_model: prepared.start_model,
+        outlier_models: prepared.outlier_models,
+        outlier_psfs: prepared.outlier_psfs,
+        existing: prepared.existing,
+        forms: imaging::Forms {
+            psf: request.calcpsf,
+            residual: request.calcres,
+        },
         minor_cycle_image_response: prepared.minor_cycle_image_response,
     };
     Ok((problem, input, native, resident))
-}
-
-pub(crate) fn visibility_write_selection(
-    problem: &CompiledProblem,
-    selected: Arc<ObservationSelection>,
-) -> Result<Arc<ObservationSelection>, ApplicationError> {
-    let Some(transform) = problem.visibility_transform() else {
-        return Ok(selected);
-    };
-    let spectral_windows = selected
-        .spectral_windows()
-        .iter()
-        .map(|selection| {
-            let output_channels = selection
-                .channel_indices()
-                .iter()
-                .copied()
-                .filter(|channel| {
-                    transform.rules().iter().any(|rule| {
-                        rule.spectral_window_id() == selection.spectral_window_id()
-                            && rule
-                                .channel_use(*channel)
-                                .is_some_and(|role| role.contributes_to_output())
-                    })
-                })
-                .collect::<Vec<_>>();
-            if output_channels.is_empty() {
-                return Err(boxed(
-                    "continuum transform selected no visibility-write output channels",
-                ));
-            }
-            Ok(SpectralWindowSelection::new(
-                selection.spectral_window_id(),
-                output_channels,
-            ))
-        })
-        .collect::<Result<Vec<_>, ApplicationError>>()?;
-    Ok(Arc::new(ObservationSelection::new(
-        selected.rows().clone(),
-        selected.rows_filter().clone(),
-        selected.data_descriptions().to_vec(),
-        spectral_windows,
-        selected.correlations().to_vec(),
-    )))
 }
 
 /// Failure before or within the installed whole-run implementation.
@@ -538,8 +586,4 @@ impl From<casa_imaging_runtime::Cancelled> for ApplicationDispatchError {
     fn from(_: casa_imaging_runtime::Cancelled) -> Self {
         Self::Cancelled
     }
-}
-
-fn boxed(message: &'static str) -> ApplicationError {
-    Box::new(io::Error::other(message))
 }

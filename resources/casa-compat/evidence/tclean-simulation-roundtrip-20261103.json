@@ -1,0 +1,134 @@
+{
+  "purpose": "#980 DONE criterion: the end-to-end simulation round trip. casa-rs simobserve writes a noise-free MeasurementSet; CASA 6.7.6.14's tclean and casa-rs's tclean image it with the call CASA's simanalyze makes (simutil.imtclean, dryrun); tools/casa-compat/tclean_case_matrix.py compares them.",
+  "tool": "tools/casa-compat/tclean_simulation_roundtrip.py",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14",
+    "host": "bg-mac-mini (macOS, arm64)"
+  },
+  "native": {
+    "branch": "lead/sim-roundtrip",
+    "revision": "a363cd30a4 (main 88cace1, #1076, plus the round-trip tool and the per-case CASA isolation)",
+    "backend": "cpu",
+    "precision": "f64"
+  },
+  "sky_model": "casatestdata unittest/simobserve/core5ps.skymodel (1873 x 1873 px of 0.043 arcsec, one channel at 345 GHz); the cube scenarios use a derived 4-channel copy (10 MHz apart, channel k scaled by 1 + 0.1 k)",
+  "round_trip_1": {
+    "date": "2026-11-03T03:52Z",
+    "scenarios": {
+      "alma12_single": {
+        "passed": true,
+        "note": "the unset map covers the 80-arcsec model with a 12 m mosaic (gridder mosaic, natural); the tool now maps 1 arcsec for a single pointing"
+      },
+      "alma12_mosaic": {
+        "passed": true,
+        "call": "gridder mosaic, natural, clark, niter 500, 1920 x 1920"
+      },
+      "alma12_mosaic_briggs": {
+        "passed": true,
+        "call": "gridder mosaic, briggs (mosweight True, per-field density), clark, niter 500"
+      },
+      "alma12_aca7_mosaic": {
+        "passed": false,
+        "call": "vis [12 m MS, 7 m MS], gridder mosaic, briggs, clark, niter 500",
+        "result": "counts exact (500 iterations, 2 major cycles, stop 1), maxpsfsidelobe within 6e-7; psf, pb, weight and sumwt within 1e-6 nRMS; image 4.2e-3, residual 8.6e-3, model 0.10 nRMS, cyclethreshold 2e-3 relative",
+        "verdict": "justified divergence: the clean's own rounding sensitivity (aca7_sensitivity)"
+      },
+      "alma12_single_cube": {
+        "passed": false,
+        "verdict": "refused by casa-rs: mosweight with a cube's per-channel density (#818, in progress); this scenario also ran as a mosaic (unset map)"
+      },
+      "alma12_mosaic_cube": {
+        "passed": false,
+        "verdict": "refused by casa-rs: mosweight with a cube's per-channel density (#818, in progress)"
+      }
+    }
+  },
+  "aca7_sensitivity": {
+    "question": "Is the 12 m + 7 m list mosaic's difference a defect or rounding? It reproduces on the 7 m MeasurementSet alone (ACA, ten 7 m dishes, 7 fields, briggs, clark).",
+    "dirty_images": "niter 0: the list, the list with natural weighting, the 12 m and the 7 m MeasurementSets agree within 1e-6 nRMS in every product (image, residual, psf, pb, weight, sumwt)",
+    "cycles": "7 m, briggs: niter 20 (one minor cycle, then the model prediction) agrees within 7e-7 with clark and with hogbom; natural weighting agrees within 9e-7 at niter 500 (3 major cycles); briggs at niter 50 agrees (model 3.4e-7), and between 50 and 100 iterations of the same first minor cycle the components diverge while the cycle's peak residual (0.0039408 / 0.0039411) and model flux (0.037867 both) still agree",
+    "perturbation": {
+      "method": "DATA of the 7 m MeasurementSet plus complex Gaussian noise of 1e-6 of its peak (seed 7); both implementations re-run on it",
+      "nrms_max_normalized": {
+        "model": {
+          "casa_vs_perturbed_casa": 0.00157,
+          "native_vs_perturbed_native": 0.00159,
+          "casa_vs_native": 0.00159
+        },
+        "residual": {
+          "casa_vs_perturbed_casa": 0.0179,
+          "native_vs_perturbed_native": 0.0202,
+          "casa_vs_native": 0.0213
+        },
+        "image": {
+          "casa_vs_perturbed_casa": 0.00194,
+          "native_vs_perturbed_native": 0.00238,
+          "casa_vs_native": 0.00237
+        }
+      },
+      "conclusion": "a 1e-6 change to the data moves CASA's own result by as much as casa-rs differs from it: this briggs clean of an extended model under a 0.31 sidelobe PSF is chaotic at the rounding level, and CASA's and casa-rs's results are equally valid (AGENTS.md: results that differ only through rounding)"
+    }
+  },
+  "matrix_driver_isolation": "test_iterbot_cube_restart_updatedmask run before test_modelvis_16 in one driver process changed CASA's result for test_modelvis_16 (120 iterations against 170). With each case's CASA steps in a fresh process (tclean_case_matrix.py --casa-steps), CASA gives 170 in that order (run isolation-1).",
+  "round_trip_final": {
+    "date": "2026-11-03T06:23Z",
+    "native": "main 53e504e (through #1084, mosweight on a mosaic cube's per-channel density) with #1087's ALMA 12 m beam radius (lead/alma-pb-radius 8220e1c); tools at lead/sim-roundtrip 24d8125",
+    "receipt_sha256": "f608a0d47b50438b53b40154ed4339d45f82030d70cd48ce1e80cef5ff5a40ea",
+    "archive": {
+      "nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-final-supplement-and-roundtrip-24d8125b83.tar",
+      "sha256": "0ddbf57906afaadd2716a1bd00d38003b5286a04a1bcac63613507bbb5a091ab"
+    },
+    "scenarios": {
+      "alma12_single": {
+        "passed": true,
+        "call": "gridder standard (one pointing), natural, clark, niter 500, 1920 x 1920",
+        "result": "307 iterations, 4 major cycles, stop 2, exact; every product within 5.5e-7 nRMS, masks exact. Before #1087 (the 12 m beam tabled to 3.568 degrees, not CASA's 1.784) 88 .pb mask pixels flipped at pblimit"
+      },
+      "alma12_mosaic": {
+        "passed": true,
+        "result": "330 iterations, 4 major cycles, stop 2, exact; worst product the residual, 3.1e-6"
+      },
+      "alma12_mosaic_briggs": {
+        "passed": true,
+        "result": "339 iterations, 4 major cycles, stop 2, exact; worst product the residual, 4.5e-6"
+      },
+      "alma12_aca7_mosaic": {
+        "passed": false,
+        "result": "as round trip 1: 500 iterations, 2 major cycles, stop 1, exact; psf, pb, weight and sumwt within 7e-7; image 4.2e-3, residual 8.6e-3, model 0.10",
+        "verdict": "justified divergence: the clean's rounding sensitivity (aca7_sensitivity)"
+      },
+      "alma12_single_cube": {
+        "passed": false,
+        "call": "gridder standard, briggs (perchanweightdensity), clark, niter 500, 4 channels, restoringbeam common",
+        "result": "906 iterations against CASA's 907, 3 major cycles, stop 1; before any cleaning the psf differs by 3.4e-4 and sumwt by 1.2e-5, pb within 2.7e-7",
+        "verdict": "CASA bug casa-rs does not follow: the cube Briggs weightor grids its density at GridFT's rotation to the phase centre and looks it up at the MeasurementSet uvw (docs/CASA (C++) bugs.md, 'The cube Briggs weightor grids and looks up its density in different uvw frames'). The pointing is 0.0215 arcsec from simanalyze's phase centre in RA and Dec (half a model pixel), so the rotation is not the identity; see cube_frames"
+      },
+      "alma12_mosaic_cube": {
+        "passed": false,
+        "call": "gridder mosaic, briggs (mosweight, perchanweightdensity), clark, niter 500, 4 channels",
+        "result": "1001 iterations, 3 major cycles, stop 1, exact; before any cleaning psf 3.3e-3, weight 2.2e-4, sumwt 2.4e-4, pb 1.4e-4 with 246 .pb mask pixels (pb within 5e-5 of pblimit); model 7.2e-2 after cleaning",
+        "verdict": "the same CASA bug for a multi-field cube (each field's density is gridded at the image phase centre's rotation), as #1084 measured on refim_alma_mosaic.ms (#789); under natural weighting the same mosaic cube agrees (cube_frames)"
+      }
+    }
+  },
+  "cube_frames": {
+    "question": "Are the two cube scenarios' differences the cube density's two uvw frames, or something else?",
+    "native": "as round_trip_final",
+    "pointing": "casa-rs simobserve's single pointing is at RA -1.30899705244215 rad, Dec -0.401425623529829 rad, 0.0215 arcsec west and north of simanalyze's phase centre (19:00:00 -23:00:00, the model's reference direction): the model's centre pixel, half a pixel from its reference pixel. CASA 6.7.6.14's simobserve, given the same model and map, puts its pointing at the same direction to every printed digit",
+    "probes": {
+      "single_cube_dirty_simanalyze_centre": "niter 0 at simanalyze's phase centre: psf 3.4e-4, sumwt 1.2e-5, image 2.2e-4",
+      "single_cube_dirty_field_centre": "niter 0 at the pointing's own direction: psf 1.2e-7, sumwt 5.6e-8, image 8.6e-8, pb exact",
+      "single_cube_field_centre": "simanalyze's call (niter 500) at the pointing's own direction: 900 iterations, 3 major cycles, stop 1, all exact; psf 1.2e-7, model 1.7e-7, residual 4.6e-7, sumwt 5.6e-8, cyclethreshold and maxpsfsidelobe exact; image 2.1e-4 (the common restoring beam, below)",
+      "mosaic_cube_dirty_briggs": "niter 0, simanalyze's call: psf 3.3e-3, sumwt 2.4e-4, weight 2.2e-4, 246 .pb mask pixels",
+      "mosaic_cube_dirty_natural": "niter 0, natural weighting: every product within 1e-6; one .pb mask pixel per channel, where CASA's pb is 0.200000137 against pblimit 0.2 (CASA's single-precision mosaic weight image, as hetarray alma .3/.4, #1077)"
+    },
+    "common_beam": "with the PSFs equal to 1.2e-7 and the four channel beams equal to every printed digit, CASA's common beam is 1.143576 x 0.978783 arcsec at 89.7815 deg and casa-rs's 1.143326 x 0.978741 at 89.8177 deg: axes within 2.2e-4 (inside the comparison's 1e-3), angle 0.036 deg (outside its 0.01). Both enclose the channel beams; they differ within one 0.1% growth step of the search ('A common beam's circular case is the reciprocal of its axis' records casa-rs searching in radians where CASA searches in arcseconds)",
+    "pbcor_beam": "CASA writes the common beam on .image.pbcor; casa-rs wrote the per-channel restoring beams there. Fixed by lead/pbcor-common-beam (#1090): rerunning single_cube_field_centre with that branch's binary, casa-rs's .image.pbcor carries one beam, its .image's (the branch predates #1087, so its pb differs by 1.8e-4 as before that fix)",
+    "archive": {
+      "nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-cube-frames-and-pbcor-check.tar",
+      "sha256": "e061d84914c7a6e5624f95bb1be071d066cd5dc00f3300bed5444d218e4862c9",
+      "members": "the probes' case files, receipts and logs, the pbcor recheck, and the probe scripts (field direction, beams, mask edges, CASA's simobserve pointing)"
+    }
+  }
+}

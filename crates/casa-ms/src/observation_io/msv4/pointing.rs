@@ -17,9 +17,10 @@ use zarrs::array::{Array, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
 
 use super::metadata::{
-    has_node, invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
+    chunk_bytes, has_node, invalid, open_array, require_layout, require_units, storage, text,
     time_reference,
 };
+use super::opening::handle_bytes;
 use super::read::Msv4Observation;
 
 /// XRADIO's `frame` for a pointing direction: the celestial frames, and
@@ -40,7 +41,124 @@ const SEARCH_TIMES: u64 = 4096;
 /// The most pointing times one outward read covers.
 const MOST_SEARCH_TIMES: u64 = 16_384;
 
+/// Column indices and nearest-sample slots per requested antenna.
+const ANTENNA_WORKSPACE_BYTES: usize = 128;
+
+fn antenna_workspace(requested: usize) -> usize {
+    requested
+        .saturating_mul(ANTENNA_WORKSPACE_BYTES)
+        .saturating_add(casa_types::memory::btree_node_bytes::<
+            AntennaId,
+            AntennaPointing,
+        >(requested))
+}
+
+/// Small Zarr codec contexts and traversal state beside the charged chunk,
+/// array handles and coordinates. The conversion API grants 1 MiB for a
+/// pointing read.
+const POINTING_WORKSPACE_BYTES: usize = 64 << 10;
+
+/// The decoded coordinates, directions and final series, with the array
+/// handles, string-label decode and per-antenna bookkeeping held alongside.
+fn pointing_charge(
+    times: usize,
+    span: usize,
+    search: usize,
+    columns: usize,
+    requested: usize,
+    metadata: usize,
+) -> usize {
+    let read = times
+        .saturating_add(
+            span.saturating_add(search)
+                .saturating_mul(columns)
+                .saturating_mul(2),
+        )
+        .saturating_mul(size_of::<f64>());
+    let held = requested
+        .saturating_mul(span.saturating_add(2))
+        .saturating_mul(4 * size_of::<f64>());
+    read.saturating_add(held)
+        .saturating_add(metadata)
+        .saturating_add(antenna_workspace(requested))
+}
+
 impl Msv4Observation {
+    /// A pointing read's array metadata and string-coordinate workspace.
+    /// The opening projector uses the same conservative handle and UTF32
+    /// costs; its codec workspace also covers transient Zarr decode buffers.
+    fn pointing_metadata(
+        &self,
+        path: &str,
+        beam: &Array<FilesystemStore>,
+        time_axis: &str,
+    ) -> Result<usize, ObservationError> {
+        if beam.shape().len() < 3 {
+            return Err(invalid(format!(
+                "{path}/POINTING_BEAM has no pointing axes"
+            )));
+        }
+        let time = open_array(&self.store, &format!("{path}/{time_axis}"))?;
+        let names = open_array(&self.store, &format!("{path}/antenna_name"))?;
+        if time.shape() != [beam.shape()[0]] || names.shape() != [beam.shape()[1]] {
+            return Err(invalid(format!(
+                "{path}/POINTING_BEAM does not span its coordinates"
+            )));
+        }
+        let fixed = names.data_type().fixed_size().unwrap_or(0);
+        let labels = usize::try_from(names.shape()[0])
+            .unwrap_or(usize::MAX)
+            .saturating_mul(
+                fixed
+                    .saturating_mul(4)
+                    .saturating_add(size_of::<Vec<char>>() + size_of::<String>()),
+            );
+        Ok(POINTING_WORKSPACE_BYTES
+            .saturating_add(handle_bytes(beam))
+            .saturating_add(handle_bytes(&time))
+            .saturating_add(handle_bytes(&names))
+            .saturating_add(labels)
+            .saturating_add(chunk_bytes(beam)?.saturating_mul(2))
+            .saturating_add(chunk_bytes(&time)?.saturating_mul(2))
+            .saturating_add(chunk_bytes(&names)?.saturating_mul(2)))
+    }
+
+    /// The most bytes a pointing query reads and holds
+    /// ([`casa_observation::Observation::pointing_bytes`]): over the
+    /// datasets, a query spanning every pointing time of every antenna, or
+    /// one that also searches outward from a span, whichever reads more,
+    /// and the series it gives every antenna of the catalogue.
+    pub(super) fn pointing_bound(&self) -> Result<usize, ObservationError> {
+        let mut most = 0;
+        for dataset in &self.datasets {
+            let path = format!("{}/pointing_xds", dataset.path);
+            let beam_path = format!("{path}/POINTING_BEAM");
+            if !has_node(&self.store, &beam_path)? {
+                continue;
+            }
+            let beam = open_array(&self.store, &beam_path)?;
+            let time_axis = if has_node(&self.store, &format!("{path}/time_pointing"))? {
+                "time_pointing"
+            } else {
+                "time"
+            };
+            let metadata = self.pointing_metadata(&path, &beam, time_axis)?;
+            let shape = beam.shape();
+            let [times, antennas] =
+                [shape[0], shape[1]].map(|extent| usize::try_from(extent).unwrap_or(usize::MAX));
+            let search = times.min(MOST_SEARCH_TIMES as usize);
+            most = most.max(pointing_charge(
+                times,
+                times,
+                search,
+                antennas,
+                self.catalogue.antennas.len(),
+                metadata,
+            ));
+        }
+        Ok(most)
+    }
+
     /// [`casa_observation::Observation::pointing`] on one dataset: each
     /// antenna's samples within the span and its nearest one each side.
     pub(super) fn read_pointing(
@@ -60,7 +178,12 @@ impl Msv4Observation {
             });
         }
         let path = format!("{}/pointing_xds", dataset.path);
-        for antenna in &request.antennas {
+        for (index, antenna) in request.antennas.iter().enumerate() {
+            if request.antennas[..index].contains(antenna) {
+                return Err(ObservationError::InvalidRequest {
+                    reason: format!("{antenna:?} is repeated in a pointing query"),
+                });
+            }
             if !dataset.antennas.iter().any(|(_, id)| id == antenna) {
                 return Err(ObservationError::InvalidRequest {
                     reason: format!("{antenna:?} is not an antenna of {:?}", request.partition),
@@ -108,13 +231,44 @@ impl Msv4Observation {
             .ok_or(ObservationError::Unsupported {
                 what: "an MSv4 pointing frame other than fk5, icrs or altaz",
             })?;
-        let (times, time_attributes) = numbers::<f64>(&self.store, &format!("{path}/{time_axis}"))?;
+        let metadata = self.pointing_metadata(&path, &beam, time_axis)?;
+        let minimum = metadata
+            .saturating_add(antenna_workspace(request.antennas.len()))
+            .saturating_add(
+                usize::try_from(shape[0])
+                    .unwrap_or(usize::MAX)
+                    .saturating_mul(size_of::<f64>()),
+            );
+        if minimum > request.budget_bytes {
+            return Err(ObservationError::OverBudget {
+                what: "an MSv4 pointing query",
+                required: minimum,
+                budget: request.budget_bytes,
+            });
+        }
+        let time = open_array(&self.store, &format!("{path}/{time_axis}"))?;
+        let times: Vec<f64> = time
+            .retrieve_array_subset_opt(
+                &ArraySubset::new_with_shape(time.shape().to_vec()),
+                &self.options,
+            )
+            .map_err(storage)?;
+        let time_attributes = time.attributes().clone();
         if time_reference(&time_attributes, time_axis)? != (entry.time_scale, entry.time_origin) {
             return Err(invalid(format!(
                 "{path}'s times are not in its partition's time system"
             )));
         }
-        let names = strings(&self.store, &format!("{path}/antenna_name"))?;
+        let names_array = open_array(&self.store, &format!("{path}/antenna_name"))?;
+        let names: Vec<String> = names_array
+            .retrieve_array_subset_opt::<Vec<Vec<char>>>(
+                &ArraySubset::new_with_shape(names_array.shape().to_vec()),
+                &self.options,
+            )
+            .map_err(storage)?
+            .into_iter()
+            .map(|chars| chars.into_iter().collect())
+            .collect();
         if times.len() as u64 != shape[0] || names.len() as u64 != shape[1] {
             return Err(invalid(format!(
                 "{path}/POINTING_BEAM does not span its coordinates"
@@ -131,12 +285,18 @@ impl Msv4Observation {
         } else {
             times.len().min(MOST_SEARCH_TIMES as usize)
         };
-        let read = (times.len() + (last - first + search) * names.len() * 2) * size_of::<f64>();
-        let held = request.antennas.len() * (last - first + 2) * 4 * size_of::<f64>();
-        if read + held > request.budget_bytes {
+        let required = pointing_charge(
+            times.len(),
+            last - first,
+            search,
+            names.len(),
+            request.antennas.len(),
+            metadata,
+        );
+        if required > request.budget_bytes {
             return Err(ObservationError::OverBudget {
                 what: "an MSv4 pointing query",
-                required: read + held,
+                required,
                 budget: request.budget_bytes,
             });
         }
@@ -169,16 +329,13 @@ impl Msv4Observation {
                 let direction = [span[at], span[at + 1]];
                 (!direction[0].is_nan()).then_some((time, direction))
             });
-            let samples: Vec<(usize, [f64; 2])> = before[index]
-                .into_iter()
-                .chain(within)
-                .chain(after[index])
-                .collect();
-            let sample_times: Vec<f64> = samples.iter().map(|(time, _)| times[*time]).collect();
-            let coefficients = samples
-                .iter()
-                .flat_map(|(_, direction)| *direction)
-                .collect();
+            let samples = before[index].into_iter().chain(within).chain(after[index]);
+            let mut sample_times = Vec::with_capacity(last - first + 2);
+            let mut coefficients = Vec::with_capacity((last - first + 2) * 2);
+            for (time, direction) in samples {
+                sample_times.push(times[time]);
+                coefficients.extend_from_slice(&direction);
+            }
             series.antennas.insert(
                 antenna,
                 AntennaPointing::new(sample_times.clone(), None, sample_times, 1, coefficients)?,
@@ -199,7 +356,7 @@ impl Msv4Observation {
         if beam.shape().len() == 4 {
             ranges.push(0..1);
         }
-        beam.retrieve_array_subset(&ArraySubset::new_with_ranges(&ranges))
+        beam.retrieve_array_subset_opt(&ArraySubset::new_with_ranges(&ranges), &self.options)
             .map_err(storage)
     }
 

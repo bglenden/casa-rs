@@ -59,7 +59,6 @@
   "casa-imaging-runtime": "execution",
   "casa-imaging-singledish": "execution",
   "casa-imaging-metal": "backend",
-  "casa-simulation-synthesis": "science",
   "casa-simulation": "application",
   "casa-atmosphere": "science",
   "casars-imager": "frontend",
@@ -120,12 +119,10 @@
    "casa-imaging-operator",
    "casa-imaging-products",
    "casa-imaging-runtime",
+   "casa-imaging-singledish",
    "casa-ms",
+   "casa-numerics",
    "casa-observation"
-  ],
-  "casa-simulation-synthesis": [
-   "casa-fft",
-   "casa-numerics"
   ],
   "casa-atmosphere": [],
   "casa-simulation": [
@@ -134,14 +131,19 @@
    "casa-components",
    "casa-fft",
    "casa-images",
+   "casa-imaging-application",
    "casa-imaging-model",
    "casa-imaging-operator",
+   "casa-imaging-products",
    "casa-imaging-runtime",
    "casa-imaging-singledish",
    "casa-lattices",
+   "casa-logging",
    "casa-ms",
    "casa-numerics",
-   "casa-tables"
+   "casa-provider-contracts",
+   "casa-tables",
+   "casa-task-runtime"
   ]
  },
  "device_dependency_prefixes": [
@@ -226,7 +228,6 @@
     "crates/casa-types/src",
     "crates/casa-values/src",
     "crates/casa-aipsio/src",
-    "crates/casa-simulation-synthesis/src",
     "crates/casa-measures-data/src",
     "crates/casa-task-runtime/src"
    ],
@@ -241,7 +242,6 @@
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b(?!::current_dir\\b)",
    "grandfathered": [
     "crates/casa-measures-data/src/lib.rs",
-    "crates/casa-ms/src/simulation_task.rs",
     "crates/casa-task-runtime/src/storage.rs"
    ]
   },
@@ -268,7 +268,6 @@
     "crates/casa-types/src",
     "crates/casa-values/src",
     "crates/casa-aipsio/src",
-    "crates/casa-simulation-synthesis/src",
     "crates/casa-measures-data/src",
     "crates/casa-task-runtime/src"
    ],
@@ -285,7 +284,7 @@
   },
   {
    "id": "no-content-hashing-in-imaging-crates",
-   "message": "no SHA-256 or CRC over scientific arrays, plans, receipts or spill (ADR-0014/0015/0016)",
+   "message": "no SHA-256 or CRC over scientific arrays, plans, receipts or spill (ADR-0014/0016)",
    "roots": [
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
@@ -304,10 +303,11 @@
    "grandfathered": []
   },
   {
-   "id": "selected-observation-provider-injection",
-   "message": "selected-observation source must receive an injected Measures provider and cannot discover MeasuresRuntime",
+   "id": "observation-geometry-provider-injection",
+   "message": "the observation boundary's adapters and the batch geometry receive an injected Measures provider and cannot discover MeasuresRuntime",
    "roots": [
-    "crates/casa-ms/src/selected_observation"
+    "crates/casa-ms/src/observation_io",
+    "crates/casa-imaging-model/src/batch_geometry"
    ],
    "extensions": [
     ".rs"

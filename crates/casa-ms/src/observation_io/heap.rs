@@ -164,6 +164,7 @@ fn window_bytes(window: &WindowEntry) -> usize {
 
 fn record_bytes(record: &SourceRecord) -> usize {
     let SourceRecord {
+        model,
         window: _,
         time: _,
         interval_s: _,
@@ -178,7 +179,11 @@ fn record_bytes(record: &SourceRecord) -> usize {
         rest_frequencies,
         systemic_velocities,
     } = record;
-    optional(code)
+    model.as_ref().map_or(0, |record| {
+        size_of::<casa_types::RecordValue>()
+            + 2 * size_of::<usize>()
+            + record.retained_heap_bytes().unwrap_or(usize::MAX)
+    }) + optional(code)
         + transitions.as_ref().map_or(0, strings)
         + rest_frequencies.as_ref().map_or(0, plain)
         + systemic_velocities.as_ref().map_or(0, plain)
@@ -215,15 +220,15 @@ pub(crate) fn partition_bytes(partition: &PartitionEntry) -> usize {
         + plain(scans)
         + plain(baselines)
         + entries(data_groups, group_bytes)
+        + casa_types::memory::btree_node_bytes::<AntennaId, Receptors>(receptors.len())
         + receptors.values().map(receptors_bytes).sum::<usize>()
         + plain(states)
 }
 
-/// The heap one antenna's receptors hold in a partition's map, its entry
-/// included.
+/// The heap one antenna's receptor values own, excluding their map's nodes.
 pub(crate) fn receptors_bytes(receptors: &Receptors) -> usize {
     let Receptors { types, angles } = receptors;
-    2 * size_of::<(AntennaId, Receptors)>() + strings(types) + entries(angles, quantity)
+    strings(types) + entries(angles, quantity)
 }
 
 /// The heap a data group's entry holds.

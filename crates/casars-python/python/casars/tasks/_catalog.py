@@ -174,14 +174,14 @@ def importvla(
 def tclean(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     selectdata: bool = True,
-    field: str = '',
-    spw: str = '',
-    timerange: str = '',
-    uvrange: str = '',
-    antenna: str = '',
-    scan: str = '',
+    field: str | list[str] | tuple[str, ...] = '',
+    spw: str | list[str] | tuple[str, ...] = '',
+    timerange: str | list[str] | tuple[str, ...] = '',
+    uvrange: str | list[str] | tuple[str, ...] = '',
+    antenna: str | list[str] | tuple[str, ...] = '',
+    scan: str | list[str] | tuple[str, ...] = '',
     observation: str = '',
-    intent: str = '',
+    intent: str | list[str] | tuple[str, ...] = '',
     datacolumn: str = 'corrected',
     imagename: StrPath = '',
     imsize: int | list[int] | tuple[int, ...] = [100],
@@ -189,7 +189,7 @@ def tclean(
     phasecenter: str = '',
     stokes: str = 'I',
     projection: str = 'SIN',
-    startmodel: StrPath = '',
+    startmodel: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     specmode: Literal['cont', 'cube', 'cubedata', 'cubesource', 'mfs', 'mvc'] = 'mfs',
     reffreq: str = '',
     nchan: int = -1,
@@ -268,8 +268,8 @@ def tclean(
     ddid: str = 'none',
     channel_start: int | Literal['none'] = 'none',
     channel_count: int | Literal['none'] = 'none',
-    hogbom_iteration_mode: str = 'strict',
-    write_pb: bool = False,
+    hogbom_iteration_mode: str = 'casa-inclusive',
+    write_pb: bool = True,
     fitspw: str = 'none',
     fitorder: int = 0,
     save_continuum_residual: bool = False,
@@ -291,15 +291,10 @@ def tclean(
     """Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.
 
     CASA's ``tclean``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #944:
-    ``restart``.
     Accepted only at CASA's default, where CASA reads them, until #980:
-    ``timerange``, ``antenna``, ``scan``, ``observation``, ``projection``,
-    ``reffreq``, ``psfphasecenter``, ``vptable``, ``computepastep``,
-    ``rotatepastep``, ``restoration``, ``noise``, ``npixels``,
-    ``interactive``, ``pbmask``, ``smoothfactor``, ``cutthreshold``,
-    ``dogrowprune``, ``minpercentchange``, ``verbose``, ``fastnoise``,
-    ``calcres``, ``calcpsf``.
+    ``interactive``.
+    Accepted only at CASA's default, where CASA reads them, until #1070:
+    ``computepastep``, ``rotatepastep``.
     """
     return _call_casa(tclean, locals())
 
@@ -351,16 +346,14 @@ def simobserve(
 
 def imhead(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
-    mode: Literal['list', 'put', 'summary'] = 'summary',
+    mode: Literal['add', 'del', 'get', 'history', 'list', 'put', 'summary'] = 'summary',
     hdkey: str = '',
-    hdvalue: str = '',
+    hdvalue: str | bool | int | float | dict[str, ParameterData] | list[ParameterData] = '',
     verbose: bool = False,
 ) -> Any:
     """Inspect or update CASA image header metadata.
 
     CASA's ``imhead``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``verbose``.
     """
     return _call_casa(imhead, locals())
 
@@ -1092,6 +1085,168 @@ def importfits(
     """
     return _call_casa(importfits, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits')
+def msconvert(
+    *,
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
+    outputvis: StrPath | object = _UNSET,
+    outformat: Literal['', 'msv2', 'msv4'] | object = _UNSET,
+    datagroups: str | list[str] | tuple[str, ...] | object = _UNSET,
+    partitionscheme: Literal['FIELD_ID', 'SCAN_NUMBER'] | list[Literal['FIELD_ID', 'SCAN_NUMBER']] | tuple[Literal['FIELD_ID', 'SCAN_NUMBER'], ...] | object = _UNSET,
+    withpointing: bool | object = _UNSET,
+    padding: Literal['flagged', 'omitted'] | object = _UNSET,
+    chunks: list[int] | tuple[int, ...] | object = _UNSET,
+    codec: Literal['blosc', 'none', 'zstd'] | object = _UNSET,
+    nthreads: int | object = _UNSET,
+    overwrite: bool | object = _UNSET,
+) -> TaskCompletion:
+    """Convert between MeasurementSet v2 and MSv4, in either direction."""
+    return _run("msconvert", _explicit(locals(), ('vis', 'outputvis', 'outformat', 'datagroups', 'partitionscheme', 'withpointing', 'padding', 'chunks', 'codec', 'nthreads', 'overwrite')))
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits']
+def simanalyze(
+    project: str = 'sim',
+    image: bool = True,
+    imagename: str = 'default',
+    skymodel: StrPath = '',
+    vis: str = 'default',
+    modelimage: str = '',
+    imsize: int | list[int] | tuple[int, ...] = [0, 0],
+    imdirection: str = '',
+    cell: str | list[str] | tuple[str, ...] = '',
+    interactive: bool = False,
+    niter: int = 0,
+    threshold: str = '0.1mJy',
+    weighting: Literal['briggs', 'briggsabs', 'briggsbwtaper', 'natural', 'radial', 'superuniform', 'uniform'] = 'natural',
+    mask: str | list[str] | tuple[str, ...] = [],
+    outertaper: str | list[str] | tuple[str, ...] = [],
+    pbcor: bool = True,
+    stokes: str = 'I',
+    featherimage: str = '',
+    analyze: bool = False,
+    showuv: bool = True,
+    showpsf: bool = True,
+    showmodel: bool = True,
+    showconvolved: bool = False,
+    showclean: bool = True,
+    showresidual: bool = False,
+    showdifference: bool = True,
+    showfidelity: bool = True,
+    graphics: Literal['', 'both', 'file', 'none', 'screen'] = 'both',
+    verbose: bool = False,
+    overwrite: bool = True,
+    dryrun: bool = False,
+    logfile: str = '',
+) -> Any:
+    """Image and analyze a simulated observation: CASA's simanalyze
+
+    CASA's ``simanalyze``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #980:
+    ``interactive``.
+    """
+    return _call_casa(simanalyze, locals())
+
+def tsdimaging(
+    infiles: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    outfile: StrPath = '',
+    overwrite: bool = False,
+    field: str | list[str] | tuple[str, ...] = '',
+    spw: str | list[str] | tuple[str, ...] = '',
+    antenna: str | list[str] | tuple[str, ...] = '',
+    scan: str | list[str] | tuple[str, ...] = '',
+    intent: str | list[str] | tuple[str, ...] = 'OBSERVE_TARGET#ON_SOURCE',
+    timerange: str | list[str] | tuple[str, ...] = '',
+    outframe: str = '',
+    mode: str = 'channel',
+    nchan: int = -1,
+    start: int | str = 0,
+    width: int | str = 1,
+    veltype: str = 'radio',
+    specmode: Literal['cont', 'cube', 'cubedata', 'cubesource', 'mfs', 'mvc'] = 'cube',
+    interpolation: Literal['cubic', 'linear', 'nearest', 'none'] = 'linear',
+    pointingcolumn: str = 'direction',
+    convertfirst: str = 'never',
+    projection: str = 'SIN',
+    imsize: int | list[int] | tuple[int, ...] = [],
+    cell: str | list[str] | tuple[str, ...] = '',
+    phasecenter: str = '',
+    stokes: str = 'I',
+    gridfunction: str = 'BOX',
+    convsupport: int = -1,
+    truncate: int | float | str = -1,
+    gwidth: int | float | str = -1,
+    jwidth: int | float | str = -1,
+    clipminmax: bool = False,
+    minweight: float = 0.1,
+    brightnessunit: Literal['', 'K', 'Jy/beam'] = '',
+    restfreq: str | list[str] | tuple[str, ...] = '',
+) -> Any:
+    """Grid total-power spectra by pointing into a CASA image and weight image.
+
+    CASA's ``tsdimaging``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #938:
+    ``field``, ``scan``, ``timerange``, ``outframe``, ``mode``, ``veltype``,
+    ``specmode``, ``interpolation``, ``pointingcolumn``, ``convertfirst``,
+    ``projection``, ``stokes``, ``clipminmax``.
+    """
+    return _call_casa(tsdimaging, locals())
+
+def concat(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    concatvis: StrPath = '',
+    freqtol: int | float | str | dict[str, object] = '',
+    dirtol: int | float | str | dict[str, object] = '',
+    respectname: bool = False,
+    timesort: bool = False,
+    copypointing: bool = True,
+    visweightscale: float | list[float] | tuple[float, ...] = [],
+    forcesingleephemfield: int | float | str | dict[str, object] = '',
+) -> Any:
+    """Concatenate simulated interferometric MeasurementSets with per-input weights.
+
+    CASA's ``concat``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #939:
+    ``respectname``, ``timesort``, ``forcesingleephemfield``.
+    """
+    return _call_casa(concat, locals())
+
+def simalma(
+    project: str = 'sim',
+    dryrun: bool = True,
+    skymodel: StrPath = '',
+    inbright: str = '',
+    indirection: str = '',
+    incell: str = '',
+    incenter: str = '',
+    inwidth: str = '',
+    complist: StrPath = '',
+    compwidth: str = '"8GHz"',
+    setpointings: bool = True,
+    ptgfile: StrPath = '$project.ptg.txt',
+    integration: str = '10s',
+    direction: str | list[str] | tuple[str, ...] = [],
+    mapsize: str | list[str] | tuple[str, ...] = ['', ''],
+    antennalist: str | list[str] | tuple[str, ...] = ['alma.cycle1.1.cfg', 'aca.cycle1.cfg'],
+    correlator: str | list[str] | tuple[str, ...] = ['BLC', 'BLC', 'ACASpec'],
+    hourangle: str = 'transit',
+    totaltime: str | list[str] | tuple[str, ...] = ['20min', '1h'],
+    tpnant: int = 0,
+    tptime: str = '0s',
+    pwv: float = 0.5,
+    image: bool = True,
+    imsize: int | list[int] | tuple[int, ...] = [128, 128],
+    imdirection: str = '',
+    cell: str = '',
+    niter: int = 0,
+    threshold: str = '0.1mJy',
+    graphics: Literal['', 'both', 'file', 'none', 'screen'] = 'both',
+    verbose: bool = False,
+    overwrite: bool = False,
+) -> Any:
+    """Simulate ALMA and ACA observations and combine their images
+
+    CASA's ``simalma``: its parameters, defaults and return value.
+    """
+    return _call_casa(simalma, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma']

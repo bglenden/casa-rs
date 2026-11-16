@@ -1,0 +1,45 @@
+{
+  "casatools": "6.7.6-14",
+  "results": {
+    "lsrk": {
+      "m0": {
+        "unit": "Hz",
+        "value": 44512000000.0
+      },
+      "refer": "LSRK",
+      "type": "frequency"
+    },
+    "undefined": {
+      "m0": {
+        "unit": "Hz",
+        "value": 44512000000.0
+      },
+      "refer": "Undefined",
+      "type": "frequency"
+    },
+    "type_only": {
+      "m0": {
+        "unit": "Hz",
+        "value": 44512000000.0
+      },
+      "refer": "REST",
+      "type": "frequency"
+    },
+    "unmapped_bary": {
+      "m0": {
+        "unit": "Hz",
+        "value": 44512000000.0
+      },
+      "refer": "BARY",
+      "type": "frequency"
+    },
+    "unmapped_undefined": {
+      "m0": {
+        "unit": "Hz",
+        "value": 44512000000.0
+      },
+      "refer": "Undefined",
+      "type": "frequency"
+    }
+  }
+}

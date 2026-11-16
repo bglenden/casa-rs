@@ -3,5 +3,8 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
+git_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
 
-"$repo_root/scripts/cargo-sweep-if-due.sh" || true
+# Daily housekeeping, in the background so commits are not slowed; it logs to
+# housekeeping.log in the git directory.
+nohup "$repo_root/scripts/housekeeping-if-due.sh" >>"$git_dir/housekeeping.log" 2>&1 </dev/null &

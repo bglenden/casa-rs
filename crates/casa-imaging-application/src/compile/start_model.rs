@@ -4,20 +4,25 @@
 //! (`SIImageStore::setModelImageOne`). As CASA takes it:
 //! - it is in Jy/pixel (`SynthesisImagerVi2::defineImage` refuses others);
 //! - its masked pixels are zero;
-//! - it is regridded linearly onto the main image's grid and scaled by the
-//!   ratio of the pixel areas, so its flux is kept (`regridToModelImage`:
-//!   `ImageRegrid` with `Interpolate2D::LINEAR`). CASA copies a start model
+//! - it is regridded linearly onto the main image's grid, along direction
+//!   and frequency, and scaled by the ratio of the pixel areas, so its flux
+//!   is kept (`regridToModelImage`: `ImageRegrid` with `Interpolate2D::LINEAR`
+//!   over the direction and spectral axes). A channel beyond the model's
+//!   takes its end channel's planes, as casacore's linear interpolation
+//!   writes them into a model without a mask. CASA copies a start model
 //!   already on that grid; casa-rs regrids it too, which changes it only by
 //!   rounding;
+//! - for `deconvolver='mtmfs'` it is a list of at most `nterms` images, the
+//!   k-th the start of Taylor term k, and an empty entry leaves its term
+//!   zero (`SIImageStoreMultiTerm::setModelImage`);
 //! - its direction frame is the image's: casa-rs does not convert frames;
-//! - its Stokes are the image's, plane for plane, however many there are.
-//!   CASA's regrid leaves the Stokes axis alone, so it seeds a Stokes I
-//!   image from a Stokes Q start model; casa-rs refuses that (`docs/CASA
-//!   (C++) bugs.md`);
-//! - a cube's start model has the image's spectral axis. An MFS image's has
-//!   one plane, at any frequency: CASA's regrid replicates a degenerate
-//!   spectral axis, and an MFS model holds one plane whatever frequency it
-//!   is stated at.
+//! - its Stokes planes are copied by position, as CASA leaves that axis
+//!   out of the regrid. Different labels produce a warning, not a refusal
+//!   or a polarization conversion (owner decision, #980, 2026-10-31);
+//! - its spectral frame is the image's: casa-rs does not convert frames. An
+//!   MFS image's start model has one plane, at any frequency: CASA's regrid
+//!   replicates a degenerate spectral axis, and an MFS model holds one plane
+//!   whatever frequency it is stated at.
 //!
 //! It is the model's first generation, so the first major cycle subtracts
 //! its prediction and the restored image includes it. Compile reads its
@@ -26,45 +31,92 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, StokesType};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
 use casa_images::{
     AnyPagedImage, ImageError, ImageInterface, ImagePixel, RegridMethod, RegridTemplate, TempImage,
-    TempStoragePolicy, check_regrid, regrid,
+    TempStoragePolicy, check_regrid_along_frequency, regrid_along_frequency,
 };
 use ndarray::{ArrayD, Zip};
 
 use super::PrepareError;
 use super::domains::PreparedImageDomain;
 
-/// A start model checked against the main image domain.
+/// An explicit start model or same-grid restart model checked against the main domain.
 #[derive(Clone, Debug)]
 pub(crate) struct StartModel {
-    path: PathBuf,
-    input_shape: Vec<usize>,
+    source: Source,
     template: RegridTemplate,
 }
 
+/// One start-model image: its path and shape, the template it is regridded
+/// onto, and whether its spectral axis is regridded.
+#[derive(Clone, Debug)]
+struct Regrid {
+    path: PathBuf,
+    shape: Vec<usize>,
+    template: RegridTemplate,
+    spectral: bool,
+}
+
+/// Where a start model's pixels come from.
+#[derive(Clone, Debug)]
+enum Source {
+    /// An explicit `startmodel`: an image per term, `None` for a term that
+    /// starts from zero, each regridded onto its term's grid (one Taylor
+    /// term, or a cube's every channel).
+    Regrid(Box<[Option<Regrid>]>),
+    /// An earlier run's model on the image's own grid, read as it is: one
+    /// image, or one per Taylor term, `None` for a term with none (CASA
+    /// makes it zero).
+    Direct(Box<[Option<PathBuf>]>),
+}
+
 impl StartModel {
-    /// Check the image at `path` as the start model of `main`, an image of
-    /// `polarizations` Stokes planes and `planes` spectral planes.
+    /// Check `paths` as the start model of `main`, an image of
+    /// `polarizations` Stokes planes and `planes` reconstruction planes in
+    /// `terms` terms (a cube's channels in one term, or one Taylor term
+    /// each): the k-th path, when it is given, is term k's.
     pub(super) fn prepare(
-        path: &Path,
+        paths: &[Option<PathBuf>],
         main: &PreparedImageDomain,
         polarizations: usize,
-        planes: usize,
+        (planes, terms): (usize, usize),
     ) -> Result<Self, PrepareError> {
         let [nx, ny] = main.image_size;
-        Self::onto(
-            path,
-            RegridTemplate {
+        let term = RegridTemplate {
+            coordinates: main.coordinates.clone(),
+            shape: vec![nx, ny, polarizations, planes / terms],
+        };
+        let mut sources = Vec::with_capacity(terms);
+        for index in 0..terms {
+            let source = match paths.get(index).cloned().flatten() {
+                Some(path) => Some(Self::check(&path, term.clone())?),
+                None => None,
+            };
+            sources.push(source);
+        }
+        Ok(Self {
+            source: Source::Regrid(sources.into_boxed_slice()),
+            template: RegridTemplate {
                 coordinates: main.coordinates.clone(),
                 shape: vec![nx, ny, polarizations, planes],
             },
-        )
+        })
     }
 
     /// Check the image at `path` as a start model of `template`'s image.
     pub(crate) fn onto(path: &Path, template: RegridTemplate) -> Result<Self, PrepareError> {
+        let checked = Self::check(path, template.clone())?;
+        Ok(Self {
+            source: Source::Regrid(Box::new([Some(checked)])),
+            template,
+        })
+    }
+
+    /// The image at `path` checked as a start model of `template`'s image,
+    /// with the template it is regridded onto, whose Stokes are relabelled
+    /// to the image's so its planes are copied by position.
+    fn check(path: &Path, mut template: RegridTemplate) -> Result<Regrid, PrepareError> {
         let refuse = |reason: String| PrepareError::StartModel {
             path: path.to_path_buf(),
             reason,
@@ -82,26 +134,50 @@ impl StartModel {
                 "its unit is {units:?}; a start model is in Jy/pixel, as CASA's tclean requires"
             )));
         }
-        check_regrid(&coordinates, &shape, &template).map_err(|error| {
-            refuse(format!(
-                "{error}; its Stokes and spectral axes must be the image's"
-            ))
-        })?;
-        // `check_regrid` keeps the input's coordinate on an axis of one
-        // pixel in both images, which a regrid's caller sees; the model
-        // keeps only the pixels, so a single Stokes plane is checked here.
         let (ours, theirs) = (stokes(&coordinates), stokes(&template.coordinates));
-        if ours != theirs {
-            return Err(refuse(format!(
-                "its Stokes are {ours:?} and the image's {theirs:?}; a start model seeds the \
-                 image's own Stokes planes"
-            )));
+        // SIImageStore::regridToModelImage regrids only direction and
+        // spectral axes. Match its positional Stokes copying even when
+        // the labels differ. This template is private to seeding pixels;
+        // published coordinates still come from the compiled image domain.
+        if ours != theirs
+            && let (Some(input), Some(output)) = (
+                coordinates.find_coordinate(CoordinateType::Stokes),
+                template.coordinates.find_coordinate(CoordinateType::Stokes),
+            )
+        {
+            template
+                .coordinates
+                .replace_coordinate(output, coordinates.coordinate(input).clone());
         }
-        Ok(Self {
+        let spectral =
+            check_regrid_along_frequency(&coordinates, &shape, &template).map_err(|error| {
+                refuse(format!(
+                    "{error}; casa-rs regrids a start model's direction and spectral axes, in \
+                     the image's frames"
+                ))
+            })?;
+        if ours != theirs {
+            tracing::warn!(startmodel = ?path, input_stokes = ?ours, image_stokes = ?theirs,
+                "startmodel Stokes labels differ: copying planes by position as CASA does; no polarization conversion is performed");
+        }
+        Ok(Regrid {
             path: path.to_path_buf(),
-            input_shape: shape,
+            shape,
             template,
+            spectral,
         })
+    }
+
+    /// Reuse an earlier run's model, whose images `terms` (one, or one per
+    /// Taylor term with `None` for a missing term) the caller checked on
+    /// the requested grid, without regridding. `template` is the model's
+    /// whole grid: `[nx, ny, stokes, planes]`, its planes the channels of
+    /// the one image or the Taylor terms.
+    pub(super) fn restart(terms: Box<[Option<PathBuf>]>, template: RegridTemplate) -> Self {
+        Self {
+            source: Source::Direct(terms),
+            template,
+        }
     }
 
     /// Bytes [`Self::main_samples`] holds at most besides the model: the
@@ -110,17 +186,42 @@ impl StartModel {
     /// image with its mask and the samples copied out of it, and `regrid`'s
     /// planes: an input plane of `f64` with its mask, and an output plane of
     /// `f64`, a flag and an input position each. The direction axes are the
-    /// first two of both images, as `check_regrid` requires.
+    /// first two of both images, as `check_regrid` requires. A spectral
+    /// regrid holds the direction pass's image, of the output's planes and
+    /// the input's channels, with its mask, beside its own output. Terms
+    /// are regridded one at a time, each onto its own term's grid, the
+    /// samples of all of them kept: the largest term's charge. Direct
+    /// restart holds only the input image and the emitted samples, within
+    /// this charge.
     pub(crate) fn seeding_bytes(&self) -> u64 {
-        let input: usize = self.input_shape.iter().product();
-        let output: usize = self.template.shape.iter().product();
-        let input_plane = self.input_shape[0] * self.input_shape[1];
-        let output_plane = self.template.shape[0] * self.template.shape[1];
-        let position = size_of::<Option<[f64; 2]>>();
-        (input * (8 + 1 + 4 + 4)
-            + output * (4 + 1 + 4)
-            + input_plane * (8 + 1)
-            + output_plane * (8 + 1 + position)) as u64
+        let samples: usize = self.template.shape.iter().product::<usize>() * 4;
+        let term_bytes = |input_shape: &[usize], output_shape: &[usize], spectral: bool| {
+            let input: usize = input_shape.iter().product();
+            let output: usize = output_shape.iter().product();
+            let input_plane = input_shape[0] * input_shape[1];
+            let output_plane = output_shape[0] * output_shape[1];
+            let position = size_of::<Option<[f64; 2]>>();
+            let direction_pass = if spectral {
+                output_plane * (input / input_plane) * (4 + 1)
+            } else {
+                0
+            };
+            input * (8 + 1 + 4 + 4)
+                + output * (4 + 1)
+                + direction_pass
+                + input_plane * (8 + 1)
+                + output_plane * (8 + 1 + position)
+        };
+        let largest = match &self.source {
+            Source::Regrid(terms) => terms
+                .iter()
+                .flatten()
+                .map(|term| term_bytes(&term.shape, &term.template.shape, term.spectral))
+                .max()
+                .unwrap_or(0),
+            Source::Direct(_) => term_bytes(&self.template.shape, &self.template.shape, false),
+        };
+        (samples + largest) as u64
     }
 
     /// The image's pixels along x and y.
@@ -143,24 +244,59 @@ impl StartModel {
     }
 
     /// The main domain's model samples in the model's canonical order
-    /// (spectral plane, polarization, y, x, x fastest): the regridded
-    /// image's Fortran order.
+    /// (spectral plane, polarization, y, x, x fastest), either read directly
+    /// for restart or regridded for an explicit start model.
     pub(crate) fn main_samples(&self) -> Result<Vec<f32>, ImageError> {
-        let zeroed = match AnyPagedImage::open(&self.path)? {
-            AnyPagedImage::Float32(image) => zeroed_copy(&image)?,
-            AnyPagedImage::Float64(image) => zeroed_copy(&image)?,
-            AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
-                return Err(ImageError::InvalidMetadata(
-                    "a start model is a real image".into(),
-                ));
+        let terms = match &self.source {
+            Source::Regrid(terms) => terms,
+            Source::Direct(terms) => {
+                let total: usize = self.template.shape.iter().product();
+                let per_term = total / terms.len();
+                let mut samples = Vec::with_capacity(total);
+                for term in terms {
+                    match term {
+                        Some(path) => {
+                            let image = casa_images::PagedImage::<f32>::open(path)?;
+                            // CASA's restart prediction uses StokesImageUtil::From's raw
+                            // lattice iterator; unlike explicit startmodel, it does not
+                            // zero a pixel mask.
+                            let values = image.get()?;
+                            // Iterate logical axes in model order (term or channel,
+                            // Stokes, y, x), independent of image storage order.
+                            samples.extend(values.reversed_axes().iter().copied());
+                        }
+                        None => samples.resize(samples.len() + per_term, 0.0),
+                    }
+                }
+                return Ok(samples);
             }
         };
-        let regridded = regrid(&zeroed, &self.template, RegridMethod::Linear)?;
-        Ok(regridded
-            .data
-            .as_slice_memory_order()
-            .expect("regrid writes a contiguous Fortran-order image")
-            .to_vec())
+        let total: usize = self.template.shape.iter().product();
+        let per_term = total / terms.len();
+        let mut samples = Vec::with_capacity(total);
+        for term in terms {
+            let Some(term) = term else {
+                samples.resize(samples.len() + per_term, 0.0);
+                continue;
+            };
+            let zeroed = match AnyPagedImage::open(&term.path)? {
+                AnyPagedImage::Float32(image) => zeroed_copy(&image)?,
+                AnyPagedImage::Float64(image) => zeroed_copy(&image)?,
+                AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
+                    return Err(ImageError::InvalidMetadata(
+                        "a start model is a real image".into(),
+                    ));
+                }
+            };
+            let regridded = regrid_along_frequency(&zeroed, &term.template, RegridMethod::Linear)?;
+            samples.extend_from_slice(
+                regridded
+                    .data
+                    .as_slice_memory_order()
+                    .expect("regrid writes a contiguous Fortran-order image"),
+            );
+        }
+        Ok(samples)
     }
 }
 
@@ -206,4 +342,79 @@ where
     copy.set_units(image.units())?;
     copy.put_slice(&values, &vec![0; values.ndim()])?;
     Ok(copy)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_coordinates::{
+        DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
+    };
+    use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+    use ndarray::IxDyn;
+
+    #[test]
+    fn direct_restart_reads_raw_x_fastest_pixels_while_startmodel_zeros_the_mask() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("existing.model");
+        let shape = vec![4, 3, 1, 1];
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.5],
+            [-1e-5, 1e-5],
+            [2.0, 1.0],
+        ));
+        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            1e9,
+            1e6,
+            0.0,
+            1e9,
+        ));
+        let mut image =
+            casa_images::PagedImage::<f32>::create(shape.clone(), coordinates.clone(), &path)
+                .unwrap();
+        image.set_units("Jy/pixel").unwrap();
+        let pixels =
+            ArrayD::from_shape_fn(IxDyn(&shape), |index| (index[0] + 10 * index[1]) as f32);
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.make_mask("external", true, false).unwrap();
+        image.save().unwrap();
+        drop(image);
+        let template = RegridTemplate {
+            coordinates,
+            shape: shape.clone(),
+        };
+        let explicit = StartModel::onto(&path, template.clone()).unwrap();
+        assert!(
+            explicit
+                .main_samples()
+                .unwrap()
+                .iter()
+                .all(|&value| value == 0.0)
+        );
+        // The task gate still refuses masked-model continuation until publication
+        // can preserve the mask; the seed reader must nevertheless match CASA.
+        let direct = StartModel::restart(Box::new([Some(path.clone())]), template.clone());
+        assert_eq!(
+            direct.main_samples().unwrap(),
+            vec![
+                0.0, 1.0, 2.0, 3.0, 10.0, 11.0, 12.0, 13.0, 20.0, 21.0, 22.0, 23.0
+            ]
+        );
+        // A Taylor family reads each term in order; a missing term is zero.
+        let terms = StartModel::restart(
+            Box::new([None, Some(path)]),
+            RegridTemplate {
+                shape: vec![4, 3, 1, 2],
+                ..template
+            },
+        );
+        let samples = terms.main_samples().unwrap();
+        assert_eq!(samples[..12], [0.0; 12]);
+        assert_eq!(samples[12..], direct.main_samples().unwrap()[..]);
+    }
 }

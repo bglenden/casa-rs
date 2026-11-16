@@ -70,6 +70,12 @@ pub trait Solver {
         0
     }
 
+    /// Whether a solver still runs when its component support is empty but
+    /// its enclosing polarization group has a nonempty mask.
+    fn runs_with_empty_support(&self) -> bool {
+        false
+    }
+
     /// Whether a stop by the solver's own rule charges one iteration, as
     /// CASA's `MatrixCleaner` counts the iteration that found it.
     fn charges_stop(&self) -> bool {
@@ -112,6 +118,11 @@ pub trait Solver {
     ) {
         let Candidate::Pixel { strength, .. } = candidate;
         fluxes.push(gain * strength);
+    }
+
+    /// Signed model flux to report for a component.
+    fn reported_flux(&self, fluxes: &[f64]) -> f64 {
+        fluxes.first().copied().unwrap_or(0.0)
     }
 
     /// Clean `candidate` with loop gain `gain`, adding the model update to

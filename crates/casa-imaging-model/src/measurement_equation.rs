@@ -17,6 +17,7 @@ use crate::{
     },
     geometry::{CompiledGeometry, VisibilityPhaseConvention},
     observation::{FlagPolicy, ObservationSnapshot, WeightColumn},
+    weighting::DensityCells,
 };
 
 /// Inner product on the model-coefficient space.
@@ -276,6 +277,7 @@ pub struct WeightingOperatorContract {
     visibility_inner_product: VisibilityInnerProduct,
     scheme: WeightingScheme,
     density_scope: WeightDensityScope,
+    density_cells: DensityCells,
     casa_cube_density_padding: Option<usize>,
     uv_taper: Option<UvTaper>,
     sources: Box<[WeightingSource]>,
@@ -296,8 +298,14 @@ impl WeightingOperatorContract {
 
     /// Return the complete-selection density scope. No chunk-local scope exists.
     #[must_use]
-    pub const fn density_scope(&self) -> WeightDensityScope {
-        self.density_scope
+    pub const fn density_scope(&self) -> &WeightDensityScope {
+        &self.density_scope
+    }
+
+    /// Return the cells the density is gridded on (CASA's `npixels`).
+    #[must_use]
+    pub const fn density_cells(&self) -> DensityCells {
+        self.density_cells
     }
 
     /// Return the bound CASA cube law's metadata-derived padding per side.
@@ -518,7 +526,9 @@ pub(crate) fn compile_product_boundary(
     if pb_corrected
         || matches!(
             normalization,
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+            ProductNormalization::FlatNoise
+                | ProductNormalization::FlatSky
+                | ProductNormalization::PbSquare
         )
     {
         operations.push(ProductBoundaryOperation::BlankInvalid);
@@ -548,7 +558,8 @@ fn compile_weighting_operator(
     WeightingOperatorContract {
         visibility_inner_product,
         scheme: weighting.scheme(),
-        density_scope: weighting.density_scope(),
+        density_scope: weighting.density_scope().clone(),
+        density_cells: weighting.density_cells(),
         casa_cube_density_padding: weighting.casa_cube_density_padding(),
         uv_taper: weighting.uv_taper(),
         sources,

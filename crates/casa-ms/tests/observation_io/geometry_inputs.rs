@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Geometry's inputs on the boundary (#932, step 3a;
-//! `docs/measurement-set/imaging-port.md` §2.2.1): what imaging's per-row
+//! Geometry's inputs on the boundary (#932, step 3a): what imaging's per-row
 //! geometry reads from a MeasurementSet today, carried by both stores.
 
 use std::path::Path;
@@ -178,7 +177,7 @@ fn series(observation: &dyn casa_observation::Observation) -> casa_observation::
             direction: PointingDirection::Beam,
             antennas: (0..3).map(AntennaId).collect(),
             times: grid.times_s[0]..=grid.times_s[grid.times_s.len() - 1],
-            budget_bytes: 1 << 20,
+            budget_bytes: observation.pointing_bytes().expect("pointing bound"),
         })
         .expect("pointing")
 }
@@ -321,7 +320,7 @@ fn series_over(
             direction: PointingDirection::Beam,
             antennas: (0..3).map(AntennaId).collect(),
             times,
-            budget_bytes: 1 << 20,
+            budget_bytes: observation.pointing_bytes().expect("pointing bound"),
         })
         .expect("pointing")
 }
@@ -494,7 +493,10 @@ fn pointing_the_destination_cannot_hold_is_reported_before_writing() {
         "no pointing written"
     );
     let (copy, lost) = losses(&v2, false);
-    assert_eq!(lost, ["POINTING NAME, TARGET, TRACKING"]);
+    assert!(
+        lost.is_empty(),
+        "MSv2 copies now preserve all required POINTING columns: {lost:?}"
+    );
     assert_eq!(pointing_frame(&copy), "GALACTIC");
     assert_eq!(pointing_rows(&copy).len(), pointing_rows(&v2).len());
 
@@ -636,21 +638,21 @@ fn conversion() -> casa_ms::observation_io::convert::ConversionOptions {
 /// A two-window simulation of three antennas. The simulator writes each
 /// antenna's `FEED` row for window 0 only (#943).
 fn two_windows(root: &Path) -> std::path::PathBuf {
-    let mut request = casa_ms::SyntheticObservationRequest::vla_ppdisk(
+    let mut request = casa_simulation::synthetic::ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         root.join("two.ms"),
         vec![
-            casa_ms::SyntheticAntenna::vla(
+            casa_simulation::synthetic::Antenna::vla(
                 "VLA01",
                 "N01",
                 [-1_601_185.4, -5_041_977.5, 3_554_875.9],
             ),
-            casa_ms::SyntheticAntenna::vla(
+            casa_simulation::synthetic::Antenna::vla(
                 "VLA02",
                 "N02",
                 [-1_601_085.4, -5_041_977.5, 3_554_875.9],
             ),
-            casa_ms::SyntheticAntenna::vla(
+            casa_simulation::synthetic::Antenna::vla(
                 "VLA03",
                 "N03",
                 [-1_601_185.4, -5_041_877.5, 3_554_875.9],
@@ -663,14 +665,33 @@ fn two_windows(root: &Path) -> std::path::PathBuf {
     request.spectral_windows = [44.0e9, 45.0e9]
         .iter()
         .enumerate()
-        .map(|(index, start)| casa_ms::SyntheticSpectralSetup {
+        .map(|(index, start)| casa_simulation::synthetic::SpectralSetup {
             name: format!("band{index}"),
             start_frequency_hz: *start,
             channel_width_hz: 2.0e6,
             channel_count: 4,
         })
         .collect();
-    casa_ms::generate_synthetic_observation_ms(&request).expect("simulate");
+    casa_simulation::synthetic::generate_unflagged(&request).expect("simulate");
+    // This fixture starts with window-0-only receptors; Simulator writes
+    // valid wildcard FEED rows, so state the test's intended coverage.
+    edit_feed(&request.output_ms, Some(0), &[]);
+    // Separate observe calls for the windows create identical pointing rows.
+    // This conversion fixture specifies one sample per antenna and time.
+    let mut seen = std::collections::BTreeSet::new();
+    let duplicate: Vec<_> = pointing_rows(&request.output_ms)
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            (!seen.insert((row.antenna, row.time_s.to_bits()))).then_some(index)
+        })
+        .collect();
+    let mut ms = MeasurementSet::open(&request.output_ms).unwrap();
+    ms.subtable_mut(SubtableId::Pointing)
+        .unwrap()
+        .remove_rows(&duplicate)
+        .unwrap();
+    ms.save().unwrap();
     request.output_ms
 }
 
@@ -741,14 +762,16 @@ fn feed_rows(path: &Path) -> Vec<(i32, i32)> {
     rows
 }
 
-/// Each partition states its antennas' receptors in its own window, read
-/// as casacore's `MSIter` and XRADIO's converter read `FEED`: a window's
-/// own rows once any row names a window, else the rows for every window
-/// (-1). A conversion carries them both ways; where one antenna's windows
-/// differ, the MSv2 written has a row per window for every antenna, since a
-/// row for every window would then be ignored. Of rows of one antenna,
-/// feed and window that differ in time, the last is taken, as casacore's
-/// `MSIter` takes it, and a conversion reports the others as lost.
+/// Each partition states its antennas' receptors in its own window: an
+/// antenna and feed's rows in that window, else its rows for every window
+/// (-1), as the MeasurementSet definition gives them (casacore's `MSIter`
+/// and XRADIO's converter ignore rows for every window beside rows that
+/// name a window). A conversion carries them both ways; where one
+/// antenna's windows differ, the MSv2 written has a row per window for
+/// every antenna and none for every window, which casacore and XRADIO
+/// read alike. Of rows of one antenna, feed and window that differ in
+/// time, the last is taken, as casacore's `MSIter` takes it, and a
+/// conversion reports the others as lost.
 #[test]
 fn receptors_are_each_partitions_own() {
     let root = tempfile::tempdir().expect("root");
@@ -782,8 +805,10 @@ fn receptors_are_each_partitions_own() {
         "a row per window for every antenna, none for every window"
     );
 
-    // Rows for every window serve both; with a window-1 row beside them,
-    // casacore ignores them, so window 0 has no receptors.
+    // Rows for every window serve both; a window-1 row beside them serves
+    // its antenna in window 1, and they still serve the rest (casacore's
+    // MSIter and XRADIO would ignore them in both windows). A conversion
+    // carries that both ways, written back as a row per window.
     let v2 = variant("every");
     edit_feed(&v2, Some(-1), &[]);
     let every = open(&v2, &OpenOptions::default()).expect("every");
@@ -791,7 +816,17 @@ fn receptors_are_each_partitions_own() {
     let v2 = variant("override");
     edit_feed(&v2, Some(-1), &[(0, 1, 0.25, 0.0)]);
     let overridden = open(&v2, &OpenOptions::default()).expect("override");
-    assert_eq!(angles(overridden.as_ref()), [vec![], vec![0.25, 0.25]]);
+    assert_eq!(angles(overridden.as_ref()), mixed);
+    let v4 = root.path().join("override.ps.zarr");
+    casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion()).expect("to msv4");
+    let back = root.path().join("override.ms");
+    casa_ms::observation_io::convert::to_msv2(&v4, &back, &conversion()).expect("to msv2");
+    let again = open(&back, &OpenOptions::default()).expect("back");
+    assert_eq!(angles(again.as_ref()), mixed);
+    assert_eq!(
+        feed_rows(&back),
+        [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)]
+    );
 
     // Antenna 0's window-0 receptors change 10 s later: the later row,
     // last in the table, is the one read; a conversion refuses the change
@@ -828,15 +863,51 @@ fn receptors_are_each_partitions_own() {
     let earlier = open(&v2, &OpenOptions::default()).expect("earlier");
     assert_eq!(angles(earlier.as_ref()), last);
 
-    // Rows for every window are not read beside window rows, so their
-    // changing in time is no loss.
+    // An antenna's rows for every window are not read where it has a row
+    // in every window, so their changing in time is no loss.
     let v2 = variant("unread");
-    edit_feed(&v2, None, &[(0, -1, 0.5, 0.0), (0, -1, 0.75, 10.0)]);
+    edit_feed(
+        &v2,
+        None,
+        &[
+            (0, 1, 0.0, 0.0),
+            (1, 1, 0.0, 0.0),
+            (2, 1, 0.0, 0.0),
+            (0, -1, 0.5, 0.0),
+            (0, -1, 0.75, 10.0),
+        ],
+    );
     let unread = open(&v2, &OpenOptions::default()).expect("unread");
-    assert_eq!(angles(unread.as_ref()), [vec![0.0; 6], vec![]]);
+    assert_eq!(angles(unread.as_ref()), [vec![0.0; 6], vec![0.0; 6]]);
     let v4 = root.path().join("unread.ps.zarr");
     casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion())
         .expect("no FEED loss to accept");
+
+    // Where they serve a window without rows of its own they are read, the
+    // last taken, and their changing in time is a loss.
+    let v2 = variant("read");
+    edit_feed(
+        &v2,
+        None,
+        &[
+            (0, -1, 0.0, 0.0),
+            (1, -1, 0.0, 0.0),
+            (2, -1, 0.0, 0.0),
+            (0, -1, 0.75, 10.0),
+        ],
+    );
+    let read = open(&v2, &OpenOptions::default()).expect("read");
+    let served = [vec![0.0; 6], vec![0.75, 0.75, 0.0, 0.0, 0.0, 0.0]];
+    assert_eq!(angles(read.as_ref()), served);
+    let v4 = root.path().join("read.ps.zarr");
+    let refused = casa_ms::observation_io::convert::to_msv4(&v2, &v4, &conversion());
+    assert!(
+        matches!(&refused, Err(ObservationError::InvalidRequest { reason }) if reason.contains("FEED")),
+        "{refused:?}"
+    );
+    casa_ms::observation_io::convert::to_msv4(&v2, &v4, &accepting).expect("to msv4");
+    let converted = open(&v4, &OpenOptions::default()).expect("msv4");
+    assert_eq!(angles(converted.as_ref()), served);
 }
 
 /// #937: a store says whether it holds any pointing at all, whatever the
@@ -925,7 +996,9 @@ fn a_moving_field_at_no_time_is_its_body_at_the_field_time() {
     .expect("an engine");
     let at_no_time = |field| {
         engine
-            .moving_field_reference_direction(&ms, field)
+            // The MeasurementSet states each field's TIME, so no fallback
+            // time is read.
+            .moving_field_reference_direction(field, f64::NAN)
             .expect("a direction")
     };
     let actual = at_no_time(0).expect("field 0 moves");
@@ -945,8 +1018,8 @@ fn a_moving_field_at_no_time_is_its_body_at_the_field_time() {
 
 /// A field that follows an ephemeris carries it (#942): the table its
 /// `EPHEMERIS_ID` names, read once however many fields share it and equal
-/// to the samples today's route reads from it, while its phase centre
-/// keeps `PHASE_DIR`'s angles, the offset from the body. The catalogue
+/// to the samples a phase centre naming the table reads from it, while its
+/// phase centre keeps `PHASE_DIR`'s angles, the offset from the body. The catalogue
 /// counts each shared ephemeris once. An `EPHEMERIS_ID` whose table is
 /// missing refuses opening.
 #[test]
@@ -962,11 +1035,10 @@ fn fields_carry_the_ephemerides_they_follow() {
     let observation = open(&v2, &OpenOptions::default()).expect("v2 with ephemerides");
     let catalogue = observation.catalogue();
     let table = v2.join("FIELD").join("EPHEM0_COMET0.tab");
-    let budget = casa_ms::SelectedObservationContentBudget::new(1 << 20, 1, 1);
-    let today =
-        casa_ms::SelectedObservationEphemeris::external(&table, budget.reference_data_budget())
-            .expect("today's reading");
-    let expected = today.external_series().expect("a table");
+    let reading =
+        casa_ms::PhaseCentreEphemeris::external(&table, casa_ms::EphemerisBudget::new(1 << 20))
+            .expect("the phase-centre reading");
+    let expected = reading.external_series().expect("a table");
     let [first, second, fixed] = &catalogue.fields[..] else {
         panic!("three fields");
     };
@@ -1021,4 +1093,139 @@ fn fields_carry_the_ephemerides_they_follow() {
     engine
         .observation_direction_j2000(time_s, 2)
         .expect("the fixed field's direction");
+}
+
+/// Whether two directions are the same, bit for bit, and in one frame.
+fn same_direction(
+    a: &casa_types::measures::direction::MDirection,
+    b: &casa_types::measures::direction::MDirection,
+) -> bool {
+    a.refer() == b.refer()
+        && a.cosines()
+            .iter()
+            .zip(b.cosines())
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+}
+
+/// The largest angle between two J2000 directions, radians.
+fn separation(
+    a: &casa_types::measures::direction::MDirection,
+    b: &casa_types::measures::direction::MDirection,
+) -> f64 {
+    let [a, b] = [a.cosines(), b.cosines()];
+    let dot: f64 = a.iter().zip(b).map(|(a, b)| a * b).sum();
+    let cross = [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ];
+    cross.iter().map(|c| c * c).sum::<f64>().sqrt().atan2(dot)
+}
+
+/// The engine compile builds from an observation's catalogue is the one it
+/// built from the MeasurementSet's subtables, field ephemerides attached:
+/// the same antennas, observatory, time scale, field directions, motions
+/// and reference epochs, so the same directions, frames and parallactic
+/// angles at every time. Bit for bit for the MeasurementSet's catalogue,
+/// fields in a frame that needs `FIELD.TIME` to convert and a field that
+/// follows an ephemeris among them; to 1e-12 rad for its MSv4 conversion.
+#[test]
+fn the_catalogue_engine_is_the_measurement_set_engine() {
+    use casa_ms::derived::engine::MsCalEngine;
+    let root = tempfile::tempdir().expect("root");
+    let variant = |name: &str| {
+        let dir = root.path().join(name);
+        std::fs::create_dir(&dir).expect("dir");
+        mosaic(&dir, 4)
+    };
+    let measures = casa_test_support::deterministic_measures_provider;
+    let engines = |path: &Path| {
+        let ms = MeasurementSet::open(path).expect("ms");
+        let from_ms = MsCalEngine::with_measures(&ms, measures())
+            .and_then(|engine| engine.with_field_ephemerides(&ms))
+            .expect("the MeasurementSet's engine");
+        let observation = open(path, &OpenOptions::default()).expect("the observation");
+        let from_catalogue = MsCalEngine::from_catalogue(observation.catalogue(), measures())
+            .expect("the catalogue's engine");
+        (from_ms, from_catalogue)
+    };
+    let times = [59_000.25 * 86_400.0, 59_000.25 * 86_400.0 + 60.0];
+
+    let (icrs, _) = variant("icrs");
+    variable_phase_references(&icrs, |_| DirectionRef::ICRS);
+    let (moving, _) = variant("moving");
+    super::follow_ephemerides(&moving, &[0, -1, -1]);
+    for path in [&icrs, &moving] {
+        let (from_ms, from_catalogue) = engines(path);
+        assert_eq!(from_ms.num_antennas(), from_catalogue.num_antennas());
+        assert_eq!(from_ms.num_fields(), from_catalogue.num_fields());
+        assert_eq!(from_ms.time_reference(), from_catalogue.time_reference());
+        assert_eq!(
+            from_ms.observatory_position().values(),
+            from_catalogue.observatory_position().values()
+        );
+        for field in 0..from_ms.num_fields() {
+            assert_eq!(
+                from_ms.field_moves(field),
+                from_catalogue.field_moves(field)
+            );
+            assert!(same_direction(
+                from_ms.field_direction_j2000(field).expect("ms"),
+                from_catalogue
+                    .field_direction_j2000(field)
+                    .expect("catalogue"),
+            ));
+            let reference = |engine: &MsCalEngine| {
+                engine
+                    .moving_field_reference_direction(field, f64::NAN)
+                    .expect("the reference direction")
+            };
+            match (reference(&from_ms), reference(&from_catalogue)) {
+                (None, None) => {}
+                (Some(a), Some(b)) => assert!(same_direction(&a, &b), "field {field}"),
+                other => panic!("field {field}: {other:?}"),
+            }
+            for time in times {
+                assert!(same_direction(
+                    &from_ms
+                        .observation_direction_j2000(time, field)
+                        .expect("ms"),
+                    &from_catalogue
+                        .observation_direction_j2000(time, field)
+                        .expect("catalogue"),
+                ));
+                for antenna in 0..from_ms.num_antennas() {
+                    assert_eq!(
+                        from_ms
+                            .parallactic_angle(time, field, antenna)
+                            .expect("ms")
+                            .to_bits(),
+                        from_catalogue
+                            .parallactic_angle(time, field, antenna)
+                            .expect("catalogue")
+                            .to_bits(),
+                    );
+                }
+            }
+        }
+    }
+
+    // The conversion of a MeasurementSet of J2000 fields, none moving.
+    let (plain, v4) = variant("plain");
+    let (original, _) = engines(&plain);
+    let msv4 = open(&v4, &OpenOptions::default()).expect("msv4");
+    let converted = MsCalEngine::from_catalogue(msv4.catalogue(), measures()).expect("msv4");
+    assert_eq!(original.num_fields(), converted.num_fields());
+    assert_eq!(
+        original.observatory_position().values(),
+        converted.observatory_position().values()
+    );
+    for field in 0..converted.num_fields() {
+        assert!(!converted.field_moves(field));
+        let difference = separation(
+            original.field_direction_j2000(field).expect("ms"),
+            converted.field_direction_j2000(field).expect("msv4"),
+        );
+        assert!(difference <= 1.0e-12, "field {field}: {difference:e} rad");
+    }
 }

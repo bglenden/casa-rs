@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Integration test: create an MS, save, reopen, validate, and verify data.
 
-use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_ms::selection::{MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow};
+use casa_ms::{OptionalMainColumn, SubTable};
 
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
@@ -95,6 +95,30 @@ fn add_minimal_data_description(ms: &mut MeasurementSet) {
             RecordField::new("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(0))),
         ]))
         .unwrap();
+}
+
+fn add_minimal_fields(ms: &mut MeasurementSet, count: usize) {
+    for id in 0..count {
+        let direction = Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![2, 1])));
+        let row = RecordValue::new(vec![
+            RecordField::new(
+                "NAME",
+                Value::Scalar(ScalarValue::String(format!("field-{id}"))),
+            ),
+            RecordField::new("CODE", Value::Scalar(ScalarValue::String(String::new()))),
+            RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("SOURCE_ID", Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new("DELAY_DIR", direction.clone()),
+            RecordField::new("PHASE_DIR", direction.clone()),
+            RecordField::new("REFERENCE_DIR", direction),
+        ]);
+        ms.subtable_mut(SubtableId::Field)
+            .unwrap()
+            .add_row(row)
+            .unwrap();
+    }
 }
 
 fn resolve_rows(ms: &MeasurementSet, selection: &MsSelection) -> Vec<usize> {
@@ -239,10 +263,90 @@ fn save_preserves_existing_measure_reference_keywords() {
     );
 }
 
+/// UVW's MEASINFO record, read back from `ms`.
+fn uvw_measinfo(ms: &MeasurementSet) -> RecordValue {
+    match ms
+        .main_table()
+        .column_keywords("UVW")
+        .unwrap()
+        .get("MEASINFO")
+    {
+        Some(Value::Record(record)) => record.clone(),
+        other => panic!("expected UVW.MEASINFO record, got {other:?}"),
+    }
+}
+
+#[test]
+fn saves_keep_a_uvw_measinfo_without_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    let ms_path = dir.path().join("legacy-uvw.ms");
+    let string = |text: &str| Value::Scalar(ScalarValue::String(text.to_string()));
+
+    // A new MS takes casacore's default, Muvw's ITRF.
+    let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).unwrap();
+    assert_eq!(uvw_measinfo(&ms).get("Ref"), Some(&string("ITRF")));
+
+    // casa-rs wrote {type: uvw} without a Ref before that default, which
+    // casacore reads as J2000. No save may fill in ITRF.
+    let mut keywords = ms.main_table().column_keywords("UVW").unwrap().clone();
+    keywords.upsert(
+        "MEASINFO",
+        Value::Record(RecordValue::new(vec![RecordField::new(
+            "type",
+            string("uvw"),
+        )])),
+    );
+    ms.main_table_mut().set_column_keywords("UVW", keywords);
+    ms.save().unwrap();
+
+    let mut reopened = MeasurementSet::open(&ms_path).unwrap();
+    assert_eq!(uvw_measinfo(&reopened).get("type"), Some(&string("uvw")));
+    assert_eq!(uvw_measinfo(&reopened).get("Ref"), None);
+    reopened.save_main_table_only().unwrap();
+    let mut reopened = MeasurementSet::open(&ms_path).unwrap();
+    assert_eq!(uvw_measinfo(&reopened).get("Ref"), None);
+    let copy_path = dir.path().join("legacy-uvw-copy.ms");
+    reopened.save_as(&copy_path).unwrap();
+    let copy = MeasurementSet::open(&copy_path).unwrap();
+    assert_eq!(uvw_measinfo(&copy).get("Ref"), None);
+}
+
+#[test]
+fn uvw2_takes_the_keywords_casacore_gives_a_uvw_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let ms_path = dir.path().join("uvw2.ms");
+    let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Uvw2);
+    let mut ms = MeasurementSet::create(&ms_path, builder).unwrap();
+    ms.save().unwrap();
+
+    // casacore defines UVW2 as it does UVW, a Muvw column in metres
+    // (`MeasurementSet.cc`), so `MSTableImpl::addColumnToDesc` gives it
+    // QuantumUnits [m, m, m] and `addMeasColumn` the MEASINFO
+    // {type: uvw, Ref: ITRF}, Muvw's default reference.
+    let ms = MeasurementSet::open(&ms_path).unwrap();
+    let string = |text: &str| Value::Scalar(ScalarValue::String(text.to_string()));
+    let keywords = ms.main_table().column_keywords("UVW2").unwrap();
+    assert_eq!(
+        keywords.get("QuantumUnits"),
+        Some(&Value::Array(ArrayValue::from_string_vec(vec![
+            "m".to_string();
+            3
+        ])))
+    );
+    let Some(Value::Record(measinfo)) = keywords.get("MEASINFO") else {
+        panic!("UVW2 has no MEASINFO record: {keywords:?}");
+    };
+    assert_eq!(measinfo.get("type"), Some(&string("uvw")));
+    assert_eq!(measinfo.get("Ref"), Some(&string("ITRF")));
+    assert_eq!(Some(keywords), ms.main_table().column_keywords("UVW"));
+    assert!(ms.validate().unwrap().is_empty());
+}
+
 #[test]
 fn selection_round_trip() {
     let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
     add_minimal_data_description(&mut ms);
+    add_minimal_fields(&mut ms, 3);
 
     let i = |v: i32| Value::Scalar(ScalarValue::Int32(v));
     let f = |v: f64| Value::Scalar(ScalarValue::Float64(v));

@@ -367,7 +367,9 @@ fn compiled_contract_owns_paired_operator_weighting_and_product_boundary() {
     match normal.weighting().density_scope() {
         WeightDensityScope::NotApplicable
         | WeightDensityScope::GlobalSelection
-        | WeightDensityScope::PerOutputChannel => {}
+        | WeightDensityScope::PerOutputChannel
+        | WeightDensityScope::PerField { .. }
+        | WeightDensityScope::PerFieldAndOutputChannel { .. } => {}
     }
 
     let boundary = problem.products().normalization_boundary();

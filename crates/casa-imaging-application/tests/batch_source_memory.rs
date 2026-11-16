@@ -32,7 +32,9 @@ mod imaging;
 
 #[path = "common/synthetic_observation.rs"]
 mod synthetic_observation;
-use synthetic_observation::{CELL_ARCSEC, observation, pointed_observation_as};
+use synthetic_observation::{
+    CELL_ARCSEC, observation, pointed_observation_as, two_window_observation,
+};
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -93,16 +95,20 @@ const HOST: HostResources = HostResources {
     metal: false,
 };
 
-/// A request for `measurement_set` imaged `imsize` pixels square, with
-/// `controls`.
+/// A request for `measurement_sets` (one, or a list as tclean's `vis`
+/// takes) imaged `imsize` pixels square, with `controls`.
 fn request(
-    measurement_set: &Path,
+    measurement_sets: &[&Path],
     image_name: &Path,
     imsize: usize,
     controls: Value,
 ) -> ImagingRequest {
+    let vis = match measurement_sets {
+        [one] => json!(one),
+        several => json!(several),
+    };
     let mut values = json!({
-        "vis": measurement_set,
+        "vis": vis,
         "imagename": image_name,
         "imsize": imsize,
         "cell": format!("{CELL_ARCSEC}arcsec"),
@@ -161,7 +167,9 @@ fn measure(request: &ImagingRequest, planes_per_wave: u32, memory: u64) -> (Sour
         baseline = LIVE.load(Ordering::Relaxed);
         PEAK.store(baseline, Ordering::Relaxed);
     };
-    let drive = if request.savemodel || request.save_continuum_residual {
+    let drive = if request.savemodel == casa_imaging_application::SaveModel::ModelColumn
+        || request.save_continuum_residual
+    {
         drive_batch_write(request, &context, &mut mark).expect("the write")
     } else {
         drive_batch_source(request, &context, planes_per_wave, &mut mark).expect("the source reads")
@@ -172,10 +180,16 @@ fn measure(request: &ImagingRequest, planes_per_wave: u32, memory: u64) -> (Sour
 /// Continuum and cube sources, a cube resident and in waves, a window of
 /// 101 channels whole and gapped (`0:0~1;100`, whose batches span every
 /// channel between), a mosaic that reads pointing, and the writing passes
-/// of a continuum and a gapped cube that save the model (the first
-/// creating and seeding `MODEL_DATA`), the continuum's again under a policy
-/// that splits its times into several batches: each holds at most its
-/// charge and its block, and the drives fill blocks.
+/// of a continuum, a gapped cube and a cube whose channels drift out of its
+/// band that save the model (the first creating and seeding `MODEL_DATA`,
+/// the last keeping which channels each time reads), the continuum's again
+/// under a policy
+/// that splits its times into several batches; and over lists of
+/// MeasurementSets, whose source keeps each store's plan, pointing cache
+/// and survey: a continuum over two stores of different windows, a mosaic
+/// reading two stores' pointing, and a continuum writing `MODEL_DATA` into
+/// two stores. Each holds at most its charge and its block, and the drives
+/// fill blocks.
 #[test]
 fn the_batch_source_holds_at_most_its_charge() {
     let root = tempfile::tempdir().expect("test root");
@@ -187,6 +201,8 @@ fn the_batch_source_holds_at_most_its_charge() {
     let narrow = observation(&directory("narrow"), 16);
     let wide = observation(&directory("wide"), 101);
     let alma = pointed_observation_as(&directory("alma"), 16, "ALMA");
+    let alma_again = pointed_observation_as(&directory("alma-again"), 16, "ALMA");
+    let narrow_again = observation(&directory("narrow-again"), 16);
     let cube = json!({
         "specmode": "cube",
         "outframe": "LSRK",
@@ -211,51 +227,150 @@ fn the_batch_source_holds_at_most_its_charge() {
         ("niter".to_string(), json!(10)),
     ]);
     let save = json!({ "savemodel": "modelcolumn", "niter": 10 });
+    // A TOPO cube of TOPO rows, whose edge channels drift out of its band:
+    // the writing pass keeps which channels each time reads.
+    use casa_types::measures::frequency::FrequencyRef;
+    let topo = observation(&directory("topo"), 16);
+    let mut ms = casa_ms::MeasurementSet::open(&topo).expect("the fixture");
+    ms.spectral_window_mut()
+        .expect("its windows")
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .expect("its frame");
+    ms.save().expect("the frame saved");
+    drop(ms);
+    let drift = json!({
+        "specmode": "cube",
+        "outframe": "TOPO",
+        "spw": "0",
+        "start": "0",
+        "width": "1",
+        "channel_count": 8,
+        "interpolation": "linear",
+        "savemodel": "modelcolumn",
+        "niter": 10,
+    });
     let ample = 4 << 30;
-    let cases: [(&str, &Path, Value, u32, u64); 9] = [
-        ("continuum", &narrow, json!({}), 1, ample),
-        ("cube resident", &narrow, cube.clone(), 16, ample),
-        ("cube in waves", &narrow, cube, 3, ample),
-        ("continuum of 101 channels", &wide, json!({}), 1, ample),
-        ("gapped linear cube in waves", &wide, gapped, 3, ample),
+    let pointed_mosaic = json!({ "gridder": "mosaic", "usepointing": true });
+    // A density over the whole selection of a cube on part of a window: its
+    // pass reads the rest in runs as wide as the cube's.
+    let part = json!({
+        "specmode": "cube",
+        "outframe": "LSRK",
+        "spw": "0",
+        "start": "0",
+        "width": "1",
+        "channel_count": 4,
+        "weighting": "uniform",
+        "perchanweightdensity": false,
+    });
+    let tracked_wide = json!({
+        "specmode": "cube",
+        "outframe": "TOPO",
+        "spw": "0",
+        "start": "0",
+        "width": "2",
+        "channel_count": 12,
+        "interpolation": "linear",
+    });
+    let cases: [(&str, Vec<&Path>, Value, u32, u64); 15] = [
+        ("continuum", vec![&narrow], json!({}), 1, ample),
+        (
+            "wide TOPO cube on LSRK data in waves",
+            vec![&wide],
+            tracked_wide,
+            3,
+            ample,
+        ),
+        ("cube resident", vec![&narrow], cube.clone(), 16, ample),
+        ("cube in waves", vec![&narrow], cube, 3, ample),
+        (
+            "continuum of 101 channels",
+            vec![&wide],
+            json!({}),
+            1,
+            ample,
+        ),
+        ("gapped linear cube in waves", vec![&wide], gapped, 3, ample),
         (
             "mosaic with pointing",
-            &alma,
-            json!({ "gridder": "mosaic", "usepointing": true }),
+            vec![&alma],
+            pointed_mosaic.clone(),
             1,
             ample,
         ),
         (
             "continuum saving the model",
-            &narrow,
+            vec![&narrow],
             save.clone(),
             1,
             ample,
         ),
         (
             "gapped cube saving the model",
-            &wide,
+            vec![&wide],
             gapped_write,
             10,
             ample,
         ),
         (
+            "cube on part of a window with a whole-selection density",
+            vec![&wide],
+            part,
+            4,
+            ample,
+        ),
+        (
+            "cube saving the model of the channels its band selects",
+            vec![&topo],
+            drift,
+            8,
+            ample,
+        ),
+        (
             "continuum saving the model in batches",
-            &narrow,
-            save,
+            vec![&narrow],
+            save.clone(),
             1,
             128 << 20,
         ),
+        (
+            "continuum over two MeasurementSets",
+            vec![&narrow, &wide],
+            json!({}),
+            1,
+            ample,
+        ),
+        (
+            "mosaic with pointing over two MeasurementSets",
+            vec![&alma, &alma_again],
+            pointed_mosaic,
+            1,
+            ample,
+        ),
+        (
+            "continuum saving the model into two MeasurementSets",
+            vec![&narrow, &narrow_again],
+            save,
+            1,
+            ample,
+        ),
     ];
     let mut breaches = Vec::new();
-    for (label, measurement_set, controls, planes_per_wave, memory) in cases {
+    for (label, measurement_sets, controls, planes_per_wave, memory) in cases {
         let image = root.path().join(label.replace(' ', "-"));
         let (drive, peak) = measure(
-            &request(measurement_set, &image, 256, controls),
+            &request(&measurement_sets, &image, 256, controls),
             planes_per_wave,
             memory,
         );
-        let held = peak - drive.block as i64 - tile_staging(measurement_set);
+        // The stores are read one after another, each column's session
+        // closing before the next store's opens.
+        let staging = measurement_sets
+            .iter()
+            .map(|measurement_set| tile_staging(measurement_set))
+            .max()
+            .unwrap_or(0);
+        let held = peak - drive.block as i64 - staging;
         eprintln!(
             "{label}: {held} bytes held of {} charged ({} blocks of {} bytes, tiles staged \
              apart)",
@@ -276,6 +391,45 @@ fn the_batch_source_holds_at_most_its_charge() {
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
+/// A window no channel of which reaches the cube's axis is read for the
+/// density and for a write, and by no other pass (#1081): a cube on the first
+/// of two windows reads the second's flags and weights, and not its
+/// visibilities until it writes.
+#[test]
+fn a_window_the_axis_misses_is_read_by_the_density_and_a_write_alone() {
+    const TIMES: usize = 10;
+    let root = tempfile::tempdir().expect("test root");
+    let two = two_window_observation(root.path(), 16);
+    let cube = |name: &str, spw: &str, write: bool| {
+        let mut controls = json!({
+            "specmode": "cube",
+            "outframe": "LSRK",
+            "spw": spw,
+            "start": "0",
+            "width": "1",
+            "channel_count": 8,
+        });
+        if write {
+            controls["savemodel"] = json!("modelcolumn");
+            controls["niter"] = json!(10);
+        }
+        let image = root.path().join(name);
+        measure(&request(&[&two], &image, 256, controls), 8, 4 << 30).0
+    };
+    let batches = TIMES.div_ceil(TIMES.div_ceil(OVERLAPPED_BLOCKS));
+    let first = cube("first", "0", false);
+    assert_eq!(first.blocks, 2 * batches, "{first:?}");
+    let both = cube("both", "*", false);
+    assert_eq!(both.blocks, 3 * batches, "{both:?}");
+    let writes_first = cube("writes-first", "0", true);
+    let writes_both = cube("writes-both", "*", true);
+    assert_eq!(
+        writes_both.blocks,
+        2 * writes_first.blocks,
+        "{writes_first:?} {writes_both:?}"
+    );
+}
+
 /// With memory to spare, a traversal still streams in several batches (one
 /// part in `OVERLAPPED_BLOCKS` of a partition's times each), so the stream
 /// reads the next while the passes grid one: the fixture's ten times in
@@ -286,7 +440,7 @@ fn a_pass_streams_in_overlapped_batches() {
     let root = tempfile::tempdir().expect("test root");
     let narrow = observation(root.path(), 16);
     let (drive, _) = measure(
-        &request(&narrow, &root.path().join("overlapped"), 256, json!({})),
+        &request(&[&narrow], &root.path().join("overlapped"), 256, json!({})),
         1,
         4 << 30,
     );

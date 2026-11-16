@@ -86,8 +86,8 @@
 //! (`MCDirection::ToRef_p`), except that casacore converts B1950 to and from
 //! APP directly, with its B1950 precession, nutation and aberration, and so
 //! B1950 to and from TOPO, HADEC, the AZEL frames and ITRF. casa-rs goes
-//! through J2000, which differs by 2.5–4.9″ (2026-10-22, #863). casa-rs has
-//! no BMEAN, BTRUE or B1950_VLA frame.
+//! through J2000, which differs by 2.5–4.9″ (2026-10-22, #863).
+//! BMEAN/BTRUE and B1950_VLA follow the corresponding FK4 routines.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -121,7 +121,7 @@ const MJD_OFFSET: f64 = 2_400_000.5;
 /// Celestial reference frame types for direction measures.
 ///
 /// Corresponds to a subset of C++ `MDirection::Types`; the planet-based
-/// frames, B1950_VLA, BMEAN and BTRUE are not represented.
+/// frames are not represented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DirectionRef {
     /// Mean equator/equinox at J2000.0 (dynamical).
@@ -136,6 +136,12 @@ pub enum DirectionRef {
     JNAT,
     /// Mean equator/equinox at B1950.0 (FK4, E-terms included).
     B1950,
+    /// VLA's FK4 convention, with its fixed 1979.9 epoch term.
+    B1950Vla,
+    /// Mean equator/equinox of date under FK4 precession.
+    BMEAN,
+    /// True equator/equinox of date under FK4 precession/nutation.
+    BTRUE,
     /// Galactic coordinates (IAU 1958).
     GALACTIC,
     /// Supergalactic coordinates (de Vaucouleurs 1991).
@@ -166,7 +172,54 @@ pub enum DirectionRef {
 }
 
 /// Total number of DirectionRef variants.
-const NUM_DIR_REFS: usize = 19;
+const NUM_DIR_REFS: usize = 22;
+
+/// Resolve a CASA direction-frame name or unique prefix to its canonical name.
+///
+/// The returned name can be a CASA frame that [`DirectionRef`] does not yet
+/// represent; aliases such as `AZELNE` resolve to their canonical spelling.
+#[must_use]
+pub fn casa_direction_frame_name(input: &str) -> Option<&'static str> {
+    const NAMES: [(&str, &str); 35] = [
+        ("J2000", "J2000"),
+        ("JMEAN", "JMEAN"),
+        ("JTRUE", "JTRUE"),
+        ("APP", "APP"),
+        ("B1950", "B1950"),
+        ("B1950_VLA", "B1950_VLA"),
+        ("BMEAN", "BMEAN"),
+        ("BTRUE", "BTRUE"),
+        ("GALACTIC", "GALACTIC"),
+        ("HADEC", "HADEC"),
+        ("AZEL", "AZEL"),
+        ("AZELSW", "AZELSW"),
+        ("AZELNE", "AZEL"),
+        ("AZELGEO", "AZELGEO"),
+        ("AZELSWGEO", "AZELSWGEO"),
+        ("AZELNEGEO", "AZELGEO"),
+        ("JNAT", "JNAT"),
+        ("ECLIPTIC", "ECLIPTIC"),
+        ("MECLIPTIC", "MECLIPTIC"),
+        ("TECLIPTIC", "TECLIPTIC"),
+        ("SUPERGAL", "SUPERGAL"),
+        ("ITRF", "ITRF"),
+        ("TOPO", "TOPO"),
+        ("ICRS", "ICRS"),
+        ("MERCURY", "MERCURY"),
+        ("VENUS", "VENUS"),
+        ("MARS", "MARS"),
+        ("JUPITER", "JUPITER"),
+        ("SATURN", "SATURN"),
+        ("URANUS", "URANUS"),
+        ("NEPTUNE", "NEPTUNE"),
+        ("PLUTO", "PLUTO"),
+        ("SUN", "SUN"),
+        ("MOON", "MOON"),
+        ("COMET", "COMET"),
+    ];
+    crate::quanta::unique_prefix_position(input, &NAMES, |(name, _)| name)
+        .map(|index| NAMES[index].1)
+}
 
 impl DirectionRef {
     /// Returns the C++ casacore integer code for this reference type.
@@ -181,6 +234,9 @@ impl DirectionRef {
             Self::JTRUE => 2,
             Self::APP => 3,
             Self::B1950 => 4,
+            Self::B1950Vla => 5,
+            Self::BMEAN => 6,
+            Self::BTRUE => 7,
             Self::GALACTIC => 8,
             Self::HADEC => 9,
             Self::AZEL => 10,
@@ -200,8 +256,7 @@ impl DirectionRef {
 
     /// Converts a C++ casacore integer code to the corresponding reference type.
     ///
-    /// Returns `None` for unrecognised codes. Codes 5 (B1950_VLA), 6 (BMEAN),
-    /// and 7 (BTRUE) are not supported in this Rust implementation.
+    /// Returns `None` for unrecognised codes and planet-based frames.
     pub fn from_casacore_code(code: i32) -> Option<Self> {
         match code {
             0 => Some(Self::J2000),
@@ -209,9 +264,9 @@ impl DirectionRef {
             2 => Some(Self::JTRUE),
             3 => Some(Self::APP),
             4 => Some(Self::B1950),
-            // 5 => B1950_VLA (not supported)
-            // 6 => BMEAN (not supported)
-            // 7 => BTRUE (not supported)
+            5 => Some(Self::B1950Vla),
+            6 => Some(Self::BMEAN),
+            7 => Some(Self::BTRUE),
             8 => Some(Self::GALACTIC),
             9 => Some(Self::HADEC),
             10 => Some(Self::AZEL),
@@ -238,6 +293,9 @@ impl DirectionRef {
         Self::APP,
         Self::JNAT,
         Self::B1950,
+        Self::B1950Vla,
+        Self::BMEAN,
+        Self::BTRUE,
         Self::GALACTIC,
         Self::SUPERGAL,
         Self::ICRS,
@@ -262,6 +320,9 @@ impl DirectionRef {
             Self::APP => "APP",
             Self::JNAT => "JNAT",
             Self::B1950 => "B1950",
+            Self::B1950Vla => "B1950_VLA",
+            Self::BMEAN => "BMEAN",
+            Self::BTRUE => "BTRUE",
             Self::GALACTIC => "GALACTIC",
             Self::SUPERGAL => "SUPERGAL",
             Self::ICRS => "ICRS",
@@ -290,6 +351,9 @@ impl FromStr for DirectionRef {
             ("APP", Self::APP),
             ("JNAT", Self::JNAT),
             ("B1950", Self::B1950),
+            ("B1950_VLA", Self::B1950Vla),
+            ("BMEAN", Self::BMEAN),
+            ("BTRUE", Self::BTRUE),
             ("GALACTIC", Self::GALACTIC),
             ("GAL", Self::GALACTIC),
             ("SUPERGAL", Self::SUPERGAL),
@@ -394,6 +458,15 @@ impl MDirection {
     /// Returns the reference frame.
     pub fn refer(&self) -> DirectionRef {
         self.refer
+    }
+
+    /// Relabel this direction's reference frame without converting its value.
+    ///
+    /// The direction cosines are preserved exactly. This is the operation
+    /// casacore's `MDirection::set(Ref)` performs; it is distinct from a
+    /// physical frame conversion.
+    pub fn set_reference(&mut self, refer: DirectionRef) {
+        self.refer = refer;
     }
 
     /// Returns the direction as (longitude, latitude) in radians.
@@ -1042,16 +1115,18 @@ fn rotate_t(r: &[[f64; 3]; 3], v: &[f64; 3]) -> [f64; 3] {
 // Constant rotation matrices
 // ---------------------------------------------------------------------------
 
-/// ICRS-to-J2000 frame tie rotation matrix (IAU 2006).
+/// ICRS-to-J2000 frame tie rotation matrix (IAU 2000).
 ///
 /// The frame tie between ICRS and the dynamical mean equator/equinox at
 /// J2000.0 is a tiny rotation (~17 mas). We extract the frame bias matrix
-/// `rb` from `sofars::pnp::bp06` evaluated at J2000.0.
+/// `rb` from `sofars::pnp::bp00` evaluated at J2000.0, as casacore's
+/// `MeasTable::ICRSToJ2000` uses `frameBias00`. The IAU 2006 matrix differs
+/// by about 0.3 microarcseconds, observable in simulated FIELD directions.
 ///
 /// v_J2000 = ICRS_TO_J2000 * v_ICRS
 fn icrs_to_j2000_matrix() -> [[f64; 3]; 3] {
-    // bp06 returns (rb, rp, rbp) where rb is the frame bias
-    let (rb, _, _) = sofars::pnp::bp06(MJD_OFFSET, 51544.5);
+    // bp00 returns (rb, rp, rbp) where rb is the frame bias.
+    let (rb, _, _) = sofars::pnp::bp00(MJD_OFFSET, 51544.5);
     rb
 }
 
@@ -1179,7 +1254,13 @@ fn get_latitude(frame: &MeasFrame) -> Result<f64, MeasureError> {
     let pos = frame.position().ok_or(MeasureError::MissingFrameData {
         what: "position (for observer latitude)",
     })?;
-    Ok(pos.latitude_rad())
+    // MCFrame uses zero geodetic latitude at the geocentre. SOFA's
+    // degenerate Cartesian-to-geodetic convention chooses the pole there.
+    Ok(if pos.as_itrf() == [0.; 3] {
+        0.
+    } else {
+        pos.latitude_rad()
+    })
 }
 
 /// Get the observer geocentric latitude from the frame position.
@@ -1309,7 +1390,7 @@ fn tdb_mjd(frame: &MeasFrame) -> Result<f64, MeasureError> {
 
 /// Casacore `Aberration::STANDARD` Earth barycentric velocity as β = v/c in
 /// J2000 Cartesian coordinates.
-fn casacore_aberration_beta(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
+pub(super) fn casacore_aberration_beta(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
     let velocity_ms =
         frame.cached_earth_velocity_ms(|| Ok(earth_barycentric_velocity_ms(tdb_mjd(frame)?)))?;
     Ok(velocity_ms.map(|component| component / C_M_PER_S))
@@ -1474,6 +1555,10 @@ const ROUTING_EDGES: &[(DirectionRef, DirectionRef)] = &[
     // casacore converts between GALACTIC and B1950 directly, not via J2000.
     (DirectionRef::GALACTIC, DirectionRef::B1950),
     (DirectionRef::HADEC, DirectionRef::ITRF),
+    (DirectionRef::J2000, DirectionRef::B1950Vla),
+    (DirectionRef::B1950, DirectionRef::B1950Vla),
+    (DirectionRef::B1950, DirectionRef::BMEAN),
+    (DirectionRef::BMEAN, DirectionRef::BTRUE),
 ];
 
 /// Maps a DirectionRef to a unique index for BFS.
@@ -1498,6 +1583,9 @@ fn dir_ref_index(r: DirectionRef) -> usize {
         DirectionRef::AZELSWGEO => 16,
         DirectionRef::ITRF => 17,
         DirectionRef::TOPO => 18,
+        DirectionRef::B1950Vla => 19,
+        DirectionRef::BMEAN => 20,
+        DirectionRef::BTRUE => 21,
     }
 }
 
@@ -1828,6 +1916,27 @@ fn apply_hop(
             Ok(sofars::vm::s2c(ha, dec))
         }
 
+        (J2000, B1950Vla) => Ok(casacore_frames::j2000_to_b1950(cosines, 19.799 - 20.0)),
+        (B1950Vla, J2000) => Ok(casacore_frames::b1950_to_j2000(cosines, 19.799 - 20.0)),
+        (B1950, B1950Vla) => Ok(casacore_frames::j2000_to_b1950(
+            casacore_frames::b1950_to_j2000(cosines, b1950_epoch_centuries(frame, ctx)?),
+            19.799 - 20.0,
+        )),
+        (B1950Vla, B1950) => Ok(casacore_frames::j2000_to_b1950(
+            casacore_frames::b1950_to_j2000(cosines, 19.799 - 20.0),
+            b1950_epoch_centuries(frame, ctx)?,
+        )),
+        (B1950, BMEAN) | (BMEAN, B1950) => Ok(casacore_frames::besselian_precession(
+            cosines,
+            tdb_mjd(frame)?,
+            from == BMEAN,
+        )),
+        (BMEAN, BTRUE) | (BTRUE, BMEAN) => Ok(casacore_frames::besselian_nutation(
+            cosines,
+            tdb_mjd(frame)?,
+            from == BTRUE,
+        )),
+
         // ----- B1950 (FK4, casacore's rotation and E-terms) -----
         (J2000, B1950) => Ok(casacore_frames::j2000_to_b1950(
             cosines,
@@ -2023,9 +2132,28 @@ impl MDirection {
 mod tests {
     use super::*;
 
+    #[test]
+    fn casa_direction_frame_names_resolve_aliases_and_ambiguous_prefixes() {
+        assert_eq!(casa_direction_frame_name("GAL"), Some("GALACTIC"));
+        assert_eq!(casa_direction_frame_name("j2"), Some("J2000"));
+        assert_eq!(casa_direction_frame_name("AZELNE"), Some("AZEL"));
+        assert_eq!(casa_direction_frame_name("B1950_VLA"), Some("B1950_VLA"));
+        assert_eq!(casa_direction_frame_name("J"), None);
+        assert_eq!(casa_direction_frame_name("not-a-frame"), None);
+    }
+
     use crate::measures::epoch::MEpoch;
     use crate::measures::position::MPosition;
     use crate::measures::provider::test_measures;
+
+    #[test]
+    fn relabeling_a_direction_keeps_its_cosines_exactly() {
+        let mut direction = MDirection::from_angles(1.234, -0.321, DirectionRef::J2000);
+        let before = direction.cosines().map(f64::to_bits);
+        direction.set_reference(DirectionRef::GALACTIC);
+        assert_eq!(direction.cosines().map(f64::to_bits), before);
+        assert_eq!(direction.refer(), DirectionRef::GALACTIC);
+    }
 
     fn close(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol
@@ -2170,6 +2298,23 @@ mod tests {
         let back = icrs.convert_to(DirectionRef::J2000, &frame).unwrap();
         let sep = sofars::vm::sepp(&d.cosines(), &back.cosines());
         assert!(sep < 1e-12, "roundtrip sep = {} rad", sep);
+    }
+
+    #[test]
+    fn icrs_calibrator_direction_matches_casa_frame_bias() {
+        // CASA 6.7.6.14 me.measure(me.direction('ICRS', '10h01m00',
+        // '34d30m00'), 'J2000'), the SIM-23 calibrator metadata control.
+        let direction = MDirection::from_angles(
+            150.25_f64.to_radians(),
+            34.5_f64.to_radians(),
+            DirectionRef::ICRS,
+        );
+        let converted = direction
+            .convert_to(DirectionRef::J2000, &MeasFrame::new())
+            .unwrap();
+        let (ra, dec) = converted.as_angles();
+        assert!((ra - 2.622_357_224_702_305_7).abs() < 5e-15);
+        assert!((dec - 0.602_138_645_476_905_5).abs() < 5e-15);
     }
 
     #[test]
@@ -2407,10 +2552,9 @@ mod tests {
 
     #[test]
     fn casacore_code_unsupported() {
-        // B1950_VLA=5, BMEAN=6, BTRUE=7 not in Rust enum
-        assert_eq!(DirectionRef::from_casacore_code(5), None);
-        assert_eq!(DirectionRef::from_casacore_code(6), None);
-        assert_eq!(DirectionRef::from_casacore_code(7), None);
+        assert_eq!(DirectionRef::from_casacore_code(-1), None);
+        assert_eq!(DirectionRef::from_casacore_code(22), None);
+        assert_eq!(DirectionRef::from_casacore_code(32), None);
     }
 
     #[test]

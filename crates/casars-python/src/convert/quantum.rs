@@ -10,13 +10,14 @@
 //! and quotients name their unit `km.s`, `km/(s)` and `(s)-1`. Frequencies
 //! and wavelengths do not convert to each other.
 
-use std::collections::BTreeMap;
-
 use casa_types::quanta::casacore::{self, QuantumError, conversion};
 use casa_types::quanta::{Quantity, Unit};
 
 use super::value::CasaValue;
-use super::{ConvertError, ConvertResult, Variant, casacore_unit, quantity, quantity_record};
+use super::{
+    ConvertError, ConvertResult, Variant, VariantRecord, casacore_unit, quantity,
+    quantity_variant_record,
+};
 
 impl From<QuantumError> for ConvertError {
     fn from(error: QuantumError) -> Self {
@@ -103,20 +104,46 @@ pub(crate) fn quantum_holder(value: &Variant) -> ConvertResult<Option<Quantum>> 
 }
 
 /// `QuantumHolder::fromRecord`: a value, or an array of values.
-fn record_quantum(record: &BTreeMap<String, Variant>) -> ConvertResult<Quantum> {
-    let wrap =
-        |error: String| ConvertError::runtime(format!("Error {error} in converting quantity"));
+fn record_quantum(record: &VariantRecord) -> ConvertResult<Quantum> {
+    let wrap = |error: String| {
+        if error.starts_with("Unit::check Illegal unit string ") || error.starts_with("Wrong") {
+            ConvertError::runtime(error)
+        } else {
+            ConvertError::runtime(format!("Error {error} in converting quantity"))
+        }
+    };
+    if matches!(
+        record.scalar_kind,
+        Some(super::RecordScalarKind::EmptyFloatVector)
+    ) && let Some(Variant::Text(unit)) = record.get("unit")
+    {
+        return Ok(Quantum::vector(
+            Vec::new(),
+            casacore_unit(unit).map_err(wrap)?,
+        ));
+    }
+    if record.scalar_kind.is_some() {
+        return quantity_variant_record(record)
+            .map(|quantity| Quantum::scalar(&quantity))
+            .map_err(wrap);
+    }
     match (record.get("value"), record.get("unit")) {
         (Some(Variant::Numbers(values)), Some(Variant::Text(unit))) => Ok(Quantum::vector(
             values.clone(),
             casacore_unit(unit).map_err(wrap)?,
         )),
+        (Some(Variant::Array { shape, values }), Some(Variant::Text(unit))) if shape.is_empty() => {
+            Ok(Quantum::vector(
+                values.clone(),
+                casacore_unit(unit).map_err(wrap)?,
+            ))
+        }
         (Some(Variant::Array { shape, values }), Some(Variant::Text(unit))) => Ok(Quantum {
             values: values.clone(),
             shape: Some(shape.clone()),
             unit: casacore_unit(unit).map_err(wrap)?,
         }),
-        _ => quantity_record(record)
+        _ => quantity_variant_record(record)
             .map(|quantity| Quantum::scalar(&quantity))
             .map_err(wrap),
     }

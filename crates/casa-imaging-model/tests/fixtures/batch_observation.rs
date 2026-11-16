@@ -216,8 +216,8 @@ pub fn problem_in(
 ) -> CompiledProblem {
     let frames = [FrequencyFrame::Topocentric; 2];
     compile(ProblemInput::new(
-        specification(polarization),
-        geometry(phase, facets, psf, frames),
+        specification(polarization, None),
+        geometry(phase, facets, psf, frames, false).build(),
         super::common::observation_snapshot(0),
         super::model_lifecycle_fixture::model_lifecycle(),
     ))
@@ -225,102 +225,232 @@ pub fn problem_in(
 }
 
 /// The Stokes I problem of `phase`, its frequencies taken from `source` to
-/// `output`.
+/// `output`; a TOPO or BARY output is gridded through LSRK, anchored at the
+/// first time.
 pub fn problem_framed(
     phase: PhaseCentreLaw,
     source: FrequencyFrame,
     output: FrequencyFrame,
 ) -> CompiledProblem {
     compile(ProblemInput::new(
-        specification(vec![PolarizationCoordinate::StokesI]),
+        specification(vec![PolarizationCoordinate::StokesI], None),
         geometry(
             phase,
             FacetLayout::Single,
             PsfPhaseCentreLaw::ImageDomainReference,
             [source, output],
-        ),
+            source != output || output.gridded_through_lsrk(),
+        )
+        .build(),
         super::common::observation_snapshot(0),
         super::model_lifecycle_fixture::model_lifecycle(),
     ))
     .expect("a compiled problem")
 }
 
+/// The Stokes I problem of `phase` gridded as `MosaicFT` grids, each row
+/// pointed at its field's centre, on an image centred on [`REFERENCE`] in
+/// `frame`.
+pub fn problem_mosaic(phase: PhaseCentreLaw, frame: DirectionFrame) -> CompiledProblem {
+    let frames = [FrequencyFrame::Topocentric; 2];
+    let mut geometry = geometry(
+        phase,
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+        frames,
+        false,
+    );
+    geometry.frame = frame;
+    geometry.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
+    geometry.pointing = PointingCentreLaw::FieldCentre;
+    compile(ProblemInput::new(
+        specification(vec![PolarizationCoordinate::StokesI], None),
+        geometry.build(),
+        super::common::observation_snapshot(0),
+        super::model_lifecycle_fixture::model_lifecycle(),
+    ))
+    .expect("a compiled problem")
+}
+
+/// The fixture's geometry, before it is built.
+struct Geometry {
+    phase: PhaseCentreLaw,
+    facets: FacetLayout,
+    psf: PsfPhaseCentreLaw,
+    frames: [FrequencyFrame; 2],
+    anchored: bool,
+    /// The image's direction frame.
+    frame: DirectionFrame,
+    uvw: UvwCoordinateLaw,
+    pointing: PointingCentreLaw,
+}
+
 fn geometry(
     phase: PhaseCentreLaw,
     facets: FacetLayout,
     psf: PsfPhaseCentreLaw,
-    [source, output]: [FrequencyFrame; 2],
-) -> GeometryInput {
-    let direction = DirectionCoordinateSpec::new(
-        Projection::Sin,
-        SkyDirection::new(DirectionFrame::J2000, REFERENCE[0], REFERENCE[1]),
-        [255.0, 255.0],
-        [-4.848_136_811_095_36e-5, 4.848_136_811_095_36e-5],
-        [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
-    );
-    GeometryInput::new(
-        vec![
-            ImageDomainSpec::new(
-                ImageDomainRole::Main,
-                ImageShape::new(512, 512),
-                direction,
-                facets,
-                AxisOrder::new([
-                    ImageAxis::DirectionLongitude,
-                    ImageAxis::DirectionLatitude,
-                    ImageAxis::Polarization,
-                    ImageAxis::Spectral,
-                ]),
-            )
-            .with_psf_phase_centre(psf),
-        ],
-        CentreLaws::new(phase, PointingCentreLaw::PhaseTrackingCentre),
-        UvwCoordinateLaw::PhaseTrackingCentre,
-        SpectralCoordinateSpec::new(
-            source,
-            output,
-            if source == output {
-                SpectralFrameAnchor::NotApplicable
-            } else {
-                SpectralFrameAnchor::Conversion {
-                    epoch: Epoch::new(MJD_DAYS, TimeScale::Utc),
-                    direction: SkyDirection::new(DirectionFrame::J2000, REFERENCE[0], REFERENCE[1]),
-                    observatory_position: ItrfPosition::new(
-                        -1_601_185.4,
-                        -5_041_977.5,
-                        3_554_875.9,
-                    ),
-                }
-            },
-            SpectralWcs::Linear {
-                channels: 1,
-                reference_pixel: 0.0,
-                reference_frequency_hz: 1.4e9,
-                increment_hz: 1.0e6,
-            },
-            RestFrequency::NotApplicable,
-            DopplerConvention::NotApplicable,
-        ),
-    )
+    frames: [FrequencyFrame; 2],
+    anchored: bool,
+) -> Geometry {
+    Geometry {
+        phase,
+        facets,
+        psf,
+        frames,
+        anchored,
+        frame: DirectionFrame::J2000,
+        uvw: UvwCoordinateLaw::PhaseTrackingCentre,
+        pointing: PointingCentreLaw::PhaseTrackingCentre,
+    }
 }
 
-fn specification(polarization: Vec<PolarizationCoordinate>) -> ProblemSpecification {
+impl Geometry {
+    fn build(self) -> GeometryInput {
+        let Self {
+            phase,
+            facets,
+            psf,
+            frames: [source, output],
+            anchored,
+            frame,
+            uvw,
+            pointing,
+        } = self;
+        let direction = DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(frame, REFERENCE[0], REFERENCE[1]),
+            [255.0, 255.0],
+            [-4.848_136_811_095_36e-5, 4.848_136_811_095_36e-5],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 0.0],
+        );
+        GeometryInput::new(
+            vec![
+                ImageDomainSpec::new(
+                    ImageDomainRole::Main,
+                    ImageShape::new(512, 512),
+                    direction,
+                    facets,
+                    AxisOrder::new([
+                        ImageAxis::DirectionLongitude,
+                        ImageAxis::DirectionLatitude,
+                        ImageAxis::Polarization,
+                        ImageAxis::Spectral,
+                    ]),
+                )
+                .with_psf_phase_centre(psf),
+            ],
+            CentreLaws::new(phase, pointing),
+            uvw,
+            SpectralCoordinateSpec::new(
+                source,
+                output,
+                if source == output && !anchored {
+                    SpectralFrameAnchor::NotApplicable
+                } else {
+                    SpectralFrameAnchor::Conversion {
+                        // The first time's epoch as a row's time reads it.
+                        epoch: Epoch::new(MJD_DAYS * 86_400.0 * (1.0 / 86_400.0), TimeScale::Utc),
+                        direction: SkyDirection::new(
+                            DirectionFrame::J2000,
+                            REFERENCE[0],
+                            REFERENCE[1],
+                        ),
+                        observatory_position: ItrfPosition::new(
+                            -1_601_185.4,
+                            -5_041_977.5,
+                            3_554_875.9,
+                        ),
+                    }
+                },
+                SpectralWcs::Linear {
+                    channels: 1,
+                    reference_pixel: 0.0,
+                    reference_frequency_hz: 1.4e9,
+                    increment_hz: 1.0e6,
+                },
+                RestFrequency::NotApplicable,
+                DopplerConvention::NotApplicable,
+            ),
+        )
+    }
+}
+
+pub fn aw_problem() -> CompiledProblem {
+    let aw = casa_imaging_model::AwProjectionContract::new(
+        500.0,
+        std::num::NonZeroUsize::MIN,
+        true,
+        false,
+        true,
+        false,
+        false,
+        [0.0; 2],
+        5.0,
+        360.0,
+    )
+    .expect("an AW projection");
+    compile(ProblemInput::new(
+        specification(vec![PolarizationCoordinate::StokesI], Some(aw)),
+        geometry(
+            PhaseCentreLaw::Observation,
+            FacetLayout::Single,
+            PsfPhaseCentreLaw::ImageDomainReference,
+            [FrequencyFrame::Topocentric; 2],
+            false,
+        )
+        .build(),
+        super::common::observation_snapshot(0),
+        super::model_lifecycle_fixture::model_lifecycle(),
+    ))
+    .expect("an AW problem")
+}
+
+fn specification(
+    polarization: Vec<PolarizationCoordinate>,
+    aw: Option<casa_imaging_model::AwProjectionContract>,
+) -> ProblemSpecification {
+    // CASA forms a spectral index of a Stokes I image alone.
+    let mut products = vec![
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        if aw.is_some() {
+            ProductKind::Weight
+        } else {
+            ProductKind::Sensitivity
+        },
+        ProductKind::TaylorTerms,
+    ];
+    if polarization == [PolarizationCoordinate::StokesI] {
+        products.push(ProductKind::SpectralIndex);
+    }
     let budgets = NumericalStage::ALL
         .into_iter()
         .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
         .collect();
-    ProblemSpecification::new(
-        ScientificContract::new(
-            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
-            MeasurementEquationContract::new(
-                InstrumentResponse::Scalar,
-                DeclaredInnerProducts::new(
-                    ModelInnerProduct::HermitianEuclidean,
-                    VisibilityInnerProduct::HermitianEuclidean,
-                ),
-            ),
+    let equation = MeasurementEquationContract::new(
+        if aw.is_some() {
+            InstrumentResponse::PrimaryBeam
+        } else {
+            InstrumentResponse::Scalar
+        },
+        DeclaredInnerProducts::new(
+            ModelInnerProduct::HermitianEuclidean,
+            VisibilityInnerProduct::HermitianEuclidean,
         ),
+    );
+    let spectral =
+        SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent);
+    let science = match aw {
+        Some(aw) => ScientificContract::new(spectral, equation.with_aw_projection(aw))
+            .with_instrument_model(casa_imaging_model::InstrumentModel::CasaEvlaWidebandAwV1),
+        None => ScientificContract::new(spectral, equation),
+    };
+    ProblemSpecification::new(
+        science,
         ReconstructionContract::new(
             ReconstructionBasis::Taylor { terms: 2 },
             ReconstructionAlgorithm::Mtmfs {
@@ -335,16 +465,7 @@ fn specification(polarization: Vec<PolarizationCoordinate>) -> ProblemSpecificat
             WeightDensityScope::GlobalSelection,
         ),
         ProductRequirements::new(
-            vec![
-                ProductKind::Psf,
-                ProductKind::Residual,
-                ProductKind::Model,
-                ProductKind::RestoredImage,
-                ProductKind::SumWeights,
-                ProductKind::Sensitivity,
-                ProductKind::TaylorTerms,
-                ProductKind::SpectralIndex,
-            ],
+            products,
             ProductNormalization::FlatNoise,
             RestoringBeamPolicy::PerPlane,
             ProductValidityPolicies::new(

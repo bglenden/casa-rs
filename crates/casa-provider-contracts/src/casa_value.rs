@@ -28,6 +28,8 @@ pub enum CasaValue {
     Int { value: i64 },
     /// A `float`.
     Float { value: CasaFloat },
+    /// A Python `complex`, represented by real and imaginary components.
+    Complex { real: CasaFloat, imag: CasaFloat },
     /// A `str`.
     String { value: String },
     /// A `list`.
@@ -42,6 +44,9 @@ pub enum CasaValue {
         shape: Vec<usize>,
         data: Vec<i64>,
     },
+    /// A NumPy array of unsigned 64-bit integers.
+    #[serde(rename = "uint64_array")]
+    UInt64Array { shape: Vec<usize>, data: Vec<u64> },
     /// A NumPy array of floats.
     FloatArray {
         dtype: FloatDtype,
@@ -100,12 +105,21 @@ pub enum ComplexDtype {
     Complex128,
 }
 
-/// A float that survives JSON: a number when finite, else `"nan"`, `"inf"`
-/// or `"-inf"`, which CASA's statistics of an empty or masked selection
-/// hold.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+/// A float that survives JSON: a number when finite, else `"nan"`, `"-nan"`,
+/// `"inf"`, or `"-inf"`. A negative NaN keeps its sign.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(from = "FloatRepr", into = "FloatRepr")]
 pub struct CasaFloat(pub f64);
+
+impl JsonSchema for CasaFloat {
+    fn schema_name() -> String {
+        "CasaFloat".into()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        FloatRepr::json_schema(generator)
+    }
+}
 
 #[derive(Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
@@ -118,6 +132,8 @@ enum FloatRepr {
 enum NonFinite {
     #[serde(rename = "nan")]
     Nan,
+    #[serde(rename = "-nan")]
+    NegNan,
     #[serde(rename = "inf")]
     Inf,
     #[serde(rename = "-inf")]
@@ -129,6 +145,7 @@ impl From<FloatRepr> for CasaFloat {
         Self(match repr {
             FloatRepr::Number(value) => value,
             FloatRepr::NonFinite(NonFinite::Nan) => f64::NAN,
+            FloatRepr::NonFinite(NonFinite::NegNan) => -f64::NAN,
             FloatRepr::NonFinite(NonFinite::Inf) => f64::INFINITY,
             FloatRepr::NonFinite(NonFinite::NegInf) => f64::NEG_INFINITY,
         })
@@ -138,7 +155,11 @@ impl From<FloatRepr> for CasaFloat {
 impl From<CasaFloat> for FloatRepr {
     fn from(CasaFloat(value): CasaFloat) -> Self {
         if value.is_nan() {
-            Self::NonFinite(NonFinite::Nan)
+            Self::NonFinite(if value.is_sign_negative() {
+                NonFinite::NegNan
+            } else {
+                NonFinite::Nan
+            })
         } else if value == f64::INFINITY {
             Self::NonFinite(NonFinite::Inf)
         } else if value == f64::NEG_INFINITY {
@@ -250,13 +271,17 @@ impl CasaValue {
 
     /// The value as plain JSON, as a command line prints it: arrays as
     /// nested lists in their shape, integer keys as strings, and non-finite
-    /// floats as `"nan"`, `"inf"` or `"-inf"`.
+    /// floats as `"nan"`, `"-nan"`, `"inf"` or `"-inf"`. Complex scalars are
+    /// represented as `[real, imaginary]` because JSON has no complex type.
     pub fn to_plain_json(&self) -> Value {
         match self {
             Self::None => Value::Null,
             Self::Bool { value } => Value::Bool(*value),
             Self::Int { value } => Value::from(*value),
             Self::Float { value } => plain_float(*value),
+            Self::Complex { real, imag } => {
+                Value::Array(vec![plain_float(*real), plain_float(*imag)])
+            }
             Self::String { value } => Value::String(value.clone()),
             Self::List { items } => Value::Array(items.iter().map(Self::to_plain_json).collect()),
             Self::Dict { entries } => Value::Object(
@@ -273,6 +298,7 @@ impl CasaValue {
             ),
             Self::BoolArray { shape, data } => nest(shape, data, |value| Value::Bool(*value)),
             Self::IntArray { shape, data, .. } => nest(shape, data, |value| Value::from(*value)),
+            Self::UInt64Array { shape, data } => nest(shape, data, |value| Value::from(*value)),
             Self::FloatArray { shape, data, .. } => nest(shape, data, |value| plain_float(*value)),
             Self::ComplexArray { shape, data, .. } => nest(shape, data, |[re, im]| {
                 Value::Array(vec![plain_float(*re), plain_float(*im)])
@@ -291,6 +317,7 @@ impl CasaValue {
             Self::Dict { entries } => entries.iter().all(|entry| entry.value.is_consistent()),
             Self::BoolArray { shape, data } => fits(shape, data.len()),
             Self::IntArray { shape, data, .. } => fits(shape, data.len()),
+            Self::UInt64Array { shape, data } => fits(shape, data.len()),
             Self::FloatArray { shape, data, .. } => fits(shape, data.len()),
             Self::ComplexArray { shape, data, .. } => fits(shape, data.len()),
             Self::StrArray { shape, data } => fits(shape, data.len()),
@@ -298,6 +325,7 @@ impl CasaValue {
             | Self::Bool { .. }
             | Self::Int { .. }
             | Self::Float { .. }
+            | Self::Complex { .. }
             | Self::String { .. } => true,
         }
     }
@@ -378,6 +406,22 @@ mod tests {
             json!({"kind": "dict", "entries": [{"key": 3, "value": {"kind": "float", "value": "-inf"}}]})
         );
         assert_eq!(serde_json::from_value::<CasaValue>(wire).unwrap(), value);
+    }
+
+    #[test]
+    fn signed_nan_roundtrips_and_the_schema_accepts_nonfinite_values() {
+        let wire = serde_json::to_value(CasaFloat(-f64::NAN)).unwrap();
+        assert_eq!(wire, json!("-nan"));
+        let decoded: CasaFloat = serde_json::from_value(wire).unwrap();
+        assert!(decoded.0.is_nan() && decoded.0.is_sign_negative());
+        let schema = serde_json::to_value(schemars::schema_for!(CasaFloat)).unwrap();
+        assert!(schema["anyOf"].is_array(), "{schema}");
+        let alternatives = schema["definitions"]["NonFinite"]["enum"]
+            .as_array()
+            .unwrap();
+        for value in ["nan", "-nan", "inf", "-inf"] {
+            assert!(alternatives.contains(&json!(value)), "{schema}");
+        }
     }
 
     #[test]

@@ -1,17 +1,13 @@
-Closes #___
+What changed and why, in a paragraph or two. The title and this description
+become the squashed commit on main: write them as its commit message.
 
-## Acceptance evidence
+Work issue: #___
 
-- `<contract clause>` — `<command or test>` — `<result>`
-- `<contract clause>` — `<command or test>` — `<result>`
+Evidence:
+- `command or test`: result
 
-Reviewed SHA: `<sha>`
+Decisions: none. Otherwise each choice made without the owner (what, why,
+the alternative not taken), with the `owner-review` label on the PR.
 
-## Contract review
-
-Reviewer: `<name>`
-Unresolved blockers: `none`
-
-## Stop point
-
-`none`, or `<required user decision>`
+Review: delete this line unless there was one; otherwise local or external,
+the reviewer, the revision, and how each finding was resolved.

@@ -1,0 +1,225 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "not-a-unit"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not-a-unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "not-a-unit"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not-a-unit'"
+      }
+    },
+    {
+      "method": "convert",
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "not-a-unit"
+        },
+        "m"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not-a-unit'"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": 4.0,
+          "unit": "not-a-unit"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not-a-unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": [
+            1.0,
+            2.0
+          ],
+          "unit": "not-a-unit"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not-a-unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": [
+            1.0,
+            2.0
+          ],
+          "unit": "not-a-unit"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not-a-unit'"
+      }
+    },
+    {
+      "method": "convert",
+      "args": [
+        {
+          "value": [
+            1.0,
+            2.0
+          ],
+          "unit": "not-a-unit"
+        },
+        "m"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not-a-unit'"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": [
+            1.0,
+            2.0
+          ],
+          "unit": "not-a-unit"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not-a-unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": 4.0
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": 4.0
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "convert",
+      "args": [
+        {
+          "value": 4.0
+        },
+        "m"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": 4.0
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "convert",
+      "args": [
+        {
+          "unit": "m"
+        },
+        "m"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    }
+  ]
+}

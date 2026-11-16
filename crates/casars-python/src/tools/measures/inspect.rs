@@ -56,7 +56,12 @@ pub(super) fn gettype(v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
 /// `refer`, as given; `{}` for a record that is not a measure.
 pub(super) fn getvalue(v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
     let record = match v.0.get("return") {
-        Some(crate::convert::Variant::Record(inner)) => RecordArg(inner.clone()),
+        Some(crate::convert::Variant::Record(inner)) => RecordArg(
+            inner
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        ),
         _ => v.clone(),
     };
     if read(&record, "Incorrect input type for getvalue()", true, lines).is_none() {

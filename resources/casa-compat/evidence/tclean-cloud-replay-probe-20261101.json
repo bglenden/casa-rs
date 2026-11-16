@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "record": "tclean-cloud-replay-portability-probe",
+  "date": "2026-11-01",
+  "status": "Expected scoped failures reproduced with archived data; this verifies path-independent replay on the local host, not execution in the cloud or current-source acceptance.",
+  "native_revision": "2851c6dcdcac828d2129ef66ef04dffc73273a6c",
+  "binary_sha256": "7c7e8af44bd5035d5cf7be938565838947fc8af5d1fcedb3adf7e54869d4aeb3",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "reference_request_sha256": "8c185f329855056f97c50edf109ec6e9c53bfaea13a23cca3b6bf5bb3496c8c4",
+  "case": "point-cube-briggs",
+  "backend": "cpu",
+  "precision": "f64",
+  "exit": 0,
+  "product_checks": {
+    ".image": {
+      "numeric_metric": 9.863170901406635e-07,
+      "numeric_limit": 0.001,
+      "numeric_passed": true,
+      "mask_mismatch": 0,
+      "finite_valid_pixels": true,
+      "metadata_passed": true,
+      "beam_axes_passed": true
+    },
+    ".mask": {
+      "numeric_metric": 0.0,
+      "numeric_limit": 0.001,
+      "numeric_passed": true,
+      "mask_mismatch": 0,
+      "finite_valid_pixels": true,
+      "metadata_passed": true,
+      "beam_axes_passed": true
+    },
+    ".model": {
+      "numeric_metric": 1.3422736025974224e-07,
+      "numeric_limit": 0.001,
+      "numeric_passed": true,
+      "mask_mismatch": 0,
+      "finite_valid_pixels": true,
+      "metadata_passed": true,
+      "beam_axes_passed": true
+    },
+    ".pb": {
+      "numeric_metric": 0.013570251091264973,
+      "numeric_limit": 0.001,
+      "numeric_passed": false,
+      "mask_mismatch": 0,
+      "finite_valid_pixels": true,
+      "metadata_passed": true,
+      "beam_axes_passed": true
+    },
+    ".psf": {
+      "numeric_metric": 1.0391811056100938e-05,
+      "numeric_limit": 0.001,
+      "numeric_passed": true,
+      "mask_mismatch": 0,
+      "finite_valid_pixels": true,
+      "metadata_passed": true,
+      "beam_axes_passed": true
+    },
+    ".residual": {
+      "numeric_metric": 1.0493964254947294e-05,
+      "numeric_limit": 0.001,
+      "numeric_passed": true,
+      "mask_mismatch": 0,
+      "finite_valid_pixels": true,
+      "metadata_passed": true,
+      "beam_axes_passed": true
+    },
+    ".sumwt": {
+      "numeric_metric": 1.5345117596718505e-06,
+      "numeric_limit": 5e-05,
+      "numeric_passed": true,
+      "mask_mismatch": 0,
+      "finite_valid_pixels": true,
+      "metadata_passed": true,
+      "beam_axes_passed": true
+    }
+  },
+  "selected_counts": {
+    "iterdone": {
+      "native": 489,
+      "casa": 489,
+      "passed": true
+    },
+    "nmajordone": {
+      "native": 2,
+      "casa": 2,
+      "passed": true
+    },
+    "stopcode": {
+      "native": 1,
+      "casa": 1,
+      "passed": true
+    }
+  },
+  "selected_scalars": {
+    "maxpsfsidelobe": {
+      "native": 0.04809821397066116,
+      "casa": 0.048097819089889526,
+      "passed": false
+    },
+    "cyclethreshold": {
+      "native": 0.003568232525140047,
+      "casa": 0.003568227170035243,
+      "passed": true
+    }
+  },
+  "image_directory_inventory_matches": true,
+  "extra_sidecar": {
+    "status": "extra in casa-rs"
+  },
+  "beam_position_angle_checked": false,
+  "interpretation": "The PB failure was already recorded. The newly measured maxpsfsidelobe failure is a raw scalar failure on this old binary; recheck against current source and CASA before attributing or resolving it. No numerical or sidecar waiver is granted.",
+  "raw_receipt": {
+    "nas_share_relative_path": "casa-rs/tclean/20261031/tclean-cloud-replay-probe-20261101/receipt-final.json",
+    "sha256": "caae16ed6a68ccd97da9e7d9f8ecbb5ec8c0d2d802db7e9b009348580006d687"
+  },
+  "driver_sha256": "03b1b1e28639882e82322639953a0d3de4c163d8cbf9c124bb6f501b382bd04e"
+}

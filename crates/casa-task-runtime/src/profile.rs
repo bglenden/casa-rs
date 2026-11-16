@@ -7,8 +7,7 @@ use casa_provider_contracts::{
 };
 use thiserror::Error;
 
-use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
-use crate::migrate::migrate_parameters;
+use crate::diagnostic::{Diagnostic, DiagnosticCode, SourceLocation};
 use crate::normalize::{NormalizationError, normalize_value, semantic_eq, validate_value};
 use crate::overrides::normalize_overrides;
 
@@ -37,8 +36,8 @@ pub struct ParameterProfile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedProfile {
     pub values: BTreeMap<String, ParameterValue>,
+    /// Explicit values before normalization.
     pub explicit_overrides: BTreeMap<String, ParameterValue>,
-    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// Parse a strict sparse TOML profile.
@@ -53,7 +52,11 @@ pub fn parse_profile(source: &str) -> Result<ParameterProfile, ProfileError> {
         message: "profile root must be a TOML table".to_string(),
         location: Some(SourceLocation { line: 1, column: 1 }),
     })?;
-    reject_unknown_keys(root.keys(), ["casars", "parameters"], "profile root")?;
+    reject_unknown_keys(
+        root.keys(),
+        ["casars", "parameters", "typed_parameters"],
+        "profile root",
+    )?;
 
     let header = root
         .get("casars")
@@ -95,6 +98,30 @@ pub fn parse_profile(source: &str) -> Result<ParameterProfile, ProfileError> {
             locations.insert(name.clone(), location);
         }
     }
+    if let Some(typed) = root.get("typed_parameters") {
+        let typed = typed.as_table().ok_or_else(|| ProfileError::Parse {
+            message: "[typed_parameters] must be a table".into(),
+            location: None,
+        })?;
+        for (name, value) in typed {
+            if parameters.contains_key(name) {
+                return Err(ProfileError::Parse {
+                    message: format!("parameter {name:?} occurs in both parameter tables"),
+                    location: None,
+                });
+            }
+            let text = value.as_str().ok_or_else(|| ProfileError::Parse {
+                message: format!("typed parameter {name:?} must contain JSON text"),
+                location: None,
+            })?;
+            let value: ParameterValue =
+                serde_json::from_str(text).map_err(|error| ProfileError::Parse {
+                    message: format!("invalid typed parameter {name:?}: {error}"),
+                    location: None,
+                })?;
+            parameters.insert(name.clone(), value);
+        }
+    }
 
     Ok(ParameterProfile {
         header: ProfileHeader {
@@ -132,7 +159,7 @@ pub fn resolve_profile(
             format!("unsupported profile format {}", profile.header.format),
         )]));
     }
-    if !bundle.surface.answers_to(&profile.header.surface) {
+    if bundle.surface.id() != profile.header.surface {
         let mut diagnostic = Diagnostic::error(
             DiagnosticCode::WrongSurface,
             format!(
@@ -155,89 +182,71 @@ pub fn resolve_profile(
             ),
         )]));
     }
-    if profile.header.contract > bundle.surface.contract_version() {
-        return Err(ProfileError::Diagnostics(vec![Diagnostic::error(
-            DiagnosticCode::FutureContract,
-            format!(
-                "profile contract {} is newer than current contract {}",
-                profile.header.contract,
-                bundle.surface.contract_version()
-            ),
-        )]));
-    }
-    // A surface's migration chain may start after contract 1 (the imager's
-    // became tclean's at 28): a profile older than its start cannot migrate.
     let current = bundle.surface.contract_version();
-    let oldest = bundle
-        .surface
-        .migrations()
-        .first()
-        .map_or(current, |migration| migration.from_contract);
-    if profile.header.contract < oldest {
-        let mut message = format!(
-            "profile contract {} is not the current contract {current} for surface {:?}",
-            profile.header.contract,
-            bundle.surface.id()
-        );
-        if oldest < current {
-            message.push_str(&format!("; profiles migrate from contract {oldest}"));
-        }
-        let mut diagnostic = Diagnostic::error(DiagnosticCode::UnsupportedContract, message);
+    if profile.header.contract != current {
+        let (code, message) = if profile.header.contract < current {
+            (
+                DiagnosticCode::UnsupportedContract,
+                format!(
+                    "profile contract {} is too old for {:?} (current: {current}); recreate the profile with the current parameters",
+                    profile.header.contract,
+                    bundle.surface.id(),
+                ),
+            )
+        } else {
+            (
+                DiagnosticCode::FutureContract,
+                format!(
+                    "profile contract {} is newer than current contract {current}",
+                    profile.header.contract,
+                ),
+            )
+        };
+        let mut diagnostic = Diagnostic::error(code, message);
         diagnostic.location = profile.header_locations.get("contract").copied();
         return Err(ProfileError::Diagnostics(vec![diagnostic]));
     }
 
-    let (parameters, mut diagnostics) = migrate_parameters(profile, bundle)?;
     let known = bundle
         .surface
         .bindings()
         .iter()
-        .flat_map(|binding| {
-            std::iter::once(binding.name.as_str()).chain(binding.aliases.iter().map(String::as_str))
-        })
+        .map(|binding| binding.name.as_str())
         .collect::<BTreeSet<_>>();
     let mut canonical = BTreeMap::new();
+    let mut explicit_overrides = BTreeMap::new();
     let mut failures = Vec::new();
 
-    for (source_name, value) in parameters {
-        let Some(binding) = bundle.surface.bindings().iter().find(|binding| {
-            binding.name == source_name || binding.aliases.iter().any(|alias| alias == &source_name)
-        }) else {
+    for (source_name, value) in &profile.parameters {
+        let Some(binding) = bundle
+            .surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == *source_name)
+        else {
             let mut diagnostic = Diagnostic::error(
                 DiagnosticCode::UnknownParameter,
                 format!("unknown parameter {source_name:?}"),
             )
             .for_parameter(source_name.clone());
-            diagnostic.location = profile.locations.get(&source_name).copied();
-            diagnostic.suggestions = spelling_suggestions(&source_name, &known);
+            diagnostic.location = profile.locations.get(source_name).copied();
+            diagnostic.suggestions = spelling_suggestions(source_name, &known);
             failures.push(diagnostic);
             continue;
         };
-        if canonical.contains_key(&binding.name) {
-            let mut diagnostic = Diagnostic::error(
-                DiagnosticCode::DuplicateParameter,
-                format!(
-                    "parameter {:?} is specified more than once through canonical/alias spellings",
-                    binding.name
-                ),
-            )
-            .for_parameter(binding.name.clone());
-            diagnostic.location = profile.locations.get(&source_name).copied();
-            failures.push(diagnostic);
-            continue;
-        }
         let concept = bundle.catalog.concept(&binding.concept).ok_or_else(|| {
             ProfileError::Contract(format!(
                 "missing concept {} revision {}",
                 binding.concept.id, binding.concept.semantic_revision.0
             ))
         })?;
-        match normalize_value(&value, concept).and_then(|value| {
+        match normalize_value(value, concept).and_then(|value| {
             validate_value(&value, concept, &binding.refinements)?;
             Ok(value)
         }) {
-            Ok(value) => {
-                canonical.insert(binding.name.clone(), value);
+            Ok(normalized) => {
+                canonical.insert(binding.name.clone(), normalized);
+                explicit_overrides.insert(binding.name.clone(), value.clone());
             }
             Err(error) => {
                 let note = error.binding_note(binding);
@@ -246,7 +255,7 @@ pub fn resolve_profile(
                     format!("invalid value for {}: {error}{note}", binding.name),
                 )
                 .for_parameter(binding.name.clone());
-                diagnostic.location = profile.locations.get(&source_name).copied();
+                diagnostic.location = profile.locations.get(source_name).copied();
                 failures.push(diagnostic);
             }
         }
@@ -266,11 +275,9 @@ pub fn resolve_profile(
         }
         return Err(ProfileError::Diagnostics(failures));
     }
-    diagnostics.retain(|diagnostic| diagnostic.level != DiagnosticLevel::Error);
     Ok(ResolvedProfile {
         values,
-        explicit_overrides: canonical,
-        diagnostics,
+        explicit_overrides,
     })
 }
 
@@ -501,7 +508,13 @@ fn required_value_is_complete(value: &ParameterValue) -> bool {
         ParameterValue::Table(values) => {
             !values.is_empty() && values.values().all(required_value_is_complete)
         }
-        ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) => true,
+        ParameterValue::EmptyArray { .. } => false,
+        ParameterValue::ScalarArray(value) => required_value_is_complete(value),
+        ParameterValue::NumpyScalar { value, .. } => required_value_is_complete(value),
+        ParameterValue::Bool(_)
+        | ParameterValue::Integer(_)
+        | ParameterValue::Float(_)
+        | ParameterValue::Complex(_) => true,
     }
 }
 
@@ -539,13 +552,26 @@ pub fn render_sparse_profile(
     let mut lines = profile_header(bundle);
     lines.push(String::new());
     lines.push("[parameters]".to_string());
+    let mut typed = Vec::new();
     for binding in bindings {
         let Some(value) = resolved.get(&binding.name) else {
             continue;
         };
         if sparse.contains_key(&binding.name) {
-            lines.push(format!("{} = {}", binding.name, render_toml_value(value)?));
+            if value.requires_typed_transport() {
+                let json = serde_json::to_string(value).map_err(|error| {
+                    ProfileError::Contract(format!("cannot render typed parameter: {error}"))
+                })?;
+                typed.push(format!("{} = {}", binding.name, quote_string(&json)));
+            } else {
+                lines.push(format!("{} = {}", binding.name, render_toml_value(value)?));
+            }
         }
+    }
+    if !typed.is_empty() {
+        lines.push(String::new());
+        lines.push("[typed_parameters]".to_string());
+        lines.extend(typed);
     }
     lines.push(String::new());
     Ok(lines.join("\n"))
@@ -613,6 +639,12 @@ fn render_toml_value(value: &ParameterValue) -> Result<String, ProfileError> {
         ParameterValue::Float(value) if value.is_finite() => Ok(value.to_string()),
         ParameterValue::Float(_) => Err(ProfileError::Contract(
             "cannot render non-finite profile value".to_string(),
+        )),
+        ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. }
+        | ParameterValue::ScalarArray(_)
+        | ParameterValue::NumpyScalar { .. } => Err(ProfileError::Contract(
+            "this value requires typed parameter encoding".into(),
         )),
         ParameterValue::String(value) => Ok(quote_string(value)),
         ParameterValue::Array(values) => values
@@ -795,13 +827,15 @@ pub enum ProfileError {
 
 #[cfg(test)]
 mod tests {
+    mod provenance;
+
+    use casa_provider_contracts::SurfaceParameterBinding;
     use casa_provider_contracts::{
         CELL_CONCEPT_ID, ContextRole, ParameterCatalog, ParameterConcept, ParameterConceptId,
         ParameterConceptRef, ParameterDocs, ParameterPresentation, ParameterProjections,
         ParameterRole, ParameterType, PersistenceClass, SemanticRevision, SurfaceDefinition,
-        SurfaceExecutionProjection, SurfaceMigration, TaskDefinition, UnitDimension,
+        SurfaceExecutionProjection, TaskDefinition, UnitDimension,
     };
-    use casa_provider_contracts::{MigrationStep, MigrationTransform, SurfaceParameterBinding};
 
     use super::*;
 
@@ -881,10 +915,8 @@ mod tests {
                 summary: "Image".into(),
                 provider_family: "imager".into(),
                 casa_task: None,
-                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings,
-                migrations: Vec::new(),
             }),
         };
         SurfaceContractBundle {
@@ -924,44 +956,10 @@ mod tests {
                     hidden: false,
                 },
             },
-            aliases: Vec::new(),
             reviewed_homonym: None,
             unimplemented: None,
             unimplemented_forms: None,
         }
-    }
-
-    #[test]
-    fn sparse_round_trip_normalizes_scalar_pair_and_quantity_units() {
-        let bundle = bundle(SurfaceKind::Task);
-        let source = r#"[casars]
-format = 1
-surface = "imager"
-kind = "task"
-contract = 1
-
-[parameters]
-imsize = 1024
-cell = "0.0002777777777777778deg"
-"#;
-        let resolved = resolve_profile(&parse_profile(source).unwrap(), &bundle).unwrap();
-        assert_eq!(
-            resolved.values["imsize"],
-            ParameterValue::Array(vec![ParameterValue::Integer(1024); 2])
-        );
-        assert_eq!(
-            resolved.values["cell"],
-            ParameterValue::Array(vec![ParameterValue::String("1arcsec".into()); 2])
-        );
-        let rendered = render_sparse_profile(&bundle, &resolved.values).unwrap();
-        assert!(rendered.contains("imsize = [1024, 1024]"));
-        assert!(!rendered.contains("cell ="));
-        assert_eq!(
-            resolve_profile(&parse_profile(&rendered).unwrap(), &bundle)
-                .unwrap()
-                .values,
-            resolved.values
-        );
     }
 
     #[test]
@@ -992,20 +990,27 @@ cell = "0.0002777777777777778deg"
                 panic!("resolve frozen {label}-field VLASS profile: {error}")
             });
             assert_eq!(parsed.header.contract, bundle.surface.contract_version());
-            assert!(resolved.diagnostics.is_empty(), "{label}");
             assert_eq!(
                 resolved.values["field"],
-                ParameterValue::String(expected_field.to_string()),
+                ParameterValue::Array(vec![ParameterValue::String(expected_field.to_string())]),
                 "{label}"
             );
             for (name, expected) in [
                 ("gridder", ParameterValue::String("awproject".into())),
                 ("stokes", ParameterValue::String("I".into())),
-                ("spw", ParameterValue::String("2~17".into())),
-                ("uvrange", ParameterValue::String("<12km".into())),
+                (
+                    "spw",
+                    ParameterValue::Array(vec![ParameterValue::String("2~17".into())]),
+                ),
+                (
+                    "uvrange",
+                    ParameterValue::Array(vec![ParameterValue::String("<12km".into())]),
+                ),
                 (
                     "intent",
-                    ParameterValue::String("OBSERVE_TARGET#UNSPECIFIED".into()),
+                    ParameterValue::Array(vec![ParameterValue::String(
+                        "OBSERVE_TARGET#UNSPECIFIED".into(),
+                    )]),
                 ),
                 ("usepointing", ParameterValue::Bool(true)),
                 ("nterms", ParameterValue::Integer(2)),
@@ -1040,7 +1045,7 @@ cell = "0.0002777777777777778deg"
     }
 
     #[test]
-    fn current_only_surface_rejects_a_stale_contract_without_migration() {
+    fn stale_contract_is_rejected_with_a_clear_error() {
         let mut bundle = bundle(SurfaceKind::Task);
         let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.contract_version = 2;
@@ -1063,7 +1068,36 @@ imsize = 256
         };
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagnosticCode::UnsupportedContract);
+        assert!(diagnostics[0].message.contains("too old"));
+        assert!(diagnostics[0].message.contains("recreate the profile"));
         assert_eq!(diagnostics[0].location.unwrap().line, 5);
+    }
+
+    #[test]
+    fn stale_tclean_field_files_are_refused_before_none_is_interpreted() {
+        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let stale = parse_profile(
+            r#"[casars]
+format = 1
+surface = "tclean"
+kind = "task"
+contract = 41
+
+[parameters]
+vis = ["first.ms", "second.ms"]
+imagename = "output"
+field = ["none", "0"]
+"#,
+        )
+        .unwrap();
+        let ProfileError::Diagnostics(diagnostics) =
+            resolve_profile(&stale, &bundle).expect_err("the old FIELD file must be recreated")
+        else {
+            panic!("expected a stale saved file");
+        };
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, DiagnosticCode::UnsupportedContract);
+        assert!(diagnostics[0].message.contains("too old"));
     }
 
     #[test]
@@ -1214,248 +1248,10 @@ cell = "2arcsec"
     }
 
     #[test]
-    fn old_sparse_profile_migrates_explicit_values_and_adopts_changed_defaults() {
+    fn current_profile_reports_missing_required_parameter() {
         let mut bundle = bundle(SurfaceKind::Task);
         let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.contract_version = 2;
-        definition.migrations = vec![SurfaceMigration {
-            from_contract: 1,
-            to_contract: 2,
-            steps: vec![MigrationStep::Rename {
-                from: "pixels".into(),
-                to: "imsize".into(),
-            }],
-            changed_defaults: vec!["cell".into()],
-        }];
-        definition
-            .bindings
-            .iter_mut()
-            .find(|binding| binding.name == "cell")
-            .unwrap()
-            .default = DefaultSpec::Literal {
-            value: ParameterValue::String("2arcsec".into()),
-        };
-
-        let old = parse_profile(
-            r#"[casars]
-format = 1
-surface = "imager"
-kind = "task"
-contract = 1
-
-[parameters]
-pixels = 256
-"#,
-        )
-        .unwrap();
-        let resolved = resolve_profile(&old, &bundle).unwrap();
-        assert_eq!(
-            resolved.values["imsize"],
-            ParameterValue::Array(vec![ParameterValue::Integer(256); 2])
-        );
-        assert_eq!(
-            resolved.values["cell"],
-            ParameterValue::Array(vec![ParameterValue::String("2arcsec".into()); 2])
-        );
-        assert!(
-            resolved
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == DiagnosticCode::DefaultChanged)
-        );
-        assert!(
-            resolved
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == DiagnosticCode::Migrated)
-        );
-
-        let saved = render_sparse_profile(&bundle, &resolved.values).unwrap();
-        assert!(saved.contains(&format!("contract = {}", bundle.surface.contract_version())));
-        assert!(saved.contains("imsize = [256, 256]"));
-        assert!(!saved.contains("pixels"));
-        assert!(!saved.contains("cell ="));
-    }
-
-    #[test]
-    fn importvla_v1_scalar_archivefile_migrates_to_the_canonical_list() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("importvla").unwrap();
-        let old = parse_profile(
-            r#"[casars]
-format = 1
-surface = "importvla"
-kind = "task"
-contract = 1
-
-[parameters]
-archivefiles = "raw/one.exp"
-"#,
-        )
-        .unwrap();
-
-        let resolved = resolve_profile(&old, &bundle).unwrap();
-        assert_eq!(
-            resolved.values["archivefiles"],
-            ParameterValue::Array(vec![ParameterValue::String("raw/one.exp".into())])
-        );
-        assert!(
-            resolved
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == DiagnosticCode::Migrated)
-        );
-
-        let saved = render_sparse_profile(&bundle, &resolved.values).unwrap();
-        assert!(saved.contains(&format!("contract = {}", bundle.surface.contract_version())));
-        assert!(saved.contains("archivefiles = [\"raw/one.exp\"]"));
-    }
-
-    #[test]
-    fn msexplore_v2_numeric_panel_key_migrates_to_the_string_contract() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
-        let old = parse_profile(
-            r#"[casars]
-format = 1
-surface = "msexplore"
-kind = "task"
-contract = 2
-
-[parameters]
-vis = "target.ms"
-flag_panel = 17
-"#,
-        )
-        .unwrap();
-
-        let resolved = resolve_profile(&old, &bundle).unwrap();
-        assert_eq!(
-            resolved.values["flag_panel"],
-            ParameterValue::String("17".into())
-        );
-        let saved = render_sparse_profile(&bundle, &resolved.values).unwrap();
-        assert!(saved.contains(&format!("contract = {}", bundle.surface.contract_version())));
-        assert!(saved.contains("flag_panel = \"17\""));
-    }
-
-    #[test]
-    fn multi_hop_migrations_transform_and_preserve_explicit_old_values() {
-        let mut bundle = bundle(SurfaceKind::Task);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.contract_version = 3;
-        definition.migrations = vec![
-            SurfaceMigration {
-                from_contract: 1,
-                to_contract: 2,
-                steps: vec![
-                    MigrationStep::Transform {
-                        parameter: "imsize".into(),
-                        transform: MigrationTransform::ScalarToArray { length: 2 },
-                    },
-                    MigrationStep::ReplaceValue {
-                        parameter: "cell".into(),
-                        from: ParameterValue::String("60arcsec".into()),
-                        to: ParameterValue::String("1arcmin".into()),
-                    },
-                ],
-                changed_defaults: vec!["imsize".into()],
-            },
-            SurfaceMigration {
-                from_contract: 2,
-                to_contract: 3,
-                steps: vec![MigrationStep::Transform {
-                    parameter: "cell".into(),
-                    transform: MigrationTransform::QuantityUnit {
-                        canonical_unit: "arcsec".into(),
-                    },
-                }],
-                changed_defaults: vec!["cell".into()],
-            },
-        ];
-        definition
-            .bindings
-            .iter_mut()
-            .find(|binding| binding.name == "imsize")
-            .unwrap()
-            .default = DefaultSpec::Literal {
-            value: ParameterValue::Integer(1024),
-        };
-        definition
-            .bindings
-            .iter_mut()
-            .find(|binding| binding.name == "cell")
-            .unwrap()
-            .default = DefaultSpec::Literal {
-            value: ParameterValue::String("2arcsec".into()),
-        };
-
-        let old = parse_profile(
-            r#"[casars]
-format = 1
-surface = "imager"
-kind = "task"
-contract = 1
-
-[parameters]
-imsize = 128
-cell = "60arcsec"
-"#,
-        )
-        .unwrap();
-        let resolved = resolve_profile(&old, &bundle).unwrap();
-        assert_eq!(
-            resolved.values["imsize"],
-            ParameterValue::Array(vec![ParameterValue::Integer(128); 2])
-        );
-        assert_eq!(
-            resolved.values["cell"],
-            ParameterValue::Array(vec![ParameterValue::String("60arcsec".into()); 2])
-        );
-        assert_eq!(resolved.explicit_overrides, resolved.values);
-        assert_eq!(
-            resolved
-                .diagnostics
-                .iter()
-                .filter(|diagnostic| diagnostic.code == DiagnosticCode::Migrated)
-                .count(),
-            2
-        );
-        assert!(
-            resolved
-                .diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.code != DiagnosticCode::DefaultChanged)
-        );
-
-        let saved = render_sparse_profile(&bundle, &resolved.values).unwrap();
-        assert!(saved.contains("contract = 3"));
-        assert!(saved.contains("imsize = [128, 128]"));
-        assert!(saved.contains("cell = [\"60arcsec\", \"60arcsec\"]"));
-
-        let mut incompatible = bundle.clone();
-        let SurfaceDefinition::Task(definition) = &mut incompatible.surface;
-        definition.migrations[1].steps = vec![MigrationStep::Transform {
-            parameter: "cell".into(),
-            transform: MigrationTransform::QuantityUnit {
-                canonical_unit: "s".into(),
-            },
-        }];
-        assert!(matches!(
-            resolve_profile(&old, &incompatible),
-            Err(ProfileError::Normalization(NormalizationError::Quantity(_)))
-        ));
-    }
-
-    #[test]
-    fn newly_required_parameter_needs_a_migration_or_reports_a_clear_error() {
-        let mut bundle = bundle(SurfaceKind::Task);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.contract_version = 2;
-        definition.migrations = vec![SurfaceMigration {
-            from_contract: 1,
-            to_contract: 2,
-            steps: Vec::new(),
-            changed_defaults: Vec::new(),
-        }];
         let cell = definition
             .bindings
             .iter_mut()
@@ -1464,12 +1260,12 @@ cell = "60arcsec"
         cell.default = DefaultSpec::Required;
         cell.required_when = Predicate::Always;
 
-        let old_without_value = parse_profile(
+        let missing_cell = parse_profile(
             r#"[casars]
 format = 1
 surface = "imager"
 kind = "task"
-contract = 1
+contract = 2
 
 [parameters]
 imsize = 256
@@ -1477,7 +1273,7 @@ imsize = 256
         )
         .unwrap();
         let ProfileError::Diagnostics(diagnostics) =
-            resolve_profile(&old_without_value, &bundle).unwrap_err()
+            resolve_profile(&missing_cell, &bundle).unwrap_err()
         else {
             panic!("expected a missing-required diagnostic")
         };
@@ -1485,30 +1281,6 @@ imsize = 256
             diagnostic.code == DiagnosticCode::MissingRequired
                 && diagnostic.parameter.as_deref() == Some("cell")
         }));
-
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.migrations[0].steps = vec![MigrationStep::Rename {
-            from: "legacy_cell".into(),
-            to: "cell".into(),
-        }];
-        let old_with_migratable_value = parse_profile(
-            r#"[casars]
-format = 1
-surface = "imager"
-kind = "task"
-contract = 1
-
-[parameters]
-imsize = 256
-legacy_cell = "1arcsec"
-"#,
-        )
-        .unwrap();
-        let resolved = resolve_profile(&old_with_migratable_value, &bundle).unwrap();
-        assert_eq!(
-            resolved.values["cell"],
-            ParameterValue::Array(vec![ParameterValue::String("1arcsec".into()); 2])
-        );
     }
 
     #[test]

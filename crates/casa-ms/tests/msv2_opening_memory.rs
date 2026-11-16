@@ -12,13 +12,13 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use casa_ms::MeasurementSet;
 use casa_ms::observation_io::{Msv2Observation, OpenOptions};
-use casa_ms::{
-    MeasurementSet, SyntheticField, SyntheticObservationRequest, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
-};
 use casa_observation::{
     AntennaId, Observation, ObservationError, PointingDirection, PointingRequest,
+};
+use casa_simulation::synthetic::{
+    Field, ObservationRequest, generate_unflagged, tutorial_vla_a_antennas,
 };
 use casa_types::{ScalarValue, Value};
 
@@ -96,7 +96,7 @@ fn peak_of<T>(measured: impl FnOnce() -> T) -> (T, u64) {
 /// 351 baseline rows per integration.
 fn pointed_track(root: &Path, integrations: usize) -> PathBuf {
     let measurement_set = root.join("pointed.ms");
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
+    let mut request = ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &measurement_set,
         tutorial_vla_a_antennas(),
@@ -104,11 +104,11 @@ fn pointed_track(root: &Path, integrations: usize) -> PathBuf {
     request.duration_seconds = 10.0 * integrations as f64;
     request.integration_seconds = 10.0;
     request.predict_model = false;
-    request.fields = vec![SyntheticField {
+    request.fields = vec![Field {
         name: request.field_name.clone(),
         phase_center_rad: request.phase_center_rad,
     }];
-    generate_synthetic_observation_ms(&request).expect("synthesise the MS");
+    generate_unflagged(&request).expect("synthesise the MS");
     measurement_set
 }
 
@@ -119,6 +119,109 @@ fn the_msv2_adapter_holds_at_most_its_bounds() {
     let root = tempfile::tempdir().expect("test root");
     opening_and_pointing_hold_at_most_their_bounds(&root.path().join("regular"));
     an_opening_beyond_its_budget_is_refused_before_its_grids(&root.path().join("jittered"));
+    partially_filled_tree_nodes_fit_their_bound();
+    many_small_partitions_fit_the_retained_charge(&root.path().join("partitions"));
+    first_row_lookup_allocates_nothing(&root.path().join("first-row"));
+}
+
+/// Looking up a physical row borrows the admitted index, even when the
+/// DATA_DESCRIPTION table contains many unused entries.
+fn first_row_lookup_allocates_nothing(root: &Path) {
+    std::fs::create_dir(root).expect("fixture directory");
+    let path = pointed_track(root, 2);
+    let mut ms = MeasurementSet::open(&path).expect("edit fixture");
+    let table = ms
+        .subtable_mut(casa_ms::SubtableId::DataDescription)
+        .expect("DATA_DESCRIPTION");
+    let row = table
+        .row_accessor()
+        .row(0)
+        .expect("first description")
+        .clone();
+    for _ in 0..1024 {
+        table.add_row(row.clone()).expect("unused description");
+    }
+    ms.save().expect("save fixture");
+    drop(ms);
+    let opened = Msv2Observation::open(&path).expect("open fixture");
+    let id = opened.catalogue().partition_ids()[0];
+    let grid = opened.grid(id, "base").expect("grid");
+    let time = grid.times_s[0];
+    let (row, held) = peak_of(|| {
+        std::hint::black_box(opened.first_main_row_at_time(id, std::hint::black_box(time)))
+    });
+    assert_eq!(row, Some(0));
+    assert_eq!(held, 0, "first-row lookup allocated {held} bytes");
+}
+
+/// Fixed-size maps with different insertion and removal histories exercise
+/// small roots and partially filled nodes, rather than assuming full leaves.
+fn partially_filled_tree_nodes_fit_their_bound() {
+    for count in [1_u32, 2, 5, 6, 11, 12, 27, 64, 256, 1024] {
+        let before = LIVE.load(Ordering::Relaxed);
+        let mut map: std::collections::BTreeMap<u32, [usize; 6]> =
+            (0..count).map(|key| (key, [key as usize; 6])).collect();
+        for removed in [false, true] {
+            if removed {
+                for key in (0..count).step_by(2) {
+                    map.remove(&key);
+                }
+            }
+            let held = LIVE.load(Ordering::Relaxed).saturating_sub(before);
+            let bound = casa_types::memory::btree_node_bytes::<u32, [usize; 6]>(map.len().max(1));
+            assert!(
+                held <= bound as u64,
+                "{count} entries, removed {removed}: {held} > {bound}"
+            );
+        }
+    }
+}
+
+/// Ten thousand default-scheme partitions, each with a two-antenna receptor
+/// map, exposed an undercharge hidden by large maps and subtable slack.
+fn many_small_partitions_fit_the_retained_charge(root: &Path) {
+    std::fs::create_dir(root).expect("partition fixture directory");
+    let path = root.join("many.ms");
+    let mut antennas = tutorial_vla_a_antennas();
+    antennas.truncate(2);
+    let mut request = ObservationRequest::vla_ppdisk(root.join("unused.fits"), &path, antennas);
+    request.duration_seconds = 10_000.0;
+    request.integration_seconds = 1.0;
+    request.predict_model = false;
+    request.allow_below_elevation_limit = true;
+    request.row_workers = Some(1);
+    generate_unflagged(&request).expect("small-baseline track");
+    let mut ms = MeasurementSet::open(&path).expect("edit partitions");
+    for id in [
+        casa_ms::SubtableId::Observation,
+        casa_ms::SubtableId::DataDescription,
+    ] {
+        let table = ms.subtable_mut(id).expect("partition subtable");
+        let row = table.row_accessor().row(0).expect("first row").clone();
+        for _ in 1..100 {
+            table.add_row(row.clone()).expect("copy entity");
+        }
+    }
+    for row in 0..ms.row_count() {
+        for (column, value) in [("OBSERVATION_ID", row / 100), ("DATA_DESC_ID", row % 100)] {
+            ms.main_table_mut()
+                .cell_accessor_mut(row, column)
+                .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Int32(value as i32))))
+                .expect("partition key");
+        }
+    }
+    ms.save().expect("save partitions");
+    drop(ms);
+    drop(Msv2Observation::open(&path).expect("warm opening"));
+    let before = LIVE.load(Ordering::Relaxed);
+    let opened = Msv2Observation::open(&path).expect("measured opening");
+    let retained = LIVE.load(Ordering::Relaxed).saturating_sub(before);
+    assert_eq!(opened.catalogue().partitions.len(), 10_000);
+    let charged = opened.retained_bytes();
+    assert!(
+        retained <= charged as u64,
+        "many partitions retain {retained} bytes, charged {charged}"
+    );
 }
 
 /// A grant that refuses a total beyond `budget`, recording the largest
@@ -153,7 +256,14 @@ fn opening_and_pointing_hold_at_most_their_bounds(root: &Path) {
     let bound = Msv2Observation::opening_bytes(rows);
     // One opening loads what the table layer caches.
     drop(Msv2Observation::open(&path).expect("open"));
+    let before = LIVE.load(Ordering::Relaxed);
     let (opened, opening) = peak_of(|| Msv2Observation::open(&path).expect("open"));
+    let retained = LIVE.load(Ordering::Relaxed).saturating_sub(before);
+    assert!(
+        retained <= opened.retained_bytes() as u64,
+        "the open observation retains {retained} bytes, beyond its {}-byte charge",
+        opened.retained_bytes()
+    );
     eprintln!("opening {rows} rows: peak {opening} bytes, bound {bound}");
     assert!(
         opening <= bound as u64,

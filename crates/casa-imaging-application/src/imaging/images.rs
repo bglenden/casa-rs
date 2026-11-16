@@ -17,25 +17,34 @@ use super::charts::FacetBox;
 ///
 /// Data images become the residual planes `[channel][term][pol]`; on an
 /// initial pass the PSF moments, their `sumwt` and the `sumwt` CASA
-/// publishes for `basis` come along.
+/// publishes for `basis` come along. A pass that formed the PSF alone
+/// (`calcres=False`) leaves the residual empty, for its caller to set.
 pub(crate) fn pass_images(
     domain: usize,
     images: &NormalImages,
     initial: bool,
     basis: Basis,
 ) -> PassImages {
-    let (height, width) = images.planes[0].data[0].dim();
+    let first_image = images.planes[0]
+        .data
+        .first()
+        .or_else(|| images.planes[0].psf.first())
+        .expect("a pass forms data or PSF images");
+    let (height, width) = first_image.dim();
     let first = images.first_plane as usize;
-    let mut residual = Vec::with_capacity(images.planes.len() * images.data_terms * images.pols);
+    let cells = height * width;
+    let planes = images.planes.len() * images.pols;
+    let mut residual = Vec::with_capacity(planes * images.data_terms * cells);
     for plane in &images.planes {
         for image in &plane.data {
             push_x_major(&mut residual, image);
         }
     }
     let (psf, sum_weights, published_sum_weights, weight) = if initial {
-        let mut psf = Vec::new();
-        let mut sum_weights = Vec::new();
-        let mut published_sum_weights = Vec::new();
+        let moments = planes * images.psf_terms;
+        let mut psf = Vec::with_capacity(moments * cells);
+        let mut sum_weights = Vec::with_capacity(moments);
+        let mut published_sum_weights = Vec::with_capacity(moments);
         let mut weight = Vec::new();
         for (index, plane) in images.planes.iter().enumerate() {
             for image in &plane.psf {
@@ -100,7 +109,7 @@ fn push_x_major(out: &mut Vec<f32>, image: &Array2<f32>) {
 /// a facet's `window` when it has one (each CASA facet mapper degrids its
 /// own window, `SIMapperCollection::degrid`): one plane per output channel
 /// of a channel-local basis, the Taylor terms of one plane otherwise.
-/// Pixels outside the model's support predict nothing.
+/// Pixels outside the model's support or owned by a later field predict nothing.
 pub(crate) fn model_images(
     generation: &ModelGeneration,
     (domain, window): (usize, Option<FacetBox>),
@@ -125,7 +134,7 @@ pub(crate) fn model_images(
         for term in 0..terms {
             let coefficient = if channel_local { plane as usize } else { term };
             for pol in 0..pols {
-                let samples = generation.read_plane(domain, coefficient, pol)?;
+                let samples = generation.prediction_plane(domain, coefficient, pol)?;
                 images.push(Array2::from_shape_fn((height, width), |(y, x)| {
                     let sample = samples[(origin[1] + y) * full_width + origin[0] + x];
                     match sample.support() {

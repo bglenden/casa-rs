@@ -396,7 +396,11 @@ fn apply_phase_gain_with_parang_matches_casa_applycal_on_ngc5921_subset() {
 
 #[cfg(feature = "slow-tests")]
 #[test]
-fn apply_phase_gain_with_parang_matches_casa_applycal_on_bwg_mounts() {
+fn apply_phase_gain_with_parang_matches_casa_applycal_on_nasmyth_bwg_and_other_mounts() {
+    // Each mount turns the feed by its own term (casacore
+    // `MSDerivedValues::parAngle`): Nasmyth by ±E, beam waveguide by
+    // ±(E − A), X-Y by its own angle, equatorial not at all, and an empty
+    // MOUNT as alt-az.
     let dir = TempDir::new().expect("tempdir");
     let source_ms = match common::ngc5921_ms_path() {
         Some(path) => path,
@@ -413,17 +417,21 @@ fn apply_phase_gain_with_parang_matches_casa_applycal_on_bwg_mounts() {
         }
     };
 
-    let rust_ms = dir.path().join("rust-apply-parang-bwg.ms");
-    let casa_ms = dir.path().join("casa-apply-parang-bwg.ms");
+    let rust_ms = dir.path().join("rust-apply-parang-mounts.ms");
+    let casa_ms = dir.path().join("casa-apply-parang-mounts.ms");
     common::copy_measurement_set(&source_ms, &rust_ms).expect("copy rust ms");
     common::copy_measurement_set(&source_ms, &casa_ms).expect("copy casa ms");
-    let bwg_mounts = [
+    let mounts = [
         (0, "ALT-AZ+BWG-R"),
-        (1, "ALT-AZ+BWG-R"),
-        (2, "ALT-AZ+BWG-R"),
+        (1, "ALT-AZ+BWG-L"),
+        (2, "ALT-AZ+NASMYTH-R"),
+        (3, "ALT-AZ+NASMYTH-L"),
+        (4, "X-Y"),
+        (5, "EQUATORIAL"),
+        (6, ""),
     ];
-    common::set_ms_antenna_mounts(&rust_ms, &bwg_mounts);
-    common::set_ms_antenna_mounts(&casa_ms, &bwg_mounts);
+    common::set_ms_antenna_mounts(&rust_ms, &mounts);
+    common::set_ms_antenna_mounts(&casa_ms, &mounts);
 
     common::run_casa_applycal(
         &casa_ms,
@@ -435,7 +443,7 @@ fn apply_phase_gain_with_parang_matches_casa_applycal_on_bwg_mounts() {
         false,
         true,
     )
-    .expect("run CASA applycal with BWG parang");
+    .expect("run CASA applycal with parang on mixed mounts");
 
     execute_apply_from_path(
         &rust_ms,
@@ -446,7 +454,7 @@ fn apply_phase_gain_with_parang_matches_casa_applycal_on_bwg_mounts() {
             calibration_tables: vec![ApplyCalibrationTableSpec::new(&phase_gcal)],
         },
     )
-    .expect("run Rust apply with BWG parang");
+    .expect("run Rust apply with parang on mixed mounts");
 
     assert_apply_state_close_with_tolerance(
         &rust_ms,

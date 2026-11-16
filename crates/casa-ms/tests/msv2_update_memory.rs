@@ -21,14 +21,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_ms::observation_io::{OpenOptions, UpdateSession, open_update};
-use casa_ms::{
-    SyntheticField, SyntheticObservationRequest, SyntheticSpectralSetup,
-    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
-};
 use casa_observation::{
     AccessRequest, BatchAddress, BatchBuffers, CorrelationRequest, FieldSelection, Grouping,
     PartitionId, PatchValues, ReadEvent, Roles, TimeSelection, UpdateTarget, WeightRequest,
     WritableRole,
+};
+use casa_simulation::synthetic::{
+    Field, ObservationRequest, SpectralSetup, generate_unflagged, tutorial_vla_a_antennas,
 };
 use ndarray::Array3;
 use num_complex::Complex32;
@@ -110,7 +109,7 @@ const CHANNELS: usize = 32;
 fn track(root: &Path, integrations: usize) -> PathBuf {
     std::fs::create_dir_all(root).expect("root");
     let measurement_set = root.join("track.ms");
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
+    let mut request = ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &measurement_set,
         tutorial_vla_a_antennas(),
@@ -118,17 +117,17 @@ fn track(root: &Path, integrations: usize) -> PathBuf {
     request.duration_seconds = 10.0 * integrations as f64;
     request.integration_seconds = 10.0;
     request.predict_model = false;
-    request.spectral_windows = vec![SyntheticSpectralSetup {
+    request.spectral_windows = vec![SpectralSetup {
         name: "Qband".to_string(),
         start_frequency_hz: 44.0e9,
         channel_width_hz: 2.0e6,
         channel_count: CHANNELS,
     }];
-    request.fields = vec![SyntheticField {
+    request.fields = vec![Field {
         name: request.field_name.clone(),
         phase_center_rad: request.phase_center_rad,
     }];
-    generate_synthetic_observation_ms(&request).expect("synthesise the MS");
+    generate_unflagged(&request).expect("synthesise the MS");
     measurement_set
 }
 

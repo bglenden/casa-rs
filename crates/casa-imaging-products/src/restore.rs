@@ -103,6 +103,7 @@ pub struct ResidualBeamScaling {
     smoothing_beam: Option<RestoringBeam>,
     area_ratio: f64,
     applied: bool,
+    deconvolved: bool,
 }
 
 impl ResidualBeamScaling {
@@ -130,6 +131,15 @@ impl ResidualBeamScaling {
         self.applied
     }
 
+    /// Return whether the fitted beam deconvolves from the selected beam.
+    /// When it does not (a selected beam narrower than the fitted beam on
+    /// some axis), the residual is left at its own resolution, as CASA
+    /// leaves it.
+    #[must_use]
+    pub const fn deconvolved(&self) -> bool {
+        self.deconvolved
+    }
+
     pub(crate) fn into_values(self) -> Vec<f32> {
         self.values
     }
@@ -140,11 +150,17 @@ impl ResidualBeamScaling {
 /// This follows CASA `SIImageStore::rescaleResolution`: deconvolve the fitted
 /// beam from the selected beam, skip effectively identical or sub-pixel
 /// smoothing, otherwise convolve with unit volume and multiply by the
-/// selected/fitted beam-area ratio.
+/// selected/fitted beam-area ratio. When the fitted beam does not deconvolve
+/// from the selected one (`GaussianDeconvolver::deconvolve` throws "Source
+/// may be only (slightly) resolved in one direction", which
+/// `rescaleResolution` catches), CASA warns "Cannot convolve to new beam"
+/// and leaves the residual as it is; so does this, with a warning
+/// ([`ResidualBeamScaling::deconvolved`]).
 ///
 /// # Errors
 ///
-/// Returns [`ProductsError::BeamFitFailed`] when beam deconvolution fails.
+/// Returns [`ProductsError::GeneratedNonfinite`] when the smoothing kernel
+/// has no finite positive volume.
 pub fn rescale_residual_to_beam(
     residual: &[f32],
     shape: [usize; 2],
@@ -153,24 +169,28 @@ pub fn rescale_residual_to_beam(
     selected: RestoringBeam,
 ) -> Result<ResidualBeamScaling, ProductsError> {
     let area_ratio = selected.area_sr() / fitted.area_sr();
-    let smoothing_beam = selected
-        .deconvolving_beam(fitted)
-        .map_err(|error| ProductsError::BeamFitFailed(error.to_string()))?;
+    let unscaled = |smoothing_beam, deconvolved| ResidualBeamScaling {
+        values: residual.to_vec(),
+        smoothing_beam,
+        area_ratio,
+        applied: false,
+        deconvolved,
+    };
+    let smoothing_beam = match selected.deconvolving_beam(fitted) {
+        Ok(smoothing_beam) => smoothing_beam,
+        Err(error) => {
+            tracing::warn!(
+                "cannot convolve the residual to the restoring beam {selected:?} from its fitted \
+                 beam {fitted:?} ({error}): it keeps its own resolution, as CASA's does"
+            );
+            return Ok(unscaled(None, false));
+        }
+    };
     let Some(smoothing_beam) = smoothing_beam else {
-        return Ok(ResidualBeamScaling {
-            values: residual.to_vec(),
-            smoothing_beam: None,
-            area_ratio,
-            applied: false,
-        });
+        return Ok(unscaled(None, true));
     };
     if smoothing_beam.minor_fwhm_rad() <= cell_size_rad[0].hypot(cell_size_rad[1]) {
-        return Ok(ResidualBeamScaling {
-            values: residual.to_vec(),
-            smoothing_beam: Some(smoothing_beam),
-            area_ratio,
-            applied: false,
-        });
+        return Ok(unscaled(Some(smoothing_beam), true));
     }
 
     let mut kernel = gaussian_beam_image(shape, &smoothing_beam, cell_size_rad);
@@ -192,6 +212,7 @@ pub fn rescale_residual_to_beam(
         smoothing_beam: Some(smoothing_beam),
         area_ratio,
         applied: true,
+        deconvolved: true,
     })
 }
 
@@ -369,12 +390,30 @@ mod tests {
         assert!((sum - scaling.area_ratio()).abs() < 1.0e-5, "{sum}");
     }
 
+    /// CASA's `rescaleResolution` catches the failed deconvolution of a
+    /// restoring beam narrower than the fitted beam, warns, and leaves the
+    /// residual at its own resolution and scale.
     #[test]
-    fn smaller_selected_beam_fails_instead_of_silently_skipping_scaling() {
+    fn a_narrower_selected_beam_leaves_the_residual_as_casa_does() {
         let fitted = RestoringBeam::new(8.0e-6, 6.0e-6, 0.0).expect("fitted beam");
-        let selected = RestoringBeam::new(4.0e-6, 3.0e-6, 0.0).expect("selected beam");
-        let error = rescale_residual_to_beam(&[1.0; 16], [4, 4], [1.0e-6; 2], fitted, selected)
-            .expect_err("smaller target must fail");
-        assert!(matches!(error, ProductsError::BeamFitFailed(_)));
+        for selected in [
+            RestoringBeam::new(4.0e-6, 3.0e-6, 0.0).expect("a smaller beam"),
+            // Wider on one axis, narrower on the other.
+            RestoringBeam::new(12.0e-6, 3.0e-6, 0.0).expect("a crossed beam"),
+        ] {
+            let residual = (0..16).map(|value| value as f32 - 4.0).collect::<Vec<_>>();
+            let scaling =
+                rescale_residual_to_beam(&residual, [4, 4], [1.0e-6; 2], fitted, selected)
+                    .expect("CASA keeps the residual");
+            assert!(!scaling.deconvolved() && !scaling.applied(), "{selected:?}");
+            assert_eq!(scaling.smoothing_beam(), None);
+            assert_eq!(scaling.values(), residual);
+        }
+        let wider = RestoringBeam::new(16.0e-6, 12.0e-6, 0.0).expect("a wider beam");
+        assert!(
+            rescale_residual_to_beam(&[1.0; 16], [4, 4], [1.0e-6; 2], fitted, wider)
+                .expect("a wider beam deconvolves")
+                .deconvolved()
+        );
     }
 }

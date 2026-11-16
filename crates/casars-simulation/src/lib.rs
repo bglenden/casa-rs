@@ -2,8 +2,8 @@
 #![warn(missing_docs)]
 
 //! The command-line and task surface of casa-rs's simulation tasks:
-//! `simobserve` (simulation Phase 5c, #841), with `simanalyze` and
-//! `simalma` to come, on the shared task front end (#931).
+//! `simobserve`, `simanalyze` and `simalma` (simulation Phases 5c/6,
+//! #841), on the shared task front end (#931).
 //!
 //! As for the imager, the front end resolves the parameters through the
 //! provider-contracts catalog: command-line flags and a `--json-run` request
@@ -14,14 +14,21 @@
 //! configurations, and the measures data. A run's reply carries its
 //! [`SimobserveRunTaskResult`]; simobserve returns None, as CASA's does.
 
-mod schema;
+mod alma;
+mod analysis;
+pub use alma::{simalma_front_end, simalma_protocol_descriptor, simalma_task_schema_bundle};
 mod task_contract;
+pub use analysis::{
+    simanalyze_front_end, simanalyze_protocol_descriptor, simanalyze_task_schema_bundle,
+};
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use casa_provider_contracts::{RunProductKind, SurfaceContractBundle};
-use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simobserve};
+use casa_simulation::simobserve::{
+    SimobserveParameters, SimobserveRequest, simobserve, simobserve_with_plots,
+};
 use casa_simulation::simutil::direction::Directions;
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
 use casa_task_runtime::{
@@ -29,7 +36,6 @@ use casa_task_runtime::{
 };
 use serde_json::{Map, Value};
 
-pub use schema::command_schema;
 pub use task_contract::*;
 
 fn simobserve_surface() -> Result<SurfaceContractBundle, String> {
@@ -171,7 +177,24 @@ pub fn run(
         data_roots: data_roots()?,
         options: SimulatorOptions::from_system(resources).map_err(|error| error.to_string())?,
     };
-    let outcome = simobserve(&request).map_err(|error| error.to_string())?;
+    let outcome = match std::env::var_os("CASARS_PLOT_PAYLOAD") {
+        Some(path) => simobserve_with_plots(&request, Path::new(&path)),
+        None => simobserve(&request),
+    }
+    .map_err(|error| error.to_string())?;
+    let mut artifacts: Vec<_> = outcome
+        .products
+        .iter()
+        .map(|path| artifact(&outcome.stem, path))
+        .collect();
+    for plot in &outcome.plots {
+        if let Some(path) = &plot.output_file {
+            let mut product = artifact(&outcome.stem, path);
+            product.exists = false;
+            product.render_pending = true;
+            artifacts.push(product);
+        }
+    }
     Ok(SimobserveRunTaskResult {
         request: parameters,
         run: SimobserveRunReport {
@@ -180,11 +203,8 @@ pub fn run(
             warnings: outcome.warnings.clone(),
             elapsed_ns: u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
         },
-        artifacts: outcome
-            .products
-            .iter()
-            .map(|path| artifact(&outcome.stem, path))
-            .collect(),
+        artifacts,
+        plots: outcome.plots,
     })
 }
 
@@ -201,9 +221,13 @@ fn artifact(stem: &str, path: &Path) -> SimobserveArtifact {
         .to_string();
     let resource_kind = if kind == "ms" || kind.ends_with(".ms") {
         RunProductKind::MeasurementSet
-    } else if kind.ends_with("skymodel") || kind.ends_with(".flat") || kind == "newmodel" {
+    } else if kind.ends_with("skymodel")
+        || kind.ends_with(".flat")
+        || kind == "newmodel"
+        || kind == "quick.psf"
+    {
         RunProductKind::CasaImage
-    } else if kind.ends_with(".txt") {
+    } else if kind.ends_with(".txt") || kind.ends_with(".png") {
         RunProductKind::File
     } else {
         RunProductKind::CasaTable
@@ -213,6 +237,7 @@ fn artifact(stem: &str, path: &Path) -> SimobserveArtifact {
         kind,
         path: path.display().to_string(),
         exists: path.exists(),
+        render_pending: false,
         resource_kind,
     }
 }
@@ -220,7 +245,7 @@ fn artifact(stem: &str, path: &Path) -> SimobserveArtifact {
 /// The front end of the `simobserve` binary, which hosts `simobserve`.
 pub fn task_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
-    TaskFrontEnd::new(
+    TaskFrontEnd::new_with_deferred_schema(
         "simobserve",
         simobserve_task_schema_bundle(),
         &["simobserve"],
@@ -339,6 +364,7 @@ mod tests {
             "p.alma.out01.ms",
             "p.alma.out01.noisy.ms",
             "p.alma.out01.skymodel.flat",
+            "p.alma.out01.quick.psf",
             "p.alma.out01.ptg.txt",
             "p.alma.out01.fullpol.cal",
         ]
@@ -354,6 +380,7 @@ mod tests {
                 ("ms".to_string(), RunProductKind::MeasurementSet),
                 ("noisy.ms".to_string(), RunProductKind::MeasurementSet),
                 ("skymodel.flat".to_string(), RunProductKind::CasaImage),
+                ("quick.psf".to_string(), RunProductKind::CasaImage),
                 ("ptg.txt".to_string(), RunProductKind::File),
                 ("fullpol.cal".to_string(), RunProductKind::CasaTable),
             ]

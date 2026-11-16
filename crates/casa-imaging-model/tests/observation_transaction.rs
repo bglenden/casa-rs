@@ -182,12 +182,12 @@ fn transaction_contract_derives_the_exact_snapshot_read_set() {
 }
 
 #[test]
-fn selected_model_column_writes_target_the_selected_rows() {
+fn selected_model_column_writes_target_the_selected_samples() {
     let snapshot = common::observation_snapshot(8);
 
     let writable_problem = compile_transaction(
         snapshot.clone(),
-        ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
+        ObservationTransactionRequirements::new(ModelColumnWrite::SelectedSamples),
     );
     let writable = writable_problem.observation_transaction();
 
@@ -199,14 +199,14 @@ fn selected_model_column_writes_target_the_selected_rows() {
     );
     assert_eq!(write.selection(), snapshot.sources()[0].selection());
     assert_eq!(
-        writable.read_set().sources()[0].selection().rows(),
-        snapshot.sources()[0].selection().rows(),
-        "the transaction read contract must retain the compact row manifest"
+        writable.read_set().sources()[0].selection().partitions(),
+        snapshot.sources()[0].selection().partitions(),
+        "the transaction read contract must retain the selected partitions"
     );
     assert_eq!(
-        write.selection().rows(),
-        snapshot.sources()[0].selection().rows(),
-        "MODEL_DATA write access must retain the compact row manifest"
+        write.selection().partitions(),
+        snapshot.sources()[0].selection().partitions(),
+        "MODEL_DATA write access must retain the selected partitions"
     );
     assert_eq!(write.column(), MsColumnKind::ModelData);
 }
@@ -287,7 +287,7 @@ fn multi_ms_read_and_write_sets_keep_request_order() {
 
     let problem = compile_transaction(
         snapshot.clone(),
-        ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
+        ObservationTransactionRequirements::new(ModelColumnWrite::SelectedSamples),
     );
     let contract = problem.observation_transaction();
     let canonical_sources = vec![0, 1];

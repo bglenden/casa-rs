@@ -4,14 +4,14 @@
 //! direction coordinate, product coordinate system and clean mask.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::ops::RangeInclusive;
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, ProjectionType,
-};
-use casa_images::AnyPagedImage;
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo};
 use casa_imaging_deconvolution::{
-    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, ReconstructionMaskPlan,
+    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, MaskPlanes,
+    NoiseEstimate, ReconstructionMask, ReconstructionMaskPlan,
 };
 use casa_imaging_model::{
     AxisOrder, DirectionCoordinateSpec, DirectionFrame, FacetLayout, ImageAxis, ImageDomainRole,
@@ -26,9 +26,14 @@ use super::direction::{
     parse_phase_center_direction,
 };
 use super::outliers::read_outlier_domains;
+use crate::RunContext;
 use casa_imaging_products::CasaImageDomainOutput;
+use casa_imaging_runtime::{Demand, Reservation, admit};
 
-use crate::{Gridder, ImagingRequest, UseMask};
+use crate::{Gridder, ImagingRequest, SpectralMaskRange, UseMask, UserMaskBox};
+
+/// A pixel box limited to an inclusive span of output channels.
+pub type ChannelMaskBox = ([i64; 4], RangeInclusive<usize>);
 
 /// The pixels a domain's minor cycle may update.
 #[derive(Clone, Debug, PartialEq)]
@@ -36,13 +41,46 @@ pub(super) enum DomainMask {
     /// Every valid model pixel.
     FullPlane,
     /// The union of inclusive pixel boxes `[x0, y0, x1, y1]`.
-    Boxes(Vec<[usize; 4]>),
-    /// The non-zero pixels of a CASA image, reprojected onto the domain.
-    Image(PathBuf),
-    /// Row-major support over the domain's own grid.
-    PixelSupport(Box<[bool]>),
+    Boxes(Vec<[i64; 4]>),
+    /// A CRTF sky polygon, projected and rasterized on this domain's grid.
+    SkyPolygon(crate::tclean::MaskPolygon),
+    /// The positive pixels of a CASA image, reprojected onto the domain and
+    /// matched to its planes ([`super::mask_image`]).
+    Image {
+        /// The supplied CASA mask images, in list order.
+        paths: Vec<PathBuf>,
+        /// Limit MEM to the shared tangent grid verified for image-mask import (#823).
+        require_shared_tangent_grid: bool,
+        /// Ranged regions are compared with an aligned continuum image.
+        require_aligned_continuum: bool,
+        /// Pixel boxes before and after the image, on their output channels.
+        regions: [Vec<ChannelMaskBox>; 2],
+    },
+    /// Support over the domain's own grid: each plane x-major, plane after
+    /// plane (channel-major), shared along an axis of one plane.
+    PixelSupport {
+        /// The planes held.
+        planes: MaskPlanes,
+        /// Their support, shared by the plan and every mask made from it.
+        support: std::sync::Arc<[bool]>,
+    },
     /// CASA auto-multithresh support from the current normal state.
-    AutoMultithresh(AutoMultithreshControls),
+    AutoMultithresh {
+        controls: AutoMultithreshControls,
+        previous: Option<(MaskPlanes, Arc<[bool]>)>,
+    },
+    /// Inclusive pixel boxes `[x0, y0, x1, y1]`, each on its channels: a
+    /// CRTF region limited to a spectral range over part of a cube.
+    ChannelBoxes(Vec<ChannelMaskBox>),
+    /// A static mask kept, in every plane, where that plane's `.pb`
+    /// exceeds `level` (`SDMaskHandler::makePBMask`): `usemask='pb'`'s
+    /// every pixel, or a named user mask under a `pbmask` above zero.
+    WithinPrimaryBeam {
+        /// The static mask the beam cuts.
+        within: Box<DomainMask>,
+        /// tclean's `pbmask`.
+        level: f64,
+    },
 }
 
 /// One image domain of the run.
@@ -53,7 +91,14 @@ pub(super) struct PreparedImageDomain {
     pub(super) image_size: [usize; 2],
     pub(super) direction: DirectionCoordinateSpec,
     pub(super) coordinates: CoordinateSystem,
+    /// The first selected field's name (`SynthesisImager::createIMStore`).
+    pub(super) object_name: String,
+    /// The telescope of the selected observations.
+    pub(super) telescope: String,
     pub(super) mask: DomainMask,
+    /// The outlier's resolved starting image. The main field takes the
+    /// request's startmodel list.
+    pub(super) outlier_start_model: Option<PathBuf>,
     /// CASA facets the first image field only (`SynthesisImager`'s
     /// `createFacetImageStoreList`); outliers are single.
     pub(super) facets: FacetLayout,
@@ -84,7 +129,17 @@ impl PreparedImageDomain {
             self.output.clone(),
             self.coordinates.clone(),
         )
+        .observing(&self.object_name, &self.telescope)
     }
+}
+
+/// Whether a domain's masking is needed by the run or only its geometry is used.
+#[derive(Clone, Copy)]
+pub(super) enum MaskPreparation {
+    /// Build the run's mask as requested.
+    ForRun,
+    /// A secondary coordinate view does not own a separate mask.
+    GeometryOnly,
 }
 
 /// The main domain and the outlier file's, ordered by role, each writing
@@ -92,19 +147,24 @@ impl PreparedImageDomain {
 pub(super) fn prepare_domains(
     request: &ImagingRequest,
     centre: &Centre,
-    spectral: ImageSpectralCoordinate,
-    observation: &ObsInfo,
+    (spectral, channels): (&ImageSpectralCoordinate, usize),
+    (observation, object_name): (&ObsInfo, &str),
+    mask_preparation: MaskPreparation,
 ) -> Result<Vec<PreparedImageDomain>, PrepareError> {
     let polarizations = &request.stokes;
     let facets = match request.gridder {
-        Gridder::Standard { facets } if facets.get() > 1 => FacetLayout::Regular {
-            columns: facets.get(),
-            rows: facets.get(),
-        },
+        Gridder::Standard { facets } | Gridder::Wproject { facets, .. } if facets.get() > 1 => {
+            FacetLayout::Regular {
+                columns: facets.get(),
+                rows: facets.get(),
+            }
+        }
         _ => FacetLayout::Single,
     };
     let mut domains = vec![PreparedImageDomain {
         role: ImageDomainRole::Main,
+        object_name: object_name.to_owned(),
+        telescope: observation.telescope.clone(),
         output: request.imagename.clone(),
         image_size: request.imsize,
         direction: centre.direction,
@@ -115,19 +175,53 @@ pub(super) fn prepare_domains(
             spectral,
             observation,
         ),
-        mask: request_mask(request),
+        mask: match mask_preparation {
+            MaskPreparation::ForRun => request_mask(request, spectral, channels)?,
+            MaskPreparation::GeometryOnly => DomainMask::FullPlane,
+        },
+        outlier_start_model: None,
         facets,
     }];
     if let Some(path) = request.outlierfile.as_deref() {
-        for outlier in read_outlier_domains(path, request.imsize, request.cell)? {
+        let mut outliers = read_outlier_domains(path, request.imsize, request.cell)?;
+        if let Some(outputs) = &request.numbered_outlier_outputs {
+            if outputs.len() != outliers.len()
+                || outliers
+                    .iter()
+                    .zip(outputs)
+                    .any(|(outlier, (input, _))| outlier.output.as_os_str() != input.as_os_str())
+            {
+                return Err(PrepareError::Restart {
+                    path: path.into(),
+                    reason: "outlier file changed after image numbering (#944)".into(),
+                });
+            }
+            for (outlier, (_, output)) in outliers.iter_mut().zip(outputs) {
+                outlier.output.clone_from(output);
+            }
+        }
+        for outlier in outliers {
             let centre = parse_phase_center_direction(&outlier.phase_center)?;
+            super::direction::refuse_ncp_at_equator(request.projection, centre.latitude_rad())?;
+            // An outlier field projects as the main image: CASA's outlier
+            // records start from the main image's parameters.
             let direction = direction_spec(
                 outlier.image_size,
                 outlier.cell_arcsec,
+                request.projection,
                 DirectionFrame::J2000,
-                centre.longitude_rad(),
-                centre.latitude_rad(),
+                [
+                    centre.longitude_rad().rem_euclid(std::f64::consts::TAU),
+                    centre.latitude_rad(),
+                ],
             );
+            // ImagerParameters copies the main record, then applies each
+            // outlier's keys. An empty value clears the inherited model.
+            let outlier_start_model = match outlier.start_model {
+                Some(path) if path.is_empty() => None,
+                Some(path) => Some(path.into()),
+                None => request.startmodel.first().cloned().flatten(),
+            };
             domains.push(PreparedImageDomain {
                 role: ImageDomainRole::Outlier(outlier.name),
                 output: outlier.output,
@@ -140,13 +234,19 @@ pub(super) fn prepare_domains(
                     spectral,
                     observation,
                 ),
-                mask: outlier.mask,
+                object_name: object_name.to_owned(),
+                telescope: observation.telescope.clone(),
+                mask: match mask_preparation {
+                    MaskPreparation::ForRun => outlier.mask,
+                    MaskPreparation::GeometryOnly => DomainMask::FullPlane,
+                },
+                outlier_start_model,
                 facets: FacetLayout::Single,
             });
         }
     }
     // Distinct outputs give distinct roles: an outlier's output is its name
-    // resolved beside the outlier file.
+    // resolved from the working directory.
     let mut outputs = BTreeSet::new();
     for domain in &domains {
         if !outputs.insert(domain.output.as_path()) {
@@ -180,46 +280,264 @@ fn warn_inefficient_size(image_size: [usize; 2]) {
     }
 }
 
-/// The main domain's mask: CASA auto-multithresh, the user mask image or
-/// boxes, or every pixel. The auto-multithresh controls the catalog does
-/// not carry take CASA's defaults (`smoothfactor = 1`, `cutthreshold =
-/// 0.01`, `minpercentchange = -1`).
-fn request_mask(request: &ImagingRequest) -> DomainMask {
-    match (request.usemask, &request.mask_image) {
-        (UseMask::AutoMultithresh, _) => DomainMask::AutoMultithresh(AutoMultithreshControls {
-            sidelobe_factor: request.sidelobethreshold,
-            noise_factor: request.noisethreshold,
-            low_noise_factor: request.lownoisethreshold,
-            negative_factor: request.negativethreshold,
-            minimum_beam_fraction: request.minbeamfrac,
-            smooth_factor: 1.0,
-            cut_threshold: 0.01,
-            grow_iterations: request.growiterations,
-            minimum_percent_change: -1.0,
-        }),
-        (UseMask::User, Some(path)) => DomainMask::Image(path.clone()),
-        (UseMask::User, None) if request.mask_box.is_empty() => DomainMask::FullPlane,
-        (UseMask::User, None) => DomainMask::Boxes(request.mask_box.clone()),
+/// The main domain's mask, on an image of `channels` channels on
+/// `spectral`: CASA auto-multithresh with tclean's controls, the pixels
+/// inside the primary beam (`usemask='pb'`), the user mask image or boxes
+/// ([`user_boxes`]), or every pixel. tclean's `setupMask` cuts a named user
+/// mask to the primary beam at a `pbmask` above zero, and leaves every
+/// pixel when no mask is named; an automatic mask reads `pbmask` as it
+/// masks (the minor cycle's `MinorCycleSetup::pbmask`).
+fn request_mask(
+    request: &ImagingRequest,
+    spectral: &ImageSpectralCoordinate,
+    channels: usize,
+) -> Result<DomainMask, PrepareError> {
+    let within_beam = |within: DomainMask, level: f64| DomainMask::WithinPrimaryBeam {
+        within: Box::new(within),
+        level,
+    };
+    let named = |mask: DomainMask| {
+        if request.pbmask > 0.0 {
+            within_beam(mask, request.pbmask)
+        } else {
+            mask
+        }
+    };
+    Ok(match (request.usemask, request.mask_images.as_slice()) {
+        (UseMask::Pb, _) => within_beam(DomainMask::FullPlane, request.pbmask),
+        (UseMask::AutoMultithresh, _) => DomainMask::AutoMultithresh {
+            controls: AutoMultithreshControls {
+                sidelobe_factor: request.sidelobethreshold,
+                noise_factor: request.noisethreshold,
+                low_noise_factor: request.lownoisethreshold,
+                negative_factor: request.negativethreshold,
+                minimum_beam_fraction: request.minbeamfrac,
+                smooth_factor: request.smoothfactor,
+                cut_threshold: request.cutthreshold,
+                grow_iterations: request.growiterations,
+                grow_prune: request.dogrowprune,
+                minimum_percent_change: request.minpercentchange,
+                noise: noise_estimate(request),
+                verbose: request.verbose,
+            },
+            previous: None,
+        },
+        (UseMask::User, paths) if !paths.is_empty() => {
+            let (before, after) = request
+                .mask_box
+                .split_at(request.mask_regions_before_image.unwrap_or(0));
+            named(DomainMask::Image {
+                paths: paths.to_vec(),
+                require_shared_tangent_grid: request.deconvolver == crate::Deconvolver::Mem,
+                require_aligned_continuum: request.has_ranged_image_mask(),
+                regions: [
+                    mask_box_channels(before, spectral, channels)?,
+                    mask_box_channels(after, spectral, channels)?,
+                ],
+            })
+        }
+        (UseMask::User, _) if let Some(polygon) = &request.mask_polygon => {
+            named(DomainMask::SkyPolygon(polygon.clone()))
+        }
+        (UseMask::User, _) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
+            DomainMask::FullPlane
+        }
+        (UseMask::User, _) => named(user_boxes(&request.mask_box, spectral, channels)?),
+    })
+}
+
+/// The user mask's boxes on an image of `channels` channels on `spectral`:
+/// a box limited to a spectral range masks the channels casacore's
+/// `AnnRegion` extension gives it ([`range_channels`]), and a box whose
+/// range misses every channel is left out, as CASA leaves its region out.
+/// Boxes over every channel are plain boxes; a box over part of a cube
+/// makes the mask one of a plane per channel ([`DomainMask::ChannelBoxes`]).
+fn user_boxes(
+    boxes: &[UserMaskBox],
+    spectral: &ImageSpectralCoordinate,
+    channels: usize,
+) -> Result<DomainMask, PrepareError> {
+    let kept = mask_box_channels(boxes, spectral, channels)?;
+    let every = 0..=channels.saturating_sub(1);
+    Ok(if kept.iter().all(|(_, span)| *span == every) {
+        DomainMask::Boxes(kept.into_iter().map(|(corners, _)| corners).collect())
+    } else {
+        DomainMask::ChannelBoxes(kept)
+    })
+}
+
+fn mask_box_channels(
+    boxes: &[UserMaskBox],
+    spectral: &ImageSpectralCoordinate,
+    channels: usize,
+) -> Result<Vec<ChannelMaskBox>, PrepareError> {
+    let every = 0..=channels.saturating_sub(1);
+    let mut kept = Vec::with_capacity(boxes.len());
+    for user in boxes {
+        let span = match user.range {
+            None => every.clone(),
+            Some(range) => match range_channels(range, spectral, channels)? {
+                Some((first, last)) => first..=last,
+                None => {
+                    tracing::warn!(
+                        "the mask region of box {:?} lies outside the image's channels, so \
+                         it is left out, as CASA leaves it out",
+                        user.corners
+                    );
+                    continue;
+                }
+            },
+        };
+        kept.push((user.corners, span));
+    }
+    Ok(kept)
+}
+
+/// The support of `boxes`, each on its channels, over an image of
+/// `[nx, ny]` pixels and `channels` channels: plane after plane, each
+/// x-major (pixel `(x, y)` at `x · ny + y`). A box's corners are inclusive
+/// and clipped to the image, as a [`MaskBox`]'s are.
+fn channel_box_support(boxes: &[ChannelMaskBox], size: [usize; 2], channels: usize) -> Arc<[bool]> {
+    let mut support = vec![false; size[0] * size[1] * channels];
+    let planes = MaskPlanes::new(channels, 1).expect("an image has at least one channel");
+    paint_channel_boxes(&mut support, size, planes, boxes);
+    support.into()
+}
+
+/// Paint boxes on their specified channels and all stored Stokes planes.
+pub(super) fn paint_channel_boxes(
+    support: &mut [bool],
+    size: [usize; 2],
+    planes: MaskPlanes,
+    boxes: &[ChannelMaskBox],
+) {
+    let cells = size[0] * size[1];
+    let polarizations = planes.polarizations();
+    for (corners, span) in boxes {
+        for channel in span
+            .clone()
+            .take_while(|channel| *channel < planes.channels())
+        {
+            for stokes in 0..polarizations {
+                let offset = (channel * polarizations + stokes) * cells;
+                paint_mask_box(&mut support[offset..offset + cells], size, *corners);
+            }
+        }
     }
 }
 
-/// Each domain's mask plan, bound to its direction coordinate.
-pub(super) fn mask_plans(
-    domains: &[PreparedImageDomain],
-) -> Result<ImageDomainReconstructionMaskPlans, PrepareError> {
-    Ok(ImageDomainReconstructionMaskPlans::new(
-        domains
-            .iter()
-            .map(|domain| mask_plan(domain.mask.clone(), domain.direction, domain.image_size))
-            .collect::<Result<Vec<_>, _>>()?,
-    )?)
+/// Paint an inclusive pixel box, clipped to the target plane.
+pub(super) fn paint_mask_box(
+    support: &mut [bool],
+    [nx, ny]: [usize; 2],
+    [x0, y0, x1, y1]: [i64; 4],
+) {
+    let clip = |a: i64, b: i64, extent: usize| {
+        let (low, high) = (a.min(b).max(0), a.max(b).min(extent as i64 - 1));
+        (low <= high).then_some(low as usize..=high as usize)
+    };
+    let (Some(xs), Some(ys)) = (clip(x0, x1, nx), clip(y0, y1, ny)) else {
+        return;
+    };
+    for x in xs {
+        let row = x * ny;
+        support[row + ys.start()..=row + ys.end()].fill(true);
+    }
 }
 
+/// The channels `first..=last` a spectral range masks on an image of
+/// `channels` channels on `spectral`, or `None` when it masks none.
+/// casacore's `AnnRegion::_extend` takes each end's pixel on the image's
+/// spectral axis and orders them; `WCBox` hands them to `LCBox`, which
+/// takes `Int(p + 0.5)` of each (truncating toward zero), clamps the low
+/// end to 0 and the high end to the last channel, and refuses a box whose
+/// ends cross, which leaves the region out.
+///
+/// # Errors
+///
+/// [`PrepareError::MaskRange`] when an end is not a finite pixel.
+fn range_channels(
+    range: SpectralMaskRange,
+    spectral: &ImageSpectralCoordinate,
+    channels: usize,
+) -> Result<Option<(usize, usize)>, PrepareError> {
+    let ends = match range {
+        SpectralMaskRange::Frequency(hz) if spectral.channel_table_hz.is_some() => {
+            if !hz.iter().all(|frequency| frequency.is_finite()) {
+                return Err(PrepareError::MaskRange { range });
+            }
+            let axis = spectral.coordinate();
+            let pixel = |frequency| {
+                axis.to_pixel(&[frequency])
+                    .map(|value| value[0])
+                    .map_err(|_| PrepareError::MaskRange { range })
+            };
+            [pixel(hz[0])?, pixel(hz[1])?]
+        }
+        SpectralMaskRange::Frequency(hz) => hz
+            .map(|frequency| (frequency - spectral.reference_frequency_hz) / spectral.increment_hz),
+        SpectralMaskRange::Pixel(pixels) => pixels,
+    };
+    if !ends.iter().all(|end| end.is_finite()) {
+        return Err(PrepareError::MaskRange { range });
+    }
+    let [low, high] = if ends[1] <= ends[0] {
+        [ends[1], ends[0]]
+    } else {
+        ends
+    };
+    let last = i64::try_from(channels).unwrap_or(i64::MAX) - 1;
+    let first = ((low + 0.5) as i64).max(0);
+    let end = ((high + 0.5) as i64).min(last);
+    Ok((first <= end).then_some((first as usize, end as usize)))
+}
+
+/// tclean's noise estimate (`fastnoise`).
+pub(super) const fn noise_estimate(request: &ImagingRequest) -> NoiseEstimate {
+    if request.fastnoise {
+        NoiseEstimate::Fast
+    } else {
+        NoiseEstimate::Robust
+    }
+}
+
+/// Each domain's mask plan, bound to its direction coordinate, for images
+/// of `channels` channels, and what the plans keep of the mask images
+/// read for them: each image's read is admitted under `context` before it
+/// is read ([`super::mask_image::MaskImage::bytes`]), and the
+/// support its plan shares stays charged.
+pub(super) fn mask_plans(
+    domains: &[PreparedImageDomain],
+    channels: usize,
+    context: &RunContext,
+) -> Result<(ImageDomainReconstructionMaskPlans, Reservation), PrepareError> {
+    let mut resident = Reservation::none();
+    let plans = domains
+        .iter()
+        .map(|domain| {
+            mask_plan(
+                domain,
+                domain.mask.clone(),
+                channels,
+                context,
+                &mut resident,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((ImageDomainReconstructionMaskPlans::new(plans)?, resident))
+}
+
+/// The plan of `mask` on `domain`'s grid, charging what it keeps resident
+/// to `resident`.
 fn mask_plan(
+    domain: &PreparedImageDomain,
     mask: DomainMask,
-    coordinate: DirectionCoordinateSpec,
-    image_size: [usize; 2],
+    channels: usize,
+    context: &RunContext,
+    resident: &mut Reservation,
 ) -> Result<ReconstructionMaskPlan, PrepareError> {
+    let coordinate = domain.direction;
+    let image_size = domain.image_size;
     Ok(match mask {
         DomainMask::FullPlane => ReconstructionMaskPlan::FullPlane { coordinate },
         DomainMask::Boxes(boxes) => ReconstructionMaskPlan::Boxes {
@@ -229,117 +547,158 @@ fn mask_plan(
                 .map(|[x0, y0, x1, y1]| MaskBox::new([x0, y0], [x1, y1]))
                 .collect::<Result<Vec<_>, _>>()?,
         },
-        DomainMask::Image(path) => reproject_image_mask(&path, coordinate, image_size)?,
-        DomainMask::PixelSupport(support) => {
-            assert_eq!(
-                image_size[0].checked_mul(image_size[1]),
-                Some(support.len()),
-                "an outlier circle mask covers exactly its image domain"
-            );
+        DomainMask::SkyPolygon(polygon) => {
+            let (memory, kept) = super::mask_polygon::bytes(&polygon, image_size);
+            let mut charge = admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "clean mask polygon",
+                    memory,
+                },
+            )?;
+            let support = super::mask_polygon::support(&polygon, coordinate, image_size)?;
+            charge.retain(kept);
+            resident.join(charge);
             ReconstructionMaskPlan::Reprojected {
                 coordinate,
+                planes: MaskPlanes::SHARED,
                 support,
             }
         }
-        DomainMask::AutoMultithresh(controls) => ReconstructionMaskPlan::AutoMultithresh {
-            coordinate,
-            controls,
-            completed_major_cycles: 0,
-            cycle_threshold_reached: false,
-            previous: None,
-            evolution_stopped: false,
-        },
+        DomainMask::Image {
+            paths,
+            require_shared_tangent_grid,
+            require_aligned_continuum,
+            regions,
+        } => {
+            let coordinate_of = |kind| {
+                domain
+                    .coordinates
+                    .find_coordinate(kind)
+                    .map(|index| domain.coordinates.coordinate(index))
+            };
+            let polarizations = match coordinate_of(CoordinateType::Stokes) {
+                Some(CoordinateModel::Stokes(stokes)) => stokes.stokes().len(),
+                _ => 1,
+            };
+            let spectral = match coordinate_of(CoordinateType::Spectral) {
+                Some(CoordinateModel::Spectral(spectral)) => Some(&**spectral),
+                _ => None,
+            };
+            let planes = super::mask_image::TargetPlanes {
+                channels,
+                polarizations,
+                spectral,
+            };
+            let [path] = paths.as_slice() else {
+                let (plan, charge) =
+                    super::mask_image::read_aligned_list(&paths, coordinate, image_size, context)?;
+                resident.join(charge);
+                return Ok(plan);
+            };
+            let image = super::mask_image::MaskImage::open(path, coordinate, image_size, planes)?;
+            if require_shared_tangent_grid && !image.has_shared_tangent_grid() {
+                return Err(PrepareError::MemMaskGrid { path: path.clone() });
+            }
+            if require_aligned_continuum && !image.is_aligned_continuum() {
+                return Err(PrepareError::MaskListGrid { path: path.clone() });
+            }
+            let regions = regions.each_ref().map(Vec::as_slice);
+            let (memory, retained) = image.bytes(regions);
+            let mut charge = admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "clean mask image",
+                    memory,
+                },
+            )?;
+            let plan = image.read(regions)?;
+            charge.retain(retained);
+            resident.join(charge);
+            plan
+        }
+        DomainMask::PixelSupport { planes, support } => {
+            assert_eq!(
+                (image_size[0] * image_size[1]).checked_mul(planes.count()),
+                Some(support.len()),
+                "a pixel support covers exactly its image domain's planes"
+            );
+            ReconstructionMaskPlan::Reprojected {
+                coordinate,
+                planes,
+                support,
+            }
+        }
+        DomainMask::ChannelBoxes(boxes) => {
+            // The support is the plan's for the whole run, charged as a mask
+            // image's is.
+            let bytes = (image_size[0] * image_size[1] * channels) as u64;
+            let mut charge = admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "clean mask regions",
+                    memory: bytes,
+                },
+            )?;
+            charge.retain(bytes);
+            let support = channel_box_support(&boxes, image_size, channels);
+            resident.join(charge);
+            ReconstructionMaskPlan::Reprojected {
+                coordinate,
+                planes: MaskPlanes::new(channels, 1)?,
+                support,
+            }
+        }
+        DomainMask::AutoMultithresh { controls, previous } => {
+            ReconstructionMaskPlan::AutoMultithresh {
+                coordinate,
+                controls,
+                completed_major_cycles: 0,
+                cycle_threshold_reached: false,
+                previous: previous
+                    .map(|(planes, support)| {
+                        ReconstructionMask::from_plane_support(
+                            coordinate, image_size, planes, support,
+                        )
+                        .map(Box::new)
+                    })
+                    .transpose()?,
+                stopped_channels: Box::new([]),
+            }
+        }
+        DomainMask::WithinPrimaryBeam { within, level } => {
+            ReconstructionMaskPlan::within_primary_beam(
+                mask_plan(domain, *within, channels, context, resident)?,
+                level,
+            )?
+        }
     })
 }
 
-/// Whether each pixel of `values`, in index order, is finite, non-zero and
-/// valid in the image's default `mask`.
-///
-/// The values and the mask are walked together; indexing the mask with the
-/// running count of a many-axis image panicked (#1022 review).
-fn mask_support<T>(values: &ndarray::ArrayD<T>, mask: Option<&ndarray::ArrayD<bool>>) -> Vec<bool>
-where
-    T: Into<f64> + Copy,
-{
-    let support = |value: &T| {
-        let value: f64 = (*value).into();
-        value.is_finite() && value != 0.0
-    };
-    match mask {
-        Some(mask) => values
-            .iter()
-            .zip(mask.iter())
-            .map(|(value, valid)| *valid && support(value))
-            .collect(),
-        None => values.iter().map(support).collect(),
-    }
-}
-
-/// The non-zero, unmasked, finite pixels of a one-plane CASA image,
-/// reprojected onto `target_spec`.
-fn reproject_image_mask(
-    path: &Path,
-    target_spec: DirectionCoordinateSpec,
-    target_size: [usize; 2],
-) -> Result<ReconstructionMaskPlan, PrepareError> {
-    let (source_shape, source_coordinates, source_support) = match AnyPagedImage::open(path)? {
-        AnyPagedImage::Float32(image) => {
-            let support = mask_support(&image.get()?, image.get_mask()?.as_ref());
-            (image.shape().to_vec(), image.coordinates().clone(), support)
-        }
-        AnyPagedImage::Float64(image) => {
-            let support = mask_support(&image.get()?, image.get_mask()?.as_ref());
-            (image.shape().to_vec(), image.coordinates().clone(), support)
-        }
-        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
-            return Err(PrepareError::ComplexMaskImage);
-        }
-    };
-    let index = source_coordinates
-        .find_coordinate(CoordinateType::Direction)
-        .ok_or(PrepareError::MaskImageDirection)?;
-    // The direction's two axes follow those of the coordinates before it,
-    // wherever that is (#1002); every other axis has one pixel, so the
-    // support, in the image's index order, runs over the plane alone.
-    let longitude = (0..index)
-        .map(|k| source_coordinates.coordinate(k).n_pixel_axes())
-        .sum::<usize>();
-    let plane = [longitude, longitude + 1];
-    if source_shape.len() < longitude + 2
-        || source_shape
-            .iter()
-            .enumerate()
-            .any(|(axis, extent)| !plane.contains(&axis) && *extent != 1)
-        || source_support.len() != source_shape[plane[0]] * source_shape[plane[1]]
-    {
-        return Err(PrepareError::MaskImageShape {
-            shape: source_shape,
-        });
-    }
-    let source_spec = direction_model_spec(source_coordinates.coordinate(index))?;
-    let support = casa_imaging_deconvolution::reproject_mask_support(
-        source_spec,
-        [source_shape[plane[0]], source_shape[plane[1]]],
-        &source_support,
-        target_spec,
-        target_size,
-    )?;
-    Ok(ReconstructionMaskPlan::Reprojected {
-        coordinate: target_spec,
-        support,
-    })
-}
-
-fn direction_model_spec(
+/// The model's direction coordinate of a mask image's direction
+/// `coordinate`: a projection casa-rs images in, with the parameters CASA
+/// writes for it (`NCP` is `SIN` slanted by `[0, cot δ₀]`).
+pub(super) fn direction_model_spec(
     coordinate: &CoordinateModel,
 ) -> Result<DirectionCoordinateSpec, PrepareError> {
     let CoordinateModel::Direction(direction) = coordinate else {
         unreachable!("find_coordinate(Direction) names a direction coordinate");
     };
-    let projection = direction.projection().projection_type();
-    if projection != ProjectionType::SIN {
-        return Err(PrepareError::MaskImageProjection { projection });
+    if direction.direction_ref() != direction.conversion_direction_ref() {
+        return Err(PrepareError::MaskImageConversion {
+            native: direction.direction_ref(),
+            conversion: direction.conversion_direction_ref(),
+        });
     }
+    let reference = coordinate.reference_value();
+    let projection = Projection::of_coordinate(direction.projection(), reference[1]).ok_or(
+        PrepareError::MaskImageProjection {
+            projection: direction.projection().projection_type(),
+        },
+    )?;
     let frame = match direction.direction_ref() {
         DirectionRef::J2000 => DirectionFrame::J2000,
         DirectionRef::B1950 => DirectionFrame::B1950,
@@ -347,12 +706,11 @@ fn direction_model_spec(
         DirectionRef::ICRS => DirectionFrame::Icrs,
         frame => return Err(PrepareError::MaskImageFrame { frame }),
     };
-    let reference = coordinate.reference_value();
     let pixel = coordinate.reference_pixel();
     let increment = coordinate.increment();
     let pc = direction.pc_matrix();
     Ok(DirectionCoordinateSpec::new(
-        Projection::Sin,
+        projection,
         SkyDirection::new(frame, reference[0], reference[1]),
         [pixel[0], pixel[1]],
         [increment[0], increment[1]],
@@ -387,12 +745,15 @@ pub(super) fn model_samples(
 mod tests {
     use super::*;
     use casa_coordinates::{
-        DirectionCoordinate, Projection as CoordinateProjection, SpectralCoordinate,
-        StokesCoordinate, StokesType,
+        DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
+        SpectralCoordinate, StokesCoordinate, StokesType,
     };
     use casa_images::{ImagePixel, PagedImage};
     use casa_types::measures::frequency::FrequencyRef;
     use ndarray::{ArrayD, IxDyn};
+    use std::path::Path;
+
+    use crate::compile::mask_image::{TargetPlanes, reproject_image_mask};
 
     fn direction() -> DirectionCoordinate {
         DirectionCoordinate::new(
@@ -404,11 +765,25 @@ mod tests {
         )
     }
 
+    #[test]
+    fn mask_grid_refuses_direction_conversion_metadata() {
+        let coordinate = CoordinateModel::Direction(
+            direction().with_conversion_direction_ref(DirectionRef::GALACTIC),
+        );
+        assert!(matches!(
+            direction_model_spec(&coordinate),
+            Err(PrepareError::MaskImageConversion { .. })
+        ));
+    }
+
     /// A one-plane mask image of `T` pixels on a 3 by 2 direction plane:
     /// non-zero at (0, 0), (2, 0), (1, 1) and (2, 1), with (2, 1) invalid in
     /// its default pixel mask; the direction first, or (as a transposed CASA
     /// mask reads) after Stokes. Its support reprojected onto its own grid.
-    fn support<T: ImagePixel + From<f32>>(dir: &Path, direction_first: bool) -> Box<[bool]> {
+    fn support<T: ImagePixel + From<f32>>(
+        dir: &Path,
+        direction_first: bool,
+    ) -> std::sync::Arc<[bool]> {
         let mut coordinates = CoordinateSystem::new();
         let stokes = StokesCoordinate::new(vec![StokesType::I]);
         let shape = if direction_first {
@@ -447,7 +822,17 @@ mod tests {
         image.save().unwrap();
         drop(image);
         let target = direction_model_spec(&CoordinateModel::Direction(direction())).unwrap();
-        let plan = reproject_image_mask(&path, target, [3, 2]).unwrap();
+        let plan = reproject_image_mask(
+            &path,
+            target,
+            [3, 2],
+            TargetPlanes {
+                channels: 1,
+                polarizations: 1,
+                spectral: None,
+            },
+        )
+        .unwrap();
         let ReconstructionMaskPlan::Reprojected { support, .. } = plan else {
             panic!("a mask image is reprojected");
         };
@@ -476,5 +861,177 @@ mod tests {
                 "f64, direction first {direction_first}"
             );
         }
+    }
+    /// A spectral axis of `channels` channels from 999.98875… MHz in steps
+    /// of 49.9994… MHz: the LSRK cube axis CASA 6.7.6.14's tclean lays on
+    /// casatestdata's `refim_point.ms` (test_mask_2), as its `.mask` reads.
+    fn refim_point_axis() -> ImageSpectralCoordinate {
+        ImageSpectralCoordinate {
+            frequency_reference: FrequencyRef::LSRK,
+            reference_frequency_hz: 999_988_750.387_257_2,
+            increment_hz: 1_049_988_187.906_619_9 - 999_988_750.387_257_2,
+            rest_frequency_hz: 0.0,
+            channel_table_hz: None,
+            additional_rest_frequencies_hz: Vec::new(),
+            undefined_frame: false,
+        }
+    }
+
+    /// The main domain's mask of `request` on a one-channel image.
+    fn mask_of(request: &ImagingRequest) -> DomainMask {
+        request_mask(request, &refim_point_axis(), 1).unwrap()
+    }
+
+    /// The channels CASA 6.7.6.14 masks for `circle[[50pix,50pix],10pix],
+    /// range=[...]` on `refim_point.ms`'s 20-channel cube, by `rg.fromtext`
+    /// and tclean's `.mask` (2026-11-03): each end's pixel rounded by
+    /// `Int(p + 0.5)`, clamped to the cube, the region left out when the
+    /// ends cross.
+    #[test]
+    fn a_spectral_range_masks_the_channels_casa_masks() {
+        let axis = refim_point_axis();
+        let hz = |low: f64, high: f64| SpectralMaskRange::Frequency([low * 1e9, high * 1e9]);
+        for (range, expected) in [
+            (hz(1.1, 1.5), Some((2, 10))),
+            (hz(1.5, 1.1), Some((2, 10))),
+            (hz(1.12, 1.47), Some((2, 9))),
+            (hz(1.124, 1.4749), Some((2, 9))),
+            (hz(1.1251, 1.4751), Some((3, 10))),
+            (hz(1.13, 1.48), Some((3, 10))),
+            (hz(1.125, 1.475), Some((3, 10))),
+            (hz(1.07, 1.08), Some((1, 2))),
+            (hz(1.074, 1.076), Some((1, 2))),
+            (hz(1.101, 1.119), Some((2, 2))),
+            (hz(0.9, 0.95), Some((0, 0))),
+            (hz(0.97, 0.98), Some((0, 0))),
+            (hz(0.5, 1.12), Some((0, 2))),
+            (hz(1.9, 3.0), Some((18, 19))),
+            (hz(1.96, 1.99), Some((19, 19))),
+            (hz(2.0, 2.1), None),
+            (hz(2.1, 2.3), None),
+            (hz(0.5, 0.9), None),
+            (SpectralMaskRange::Pixel([1.4, 3.6]), Some((1, 4))),
+        ] {
+            assert_eq!(
+                range_channels(range, &axis, 20).unwrap(),
+                expected,
+                "{range:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_frequency_mask_range_inverts_the_tabular_axis() {
+        let axis = ImageSpectralCoordinate {
+            reference_frequency_hz: 140.0,
+            increment_hz: -20.0,
+            channel_table_hz: Some(vec![140.0, 120.0, 107.0, 100.0]),
+            ..refim_point_axis()
+        };
+        let range = SpectralMaskRange::Frequency([101.0, 102.0]);
+        assert_eq!(range_channels(range, &axis, 4).unwrap(), Some((3, 3)));
+    }
+
+    /// A ranged box over every channel, or a one-channel image's only
+    /// channel, is a plain box; one whose range misses the image is left
+    /// out; one over part of a cube masks only its channels, a plane per
+    /// channel. CASA's MFS image of `refim_point.ms` is one channel at about
+    /// 1.5 GHz, 1 GHz wide: `range=[1.1GHz,1.2GHz]` and `[0.1GHz,0.2GHz]`
+    /// mask it, `[3GHz,3.2GHz]` does not (stop code 7).
+    #[test]
+    fn ranged_boxes_resolve_on_the_image_channels() {
+        let plain = UserMaskBox::new([1, 2, 3, 4]);
+        let ranged = |low: f64, high: f64| UserMaskBox {
+            corners: [5, 6, 7, 8],
+            range: Some(SpectralMaskRange::Frequency([low * 1e9, high * 1e9])),
+        };
+        let mfs = ImageSpectralCoordinate {
+            reference_frequency_hz: 1.5e9,
+            increment_hz: 1.0e9,
+            ..refim_point_axis()
+        };
+        for (low, high, kept) in [
+            (1.1, 1.2, true),
+            (0.1, 0.2, true),
+            (1.4, 1.6, true),
+            (3.0, 3.2, false),
+        ] {
+            let boxes = user_boxes(&[plain, ranged(low, high)], &mfs, 1).unwrap();
+            let expected = if kept {
+                vec![[1, 2, 3, 4], [5, 6, 7, 8]]
+            } else {
+                vec![[1, 2, 3, 4]]
+            };
+            assert_eq!(boxes, DomainMask::Boxes(expected), "{low}~{high} GHz");
+        }
+        let cube = refim_point_axis();
+        assert_eq!(
+            user_boxes(&[ranged(0.9, 2.1)], &cube, 20).unwrap(),
+            DomainMask::Boxes(vec![[5, 6, 7, 8]])
+        );
+        assert_eq!(
+            user_boxes(&[ranged(2.1, 2.3)], &cube, 20).unwrap(),
+            DomainMask::Boxes(Vec::new())
+        );
+        // test_mask_2's region on the cube: its channels 2 to 10, and a plain
+        // box beside it on every channel.
+        assert_eq!(
+            user_boxes(&[ranged(1.1, 1.5), plain], &cube, 20).unwrap(),
+            DomainMask::ChannelBoxes(vec![([5, 6, 7, 8], 2..=10), ([1, 2, 3, 4], 0..=19)])
+        );
+    }
+
+    /// The per-channel support holds each box, inclusive and clipped to the
+    /// image, on its channels only, plane after plane, each x-major.
+    #[test]
+    fn channel_boxes_hold_their_pixels_on_their_channels() {
+        let [nx, ny, channels] = [6_usize, 4, 3];
+        let support = channel_box_support(
+            &[([4, 1, 9, 2], 1..=1), ([-3, -3, 0, 0], 0..=2)],
+            [nx, ny],
+            channels,
+        );
+        assert_eq!(support.len(), nx * ny * channels);
+        let set = |channel: usize, x: usize, y: usize| support[channel * nx * ny + x * ny + y];
+        for channel in 0..channels {
+            for x in 0..nx {
+                for y in 0..ny {
+                    let first = channel == 1 && (4..=5).contains(&x) && (1..=2).contains(&y);
+                    let corner = x == 0 && y == 0;
+                    assert_eq!(set(channel, x, y), first || corner, "{channel} {x} {y}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_region_file_is_zero_support_but_an_absent_mask_is_full_plane() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("empty.crtf");
+        std::fs::write(&path, "#CRTF\n# no regions\n").unwrap();
+        let explicit = crate::request::tests::request(serde_json::json!({"mask": path}));
+        assert!(matches!(mask_of(&explicit), DomainMask::Boxes(boxes) if boxes.is_empty()));
+        let default = crate::request::tests::request(serde_json::json!({}));
+        assert_eq!(mask_of(&default), DomainMask::FullPlane);
+        let empty_argument = crate::request::tests::request(serde_json::json!({"mask": []}));
+        assert_eq!(mask_of(&empty_argument), DomainMask::FullPlane);
+        let automatic = crate::request::tests::request(
+            serde_json::json!({"usemask": "auto-multithresh", "mask": path}),
+        );
+        assert!(matches!(
+            mask_of(&automatic),
+            DomainMask::AutoMultithresh { .. }
+        ));
+        // A new explicit empty region must not silently reuse an old mask:
+        // it stays the request's own empty mask, and a cleaning run over an
+        // old mask is refused rather than merged.
+        let mut continuation = explicit;
+        continuation.imagename = directory.path().join("image");
+        std::fs::write(directory.path().join("image.model"), "old model").unwrap();
+        std::fs::write(directory.path().join("image.mask"), "old mask").unwrap();
+        continuation.check_tclean_output_prefixes().unwrap();
+        assert!(matches!(mask_of(&continuation), DomainMask::Boxes(boxes) if boxes.is_empty()));
+        continuation.niter = 5;
+        assert!(continuation.check_tclean_output_prefixes().is_err());
     }
 }

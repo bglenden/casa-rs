@@ -1,0 +1,44 @@
+{
+  "schema": "tclean-evidence-receipt/1",
+  "title": "Blank PSF beams in automask channel blocks",
+  "work_issue": 1140,
+  "date": "2026-11-05",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "native_revision": "cd462a3b4e61e809b59a9049b7dba43dbef79b66",
+  "imager_binary_sha256": "233f519109d34a47b7c0d1407358204d83e9cd96de9090f059ddc990f74a2797",
+  "backend": "cpu",
+  "precision": "f64",
+  "cross_block_restart": {
+    "input": "Synthetic 900x900x11 Stokes-I cube, seeded from refim_point_linRL.ms: channel 0 has a 25-pixel residual island and a narrow PSF; channels 1-9 have blank PSFs; channel 10 has a broader PSF. All three runs use identical edited PSF, residual, model and sumwt products.",
+    "parameters": "niter=1, calcpsf=False, calcres=False, usemask=auto-multithresh, minbeamfrac=0.5, gain=0.1, restoration=False",
+    "casa": {"mask_pixels_channel_0": 0, "iterdone": 0, "stopcode": 7},
+    "native": {"mask_pixels_channel_0": 0, "iterdone": 0, "stopcode": 7, "mask_cube_mismatches": 0},
+    "parent": {"native_revision": "4359654c25a918333ddf1f7fe9c9710af388594a", "mask_pixels_channel_0": 177, "iterdone": 1, "stopcode": 1, "mask_cube_mismatches": 177},
+    "casa_pruning_pixels": 45.3219,
+    "scope": "The first block's blank PSFs inherit the largest beam from the image domain, including the broad PSF in the next block. CASA and native mask arrays agree across all 8,910,000 pixels."
+  },
+  "common_beam": {
+    "multi_stokes_reference": "CASA image.commonbeam for the reviewed 10-channel, two-Stokes beam set: 137.5886922424 x 118.2682964644 arcsec, PA -49.8633900565 degrees.",
+    "four_ellipse_reference_radians": [0.0007650884727840565, 0.0005882917966857718, -0.22285445660172803],
+    "scope": "CASA's channel-fast beam matrix, first equal-area maximum, last non-enclosed beam, canonical angle and arcsecond construction are exercised by mutation-tested laws."
+  },
+  "paired_regressions": {
+    "fresh_t15_point_mfs_clark_briggs": {"worst_nrms": 0.0000022962298316876887, "sumwt_metric": 0.0},
+    "existing_common_beam_and_automask_cases": {"passed": 3, "total": 3, "worst_nrms": 0.000043150603615030374},
+    "polarized_mtmfs_common_beam": {"passed": 1, "total": 1, "worst_nrms": 0.000004377057704365334}
+  },
+  "representative_t2": {
+    "case": "standard-mfs-automask-vla",
+    "reference": "CASA frozen oracle 20261013T083729Z-issue607-standard-mfs-representative-2564992b",
+    "status": "all numerical tolerances passed; exact mask and product inventory",
+    "worst_nrms": 0.00000012198818629298232,
+    "peak_rss_bytes": 141393920,
+    "largest_phase_reservation_bytes": 240469751,
+    "metadata": "Raw image and PSF restoring-beam fields differ from CASA within beam tolerances; the parent and candidate have identical beams and image arrays. The harness's generic mode-level human-review field remains pending."
+  },
+  "memory_law": "A 12,000-plane mostly blank block is measured by the allocated-heap law. Removing the new beam-workspace charge fails it (3276217 bytes held versus 2412319 admitted).",
+  "review": "One independent local review checked the CASA/casacore C++ call chain and identified the allocation, numerical-order and mask-wiring issues; each was repaired and its law proved by mutation."
+}

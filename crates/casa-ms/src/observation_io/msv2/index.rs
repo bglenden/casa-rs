@@ -35,9 +35,9 @@ pub(super) const NO_ROW: u32 = u32::MAX;
 pub(super) const ROWS_PER_CHUNK: usize = 1 << 18;
 
 /// Bytes a chunk of key columns ([`KeyColumns`]) holds per row: a row
-/// number, a time and ten integer keys.
+/// number, a time and eleven integer keys.
 pub(super) const CHUNK_ROW_BYTES: usize =
-    size_of::<usize>() + size_of::<f64>() + 10 * size_of::<i32>();
+    size_of::<usize>() + size_of::<f64>() + 11 * size_of::<i32>();
 
 /// At most the bytes a node of a B-tree of `entry`-byte entries holds:
 /// room for 11 entries, the 12 edges of an internal node, and its header.
@@ -80,6 +80,8 @@ struct KeyColumns {
     feed1: Vec<i32>,
     feed2: Vec<i32>,
     processor: Vec<i32>,
+    /// `ARRAY_ID`, which no partition key holds ([`ArrayIds`]).
+    array: Vec<i32>,
 }
 
 impl KeyColumns {
@@ -98,6 +100,7 @@ impl KeyColumns {
             feed1,
             feed2,
             processor,
+            array,
         } = self;
         indices.clear();
         indices.extend(rows);
@@ -116,6 +119,7 @@ impl KeyColumns {
             ("FEED1", feed1),
             ("FEED2", feed2),
             ("PROCESSOR_ID", processor),
+            ("ARRAY_ID", array),
         ] {
             destinations.push(RequiredScalarColumnDestination::new(
                 name,
@@ -154,6 +158,18 @@ pub(super) struct PartitionKey {
     pub(super) field: Option<i32>,
     /// `SCAN_NUMBER`, when the scheme splits by scan.
     pub(super) scan: Option<i32>,
+}
+
+impl PartitionKey {
+    /// Whether the keys differ only by the optional field and scan splits.
+    /// These groups are contiguous in key order.
+    pub(super) fn same_unsplit_partition(&self, other: &Self) -> bool {
+        self.data_description == other.data_description
+            && self.obs_mode == other.obs_mode
+            && self.observation == other.observation
+            && self.ephemeris == other.ephemeris
+            && self.feeds == other.feeds
+    }
 }
 
 /// A row's [`PartitionKey`] with its `OBS_MODE` as the mode's rank among
@@ -267,7 +283,38 @@ struct Gathered {
     /// The last row's `STATE_ID`: rows of one state usually follow each
     /// other.
     last_state: Option<i32>,
+    /// The `ARRAY_ID`s of its rows.
+    arrays: ArrayIds,
     rows: usize,
+}
+
+/// The `ARRAY_ID`s a partition's rows hold, as far as a consumer that
+/// orders by array needs to know them: none yet, one, or several. XRADIO's
+/// partition key, which the adapter follows, has no array, so one
+/// partition may hold rows of several arrays.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ArrayIds {
+    #[default]
+    None,
+    One(i32),
+    Several,
+}
+
+impl ArrayIds {
+    fn observe(&mut self, array: i32) {
+        *self = match *self {
+            Self::None => Self::One(array),
+            Self::One(one) if one == array => Self::One(one),
+            _ => Self::Several,
+        };
+    }
+
+    const fn one(self) -> Option<i32> {
+        match self {
+            Self::One(array) => Some(array),
+            Self::None | Self::Several => None,
+        }
+    }
 }
 
 impl Gathered {
@@ -343,6 +390,7 @@ impl Survey {
                     * entry_bytes(size_of::<i32>());
                 partition.last_state = Some(columns.state[i]);
             }
+            partition.arrays.observe(columns.array[i]);
             partition.rows += 1;
             let scan = (columns.scan_number[i], columns.state[i]);
             if last_scan != Some(scan) {
@@ -397,6 +445,8 @@ struct Placing {
     /// The partition's `STATE_ID`s, ascending, and its one `PROCESSOR_ID`.
     states: Vec<i32>,
     processor: Option<i32>,
+    /// Its rows' one `ARRAY_ID`, or `None` for several.
+    array: Option<i32>,
 }
 
 impl Placing {
@@ -426,6 +476,7 @@ impl Placing {
             last_time: None,
             states: gathered.states.into_iter().collect(),
             processor: gathered.processors.first().copied(),
+            array: gathered.arrays.one(),
         })
     }
 
@@ -503,6 +554,7 @@ impl Placing {
             rows: self.rows,
             states: self.states,
             processor: self.processor,
+            array: self.array,
         }
     }
 }
@@ -637,6 +689,8 @@ pub(super) struct Grid {
     pub(super) states: Vec<i32>,
     /// Its rows' one `PROCESSOR_ID`.
     pub(super) processor: Option<i32>,
+    /// Its rows' one `ARRAY_ID`; `None` when they hold several.
+    pub(super) array: Option<i32>,
 }
 
 impl Grid {
@@ -644,6 +698,17 @@ impl Grid {
     pub(super) fn cells(&self, times: Range<usize>) -> &[u32] {
         let per_time = self.baselines.len();
         &self.cells[times.start * per_time..times.end * per_time]
+    }
+
+    /// The first of its rows in time order, as CASA's iteration meets them:
+    /// the lowest MAIN row of its first time.
+    pub(super) fn first_time_row(&self) -> usize {
+        self.cells(0..1)
+            .iter()
+            .copied()
+            .filter(|cell| *cell != NO_ROW)
+            .min()
+            .expect("a partition's first time holds a row") as usize
     }
 }
 

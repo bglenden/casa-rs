@@ -1,0 +1,1089 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        -1
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        true
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        1.5
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        "0"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirra> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        [
+          0
+        ]
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        1267650600228229401496703205376
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirra> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0,
+        "rad",
+        0
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0,
+        "bad",
+        -1
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0,
+        "",
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": 5
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": [
+          "deg"
+        ]
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": null
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirra> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": 1.5
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _precision must be an integer"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": "3"
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _precision must be an integer"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": true
+      },
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": 1267650600228229401496703205376
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirra> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        null
+      ],
+      "kwargs": {
+        "unit": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": null,
+        "precision": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        -1
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        true
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        1.5
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        "0"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirdec> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        [
+          0
+        ]
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        1267650600228229401496703205376
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirdec> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0,
+        "rad",
+        0
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0,
+        "bad",
+        -1
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0,
+        "",
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": 5
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": [
+          "deg"
+        ]
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": null
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirdec> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": 1.5
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _precision must be an integer"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": "3"
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _precision must be an integer"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": true
+      },
+      "result": ""
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": 1267650600228229401496703205376
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirdec> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        null
+      ],
+      "kwargs": {
+        "unit": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": false,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": null,
+        "precision": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        -1
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        true
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        1.5
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        "0"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirra> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        [
+          0
+        ]
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        1267650600228229401496703205376
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirra> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0,
+        "rad",
+        0
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0,
+        "bad",
+        -1
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0,
+        "",
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": 5
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": [
+          "deg"
+        ]
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": null
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirra> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": 1.5
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _precision must be an integer"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": "3"
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _precision must be an integer"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": true
+      },
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": 1267650600228229401496703205376
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirra> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        null
+      ],
+      "kwargs": {
+        "unit": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirra",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": null,
+        "precision": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        -1
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        true
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        1.5
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        "0"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirdec> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        [
+          0
+        ]
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        1267650600228229401496703205376
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirdec> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0,
+        "rad",
+        0
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0,
+        "bad",
+        -1
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0,
+        "",
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": 5
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": [
+          "deg"
+        ]
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": null
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirdec> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": 1.5
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _precision must be an integer"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": "3"
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _precision must be an integer"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": true
+      },
+      "result": ""
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "precision": 1267650600228229401496703205376
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getrefdirdec> returned a result with an exception set"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        null
+      ],
+      "kwargs": {
+        "unit": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    },
+    {
+      "populated": true,
+      "method": "getrefdirdec",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "unit": null,
+        "precision": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      }
+    }
+  ]
+}

@@ -6,7 +6,7 @@
 //! flux; the standard gridder, run on the same data as the control,
 //! smears and displaces it (IF-3, #652).
 
-use casa_ms::{SyntheticSpectralSetup, tutorial_vla_a_antennas};
+use casa_simulation::synthetic::{SpectralSetup, tutorial_vla_a_antennas};
 use ndarray::Array2;
 use serde_json::{Value, json};
 
@@ -47,7 +47,7 @@ fn setup() -> Setup {
         telescope: "VLA".to_string(),
         antennas,
         fields: Vec::new(),
-        spectral_windows: vec![SyntheticSpectralSetup {
+        spectral_windows: vec![SpectralSetup {
             name: "t1-150mhz".to_string(),
             start_frequency_hz: FREQUENCY_HZ,
             channel_width_hz: 1.0e6,
@@ -188,5 +188,61 @@ fn w_projection_recovers_the_far_point_the_standard_gridder_smears() {
         standard.pixel,
         standard.offset_px,
         projected.peak_jy
+    );
+}
+
+/// Facets retain the W kernels and their own sums while a minor cycle's
+/// model is predicted through the faceted operator (#1063).
+#[test]
+fn w_projection_facets_keep_w_and_refresh_the_model() {
+    let observation = Observation::synthesise_setup(setup(), &[("centre", CENTRE), ("far", FAR)]);
+    let (summary, projected) = observation.image(
+        "w-facets",
+        json!({"gridder": "wproject", "wprojplanes": 4, "facets": 2,
+               "weighting": "natural", "deconvolver": "hogbom", "niter": 10}),
+    );
+    let (_, flat) = observation.image(
+        "w-facets-flat",
+        json!({"gridder": "standard", "facets": 2, "weighting": "natural", "niter": 0}),
+    );
+    let (_, finer) = observation.image(
+        "w-facets-finer",
+        json!({"gridder": "wproject", "wprojplanes": 12, "facets": 2,
+               "weighting": "natural", "niter": 0}),
+    );
+    assert_eq!(&projected.get(".sumwt").image.shape()[..2], &[2, 2]);
+    assert!(summary.actual_minor_iterations > 0);
+    assert!(
+        summary.major_cycles >= 2,
+        "the clean must predict its model"
+    );
+    assert!(
+        projected
+            .get(".model")
+            .pixels
+            .iter()
+            .any(|value| *value != 0.0)
+    );
+    let w = &projected.get(".psf").pixels;
+    let no_w = &flat.get(".psf").pixels;
+    let (difference, power) = w
+        .iter()
+        .zip(no_w)
+        .fold((0.0_f64, 0.0_f64), |(d, p), (a, b)| {
+            (d + f64::from(a - b).powi(2), p + f64::from(*a).powi(2))
+        });
+    assert!(
+        (difference / power).sqrt() > 1.0e-4,
+        "the fixture must distinguish W projection"
+    );
+    let finer_psf = &finer.get(".psf").pixels;
+    let difference: f64 = w
+        .iter()
+        .zip(finer_psf)
+        .map(|(a, b)| f64::from(a - b).powi(2))
+        .sum();
+    assert!(
+        (difference / power).sqrt() > 1.0e-6,
+        "the fixture must distinguish four from twelve W planes"
     );
 }

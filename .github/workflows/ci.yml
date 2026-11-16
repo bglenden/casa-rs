@@ -24,13 +24,43 @@ jobs:
       # debug info in ~130 linked test binaries.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
+      # The restored cache and a rebuild of what a change to a low-level crate
+      # invalidates sit side by side, which can fill the runner's disk: the
+      # runner then dies with no log (#1115, #1119). These tools go unused here.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          df -h /
+
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # arch-check resolves the reviewed CASA-compatibility evidence at
+          # its pinned commits (scripts/casa_compat_semantics.py).
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Set up Python for Rust tests
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install NumPy for Rust tests
+        run: python -m pip install 'numpy>=2,<3'
+
+      # PyO3 configures itself once per build cache: the restored cache keeps
+      # the library directory of the interpreter it was built with. Naming
+      # the interpreter by its versioned path makes PyO3 configure itself
+      # again when "3.12" moves to a new patch release (PYO3_PYTHON is one of
+      # its rerun triggers); a fixed `python3` linked against a directory
+      # the new runner no longer has.
+      - name: Point PyO3 at the interpreter installed
+        run: echo "PYO3_PYTHON=$pythonLocation/bin/python3" >> "$GITHUB_ENV"
 
       - name: Install FFTW development libraries
         run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
@@ -51,7 +81,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --keep-going -- -D warnings
 
       - name: Install explicit measures runtime for integration tests
         run: |
@@ -95,7 +125,7 @@ jobs:
           python-version: "3.10"
 
       - name: Test Python package
-        run: scripts/test-python-package.sh
+        run: scripts/test-python-package.sh --plot
 
   perf_tools:
     runs-on: ubuntu-latest

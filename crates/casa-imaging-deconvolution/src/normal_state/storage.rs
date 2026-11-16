@@ -180,6 +180,15 @@ impl NormalStatePrimitives {
         }
     }
 
+    pub(crate) fn refilled_sum_weight(&self, ordinal: usize) -> bool {
+        match self {
+            Self::Coupled(domains) => domains
+                .get(ordinal)
+                .is_some_and(|d| d.refilled_sum_weight()),
+            Self::ChannelLocal(_) => false,
+        }
+    }
+
     /// The resident domains of a coupled coefficient family.
     pub(crate) fn into_coupled(self) -> Result<Box<[SpectralDomainPrimitives]>, NormalStateError> {
         match self {
@@ -227,7 +236,7 @@ impl NormalStatePrimitives {
                     .get(ordinal)
                     .ok_or(NormalStateError::InvalidSlab)?
                     .primitives();
-                if domain.basis != (SpectralBasisPlan::Polynomial { terms: 1 }) {
+                if domain.basis != SpectralBasisPlan::Constant {
                     return Err(NormalStateError::NormalStorage(
                         "a single plane is read only from a channel-local or constant-basis normal state"
                             .into(),
@@ -534,7 +543,15 @@ impl<'a> FinalNormalPlaneReader<'a> {
         }
     }
 
-    pub(crate) fn read_residual_real(&self) -> Result<Option<Cow<'a, [f32]>>, NormalStateError> {
+    /// Read only the selected unnormalized dirty or residual plane as Float values.
+    ///
+    /// Values use the x-major plane layout. `None` means the backing is not
+    /// real Float and the complex reader must be used instead.
+    ///
+    /// # Errors
+    ///
+    /// The backing cannot read the plane or returns an invalid window.
+    pub fn read_residual_real(&self) -> Result<Option<Cow<'a, [f32]>>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_real(&d.fields.dirty, offset, self.cells),
@@ -542,7 +559,7 @@ impl<'a> FinalNormalPlaneReader<'a> {
         }
     }
 
-    /// Load only the selected unnormalized point-spread-function plane.
+    /// Load only the selected gridded or saved PSF plane.
     pub fn read_psf(&self) -> Result<Cow<'a, [Complex64]>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
@@ -554,7 +571,15 @@ impl<'a> FinalNormalPlaneReader<'a> {
         }
     }
 
-    pub(crate) fn read_psf_real(&self) -> Result<Option<Cow<'a, [f32]>>, NormalStateError> {
+    /// Read only the selected gridded or saved PSF plane as Float values.
+    ///
+    /// Values use the x-major plane layout. `None` means the backing is not
+    /// real Float and the complex reader must be used instead.
+    ///
+    /// # Errors
+    ///
+    /// The backing cannot read the plane or returns an invalid window.
+    pub fn read_psf_real(&self) -> Result<Option<Cow<'a, [f32]>>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_real(&d.fields.psf, offset, self.cells),

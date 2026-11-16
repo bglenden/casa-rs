@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's `simutil` helpers that `simobserve` uses (simulation Phase 5,
 //! #841): CASA 6.7.6's `casatasks/src/private/simutil.py`, ported as its
-//! specification (ADR-0018).
+//! specification (ADR-0017).
 //!
 //! | CASA | casa-rs |
 //! |---|---|
@@ -11,8 +11,10 @@
 //! | `read_pointings`, `write_pointings` | [`pointings::read_pointings`], [`pointings::write_pointings`] |
 //! | `noisetemp`, `bandname`, `polsettings` | [`receivers::noise_temperature`], [`receivers::band_name`], [`receivers::polarization_settings`] |
 //! | `itrf2loc`, `baselineLengths`, `approxBeam` | [`baselines::itrf_to_local`], [`baselines::baseline_lengths`], [`baselines::approximate_beam`] |
+//! | `sfBeam1d`, `sensitivity` | [`beam::spheroidal_beam`], [`sensitivity::sensitivity`], [`sensitivity::array_sensitivity`] |
 //! | `dir_s2m` | [`direction::direction_measure`] |
-//! | `modifymodel`, `flatimage`, `ia.modify`, the component-only model | [`skymodel`] |
+//! | `setcfg`'s mount | [`config::default_mount`] |
+//! | `modifymodel`, `flatimage`, `is4d`, `spectral`, `ia.modify`, the component-only model | [`skymodel`] |
 //! | `cellsize`, `statim`, `ismstp`, `convimage`, `simanalyze`'s fidelity | [`analysis`] |
 //!
 //! **CASA's numbers to the last bit.** Pointing lists are compared with
@@ -47,10 +49,14 @@
 
 pub mod analysis;
 pub mod baselines;
+pub mod beam;
+pub mod config;
 pub mod direction;
+pub mod graphics;
 pub mod pointings;
 pub(crate) mod qa;
 pub mod receivers;
+pub mod sensitivity;
 pub mod skymodel;
 
 pub use qa::python_float;

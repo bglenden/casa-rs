@@ -316,6 +316,68 @@
         "fits"
       ],
       "include_in_suite": true
+    },
+    {
+      "id": "msconvert",
+      "launch": {
+        "executable": "msconvert",
+        "cargo_package": "casars-msconvert",
+        "override_env": "CASARS_MSCONVERT_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "simanalyze",
+      "launch": {
+        "executable": "simanalyze",
+        "cargo_package": "casars-simulation",
+        "override_env": "CASARS_SIMANALYZE_BIN"
+      },
+      "dataset_kinds": [
+        "image",
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "tsdimaging",
+      "launch": {
+        "executable": "tsdimaging",
+        "cargo_package": "casars-imager",
+        "override_env": "CASARS_TSDIMAGING_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "concat",
+      "launch": {
+        "executable": "concat",
+        "cargo_package": "casa-ms",
+        "override_env": "CASARS_CONCAT_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "simalma",
+      "launch": {
+        "executable": "simalma",
+        "cargo_package": "casars-simulation",
+        "override_env": "CASARS_SIMALMA_BIN"
+      },
+      "dataset_kinds": [
+        "image",
+        "measurement_set"
+      ],
+      "include_in_suite": true
     }
   ]
 }

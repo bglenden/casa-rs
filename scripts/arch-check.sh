@@ -29,8 +29,8 @@ for path in "${required_files[@]}"; do
 done
 
 python3 scripts/check-parameter-surface-catalog.py
-python3 scripts/check-parameter-contract-history.py
 python3 scripts/check-casa-inventory.py
+python3 scripts/test-casa-compat-semantics.py
 python3 scripts/check-no-casa-runtime.py
 python3 scripts/check-imaging-dependencies.py --self-test
 python3 scripts/check-imaging-dependencies.py

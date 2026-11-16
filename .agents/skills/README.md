@@ -1,15 +1,9 @@
 # Repository skills
 
-This repository vendors only skills that encode casa-rs-specific domain
-knowledge:
+This directory holds only skills that encode casa-rs domain knowledge:
 
-- `casa-rs-imaging-performance`
+- `casa-rs-imaging-performance`: imaging performance and CASA parity work.
 
-Generic development procedures are intentionally not copied into the
-repository. Use the globally installed Matt Pocock skills for shaping,
-domain-modeling, research, TDD, diagnosis, codebase design, code review, and
-merge-conflict resolution when those skills are available in the runtime.
-
-`AGENTS.md`, `ARCHITECTURE.md`, `TESTING.md`, accepted ADRs, tests, and CI own
-durable project policy. GitHub issues and pull requests own work state and
-acceptance evidence.
+Generic development workflows come from user-level skills and are not copied
+here. Project policy lives in `AGENTS.md`, `ARCHITECTURE.md`, `TESTING.md`
+and the ADRs; work state lives in GitHub issues and pull requests.

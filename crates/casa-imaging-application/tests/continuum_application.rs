@@ -11,7 +11,7 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_application::{
     ApplicationDispatchError, Cancel, CleanStop, HostResources, ImagingOutcome, ImagingRequest,
-    PrepareError, ResourcePolicy, RunContext, SourceRoute, route_law,
+    PrepareError, ResourcePolicy, RunContext, product_law,
 };
 use casa_imaging_model::{
     ImageDomainRole, ProductBeamRule, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,
@@ -303,7 +303,7 @@ fn a_selection_of_no_rows_is_refused() {
     assert!(
         matches!(
             error,
-            ApplicationDispatchError::Preparation(PrepareError::NoSelectedRows)
+            ApplicationDispatchError::Preparation(PrepareError::NoSelectedSamples)
         ),
         "{error}"
     );
@@ -867,8 +867,9 @@ fn spoiled_row_images(spoiled: Spoiled, weighting: &str) -> Result<[ArrayD<f32>;
 }
 
 /// The compiled `FiniteValuePolicy::RejectUnflaggedInput`: an unflagged
-/// non-finite visibility fails the run, naming its row and the remedy,
-/// where CASA images it as NaN everywhere. Under uniform weighting the
+/// non-finite visibility fails the run, naming its sample (window, time,
+/// baseline, channel and correlation; MAIN row 3 is baseline 0–1) and the
+/// remedy, where CASA images it as NaN everywhere. Under uniform weighting the
 /// density pass reads no visibilities, so the first imaging pass finds it.
 #[test]
 fn an_unflagged_nonfinite_visibility_fails_the_run_and_names_it() {
@@ -882,7 +883,9 @@ fn an_unflagged_nonfinite_visibility_fails_the_run_and_names_it() {
             panic!("{weighting}: an unflagged NaN visibility imaged");
         };
         assert!(
-            error.contains("visibility at MAIN row 3") && error.contains("flagdata"),
+            error.contains("unflagged visibility at spectral window 0")
+                && error.contains("baseline 0–1, channel 0")
+                && error.contains("flagdata"),
             "{weighting}: {error}"
         );
     }
@@ -947,7 +950,11 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
         let imaging = request(
             &measurement_set,
             &image_name,
-            json!({ "niter": niter, "outlierfile": outlier_file }),
+            json!({
+                "niter": niter,
+                "outlierfile": outlier_file,
+                "hogbom_iteration_mode": "strict",
+            }),
         );
 
         let result = execute(&imaging).expect("execute T31 multi-domain application");
@@ -1098,8 +1105,12 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
     let outlier_file = root.path().join("reversed.outlier");
     std::fs::write(
         &outlier_file,
-        "imagename=zeta\nimsize=[10,10]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 1.003rad 0.497rad\nusemask=user\nmask=circle[[5pix,5pix],2pix]\n\
-         imagename=alpha\nimsize=[12,12]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 0.998rad 0.502rad\nusemask=user\nmask=circle[[3pix,3pix],1pix]\n",
+        format!(
+            "imagename={}\nimsize=[10,10]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 1.003rad 0.497rad\nusemask=user\nmask=circle[[5pix,5pix],2pix]\n\
+             imagename={}\nimsize=[12,12]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 0.998rad 0.502rad\nusemask=user\nmask=circle[[3pix,3pix],1pix]\n",
+            zeta.display(),
+            alpha.display(),
+        ),
     )
     .expect("write reversed CASA outlier fixture");
     let imaging = request(
@@ -1112,14 +1123,14 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
     let expected = [
         (ImageDomainRole::Main, main.as_path(), 16, [1.0, 0.5], 256),
         (
-            ImageDomainRole::Outlier("alpha".to_string()),
+            ImageDomainRole::Outlier(alpha.display().to_string()),
             alpha.as_path(),
             12,
             [0.998, 0.502],
             5,
         ),
         (
-            ImageDomainRole::Outlier("zeta".to_string()),
+            ImageDomainRole::Outlier(zeta.display().to_string()),
             zeta.as_path(),
             10,
             [1.003, 0.497],

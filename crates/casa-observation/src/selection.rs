@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Which of a partition's grid times a traversal delivers: the request's
-//! time range and field selection resolved against the partition's grid
-//! (`docs/measurement-set/contracts.md`, section 4).
+//! time range and field selection resolved against the partition's grid.
 //!
 //! A selection takes whole times: a field is per time, so selecting fields
 //! leaves runs of consecutive grid times with gaps between them. A batch
 //! holds whole times of one run, so no batch reads a gap; on an MSv4 a run
-//! shorter than a chunk row still decodes that chunk row
-//! (`docs/measurement-set/contracts.md`, section 4).
+//! shorter than a chunk row still decodes that chunk row.
 //!
 //! Intents are not selected here. A partition's samples share their intents
 //! (the catalogue partitions by them, as XRADIO's converter does), so a

@@ -1,0 +1,12 @@
+{
+  "casa_version": "6.7.6-14",
+  "lines": [
+    "2026-11-06 04:35:57\tINFO\tImageHistory::get\tCreated Paged image 'crates/casars-imexplore/tests/data/imhead_put/base.im' of shape [4, 4, 1, 2] with float valued pixels.",
+    "2026-11-06 04:35:57\tINFO\t::::image::fromshape\tRan ia.fromshape",
+    "2026-11-06 04:35:57\tINFO\t::::image::fromshape\tia.fromshape(outfile=\"crates/casars-imexplore/tests/data/imhead_put/base.im\", shape=[4,4,1,2], csys={...}, linear=false, overwrite=true, log=true, type=\"f\")",
+    "2026-11-06 04:35:57\tINFO\t::::image::setrestoringbeam\tRan ia.setrestoringbeam",
+    "2026-11-06 04:35:57\tINFO\t::::image::setrestoringbeam\tia.setrestoringbeam(major=\"3arcmin\", minor=\"2arcsec\", pa=\"0.3rad\", beam={...}, remove=false, log=true, channel=-1, polarization=-1, imagename=\"\")",
+    "2026-11-06 04:35:57\tINFO\t::::image::setbrightnessunit\tRan ia.setbrightnessunit",
+    "2026-11-06 04:35:57\tINFO\t::::image::setbrightnessunit\tia.setbrightnessunit(unit=\"Jy/beam\")"
+  ]
+}

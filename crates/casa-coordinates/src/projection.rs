@@ -12,20 +12,31 @@
 //! | Code | Name | FITS keyword |
 //! |------|------|-------------|
 //! | SIN  | Slant orthographic | `-SIN` |
+//! | AZP  | Zenithal perspective with zero parameters | `-AZP` |
+//! | SZP  | Slant zenithal perspective with tclean parameters | `-SZP` |
+//! | AIR  | Airy with zero reference latitude parameter | `-AIR` |
 //! | TAN  | Gnomonic (tangent plane) | `-TAN` |
 //! | ARC  | Zenithal equidistant | `-ARC` |
 //! | CAR  | Plate carree (cylindrical equidistant) | `-CAR` |
 //! | SFL  | Sanson-Flamsteed (sinusoidal) | `-SFL` |
+//! | PAR  | Parabolic | `-PAR` |
+//! | MOL  | Mollweide equal-area | `-MOL` |
+//! | PCO  | Polyconic | `-PCO` |
 //! | MER  | Mercator | `-MER` |
 //! | AIT  | Hammer-Aitoff | `-AIT` |
 //! | ZEA  | Zenithal equal-area | `-ZEA` |
 //! | STG  | Stereographic | `-STG` |
+//! | TSC  | Tangential spherical cube | `-TSC` |
+//! | CSC  | COBE quadrilateralized spherical cube | `-CSC` |
+//! | QSC  | Quadrilateralized spherical cube | `-QSC` |
 //! | NCP  | North Celestial Pole (SIN special case) | `-NCP` |
 
-use std::f64::consts::{FRAC_PI_2, PI};
+use std::f64::consts::{FRAC_PI_2, LN_2, PI, SQRT_2};
 use std::fmt;
 
 use crate::error::CoordinateError;
+
+mod cube;
 
 /// Degrees-to-radians conversion factor.
 const DEG_TO_RAD: f64 = PI / 180.0;
@@ -41,6 +52,12 @@ const RAD_TO_DEG: f64 = 180.0 / PI;
 pub enum ProjectionType {
     /// Slant orthographic projection.
     SIN,
+    /// Zenithal perspective with tclean's zero parameters.
+    AZP,
+    /// Slant zenithal perspective with tclean's `[0, 0, 90]` parameters.
+    SZP,
+    /// Airy projection with tclean's zero latitude parameter.
+    AIR,
     /// Gnomonic (tangent-plane) projection.
     TAN,
     /// Zenithal equidistant projection.
@@ -49,6 +66,18 @@ pub enum ProjectionType {
     CAR,
     /// Sanson-Flamsteed (sinusoidal) projection.
     SFL,
+    /// Parabolic projection.
+    PAR,
+    /// Mollweide equal-area projection.
+    MOL,
+    /// Polyconic projection.
+    PCO,
+    /// Tangential spherical cube.
+    TSC,
+    /// COBE quadrilateralized spherical cube.
+    CSC,
+    /// Quadrilateralized spherical cube.
+    QSC,
     /// Mercator projection.
     MER,
     /// Hammer-Aitoff equal-area projection.
@@ -78,10 +107,19 @@ impl ProjectionType {
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_uppercase().as_str() {
             "SIN" => Some(Self::SIN),
+            "AZP" => Some(Self::AZP),
+            "SZP" => Some(Self::SZP),
+            "AIR" => Some(Self::AIR),
             "TAN" => Some(Self::TAN),
             "ARC" => Some(Self::ARC),
             "CAR" => Some(Self::CAR),
             "SFL" => Some(Self::SFL),
+            "PAR" => Some(Self::PAR),
+            "MOL" => Some(Self::MOL),
+            "PCO" => Some(Self::PCO),
+            "TSC" => Some(Self::TSC),
+            "CSC" => Some(Self::CSC),
+            "QSC" => Some(Self::QSC),
             "MER" => Some(Self::MER),
             "AIT" => Some(Self::AIT),
             "ZEA" => Some(Self::ZEA),
@@ -95,10 +133,19 @@ impl ProjectionType {
     pub fn name(self) -> &'static str {
         match self {
             Self::SIN => "SIN",
+            Self::AZP => "AZP",
+            Self::SZP => "SZP",
+            Self::AIR => "AIR",
             Self::TAN => "TAN",
             Self::ARC => "ARC",
             Self::CAR => "CAR",
             Self::SFL => "SFL",
+            Self::PAR => "PAR",
+            Self::MOL => "MOL",
+            Self::PCO => "PCO",
+            Self::TSC => "TSC",
+            Self::CSC => "CSC",
+            Self::QSC => "QSC",
             Self::MER => "MER",
             Self::AIT => "AIT",
             Self::ZEA => "ZEA",
@@ -178,10 +225,24 @@ impl Projection {
     pub fn project(&self, phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
         match self.projection_type {
             ProjectionType::SIN => project_sin(phi, theta, &self.parameters),
+            ProjectionType::AZP | ProjectionType::SZP => {
+                self.validate_conversion_parameters()?;
+                project_tan(phi, theta)
+            }
+            ProjectionType::AIR => {
+                self.validate_conversion_parameters()?;
+                project_air(phi, theta)
+            }
             ProjectionType::TAN => project_tan(phi, theta),
             ProjectionType::ARC => project_arc(phi, theta),
             ProjectionType::CAR => project_car(phi, theta),
             ProjectionType::SFL => project_sfl(phi, theta),
+            ProjectionType::PAR => project_par(phi, theta),
+            ProjectionType::MOL => project_mol(phi, theta),
+            ProjectionType::PCO => project_pco(phi, theta),
+            ProjectionType::TSC | ProjectionType::CSC | ProjectionType::QSC => {
+                cube::project(self.projection_type, phi, theta)
+            }
             ProjectionType::MER => project_mer(phi, theta),
             ProjectionType::AIT => project_ait(phi, theta),
             ProjectionType::ZEA => project_zea(phi, theta),
@@ -195,16 +256,58 @@ impl Projection {
     pub fn deproject(&self, x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
         match self.projection_type {
             ProjectionType::SIN => deproject_sin(x, y, &self.parameters),
+            ProjectionType::AZP | ProjectionType::SZP => {
+                self.validate_conversion_parameters()?;
+                deproject_tan(x, y)
+            }
+            ProjectionType::AIR => {
+                self.validate_conversion_parameters()?;
+                deproject_air(x, y)
+            }
             ProjectionType::TAN => deproject_tan(x, y),
             ProjectionType::ARC => deproject_arc(x, y),
             ProjectionType::CAR => deproject_car(x, y),
             ProjectionType::SFL => deproject_sfl(x, y),
+            ProjectionType::PAR => deproject_par(x, y),
+            ProjectionType::MOL => deproject_mol(x, y),
+            ProjectionType::PCO => deproject_pco(x, y),
+            ProjectionType::TSC | ProjectionType::CSC | ProjectionType::QSC => {
+                cube::deproject(self.projection_type, x, y)
+            }
             ProjectionType::MER => deproject_mer(x, y),
             ProjectionType::AIT => deproject_ait(x, y),
             ProjectionType::ZEA => deproject_zea(x, y),
             ProjectionType::STG => deproject_stg(x, y),
             ProjectionType::NCP => deproject_ncp(x, y),
         }
+    }
+
+    /// Confirm that a partially implemented projection uses the parameters
+    /// supported by coordinate conversion. Other projections are unchanged.
+    ///
+    /// AZP and SZP give the gnomonic map at zero distance from the sphere's
+    /// centre (Calabretta & Greisen 2002, §§5.1.1–2). Casacore pads missing
+    /// SZP parameters with `[0, 0, 90]`. AIR requires an explicit zero
+    /// latitude parameter because casacore's missing-parameter default is 90°.
+    pub fn validate_conversion_parameters(&self) -> Result<(), CoordinateError> {
+        let required = match self.projection_type {
+            ProjectionType::AZP if self.parameters.iter().any(|&value| value != 0.0) => {
+                "the zero projection parameters written by tclean"
+            }
+            ProjectionType::SZP if ![0.0, 0.0, 90.0].starts_with(&self.parameters) => {
+                "the [0, 0, 90] projection parameters written by tclean"
+            }
+            ProjectionType::AIR
+                if self.parameters.is_empty() || ![0.0, 0.0].starts_with(&self.parameters) =>
+            {
+                "the zero latitude parameter written by tclean"
+            }
+            _ => return Ok(()),
+        };
+        Err(CoordinateError::ConversionFailed(format!(
+            "{} requires {required}",
+            self.name()
+        )))
     }
 }
 
@@ -263,43 +366,53 @@ fn deproject_sin(x: f64, y: f64, params: &[f64]) -> Result<(f64, f64), Coordinat
         };
         Ok((phi, theta))
     } else {
-        // Generalised SIN:
+        // Generalised (slant) SIN, as WCSLIB's `sinx2s` solves it:
         //   x = cos(theta)*sin(phi) + xi*(1 - sin(theta))
         //   y = -cos(theta)*cos(phi) + eta*(1 - sin(theta))
-        //
-        // Let s = sin_theta, c = cos_theta = sqrt(1-s^2).
-        // x' = x - xi*(1-s) = c*sin(phi)
-        // y' = y - eta*(1-s) = -c*cos(phi)
-        // x'^2 + y'^2 = c^2 = 1 - s^2
-        //
-        // Expand: [x - xi + xi*s]^2 + [y - eta + eta*s]^2 = 1 - s^2
-        // Let a = xi, b = eta, X = x - xi, Y = y - eta:
-        // (X + a*s)^2 + (Y + b*s)^2 = 1 - s^2
-        // X^2 + 2*X*a*s + a^2*s^2 + Y^2 + 2*Y*b*s + b^2*s^2 = 1 - s^2
-        // s^2*(a^2 + b^2 + 1) + 2*s*(X*a + Y*b) + (X^2 + Y^2 - 1) = 0
-        let big_x = x - xi;
-        let big_y = y - eta;
-        let a_coeff = xi * xi + eta * eta + 1.0;
-        let b_coeff = 2.0 * (big_x * xi + big_y * eta);
-        let c_coeff = big_x * big_x + big_y * big_y - 1.0;
-        let disc = b_coeff * b_coeff - 4.0 * a_coeff * c_coeff;
-        if disc < -1e-12 {
-            return Err(CoordinateError::ConversionFailed(
-                "SIN deproject: no solution (generalised)".into(),
-            ));
-        }
-        let disc = disc.max(0.0);
-        // Take the root closest to 1 (near the pole):
-        let s = (-b_coeff + disc.sqrt()) / (2.0 * a_coeff);
-        let s = s.clamp(-1.0, 1.0);
-        let theta = s.asin();
-        let cos_theta = theta.cos();
-        let xp = x - xi * (1.0 - s);
-        let yp = y - eta * (1.0 - s);
-        let phi = if cos_theta.abs() < 1e-15 {
+        // so that, with s = sin(theta), w1 = xi^2 + eta^2 and
+        // xy = x*xi + y*eta,
+        //   (1 + w1)*s^2 + 2*(xy - w1)*s + (r2 - 2*xy + w1 - 1) = 0.
+        // Near the native pole the root is s ~ 1, where asin would turn
+        // the root's rounding into an error of sqrt(eps) in theta; WCSLIB
+        // takes the small-angle form there instead.
+        let r2 = x * x + y * y;
+        let xy = x * xi + y * eta;
+        let w1 = xi * xi + eta * eta;
+        let (theta, z) = if r2 < 1.0e-10 {
+            (FRAC_PI_2 - (r2 / (1.0 + xy)).sqrt(), r2 / 2.0)
+        } else {
+            let a = w1 + 1.0;
+            let b = xy - w1;
+            let c = r2 - xy - xy + w1 - 1.0;
+            let d = b * b - a * c;
+            if d < 0.0 {
+                return Err(CoordinateError::ConversionFailed(
+                    "SIN deproject: no solution (generalised)".into(),
+                ));
+            }
+            let d = d.sqrt();
+            // The solution nearest the pole.
+            let (s1, s2) = ((-b + d) / a, (-b - d) / a);
+            let mut s = s1.max(s2);
+            if s > 1.0 {
+                s = if s - 1.0 < 1.0e-13 { 1.0 } else { s1.min(s2) };
+            }
+            if s < -1.0 && s + 1.0 > -1.0e-13 {
+                s = -1.0;
+            }
+            if !(-1.0..=1.0).contains(&s) {
+                return Err(CoordinateError::ConversionFailed(
+                    "SIN deproject: no solution (generalised)".into(),
+                ));
+            }
+            (s.asin(), 1.0 - s)
+        };
+        let x1 = -y + eta * z;
+        let y1 = x - xi * z;
+        let phi = if x1 == 0.0 && y1 == 0.0 {
             0.0
         } else {
-            xp.atan2(-yp)
+            y1.atan2(x1)
         };
         Ok((phi, theta))
     }
@@ -326,6 +439,72 @@ fn deproject_tan(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
     let phi = x.atan2(-y);
     let theta = (1.0_f64).atan2(r);
     Ok((phi, theta))
+}
+
+// ---------------------------------------------------------------------------
+// AIR (Airy with θ_b = 0)
+// ---------------------------------------------------------------------------
+
+// WCSLIB uses the small-angle limit below this half-zenith angle.
+const AIR_LINEAR_LIMIT: f64 = 1e-4;
+const AIR_SLOPE: f64 = 1.0 + LN_2;
+
+/// Calabretta & Greisen (2002), Eq. 71, in radians. With t = tan(ξ)
+/// and ξ_b = π/4, the radius is ln(1 + t²)/t + ln(2)t.
+fn project_air(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
+    if theta <= -FRAC_PI_2 {
+        return Err(CoordinateError::ConversionFailed(
+            "AIR project: the native south pole is outside the projection".into(),
+        ));
+    }
+    let half_zenith = (FRAC_PI_2 - theta) / 2.0;
+    let radius = if half_zenith < AIR_LINEAR_LIMIT {
+        AIR_SLOPE * half_zenith
+    } else {
+        let tangent = half_zenith.tan();
+        (tangent * tangent).ln_1p() / tangent + LN_2 * tangent
+    };
+    Ok((radius * phi.sin(), -radius * phi.cos()))
+}
+
+/// Invert the monotone radius in t. The logarithm bounds t between
+/// radius/(1 + ln(2)) and radius/ln(2), which bracket the Newton steps.
+fn deproject_air(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
+    let radius = x.hypot(y);
+    if radius == 0.0 {
+        return Ok((0.0, FRAC_PI_2));
+    }
+    let phi = x.atan2(-y);
+    let linear = radius / AIR_SLOPE;
+    if linear < AIR_LINEAR_LIMIT {
+        return Ok((phi, FRAC_PI_2 - 2.0 * linear));
+    }
+
+    let (mut low, mut high) = (linear, radius / LN_2);
+    let mut tangent = low;
+    for _ in 0..32 {
+        let squared = tangent * tangent;
+        let logarithmic_factor = squared.ln_1p() / squared;
+        let error = tangent * (LN_2 + logarithmic_factor) - radius;
+        if error.abs() <= 4.0 * f64::EPSILON * radius {
+            return Ok((phi, FRAC_PI_2 - 2.0 * tangent.atan()));
+        }
+        if error < 0.0 {
+            low = tangent;
+        } else {
+            high = tangent;
+        }
+        let derivative = LN_2 + 2.0 / (1.0 + squared) - logarithmic_factor;
+        let next = tangent - error / derivative;
+        tangent = if low < next && next < high {
+            next
+        } else {
+            low.midpoint(high)
+        };
+    }
+    Err(CoordinateError::ConversionFailed(
+        "AIR deproject: no finite inverse radius".into(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -373,6 +552,186 @@ fn deproject_sfl(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
         x / cos_theta
     };
     Ok((phi, theta))
+}
+
+// ---------------------------------------------------------------------------
+// PAR (parabolic)
+// ---------------------------------------------------------------------------
+
+/// Calabretta & Greisen (2002), Eqs. 94–95, in radians.
+fn project_par(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
+    if theta.abs() == FRAC_PI_2 {
+        return Ok((0.0, FRAC_PI_2.copysign(theta)));
+    }
+    let sine = (theta / 3.0).sin();
+    Ok((phi * (1.0 - 4.0 * sine * sine), PI * sine))
+}
+
+fn deproject_par(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
+    let sine = y / PI;
+    if sine.abs() <= 0.5 {
+        if sine.abs() == 0.5 {
+            if x.abs() < 1e-13 * DEG_TO_RAD {
+                return Ok((0.0, FRAC_PI_2.copysign(y)));
+            }
+        } else {
+            let phi = x / (1.0 - 4.0 * sine * sine);
+            if phi.abs() <= PI + 1e-12 * DEG_TO_RAD {
+                return Ok((phi.clamp(-PI, PI), 3.0 * sine.asin()));
+            }
+        }
+    }
+    Err(CoordinateError::ConversionFailed(
+        "PAR deproject: point outside projection boundary".into(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// MOL (Mollweide equal-area)
+// ---------------------------------------------------------------------------
+
+/// Calabretta & Greisen (2002), Eqs. 97–100, in radians. Solve the
+/// monotone auxiliary-angle equation with bracketed Newton steps.
+fn project_mol(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
+    if theta.abs() == FRAC_PI_2 {
+        return Ok((0.0, SQRT_2.copysign(theta)));
+    }
+    let target = PI * theta.sin().abs();
+    let (mut low, mut high) = (0.0, PI);
+    let mut angle = target / 2.0;
+    for _ in 0..64 {
+        let residual = (angle - target) + angle.sin();
+        if residual.abs() <= 4.0 * f64::EPSILON {
+            let (sine, cosine) = (angle.copysign(theta) / 2.0).sin_cos();
+            return Ok((2.0 * SQRT_2 / PI * phi * cosine, SQRT_2 * sine));
+        }
+        if residual < 0.0 {
+            low = angle;
+        } else {
+            high = angle;
+        }
+        let next = angle - residual / (1.0 + angle.cos());
+        angle = if low < next && next < high {
+            next
+        } else {
+            low.midpoint(high)
+        };
+    }
+    Err(CoordinateError::ConversionFailed(
+        "MOL project: auxiliary angle did not converge".into(),
+    ))
+}
+
+fn deproject_mol(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
+    let width_squared = 2.0 - y * y;
+    // WCSLIB's pole tolerance is applied in the intermediate plane.
+    if width_squared >= -1e-12 {
+        let sine = (y / SQRT_2).clamp(-1.0, 1.0);
+        if width_squared <= 1e-12 {
+            if x.abs() < 1e-12 * DEG_TO_RAD {
+                return Ok((0.0, (2.0 * sine.asin() / PI).asin()));
+            }
+        } else {
+            let width = width_squared.sqrt();
+            let phi = (PI / 2.0) * x / width;
+            if phi.abs() <= PI + 1e-11 * DEG_TO_RAD {
+                let theta = ((2.0 * sine.asin() + y * width) / PI)
+                    .clamp(-1.0, 1.0)
+                    .asin();
+                return Ok((phi.clamp(-PI, PI), theta));
+            }
+        }
+    }
+    Err(CoordinateError::ConversionFailed(
+        "MOL deproject: point outside projection boundary".into(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// PCO (polyconic)
+// ---------------------------------------------------------------------------
+
+// WCSLIB's small-angle switch and equator/pole tolerance, in radians.
+const PCO_EQUATOR_LIMIT: f64 = 1e-4 * DEG_TO_RAD;
+const PCO_ANGLE_TOLERANCE: f64 = 1e-12 * DEG_TO_RAD;
+
+/// Calabretta & Greisen (2002), §5.5.2. The half-angle expression
+/// for 1 - cos(a) preserves small offsets from the central meridian.
+fn project_pco(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
+    if theta.abs() == FRAC_PI_2 {
+        return Ok((0.0, theta));
+    }
+    let (sine, cosine) = theta.sin_cos();
+    if theta.abs() < PCO_EQUATOR_LIMIT {
+        let x = phi * cosine;
+        return Ok((x, theta * (1.0 + x * x / 2.0)));
+    }
+    let a = phi * sine;
+    let cotangent = cosine / sine;
+    Ok((
+        cotangent * a.sin(),
+        theta + 2.0 * cotangent * (a / 2.0).sin().powi(2),
+    ))
+}
+
+fn deproject_pco(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
+    let height = y.abs();
+    let (phi, theta) = if height < PCO_ANGLE_TOLERANCE {
+        (x, 0.0)
+    } else if (height - FRAC_PI_2).abs() < PCO_ANGLE_TOLERANCE {
+        (0.0, FRAC_PI_2)
+    } else {
+        let theta = pco_inverse_latitude(x, height)?;
+        let (sine, cosine) = theta.sin_cos();
+        let phi = (x * sine).atan2(cosine - (height - theta) * sine) / sine;
+        (phi, theta)
+    };
+    if phi.abs() <= PI + PCO_ANGLE_TOLERANCE {
+        Ok((phi.clamp(-PI, PI), theta.copysign(y)))
+    } else {
+        Err(CoordinateError::ConversionFailed(
+            "PCO deproject: point outside projection boundary".into(),
+        ))
+    }
+}
+
+/// Invert WCSLIB's circle equation after multiplying by sin(theta).
+/// The residual's derivative is (x² + (height - theta)² + 2) cos(theta),
+/// so the physical root is bracketed between the equator and the pole.
+/// The exact central meridian has `theta = height`, avoiding WCSLIB's
+/// zero divided by zero in the first weighted division when `x == 0`.
+fn pco_inverse_latitude(x: f64, height: f64) -> Result<f64, CoordinateError> {
+    let x_squared = x * x;
+    let estimate = height / (1.0 + x_squared / 2.0);
+    if height < PCO_EQUATOR_LIMIT {
+        return Ok(estimate);
+    }
+    let (mut low, mut high) = (0.0, height.min(FRAC_PI_2));
+    let mut theta = estimate.min(high);
+    for _ in 0..64 {
+        let (sine, cosine) = theta.sin_cos();
+        let offset = height - theta;
+        let radius_squared = x_squared + offset * offset;
+        let residual = radius_squared * sine - 2.0 * offset * cosine;
+        let slope = (radius_squared + 2.0) * cosine;
+        if residual.abs() <= PCO_ANGLE_TOLERANCE * slope || high - low <= PCO_ANGLE_TOLERANCE {
+            return Ok(theta);
+        }
+        if residual < 0.0 {
+            low = theta;
+        } else {
+            high = theta;
+        }
+        let next = theta - residual / slope;
+        theta = if low < next && next < high {
+            next
+        } else {
+            low.midpoint(high)
+        };
+    }
+    Err(CoordinateError::ConversionFailed(
+        "PCO deproject: latitude did not converge".into(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -593,6 +952,78 @@ mod tests {
         roundtrip(&proj, 0.1, 1.2);
         roundtrip(&proj, 0.0, FRAC_PI_2);
         roundtrip(&proj, -0.3, 1.0);
+    }
+
+    #[test]
+    fn zenithal_transforms_refuse_parameters_outside_tclean() {
+        for (kind, parameters) in [
+            (ProjectionType::AZP, vec![2.0, 0.0]),
+            (ProjectionType::AZP, vec![0.0, 10.0]),
+            (ProjectionType::SZP, vec![1.0, 0.0, 90.0]),
+            (ProjectionType::SZP, vec![0.0, 0.0, 45.0]),
+            (ProjectionType::AIR, vec![]),
+            (ProjectionType::AIR, vec![90.0]),
+        ] {
+            let projection = Projection::with_parameters(kind, parameters);
+            assert!(projection.project(0.4, 1.2).is_err(), "{kind:?}");
+            assert!(projection.deproject(0.04, 0.03).is_err(), "{kind:?}");
+        }
+    }
+
+    /// WCSLIB's AIR forward transform has no finite projection at the antipode.
+    #[test]
+    fn airy_rejects_the_native_south_pole() {
+        let projection = Projection::with_parameters(ProjectionType::AIR, vec![0.0]);
+        assert!(projection.project(0.0, -FRAC_PI_2).is_err());
+    }
+
+    /// As in WCSLIB, the pseudocylindrical boundaries collapse to one
+    /// representable point at either pole and have a finite equator.
+    #[test]
+    fn pseudocylindrical_boundaries_refuse_outside_pixels() {
+        for (kind, pole, equator_edge) in [
+            (ProjectionType::PAR, FRAC_PI_2, PI),
+            (ProjectionType::MOL, SQRT_2, 2.0 * SQRT_2),
+        ] {
+            let projection = Projection::new(kind);
+            for sign in [-1.0, 1.0] {
+                let pole = pole * sign;
+                assert_eq!(
+                    projection.project(0.7, FRAC_PI_2 * sign).unwrap(),
+                    (0.0, pole)
+                );
+                let (phi, theta) = projection.deproject(0.0, pole).unwrap();
+                assert_eq!(phi, 0.0);
+                assert!((theta - FRAC_PI_2 * sign).abs() < 1e-12);
+                assert!(projection.deproject(0.001, pole).is_err(), "{kind:?}");
+                assert!(
+                    projection.deproject(0.0, pole + 0.001 * sign).is_err(),
+                    "{kind:?}"
+                );
+            }
+            assert!(projection.deproject(equator_edge, 0.0).is_ok(), "{kind:?}");
+            assert!(
+                projection.deproject(equator_edge + 0.01, 0.0).is_err(),
+                "{kind:?}"
+            );
+        }
+    }
+
+    /// WCSLIB maps the equator directly and rejects longitude beyond ±π.
+    /// The native inverse also gives finite worlds on the central meridian.
+    #[test]
+    fn polyconic_equator_and_central_meridian_are_finite() {
+        let projection = Projection::new(ProjectionType::PCO);
+        assert_eq!(projection.project(1.1, 0.0).unwrap(), (1.1, 0.0));
+        assert_eq!(projection.deproject(PI, 0.0).unwrap(), (PI, 0.0));
+        assert!(projection.deproject(PI + 1e-3, 0.0).is_err());
+        let offset = 24.0 * DEG_TO_RAD / 3600.0;
+        for latitude in [-offset, offset] {
+            assert_eq!(
+                projection.deproject(0.0, latitude).unwrap(),
+                (0.0, latitude)
+            );
+        }
     }
 
     #[test]

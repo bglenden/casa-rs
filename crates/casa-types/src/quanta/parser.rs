@@ -28,6 +28,11 @@ use crate::quanta::unit_val::UnitVal;
 /// On success the result is cached in the global registry for future lookups.
 /// Returns `Err(UnitError::InvalidUnit)` if the string cannot be parsed.
 pub fn parse_unit(input: &str) -> Result<UnitVal, UnitError> {
+    parse_unit_with_hook(input, || {})
+}
+
+/// `after_parse` permits a deterministic registration interleaving in tests.
+fn parse_unit_with_hook(input: &str, mut after_parse: impl FnMut()) -> Result<UnitVal, UnitError> {
     let input = input.trim();
     if input.is_empty() {
         return Ok(UnitVal::NODIM);
@@ -39,19 +44,28 @@ pub fn parse_unit(input: &str) -> Result<UnitVal, UnitError> {
         return Ok(val);
     }
 
-    let bytes = input.as_bytes();
-    let mut pos = 0;
-    let result = parse_expr(bytes, &mut pos)?;
-
-    if pos != bytes.len() {
-        return Err(UnitError::InvalidUnit {
-            input: input.to_owned(),
-        });
+    loop {
+        // FITS may change the meaning of any matching alias. If registration
+        // or a user definition changes during parsing, retry.
+        let fits_enabled = reg.cache_fits_state();
+        let user_generation = reg.user_generation();
+        let bytes = input.as_bytes();
+        let mut pos = 0;
+        let result = parse_expr(bytes, &mut pos);
+        after_parse();
+        if fits_enabled != reg.cache_fits_state() || user_generation != reg.user_generation() {
+            continue;
+        }
+        let result = result?;
+        if pos != bytes.len() {
+            return Err(UnitError::InvalidUnit {
+                input: input.to_owned(),
+            });
+        }
+        // A late cache write retains the state under which parsing began.
+        reg.cache_put_at_state(input, result, fits_enabled, user_generation);
+        return Ok(result);
     }
-
-    // Cache the result.
-    reg.cache_put(input, result);
-    Ok(result)
 }
 
 /// Parse a full expression: sequence of terms separated by `.` or `/`.
@@ -88,7 +102,23 @@ fn parse_term(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
         return Ok(UnitVal::NODIM);
     }
 
-    let val = if bytes[*pos] == b'(' {
+    // casacore treats an unsigned digit following the special `_` field
+    // (including a prefixed form like `m_`) as part of its name. Signed
+    // exponents and exponents on a parenthesized expression remain valid.
+    let start = *pos;
+    let parenthesized = bytes[start] == b'(';
+    let val = if bytes[*pos].is_ascii_digit() {
+        // casacore accepts numeric fields as dimensionless, including a
+        // numeric prefix directly before a unit (for example `1m`).
+        while bytes.get(*pos).is_some_and(u8::is_ascii_digit) {
+            *pos += 1;
+        }
+        if scan_field(bytes, *pos) > *pos {
+            parse_term(bytes, pos)?
+        } else {
+            UnitVal::NODIM
+        }
+    } else if bytes[*pos] == b'(' {
         *pos += 1;
         let inner = parse_expr(bytes, pos)?;
         if *pos >= bytes.len() || bytes[*pos] != b')' {
@@ -102,6 +132,12 @@ fn parse_term(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
         parse_field(bytes, pos)?
     };
 
+    let underscore_field = !parenthesized && *pos > start && bytes[*pos - 1] == b'_';
+    if underscore_field && bytes.get(*pos).is_some_and(u8::is_ascii_digit) {
+        return Err(UnitError::InvalidUnit {
+            input: String::from_utf8_lossy(bytes).into_owned(),
+        });
+    }
     // Optional exponent.
     let exp = parse_exponent(bytes, pos);
     if exp != 1 { Ok(val.pow(exp)) } else { Ok(val) }
@@ -262,10 +298,48 @@ mod tests {
     }
 
     #[test]
+    fn a_non_s_expression_is_retried_if_fits_is_registered_during_parse() {
+        let reg = global_registry();
+        reg.put_user("IXEL", UnitVal::new(2.0, UnitVal::TIME.dim), "test");
+        let mut registered = false;
+        let value = parse_unit_with_hook("PIXEL.m", || {
+            if !registered {
+                reg.add_fits_units();
+                registered = true;
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            (value.factor, value.dim),
+            (1.0, (UnitVal::UNDIM * UnitVal::LENGTH).dim)
+        );
+        let direct = parse_unit("PIXEL").unwrap();
+        assert_eq!((direct.factor, direct.dim), (1.0, UnitVal::UNDIM.dim));
+    }
+
+    #[test]
     fn parse_empty() {
         let val = parse_unit("").unwrap();
         assert_eq!(val.factor, 1.0);
         assert!(val.dim.is_dimensionless());
+    }
+
+    #[test]
+    fn parse_one_is_dimensionless() {
+        let val = parse_unit("1").unwrap();
+        assert_eq!(val.factor, 1.0);
+        assert!(val.dim.is_dimensionless());
+        for expression in ["1.m", "m.1", "1m", "(1).m", "2.m"] {
+            let actual = parse_unit(expression).unwrap();
+            let expected = parse_unit("m").unwrap();
+            assert_eq!(actual.dim, expected.dim, "{expression}");
+            assert_eq!(actual.factor, expected.factor, "{expression}");
+        }
+        assert_eq!(
+            parse_unit("1/m").unwrap().dim,
+            parse_unit("/m").unwrap().dim
+        );
+        assert!(parse_unit("(1)2").unwrap().dim.is_dimensionless());
     }
 
     #[test]
@@ -302,6 +376,18 @@ mod tests {
         let val = parse_unit("s-2").unwrap();
         assert_eq!(val.factor, 1.0);
         assert_eq!(val.dim.get(Dimension::Time), -2);
+    }
+
+    #[test]
+    fn underscore_field_requires_a_sign_on_direct_exponents() {
+        for invalid in ["_0", "_1", "_2", "_4", "m_2", "k_2", "da_2", "m._2", "m/_2"] {
+            assert!(parse_unit(invalid).is_err(), "{invalid}");
+        }
+        for valid in [
+            "_", "_+2", "_-0", "_-1", "_-2", "m_", "m_-2", "m_+2", "(_)2", "(_)-2", "_._", "_/s2",
+        ] {
+            assert!(parse_unit(valid).is_ok(), "{valid}");
+        }
     }
 
     #[test]
@@ -371,5 +457,28 @@ mod tests {
         assert_eq!(val.dim.get(Dimension::Time), -2);
         assert_eq!(val.dim.get(Dimension::Temperature), -1);
         assert_eq!(val.dim.get(Dimension::Amount), -1);
+    }
+
+    #[test]
+    fn concurrent_user_redefinitions_do_not_mix_one_expression() {
+        let reg = global_registry();
+        let unit = |factor| UnitVal::new(factor, crate::quanta::UnitDim::NODIM);
+        reg.put_user("casaRaceUnit", unit(2.0), "test");
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for i in 0..4000 {
+                    reg.put_user(
+                        "casaRaceUnit",
+                        unit(if i % 2 == 0 { 3.0 } else { 2.0 }),
+                        "test",
+                    );
+                }
+            });
+            for _ in 0..4000 {
+                let result = parse_unit("casaRaceUnit.casaRaceUnit").unwrap().factor;
+                assert!(result == 4.0 || result == 9.0, "mixed definition: {result}");
+            }
+        });
+        reg.remove_user("casaRaceUnit");
     }
 }

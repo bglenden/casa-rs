@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! An MSv2 destination's `POINTING`: the samples each input's plan's reads
+//! An MSv2 destination preserves an MSv2 source's POINTING rows and required
+//! metadata, remapping only antenna IDs. For MSv4, it writes the samples
+//! each input's plan's reads
 //! gather through the boundary ([`Observation::pointing`],
 //! [`PointingPlan::reads`]), one row per sample, input after input, each
 //! input's in (time, antenna) order as casacore's
@@ -57,6 +59,7 @@ pub(super) fn gathered_bytes(samples: usize, coefficients: usize) -> usize {
 /// output's `ANTENNA` row of each of its antennas.
 pub(super) struct Pointed<'a> {
     pub(super) observation: &'a dyn Observation,
+    pub(super) msv2: Option<&'a crate::observation_io::Msv2Observation>,
     pub(super) plan: &'a PointingPlan,
     pub(super) antennas: &'a [i32],
 }
@@ -78,6 +81,63 @@ pub(super) fn write(
     ms: &mut MeasurementSet,
     inputs: &[Pointed<'_>],
 ) -> Result<(), ObservationError> {
+    // Preserving MSv2 storage decorations belongs here, inside its adapter's
+    // writer; no task reads or reconstructs pointing payload itself.
+    for input in inputs {
+        if input.plan.preserved() {
+            copy_msv2(ms, input)?;
+        } else {
+            write_series(ms, std::slice::from_ref(input))?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_msv2(ms: &mut MeasurementSet, input: &Pointed<'_>) -> Result<(), ObservationError> {
+    let source = input
+        .msv2
+        .expect("preserved MSv2 pointing")
+        .measurement_set();
+    let Some(source) = source.subtable(SubtableId::Pointing) else {
+        return Ok(());
+    };
+    let table = subtable_mut(ms, SubtableId::Pointing).map_err(storage)?;
+    if source.row_count() == 0 {
+        return Ok(());
+    }
+    for column in schema::pointing::REQUIRED_COLUMNS {
+        if let Some(keywords) = source.column_keywords(column.name) {
+            if table.row_count() > 0 && table.column_keywords(column.name) != Some(keywords) {
+                return Err(crate::observation_io::update::request_error(
+                    "POINTING column metadata differs between inputs (#939)",
+                ));
+            }
+            table.set_column_keywords(column.name, keywords.clone());
+        }
+    }
+    for row in source.rows().map_err(storage)? {
+        let mut row = row.clone();
+        let antenna = match row.get("ANTENNA_ID") {
+            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(id))) => *id,
+            _ => {
+                return Err(crate::observation_io::update::request_error(
+                    "POINTING ANTENNA_ID is not int32",
+                ));
+            }
+        };
+        // -1 is CASA's all-antennas row, which remains -1.
+        if antenna >= 0 {
+            let mapped = *input.antennas.get(antenna as usize).ok_or_else(|| {
+                crate::observation_io::update::request_error("POINTING names an unknown antenna")
+            })?;
+            *row.get_mut("ANTENNA_ID").expect("checked antenna") = i(mapped);
+        }
+        table.add_row(row).map_err(storage)?;
+    }
+    Ok(())
+}
+
+fn write_series(ms: &mut MeasurementSet, inputs: &[Pointed<'_>]) -> Result<(), ObservationError> {
     let mut gathered = Vec::with_capacity(inputs.len());
     let mut frame = None;
     for input in inputs {

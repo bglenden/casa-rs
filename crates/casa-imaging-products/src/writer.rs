@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The CASA image writer (plan section 5.7).
+//! The CASA image writer.
 //!
 //! Each member is written to a private staging directory beside its target.
 //! Publishing then replaces each target on its own: the staged image is
@@ -29,12 +29,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CString, OsString};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
-use casa_imaging_model::{ImageDomainRole, ProductPixelMask, ProductRole, ProductUnit};
+use casa_imaging_model::{
+    ImageDomainRole, ProductPixelMask, ProductRole, ProductTerm, ProductUnit,
+};
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
@@ -43,8 +45,11 @@ use crate::{PlannedContinuumGeneration, PlannedMember, ProductsError, RestoringB
 
 /// The CASA image member set of one run, staged until [`Self::publish`].
 pub struct CasaImageWriter {
-    domains: BTreeMap<ImageDomainRole, CasaImageDomainOutput>,
-    staged: Mutex<Vec<StagedImage>>,
+    domains: Arc<BTreeMap<ImageDomainRole, CasaImageDomainOutput>>,
+    alternate_coordinates: Option<Vec<(ImageDomainRole, CoordinateSystem)>>,
+    main_psf_coordinates: Option<Arc<CoordinateSystem>>,
+    mem_alpha: Option<f32>,
+    staged: Arc<Mutex<Vec<StagedImage>>>,
 }
 
 /// Where one compiled image domain's members are written, and their
@@ -54,6 +59,10 @@ pub struct CasaImageDomainOutput {
     role: ImageDomainRole,
     base: PathBuf,
     coordinates: CoordinateSystem,
+    /// The name the images give their object.
+    object_name: String,
+    /// The telescope in their `miscinfo`'s `INSTRUME`.
+    telescope: String,
 }
 
 impl CasaImageDomainOutput {
@@ -64,7 +73,17 @@ impl CasaImageDomainOutput {
             role,
             base,
             coordinates,
+            object_name: String::new(),
+            telescope: String::new(),
         }
+    }
+
+    /// Name the observed source and telescope in these images.
+    #[must_use]
+    pub fn observing(mut self, object_name: &str, telescope: &str) -> Self {
+        self.object_name = object_name.to_owned();
+        self.telescope = telescope.to_owned();
+        self
     }
 }
 
@@ -72,6 +91,33 @@ struct StagedImage {
     _directory: tempfile::TempDir,
     staging: PathBuf,
     target: PathBuf,
+}
+
+/// Keep the `logtable` of the image at `target` in the image about to replace
+/// it: a run on an existing image appends to its history, as CASA's does,
+/// which updates the image in place.
+fn carry_history(target: &Path, staging: &Path) -> std::io::Result<()> {
+    let earlier = target.join("logtable");
+    if !earlier.is_dir() {
+        return Ok(());
+    }
+    let staged = staging.join("logtable");
+    fs::remove_dir_all(&staged)?;
+    copy_directory(&earlier, &staged)
+}
+
+fn copy_directory(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
 
 impl CasaImageWriter {
@@ -109,9 +155,91 @@ impl CasaImageWriter {
             "compiled image domains include the main domain"
         );
         Self {
-            domains: outputs,
-            staged: Mutex::new(Vec::new()),
+            domains: Arc::new(outputs),
+            alternate_coordinates: None,
+            main_psf_coordinates: None,
+            mem_alpha: None,
+            staged: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Bind alternate coordinates to the same output domains and staging.
+    ///
+    /// Product families with different coordinate systems may be generated
+    /// sequentially with the returned writer and this writer. Publishing from
+    /// either publishes their combined staging; dropping one leaves the
+    /// staging alive while the other remains. A failed generation discards
+    /// only the members it staged.
+    ///
+    /// # Panics
+    ///
+    /// If the coordinates do not name each bound domain exactly once.
+    #[must_use]
+    pub fn with_coordinates(&self, coordinates: Vec<(ImageDomainRole, CoordinateSystem)>) -> Self {
+        assert_eq!(
+            coordinates.len(),
+            self.domains.len(),
+            "coordinates name every domain"
+        );
+        for (index, (role, _)) in coordinates.iter().enumerate() {
+            assert!(self.domains.contains_key(role), "a bound domain");
+            assert!(
+                coordinates[..index].iter().all(|(prior, _)| prior != role),
+                "each domain is named once"
+            );
+        }
+        Self {
+            domains: Arc::clone(&self.domains),
+            alternate_coordinates: Some(coordinates),
+            main_psf_coordinates: self.main_psf_coordinates.clone(),
+            mem_alpha: self.mem_alpha,
+            staged: Arc::clone(&self.staged),
+        }
+    }
+
+    /// Use the separately gridded main PSF's coordinates for its image.
+    /// The residual, model, weight and other products keep the main grid.
+    pub fn set_main_psf_coordinates(&mut self, coordinates: CoordinateSystem) {
+        self.main_psf_coordinates = Some(Arc::new(coordinates));
+    }
+
+    fn member_coordinates(&self, member: &PlannedMember) -> &CoordinateSystem {
+        let role = member.axes().domain();
+        if role == &ImageDomainRole::Main
+            && matches!(member.role(), ProductRole::Psf(_))
+            && let Some(coordinates) = &self.main_psf_coordinates
+        {
+            return coordinates;
+        }
+        self.coordinates_for(role)
+    }
+
+    /// The coordinate binding of this family, or the original binding.
+    fn coordinates_for(&self, role: &ImageDomainRole) -> &CoordinateSystem {
+        match &self.alternate_coordinates {
+            Some(coordinates) => {
+                &coordinates
+                    .iter()
+                    .find(|(candidate, _)| candidate == role)
+                    .expect("coordinates name every bound domain")
+                    .1
+            }
+            None => &self.output(role).coordinates,
+        }
+    }
+
+    /// Save the last CASA MEM entropy multiplier in the model image's
+    /// existing misc-info record, alongside its zero flux multiplier.
+    ///
+    /// # Errors
+    ///
+    /// If `alpha` is not finite.
+    pub fn set_mem_alpha(&mut self, alpha: f32) -> Result<(), ProductsError> {
+        if !alpha.is_finite() {
+            return Err(ProductsError::InvalidControls);
+        }
+        self.mem_alpha = Some(alpha);
+        Ok(())
     }
 
     fn output(&self, role: &ImageDomainRole) -> &CasaImageDomainOutput {
@@ -137,16 +265,19 @@ impl CasaImageWriter {
         const IMAGE_ENVELOPE_BYTES: u64 = 64 * 1024;
         const STAGED_MEMBER_RECORD_BYTES: u64 = 512;
         let overflow = || ProductsError::ResourceDemandOverflow("CASA image writer");
-        let coordinate_bytes = self.domains.values().try_fold(0_u64, |maximum, output| {
-            let bytes = output
-                .coordinates
-                .to_record()
-                .retained_heap_bytes()
-                .and_then(|bytes| bytes.checked_mul(4))
-                .and_then(|bytes| u64::try_from(bytes).ok())
-                .ok_or_else(overflow)?;
-            Ok::<_, ProductsError>(maximum.max(bytes))
-        })?;
+        let coordinate_bytes = planned
+            .members()
+            .iter()
+            .try_fold(0_u64, |maximum, member| {
+                let bytes = self
+                    .member_coordinates(member)
+                    .to_record()
+                    .retained_heap_bytes()
+                    .and_then(|bytes| bytes.checked_mul(4))
+                    .and_then(|bytes| u64::try_from(bytes).ok())
+                    .ok_or_else(overflow)?;
+                Ok::<_, ProductsError>(maximum.max(bytes))
+            })?;
         let beam_bytes = planned
             .members()
             .iter()
@@ -215,28 +346,166 @@ impl CasaImageWriter {
         let staged =
             std::mem::take(&mut *self.staged.lock().unwrap_or_else(PoisonError::into_inner));
         for image in staged {
-            promote_atomically(&image.staging, &image.target).map_err(|source| {
-                ProductsError::Io {
-                    operation: "replacing",
-                    path: image.target.clone(),
-                    source,
-                }
-            })?;
+            let failed = |source| ProductsError::Io {
+                operation: "replacing",
+                path: image.target.clone(),
+                source,
+            };
+            carry_history(&image.target, &image.staging).map_err(failed)?;
+            publish_staged_image(&image.staging, &image.target).map_err(failed)?;
             published(&image.target);
         }
         Ok(())
     }
 
-    /// Create one member's image in private staging beside its target, with
-    /// its units, beams and metadata.
-    pub(crate) fn begin(
+    /// In-place CASA field rebuilds leave a filled scalar .sumwt table alone.
+    pub(crate) fn has_positive_saved_scalar_sum(
         &self,
-        member: &PlannedMember,
-        layout: ProductWindowLayout,
-        beams: &[Option<RestoringBeam>],
-        uses_weight_image: bool,
-    ) -> Result<MemberImage<'_>, ProductsError> {
-        let started = Instant::now();
+        domain: &ImageDomainRole,
+    ) -> Result<bool, ProductsError> {
+        let path = self.saved_image_path(domain, ".sumwt");
+        if !path.exists() {
+            return Ok(false);
+        }
+        let image_error = |source| ProductsError::Image {
+            path: path.clone(),
+            source,
+        };
+        let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        let values = image.get_slice(&[0; 4], &[1; 4]).map_err(image_error)?;
+        let value = values[&[0; 4][..]];
+        Ok(value.is_finite() && value > 0.0)
+    }
+
+    pub(crate) fn has_saved_pb(&self, domain: &ImageDomainRole) -> bool {
+        self.saved_image_path(domain, ".pb").exists()
+    }
+
+    /// Read the generated mask retained when standard imaging rebuilds the PB.
+    pub(crate) fn existing_pb_mask(
+        &self,
+        domain: &ImageDomainRole,
+    ) -> Result<Option<Vec<bool>>, ProductsError> {
+        Ok(self
+            .existing_mask(domain, ".pb", |name| name == "mask0")?
+            .map(|mask| mask.pixels))
+    }
+
+    /// Read a persisted mask in channel, polarization, x, y order.
+    pub(crate) fn existing_image_mask(
+        &self,
+        domain: &ImageDomainRole,
+        suffix: &str,
+    ) -> Result<Option<Vec<bool>>, ProductsError> {
+        Ok(self
+            .existing_mask(domain, suffix, |_| true)?
+            .map(|mask| mask.pixels))
+    }
+
+    /// Read one default mask after checking its name, so an ignored mask
+    /// does not allocate an image plane or open its backing table.
+    pub(crate) fn existing_mask(
+        &self,
+        domain: &ImageDomainRole,
+        suffix: &str,
+        accepts_name: impl FnOnce(&str) -> bool,
+    ) -> Result<Option<SavedPixelMask>, ProductsError> {
+        let path = self.saved_image_path(domain, suffix);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let image_error = |source| ProductsError::Image {
+            path: path.clone(),
+            source,
+        };
+        let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        let Some(name) = image.default_mask_name() else {
+            return Ok(None);
+        };
+        if !accepts_name(&name) {
+            return Ok(None);
+        }
+        let mask = image
+            .get_named_mask_slice(&name, &[0; 4], image.shape(), &[1; 4])
+            .map_err(image_error)?;
+        Ok(Some(SavedPixelMask {
+            name,
+            pixels: pixel_mask_planes(mask),
+        }))
+    }
+
+    /// One on-disk apparent model plane retained by CASA's cube major cycle.
+    pub(crate) fn saved_model_plane(
+        &self,
+        domain: &ImageDomainRole,
+        channel: usize,
+        polarization: usize,
+    ) -> Result<ndarray::ArrayD<f32>, ProductsError> {
+        let path = self.saved_image_path(domain, ".model");
+        let image_error = |source| ProductsError::Image {
+            path: path.clone(),
+            source,
+        };
+        let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        let shape = image.shape();
+        image
+            .get_slice(&[0, 0, polarization, channel], &[shape[0], shape[1], 1, 1])
+            .map_err(image_error)
+    }
+
+    fn saved_image_path(&self, domain: &ImageDomainRole, suffix: &str) -> PathBuf {
+        let mut name = self.output(domain).base.clone().into_os_string();
+        name.push(suffix);
+        PathBuf::from(name)
+    }
+
+    /// Read the default residual mask. Image restoration only propagates
+    /// CASA's generated mask0. The spectral-index cutoff uses any default.
+    /// A refreshed field that had no mask takes mask0 from its saved PB.
+    pub(crate) fn saved_residual_mask(
+        &self,
+        domain: &ImageDomainRole,
+        term: ProductTerm,
+        restoring_image: bool,
+        copy_pb_mask: bool,
+    ) -> Result<Option<Vec<bool>>, ProductsError> {
+        let mut name = self.output(domain).base.clone().into_os_string();
+        match term {
+            ProductTerm::Single => name.push(".residual"),
+            ProductTerm::Taylor(term) => name.push(format!(".residual.tt{term}")),
+        }
+        let path = PathBuf::from(name);
+        let image_error = |source| ProductsError::Image {
+            path: path.clone(),
+            source,
+        };
+        let image = PagedImage::<f32>::open_with_cache(&path, 64 * 1024).map_err(image_error)?;
+        let image = if copy_pb_mask && image.default_mask_name().is_none() {
+            drop(image);
+            let path = self.saved_image_path(domain, ".pb");
+            if !path.exists() {
+                return Ok(None);
+            }
+            let beam = PagedImage::<f32>::open_with_cache(&path, 64 * 1024)
+                .map_err(|source| ProductsError::Image { path, source })?;
+            if beam.default_mask_name().as_deref() != Some("mask0") {
+                return Ok(None);
+            }
+            beam
+        } else {
+            image
+        };
+        // SIImageStore::copyMask propagates only the generated mask0.
+        if restoring_image && image.default_mask_name().as_deref() != Some("mask0") {
+            return Ok(None);
+        }
+        let mask = image
+            .get_mask_slice(&[0; 4], image.shape(), &[1; 4])
+            .map_err(image_error)?;
+        Ok(mask.map(pixel_mask_planes))
+    }
+
+    fn stage(&self, member: &PlannedMember) -> Result<StagedImage, ProductsError> {
         let output = self.output(member.axes().domain());
         let mut target = output.base.clone().into_os_string();
         target.push(member.name());
@@ -259,8 +528,76 @@ impl CasaImageWriter {
             .tempdir_in(parent)
             .map_err(io("staging", parent))?;
         let staging = directory.path().join("image");
+        Ok(StagedImage {
+            _directory: directory,
+            staging,
+            target,
+        })
+    }
+
+    /// Attach a fitted beam without reading or normalizing the saved Float
+    /// samples. Use the ordinary staging and replacement path.
+    pub(crate) fn stage_saved_psf_beam(
+        &self,
+        member: &PlannedMember,
+        beams: &[Option<RestoringBeam>],
+    ) -> Result<(), ProductsError> {
+        let staged = self.stage(member)?;
+        copy_directory(&staged.target, &staged.staging).map_err(|source| ProductsError::Io {
+            operation: "staging saved PSF",
+            path: staged.target.clone(),
+            source,
+        })?;
+        {
+            let image_error = |source| ProductsError::Image {
+                path: staged.target.clone(),
+                source,
+            };
+            let mut image = PagedImage::<f32>::open_with_cache(&staged.staging, 64 * 1024)
+                .map_err(image_error)?;
+            let mut info = image.image_info().map_err(image_error)?;
+            info.beam_set = persisted_beam_set(beams, member.axes().spectral().output_channels())?;
+            image.set_image_info(&info).map_err(image_error)?;
+            image.save().map_err(image_error)?;
+        }
+        // PagedImage serializes table.info when it edits keywords. Retain
+        // the original file, including formatting from a CASA writer.
+        fs::copy(
+            staged.target.join("table.info"),
+            staged.staging.join("table.info"),
+        )
+        .map_err(|source| ProductsError::Io {
+            operation: "retaining saved PSF table info",
+            path: staged.target.clone(),
+            source,
+        })?;
+        self.keep_staged(staged);
+        Ok(())
+    }
+
+    fn keep_staged(&self, image: StagedImage) {
+        self.staged
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(image);
+    }
+
+    /// Create one member's image in private staging beside its target, with
+    /// its units, beams and metadata.
+    pub(crate) fn begin(
+        &self,
+        member: &PlannedMember,
+        layout: ProductWindowLayout,
+        beams: &[Option<RestoringBeam>],
+        uses_weight_image: bool,
+        mask_override: Option<Option<&str>>,
+    ) -> Result<MemberImage<'_>, ProductsError> {
+        let started = Instant::now();
+        let staged = self.stage(member)?;
+        let target = &staged.target;
+        let output = self.output(member.axes().domain());
         let image_error = |source| ProductsError::Image {
-            path: target.clone(),
+            path: target.to_path_buf(),
             source,
         };
         let mut tile = layout.shape();
@@ -268,8 +605,8 @@ impl CasaImageWriter {
         let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
             layout.shape().to_vec(),
             tile.to_vec(),
-            output.coordinates.clone(),
-            &staging,
+            self.member_coordinates(member).clone(),
+            &staged.staging,
             layout.maximum_values() * size_of::<f32>(),
         )
         .map_err(image_error)?;
@@ -281,22 +618,42 @@ impl CasaImageWriter {
         image
             .set_image_info(&ImageInfo {
                 beam_set: if storage.attach_beam() {
-                    persisted_beam_set(beams)
+                    persisted_beam_set(beams, layout.shape()[layout.spectral_axis()])?
                 } else {
                     ImageBeamSet::default()
                 },
-                image_type: match role {
-                    "psf" => ImageType::Beam,
-                    "sumwt" => ImageType::Undefined,
-                    _ => ImageType::Intensity,
-                },
-                object_name: role.to_string(),
+                // CASA's tclean leaves every product the default type.
+                image_type: ImageType::Intensity,
+                object_name: output.object_name.clone(),
             })
             .map_err(image_error)?;
-        let mut miscinfo = vec![RecordField::new(
-            "casars_imager_role",
-            Value::Scalar(ScalarValue::String(role.to_string())),
-        )];
+        // `SynthesisImager::createIMStore`'s, but its `memreq` and `memavail`,
+        // which describe CASA's run: one process, one chunk.
+        let mut miscinfo = vec![
+            RecordField::new(
+                "casars_imager_role",
+                Value::Scalar(ScalarValue::String(role.to_string())),
+            ),
+            RecordField::new(
+                "INSTRUME",
+                Value::Scalar(ScalarValue::String(output.telescope.clone())),
+            ),
+            RecordField::new("distance", Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new("mpiprocs", Value::Scalar(ScalarValue::Int32(1))),
+            RecordField::new("chnchnks", Value::Scalar(ScalarValue::Int32(1))),
+        ];
+        if matches!(member.role(), ProductRole::Model(_))
+            && let Some(alpha) = self.mem_alpha
+        {
+            miscinfo.push(RecordField::new(
+                "ALPHA",
+                Value::Scalar(ScalarValue::Float32(alpha)),
+            ));
+            miscinfo.push(RecordField::new(
+                "BETA",
+                Value::Scalar(ScalarValue::Float32(0.0)),
+            ));
+        }
         // CASA tools read `.sumwt`'s `useweightimage` to learn whether the
         // residual was divided by a weight image (`SIImageStore`
         // `getUseWeightImage`).
@@ -309,25 +666,42 @@ impl CasaImageWriter {
         image
             .set_misc_info(RecordValue::new(miscinfo))
             .map_err(image_error)?;
+        let mask_name = mask_override.unwrap_or(
+            matches!(storage.pixel_mask(), ProductPixelMask::Explicit(_)).then_some("mask0"),
+        );
+        if let Some(name) = mask_name
+            && (name.eq_ignore_ascii_case("logtable")
+                || !matches!(
+                    Path::new(name).components().next(),
+                    Some(std::path::Component::Normal(part)) if part == name
+                )
+                || staged.staging.join(name).exists())
+        {
+            return Err(image_error(casa_images::ImageError::InvalidMetadata(
+                format!("invalid output pixel-mask name {name:?}"),
+            )));
+        }
         Ok(MemberImage {
             image,
-            explicit_mask: matches!(storage.pixel_mask(), ProductPixelMask::Explicit(_)),
+            mask_name: mask_name.map(str::to_owned),
             writer: self,
-            staged: StagedImage {
-                _directory: directory,
-                staging,
-                target,
-            },
+            staged,
             begin_nanos: started.elapsed().as_nanos(),
             window_nanos: 0,
         })
     }
 }
 
+/// A saved default mask's name and channel, polarization, x, y values.
+pub(crate) struct SavedPixelMask {
+    pub(crate) name: String,
+    pub(crate) pixels: Vec<bool>,
+}
+
 /// One member's image in staging, written a window at a time.
 pub(crate) struct MemberImage<'a> {
     image: PagedImage<f32>,
-    explicit_mask: bool,
+    mask_name: Option<String>,
     writer: &'a CasaImageWriter,
     staged: StagedImage,
     begin_nanos: u128,
@@ -349,11 +723,11 @@ impl MemberImage<'_> {
         self.image
             .put_slice_view(data.view(), &start)
             .map_err(image_error)?;
-        if self.explicit_mask {
+        if let Some(name) = &self.mask_name {
             let mask = ArrayD::from_shape_vec(IxDyn(&shape), validity)
                 .expect("a product window's validity fills its shape");
             self.image
-                .put_mask_slice("mask0", &mask, &start)
+                .put_mask_slice(name, &mask, &start)
                 .map_err(image_error)?;
         }
         self.window_nanos += started.elapsed().as_nanos();
@@ -368,8 +742,8 @@ impl MemberImage<'_> {
             path: target.clone(),
             source,
         };
-        if self.explicit_mask {
-            self.image.set_default_mask("mask0").map_err(image_error)?;
+        if let Some(name) = &self.mask_name {
+            self.image.set_default_mask(name).map_err(image_error)?;
         }
         self.image.save().map_err(image_error)?;
         if let Some(stats) = self.image.tiled_io_stats() {
@@ -399,11 +773,7 @@ impl MemberImage<'_> {
             finish_nanos = started.elapsed().as_nanos(),
             "product image staged"
         );
-        writer
-            .staged
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(staged);
+        writer.keep_staged(staged);
         Ok(())
     }
 }
@@ -437,17 +807,30 @@ fn beam_metadata_residency_bytes(count: usize) -> Result<u64, ProductsError> {
     u64::try_from(record.checked_add(arrays).ok_or_else(overflow)?).map_err(|_| overflow())
 }
 
-fn persisted_beam_set(beams: &[Option<RestoringBeam>]) -> ImageBeamSet {
+/// The beam set casacore keeps for a member's beams, which are listed channel
+/// by channel with polarization fastest. As `SIImageStore::makeImageBeamSet`
+/// and `restore` store them, one beam is the image's beam and more are a
+/// channel × Stokes grid, equal or not: the shape `ImageInfo::checkBeamSet`
+/// requires of an image with `channels` channels before it opens it. A
+/// plane without a beam takes the largest one, as CASA's do. Beams that do
+/// not fill whole channels are refused.
+fn persisted_beam_set(
+    beams: &[Option<RestoringBeam>],
+    channels: usize,
+) -> Result<ImageBeamSet, ProductsError> {
     if beams.is_empty() {
-        return ImageBeamSet::default();
+        return Ok(ImageBeamSet::default());
+    }
+    if let [Some(only)] = beams {
+        return Ok(ImageBeamSet::new(gaussian_beam(*only)));
+    }
+    if channels == 0 || !beams.len().is_multiple_of(channels) {
+        return Err(ProductsError::BeamGrid {
+            beams: beams.len(),
+            channels,
+        });
     }
     let valid = beams.iter().flatten().copied().collect::<Vec<_>>();
-    if let Some(first) = valid.first().copied()
-        && valid.len() == beams.len()
-        && valid.iter().all(|beam| *beam == first)
-    {
-        return ImageBeamSet::new(gaussian_beam(first));
-    }
     let filler = valid
         .iter()
         .copied()
@@ -461,12 +844,18 @@ fn persisted_beam_set(beams: &[Option<RestoringBeam>]) -> ImageBeamSet {
             let one_microarcsecond_rad = std::f64::consts::PI / (180.0 * 3_600_000_000.0);
             GaussianBeam::new(one_microarcsecond_rad, one_microarcsecond_rad, 0.0)
         });
-    ImageBeamSet::from_grid(
+    let polarizations = beams.len() / channels;
+    Ok(ImageBeamSet::from_grid(
         beams
-            .iter()
-            .map(|beam| vec![beam.map_or(filler, gaussian_beam)])
+            .chunks(polarizations)
+            .map(|channel| {
+                channel
+                    .iter()
+                    .map(|beam| beam.map_or(filler, gaussian_beam))
+                    .collect()
+            })
             .collect(),
-    )
+    ))
 }
 
 fn gaussian_beam(beam: RestoringBeam) -> GaussianBeam {
@@ -505,13 +894,24 @@ const fn role_label(role: ProductRole) -> &'static str {
         ProductRole::PbCorrectedImage(_) => "pbcor.image",
         ProductRole::SpectralIndex => "alpha",
         ProductRole::SpectralIndexError => "alpha.error",
+        ProductRole::SpectralCurvature => "beta",
         ProductRole::PbCorrectedSpectralIndex => "alpha.pbcor",
         ProductRole::BeamMetadata => "beam",
         _ => "product",
     }
 }
 
-fn promote_atomically(staging: &Path, target: &Path) -> std::io::Result<()> {
+/// Publish a complete image from a private staging directory inside the
+/// target's parent. An existing target is exchanged atomically; its old
+/// contents remain at `staging` for the caller's staging guard to remove.
+/// Both containing directories are synced before success is returned.
+///
+/// # Errors
+///
+/// Invalid staging placement, unsupported directory exchange or an I/O error.
+/// A failed exchange leaves the previous target intact; a sync error after
+/// publication can report failure with the complete new image already visible.
+pub fn publish_staged_image(staging: &Path, target: &Path) -> std::io::Result<()> {
     let parent = target.parent().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -584,10 +984,20 @@ fn exchange_directories(_: &Path, _: &Path) -> std::io::Result<()> {
     ))
 }
 
+fn pixel_mask_planes(mask: ndarray::ArrayD<bool>) -> Vec<bool> {
+    let mut planes = Vec::with_capacity(mask.len());
+    for channel in mask.axis_iter(ndarray::Axis(3)) {
+        for pol in channel.axis_iter(ndarray::Axis(2)) {
+            planes.extend(pol.iter().copied());
+        }
+    }
+    planes
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CasaImageDomainOutput, CasaImageWriter, persisted_beam_set};
-    use crate::RestoringBeam;
+    use crate::{ProductsError, RestoringBeam};
     use casa_coordinates::CoordinateSystem;
     use casa_imaging_model::ImageDomainRole;
 
@@ -604,7 +1014,8 @@ mod tests {
                 Some(RestoringBeam::new(2.0e-6 + index as f64 * 1.0e-8, 1.0e-6, 0.0).unwrap())
             })
             .collect::<Vec<_>>();
-        let record_bytes = persisted_beam_set(&beams)
+        let record_bytes = persisted_beam_set(&beams, 16)
+            .expect("a beam grid")
             .to_record()
             .retained_heap_bytes()
             .unwrap();
@@ -629,10 +1040,31 @@ mod tests {
     }
 
     #[test]
+    fn alternate_coordinates_name_every_domain_once() {
+        let writer = CasaImageWriter::new("main".into(), CoordinateSystem::new());
+        let check = |coordinates| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                writer.with_coordinates(coordinates)
+            }))
+            .is_err()
+        };
+        assert!(check(Vec::new()));
+        assert!(check(vec![(
+            ImageDomainRole::Outlier("north".into()),
+            CoordinateSystem::new()
+        )]));
+        assert!(check(vec![
+            (ImageDomainRole::Main, CoordinateSystem::new()),
+            (ImageDomainRole::Main, CoordinateSystem::new()),
+        ]));
+    }
+
+    #[test]
     fn blank_beam_slots_use_the_largest_valid_casa_persistence_filler() {
         let small = RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("small beam");
         let large = RestoringBeam::new(4.0e-6, 3.0e-6, -0.2).expect("large beam");
-        let persisted = persisted_beam_set(&[Some(small), None, Some(large)]);
+        let persisted =
+            persisted_beam_set(&[Some(small), None, Some(large)], 3).expect("a beam grid");
 
         assert_eq!(persisted.shape(), (3, 1));
         assert_eq!(persisted.beam(0, 0).major, small.major_fwhm_rad());
@@ -641,8 +1073,66 @@ mod tests {
     }
 
     #[test]
+    fn equal_beams_of_several_planes_stay_a_grid_as_casa_stores_them() {
+        let beam = RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("beam");
+        assert_eq!(
+            persisted_beam_set(&[Some(beam)], 1)
+                .expect("a beam grid")
+                .shape(),
+            (1, 1)
+        );
+        assert!(
+            persisted_beam_set(&[Some(beam)], 1)
+                .expect("a beam grid")
+                .single_beam()
+                .is_some()
+        );
+        let continuum_iv = persisted_beam_set(&[Some(beam), Some(beam)], 1).expect("a beam grid");
+        assert_eq!(continuum_iv.shape(), (1, 2));
+        assert!(continuum_iv.single_beam().is_none());
+    }
+
+    #[test]
+    fn a_cube_of_several_stokes_keeps_a_channel_by_stokes_beam_grid() {
+        // casacore opens an image only when its beam set has one beam per
+        // channel and Stokes plane (`ImageInfo::checkBeamSet`).
+        let beam = |major| Some(RestoringBeam::new(major, 1.0e-6, 0.0).expect("beam"));
+        let beams = [
+            beam(2.0e-6),
+            beam(3.0e-6),
+            beam(4.0e-6),
+            beam(5.0e-6),
+            beam(6.0e-6),
+            beam(7.0e-6),
+        ];
+        let persisted = persisted_beam_set(&beams, 3).expect("a beam grid");
+
+        assert_eq!(persisted.shape(), (3, 2));
+        assert_eq!(persisted.beam(1, 0).major, 4.0e-6);
+        assert_eq!(persisted.beam(1, 1).major, 5.0e-6);
+        assert_eq!(persisted.beam(2, 1).major, 7.0e-6);
+        let record = persisted.to_record();
+        let restored = casa_images::ImageBeamSet::from_record(&record).expect("record");
+        assert_eq!(restored.shape(), (3, 2));
+        assert!((restored.beam(2, 0).major - 6.0e-6).abs() < 1.0e-15);
+    }
+
+    #[test]
+    fn beams_that_do_not_fill_whole_channels_are_refused() {
+        let beam = Some(RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("beam"));
+        assert!(matches!(
+            persisted_beam_set(&[beam, beam, beam], 2),
+            Err(ProductsError::BeamGrid {
+                beams: 3,
+                channels: 2
+            })
+        ));
+        assert!(persisted_beam_set(&[beam, beam], 0).is_err());
+    }
+
+    #[test]
     fn all_blank_beam_slots_use_only_the_casa_imageinfo_placeholder() {
-        let persisted = persisted_beam_set(&[None, None]);
+        let persisted = persisted_beam_set(&[None, None], 2).expect("a beam grid");
         let filler = persisted.beam(0, 0);
         assert_eq!(persisted.shape(), (2, 1));
         assert!(filler.major > 0.0);
@@ -660,11 +1150,11 @@ mod tests {
         let staged = private.path().join("image");
         std::fs::create_dir(&staged).unwrap();
         std::fs::write(staged.join("pixels"), b"new").unwrap();
-        super::promote_atomically(&staged, &target).unwrap();
+        super::publish_staged_image(&staged, &target).unwrap();
         assert_eq!(std::fs::read(target.join("pixels")).unwrap(), b"new");
         assert_eq!(std::fs::read(staged.join("pixels")).unwrap(), b"old");
         let missing = private.path().join("missing");
-        assert!(super::promote_atomically(&missing, &target).is_err());
+        assert!(super::publish_staged_image(&missing, &target).is_err());
         assert_eq!(std::fs::read(target.join("pixels")).unwrap(), b"new");
     }
 }

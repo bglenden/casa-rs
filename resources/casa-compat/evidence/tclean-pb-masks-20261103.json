@@ -1,0 +1,3483 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean usemask='pb' and pbmask: makePBMask, autoMaskWithinPB and calcRobustRMS at pbmask",
+ "work_issue": 1061,
+ "date": "2026-11-03",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14",
+  "host": "macOS-27.0.1-arm64-arm-64bit (Mac mini)"
+ },
+ "native_revision": "ca2287b07169d2ec9bbded6daeaffaeb112880a6",
+ "baseline_revision": "188ce5e57b243b43b84e7f3769bc8dacfd6fc55e",
+ "builds": "release casars-imager and the casars Python package of each revision in private target directories on the Mac (targets/lead-pb-mask-usemask, targets/lead-pb-masks); each revision's package drives its own binary. The regression runs (branch_pb_statistics, branch_main_matrix) used f7f1fe8, which differs from ca2287b in the tclean contract number, the smoothfactor refusal of usemask='pb' and three cases' niter, none of which those cases read.",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_case_matrix.py, each case's CASA calls in a CASA process of their own",
+ "limits": "exact image-product inventory and masks; NRMS <= 1e-3, .sumwt within 5e-5; WCS, units, beams; exact iterdone/nmajordone/stopcode; maxpsfsidelobe and cyclethreshold 1e-4 relative plus 1e-8 absolute",
+ "outcome": {
+  "summary": "11 of the 12 tclean-pb-masks cases pass on the branch, and the baseline refuses each of the 8 new ones naming #1061. alma_mosaic_automask_pbmask matches counts, scalars, the .mask and every value (worst NRMS 7.3e-5) but one pixel's product mask: at pblimit 0.1 casa-rs's mosaic .pb is 0.1000001 at pixel (747, 387) where CASA's is not above 0.1, a Float tie at the cutoff, not pbmask's. The 7 pb-statistics cases are as #1100 recorded them (6 pass; alma_standard_nsigma misses cyclethreshold by 2.2e-4 relative). Of 11 main-matrix cases, the 9 auto-multithresh test_mask cases pass, test_iterbot_cube_nsigma.1 fails as round 5 recorded it (the f32 floor), and test_stokes_mtmfs_IQUV.1+2 is refused naming #1065 (a polarized Taylor basis). The control, a 1000-iteration point case without a pb mask at the baseline, differs from CASA by 1.2e-2 residual NRMS: the noise-free floor that moved three point cases to 200 iterations."
+ },
+ "archive": {
+  "nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-pb-masks-ca2287b.tar",
+  "sha256": "f0179594dfb8d6b9ab53ba25a63ff09e2dd8b4471b6b3d5bd6221d0ee91d3326",
+  "bytes": 2075470848,
+  "members": 7137,
+  "contents": "every run directory without the staged input MeasurementSets, the run scripts, the control case file and the branch binaries"
+ },
+ "runs": {
+  "branch": {
+   "native_revision": "ca2287b07169d2ec9bbded6daeaffaeb112880a6",
+   "binary_sha256": "2925b0e0ff77f9fa4f9d2e5c8cad9c079b0ed801b7efb6a51efcac1a9ca5b1ab",
+   "case_file": "resources/casa-compat/tclean-pb-masks-cases.json",
+   "case_file_sha256": "55a2ef03a8f9c19c58c0b232041dda4877526e65bbb3bdabe415839a92488d40",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 11,
+    "total": 12
+   },
+   "cases": {
+    "alma_mosaic_pbsquare": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 200,
+         "casa": 200
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         129,
+         195,
+         200
+        ],
+        "casa": [
+         0,
+         61,
+         129,
+         195,
+         200
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17281141877174377,
+         "casa": 0.1728113889694214,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0009648936684243381,
+         "casa": 0.0009649050189182162,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.3,
+        "casa": 5.15
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 4.8236085444732e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 4.0216861196187304e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 7.750700882438515e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 6.387311598223456e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 5.126829585023031e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 2.4497814773128443e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_pbsquare_cube": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 240,
+         "casa": 240
+        },
+        "nmajordone": {
+         "native": 3,
+         "casa": 3
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         180,
+         240
+        ],
+        "casa": [
+         0,
+         180,
+         240
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17321230471134186,
+         "casa": 0.17321226000785828,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.022209549322724342,
+         "casa": 0.022209592163562775,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.72,
+        "casa": 5.15
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 4.130088758308883e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 2.0712420564819088e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 7.424484106868996e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 8.633206240521746e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 2.5091992367445032e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 2.4959896968976966e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_pbsquare_pbcor": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 200,
+         "casa": 200
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         129,
+         195,
+         200
+        ],
+        "casa": [
+         0,
+         61,
+         129,
+         195,
+         200
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17281141877174377,
+         "casa": 0.1728113889694214,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0009648936684243381,
+         "casa": 0.0009649050189182162,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.34,
+        "casa": 5.17
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 4.8236085444732e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.image.pbcor": {
+         "nrms": 5.372706640093152e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 4.0216861196187304e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 7.750700882438515e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 6.387311598223456e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 5.126829585023031e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 2.4497814773128443e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_pbsquare_negative_pblimit": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 200,
+         "casa": 200
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         129,
+         195,
+         200
+        ],
+        "casa": [
+         0,
+         61,
+         129,
+         195,
+         200
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17281141877174377,
+         "casa": 0.1728113889694214,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0009648936684243381,
+         "casa": 0.0009649050189182162,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.29,
+        "casa": 5.06
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 4.914584839018793e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 4.0216861196187304e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 7.750700882438515e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 6.387311598223456e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 5.1231615534041155e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 2.4497814773128443e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_usemask_pb": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 200,
+         "casa": 200
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         200
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         200
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00040428884676657617,
+         "casa": 0.0004043052904307842,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.15,
+        "casa": 6.31
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.4873448427178013e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 1.8540845842139893e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 4.610146288372048e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_usemask_pb": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 300,
+         "casa": 300
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ],
+        "casa": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0005468408926390111,
+         "casa": 0.0005468797171488404,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.56,
+        "casa": 5.33
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 3.8845410042897434e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 3.233815927478568e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 7.539999251056987e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_cube_usemask_pb": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 693,
+         "casa": 693
+        },
+        "nmajordone": {
+         "native": 3,
+         "casa": 3
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         319,
+         693
+        ],
+        "casa": [
+         0,
+         319,
+         693
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12745080888271332,
+         "casa": 0.12745079398155212,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.002907087793573737,
+         "casa": 0.0029070579912513494,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 4.92,
+        "casa": 10.77
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 2.570526694606742e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 7.83392921590645e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 1.1013202325142682e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 4.803990323812517e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_box_pbmask": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 200,
+         "casa": 200
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         200
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         200
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00040428884676657617,
+         "casa": 0.0004043052904307842,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.17,
+        "casa": 6.33
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.4873448427178013e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 1.8540845842139893e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 4.610146288372048e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_automask_pbmask": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 200,
+         "casa": 200
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         200
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         200
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0004362800100352615,
+         "casa": 0.00043627916602417827,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.23,
+        "casa": 7.44
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.4905943092470204e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 1.8552244489942867e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 3.932682446863007e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_automask_pbmask": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 300,
+         "casa": 300
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ],
+        "casa": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0005468408926390111,
+         "casa": 0.0005468797171488404,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.17,
+        "casa": 9.81
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 3.9508190758098275e-07,
+         "mask_mismatch": 1,
+         "passed": false
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 3.233815927478568e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 1.1023355348769875e-07,
+         "mask_mismatch": 1,
+         "passed": false
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 7.318344065579875e-05,
+         "mask_mismatch": 1,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_nsigma_pbmask": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 404,
+         "casa": 404
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         390,
+         404
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         390,
+         404
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00024670385755598545,
+         "casa": 0.00024670519633218646,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.69,
+        "casa": 7.82
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.368692288769164e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 1.8781922336546813e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 4.138455968029762e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_automask_nsigma_pbmask": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 412,
+         "casa": 412
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         380,
+         412
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         380,
+         412
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0002521997375879437,
+         "casa": 0.00025220224051736295,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.75,
+        "casa": 9.28
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.5503473184060726e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 2.484618206756369e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 7.846995772524323e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "ca2287b, tclean-pb-masks-cases.json, every case"
+  },
+  "baseline": {
+   "native_revision": "188ce5e57b243b43b84e7f3769bc8dacfd6fc55e",
+   "binary_sha256": "5f08e9f5842df6bfab772ed8d304baf20f0a1697e0c31798e85db20d55490730",
+   "case_file": "resources/casa-compat/tclean-pb-masks-cases.json",
+   "case_file_sha256": "55a2ef03a8f9c19c58c0b232041dda4877526e65bbb3bdabe415839a92488d40",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 0,
+    "total": 8
+   },
+   "cases": {
+    "point_standard_usemask_pb": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 200
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": null,
+        "casa": [
+         0,
+         21,
+         59,
+         200
+        ]
+       },
+       "native_refusal": "{'type': 'ValueError', 'message': 'reason=\\'resolve parameter session: parameter \"pbmask\" is not implemented by casa-rs yet (#1061); only CASA\\\\\\'s default 0.0 is accepted\\''}",
+       "elapsed_seconds": {
+        "native": 0.07,
+        "casa": 6.15
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": false,
+       "inventory": {
+        "casa": [
+         "img.image",
+         "img.mask",
+         "img.model",
+         "img.pb",
+         "img.psf",
+         "img.residual",
+         "img.sumwt"
+        ],
+        "native": [],
+        "passed": false
+       },
+       "products": {}
+      }
+     }
+    },
+    "alma_mosaic_usemask_pb": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 300
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": null,
+        "casa": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ]
+       },
+       "native_refusal": "{'type': 'ValueError', 'message': 'reason=\\'resolve parameter session: parameter \"pbmask\" is not implemented by casa-rs yet (#1061); only CASA\\\\\\'s default 0.0 is accepted\\''}",
+       "elapsed_seconds": {
+        "native": 0.07,
+        "casa": 5.25
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": false,
+       "inventory": {
+        "casa": [
+         "img.image",
+         "img.mask",
+         "img.model",
+         "img.pb",
+         "img.psf",
+         "img.residual",
+         "img.sumwt",
+         "img.weight"
+        ],
+        "native": [],
+        "passed": false
+       },
+       "products": {}
+      }
+     }
+    },
+    "point_cube_usemask_pb": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 693
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 3
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": null,
+        "casa": [
+         0,
+         319,
+         693
+        ]
+       },
+       "native_refusal": "{'type': 'ValueError', 'message': 'reason=\\'resolve parameter session: parameter \"pbmask\" is not implemented by casa-rs yet (#1061); only CASA\\\\\\'s default 0.0 is accepted\\''}",
+       "elapsed_seconds": {
+        "native": 0.07,
+        "casa": 10.73
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": false,
+       "inventory": {
+        "casa": [
+         "img.image",
+         "img.mask",
+         "img.model",
+         "img.pb",
+         "img.psf",
+         "img.residual",
+         "img.sumwt"
+        ],
+        "native": [],
+        "passed": false
+       },
+       "products": {}
+      }
+     }
+    },
+    "point_standard_box_pbmask": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 200
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": null,
+        "casa": [
+         0,
+         21,
+         59,
+         200
+        ]
+       },
+       "native_refusal": "{'type': 'ValueError', 'message': 'reason=\\'resolve parameter session: parameter \"pbmask\" is not implemented by casa-rs yet (#1061); only CASA\\\\\\'s default 0.0 is accepted\\''}",
+       "elapsed_seconds": {
+        "native": 0.07,
+        "casa": 6.25
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": false,
+       "inventory": {
+        "casa": [
+         "img.image",
+         "img.mask",
+         "img.model",
+         "img.pb",
+         "img.psf",
+         "img.residual",
+         "img.sumwt"
+        ],
+        "native": [],
+        "passed": false
+       },
+       "products": {}
+      }
+     }
+    },
+    "point_automask_pbmask": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 200
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": null,
+        "casa": [
+         0,
+         21,
+         59,
+         200
+        ]
+       },
+       "native_refusal": "{'type': 'ValueError', 'message': 'reason=\\'resolve parameter session: parameter \"pbmask\" is not implemented by casa-rs yet (#1061); only CASA\\\\\\'s default 0.0 is accepted\\''}",
+       "elapsed_seconds": {
+        "native": 0.07,
+        "casa": 7.43
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": false,
+       "inventory": {
+        "casa": [
+         "img.image",
+         "img.mask",
+         "img.model",
+         "img.pb",
+         "img.psf",
+         "img.residual",
+         "img.sumwt"
+        ],
+        "native": [],
+        "passed": false
+       },
+       "products": {}
+      }
+     }
+    },
+    "alma_mosaic_automask_pbmask": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 300
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": null,
+        "casa": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ]
+       },
+       "native_refusal": "{'type': 'ValueError', 'message': 'reason=\\'resolve parameter session: parameter \"pbmask\" is not implemented by casa-rs yet (#1061); only CASA\\\\\\'s default 0.0 is accepted\\''}",
+       "elapsed_seconds": {
+        "native": 0.07,
+        "casa": 9.81
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": false,
+       "inventory": {
+        "casa": [
+         "img.image",
+         "img.mask",
+         "img.model",
+         "img.pb",
+         "img.psf",
+         "img.residual",
+         "img.sumwt",
+         "img.weight"
+        ],
+        "native": [],
+        "passed": false
+       },
+       "products": {}
+      }
+     }
+    },
+    "point_standard_nsigma_pbmask": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 404
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": null,
+        "casa": [
+         0,
+         21,
+         59,
+         390,
+         404
+        ]
+       },
+       "native_refusal": "{'type': 'ValueError', 'message': 'reason=\\'resolve parameter session: parameter \"pbmask\" is not implemented by casa-rs yet (#1061); only CASA\\\\\\'s default 0.0 is accepted\\''}",
+       "elapsed_seconds": {
+        "native": 0.07,
+        "casa": 7.74
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": false,
+       "inventory": {
+        "casa": [
+         "img.image",
+         "img.mask",
+         "img.model",
+         "img.pb",
+         "img.psf",
+         "img.residual",
+         "img.sumwt"
+        ],
+        "native": [],
+        "passed": false
+       },
+       "products": {}
+      }
+     }
+    },
+    "point_automask_nsigma_pbmask": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 412
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": null,
+        "casa": [
+         0,
+         21,
+         59,
+         380,
+         412
+        ]
+       },
+       "native_refusal": "{'type': 'ValueError', 'message': 'reason=\\'resolve parameter session: parameter \"pbmask\" is not implemented by casa-rs yet (#1061); only CASA\\\\\\'s default 0.0 is accepted\\''}",
+       "elapsed_seconds": {
+        "native": 0.07,
+        "casa": 9.05
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": false,
+       "inventory": {
+        "casa": [
+         "img.image",
+         "img.mask",
+         "img.model",
+         "img.pb",
+         "img.psf",
+         "img.residual",
+         "img.sumwt"
+        ],
+        "native": [],
+        "passed": false
+       },
+       "products": {}
+      }
+     }
+    }
+   },
+   "note": "lead/pb-masks 188ce5e with its own package: the 8 new cases from the branch's case file"
+  },
+  "branch_pb_statistics": {
+   "native_revision": "f7f1fe8b3c3bd716282891065347e6c52eb7583a",
+   "binary_sha256": "5566e805b995422d4ce522102d4014eef9e5e83091d600b5630e13ab681dc95a",
+   "case_file": "resources/casa-compat/tclean-pb-statistics-cases.json",
+   "case_file_sha256": "ebbc99eb76bfa6c9ce4f1f7fa693fc9a1f868f38da66d4d175bfd4fbb5646e7c",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 6,
+    "total": 7
+   },
+   "cases": {
+    "alma_standard_nsigma": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 701,
+         "casa": 701
+        },
+        "nmajordone": {
+         "native": 11,
+         "casa": 11
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         47,
+         97,
+         147,
+         199,
+         301,
+         454,
+         593,
+         663,
+         693,
+         701
+        ],
+        "casa": [
+         0,
+         47,
+         97,
+         147,
+         199,
+         301,
+         454,
+         593,
+         663,
+         693,
+         701
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1761751025915146,
+         "casa": 0.1761750876903534,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 9.889418288366869e-05,
+         "casa": 9.891598165268078e-05,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.53,
+        "casa": 3.67
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 2.3223188380613683e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 1.6276485663595784e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 6.645185016093936e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.00016785616301846052,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_nsigma": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 511,
+         "casa": 511
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         511
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         511
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0002121380384778604,
+         "casa": 0.0002121422439813614,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.37,
+        "casa": 6.71
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.669685945745934e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 3.1017576821341216e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 1.0782023140334478e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_nsigma_robust": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 613,
+         "casa": 613
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         613
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         613
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0001886583777377382,
+         "casa": 0.0001886842946987599,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.34,
+        "casa": 6.63
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.6373904816209367e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 2.494082433234538e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 8.775428967052114e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_cube_automask": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1060,
+         "casa": 1060
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         319,
+         691,
+         1060
+        ],
+        "casa": [
+         0,
+         319,
+         691,
+         1060
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12834952771663666,
+         "casa": 0.12834952771663666,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00038294517435133457,
+         "casa": 0.0003829518973361701,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 17.34,
+        "casa": 121.9
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 2.153663014536806e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 7.584408358443113e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 7.843278205119117e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 3.6442154284261854e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_automask_nsigma_negative_pblimit": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 820,
+         "casa": 820
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         542,
+         820
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         542,
+         820
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00015865510795265436,
+         "casa": 0.00015865506429690868,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.87,
+        "casa": 9.5
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 2.2219718835863098e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 7.903426350259497e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 2.8652710577770395e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_automask": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 300,
+         "casa": 300
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ],
+        "casa": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0005468408926390111,
+         "casa": 0.0005468797171488404,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.23,
+        "casa": 9.59
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 3.8845410042897434e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 3.233815927478568e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 7.539999251056987e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_automask_nsigma": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 300,
+         "casa": 300
+        },
+        "nmajordone": {
+         "native": 6,
+         "casa": 6
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         128,
+         194,
+         287,
+         300
+        ],
+        "casa": [
+         0,
+         61,
+         128,
+         194,
+         287,
+         300
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0004916835459880531,
+         "casa": 0.0004916653851978481,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.69,
+        "casa": 11.46
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 3.9731342169930333e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 3.03900908339691e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 7.643650842274081e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "f7f1fe8: regression on #1100's cases"
+  },
+  "branch_main_matrix": {
+   "native_revision": "f7f1fe8b3c3bd716282891065347e6c52eb7583a",
+   "binary_sha256": "5566e805b995422d4ce522102d4014eef9e5e83091d600b5630e13ab681dc95a",
+   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
+   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 9,
+    "total": 11
+   },
+   "cases": {
+    "test_iterbot.test_iterbot_cube_nsigma.1": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 378,
+         "casa": 378
+        },
+        "nmajordone": {
+         "native": 8,
+         "casa": 8
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         37,
+         94,
+         151,
+         208,
+         265,
+         321,
+         378
+        ],
+        "casa": [
+         0,
+         37,
+         94,
+         151,
+         208,
+         265,
+         322,
+         378
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12834814190864563,
+         "casa": 0.12834811210632324,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 2.1096965951983293e-07,
+         "casa": 2.0888116125661327e-07,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 5.33,
+        "casa": 15.24
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.267996907226505e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 9.272797988941691e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.014539925687666e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 0.043746337908596805,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_stokes.test_stokes_mtmfs_IQUV.1+2": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 33
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": null,
+        "casa": [
+         0,
+         33
+        ]
+       },
+       "native_refusal": "{'type': 'TaskExecutionError', 'message': 'tclean failed: the installed imaging implementation cannot run this request: a Taylor basis reconstructs Stokes I only (#1065)'}",
+       "elapsed_seconds": {
+        "native": 0.13,
+        "casa": 1.09
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": null,
+         "casa": 40
+        },
+        "nmajordone": {
+         "native": null,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": null,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": null,
+        "casa": [
+         0,
+         40
+        ]
+       },
+       "native_refusal": "{'type': 'TaskExecutionError', 'message': 'tclean failed: the installed imaging implementation cannot run this request: a Taylor basis reconstructs Stokes I only (#1065)'}",
+       "elapsed_seconds": {
+        "native": 0.13,
+        "casa": 1.02
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": false,
+       "inventory": {
+        "casa": [
+         "tst.image.tt0",
+         "tst.image.tt1",
+         "tst.mask",
+         "tst.model.tt0",
+         "tst.model.tt1",
+         "tst.pb.tt0",
+         "tst.psf.tt0",
+         "tst.psf.tt1",
+         "tst.psf.tt2",
+         "tst.residual.tt0",
+         "tst.residual.tt1",
+         "tst.sumwt.tt0",
+         "tst.sumwt.tt1",
+         "tst.sumwt.tt2"
+        ],
+        "native": [],
+        "passed": false
+       },
+       "products": {}
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.39,
+        "casa": 1.77
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_newnoise.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.38,
+        "casa": 1.77
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_with_nsigma.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.4,
+        "casa": 1.81
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_with_nsigma_newnoise.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.39,
+        "casa": 1.81
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_with_prune.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1413663774728775,
+         "casa": 0.1413663625717163,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.04990803077816963,
+         "casa": 0.04990800470113754,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.12,
+        "casa": 4.26
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.1074351339308884e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 8.609001450510291e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.6734099407571883e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_with_stopmask.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 100,
+         "casa": 100
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         62,
+         100
+        ],
+        "casa": [
+         0,
+         21,
+         62,
+         100
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0016392107354477048,
+         "casa": 0.0016392087563872337,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.59,
+        "casa": 3.99
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.8815288442323354e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 3.398422698231177e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 6.953383734417796e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_with_absorption.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 100,
+         "casa": 100
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         35,
+         95,
+         100
+        ],
+        "casa": [
+         0,
+         35,
+         95,
+         100
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12308543175458908,
+         "casa": 0.12308542430400848,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0015343630220741034,
+         "casa": 0.001534359878860414,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.98,
+        "casa": 6.42
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.3393628582010324e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 3.4804489998486116e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 7.68762849056249e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 1.4927096251312977e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_mfs_IQUV.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 33,
+         "casa": 33
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         33
+        ],
+        "casa": [
+         0,
+         33
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.18299652636051178,
+         "casa": 0.18299654126167297,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.22970451414585114,
+         "casa": 0.22970442473888397,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.18,
+        "casa": 0.85
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.1451501626183725e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.3361888832284385e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.0723720743362251e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 3.848684291089186e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_cube_IQUV.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 93,
+         "casa": 93
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         93
+        ],
+        "casa": [
+         0,
+         93
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.20957250893115997,
+         "casa": 0.2095724642276764,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.2630636990070343,
+         "casa": 0.26306357979774475,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.83,
+        "casa": 2.25
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.0455930982436397e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.4613694112275403e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.4127222674279559e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 3.637323564764786e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "f7f1fe8: test_mask.test_mask_autobox_multithresh*, test_stokes_mtmfs_IQUV, test_iterbot_cube_nsigma"
+  },
+  "baseline_control": {
+   "native_revision": "188ce5e57b243b43b84e7f3769bc8dacfd6fc55e",
+   "binary_sha256": "5f08e9f5842df6bfab772ed8d304baf20f0a1697e0c31798e85db20d55490730",
+   "case_file": "control-cases.json (in the NAS archive)",
+   "case_file_sha256": "159fdd9a6af9eac0e62e384b02d5f5d6b87b4f4953e686af1a9f798924b4dc8c",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 0,
+    "total": 1
+   },
+   "cases": {
+    "control_point_standard_1000": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1000,
+         "casa": 1000
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         613,
+         1000
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         613,
+         1000
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0001406055671395734,
+         "casa": 0.0001437153696315363,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.95,
+        "casa": 7.73
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 0.00010129451115339428,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 0.0006924989615460395,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.012167784803297948,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "the control at the baseline: point_standard_usemask_pb at 1000 iterations without a pb mask"
+  }
+ }
+}

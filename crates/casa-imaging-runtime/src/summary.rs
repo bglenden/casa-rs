@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The run summary (plan section 8.3), the one record a run leaves: a small
+//! The run summary, the one record a run leaves: a small
 //! JSON document beside its products, written for every outcome (ADR-0014's
 //! final success/failure summary), and the run's diagnostic switches
-//! (section 8.1).
+//! (ADR-0016 decision 9).
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -20,7 +20,7 @@ pub const STAGE_TIMING: &str = "casa_imaging::stage_timing";
 /// The `tracing` target of the [`Diagnostics::science_trace`] events.
 pub const SCIENCE_TRACE: &str = "casa_imaging::science_trace";
 
-/// A run's optional diagnostic output (plan section 8.1). Each switch adds
+/// A run's optional diagnostic output (ADR-0016 decision 9). Each switch adds
 /// `tracing` events, at `info`, under its own target; none changes what the
 /// run computes, and with every switch off a run emits none of them. The
 /// provider-contracts catalog owns the defaults.

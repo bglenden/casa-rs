@@ -35,6 +35,7 @@ pub(crate) mod lockstep;
 pub(crate) mod losses;
 mod memory;
 mod msv2_ephemeris;
+mod msv2_feed;
 mod msv2_identity;
 mod msv2_pointing;
 mod msv2_rows;
@@ -47,6 +48,7 @@ mod pointing_scan;
 mod preservation;
 mod replace;
 mod scans;
+mod stored_weights;
 mod writing;
 
 use std::fmt;
@@ -56,6 +58,7 @@ pub use memory::{MemoryCharges, default_memory_bytes};
 pub use plan::CreationPlan;
 #[cfg(feature = "msv4")]
 pub(crate) use plan::catalogue_subtables;
+pub use replace::Replacement;
 
 /// Information a conversion or a plan cannot carry into its destination.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -146,12 +149,66 @@ pub enum LossKind {
     Defaulted,
 }
 
+impl LossKind {
+    /// Every kind, in order.
+    pub const ALL: [Self; 7] = [
+        Self::Sigma,
+        Self::RowFlags,
+        Self::FlagCategories,
+        Self::DataGroups,
+        Self::Tables,
+        Self::Columns,
+        Self::Defaulted,
+    ];
+
+    /// The kind's stable name, as a caller states it: `sigma`, `rowflags`,
+    /// `flagcategories`, `datagroups`, `tables`, `columns` or `defaulted`.
+    /// A refused conversion names the kinds to accept by these names
+    /// ([`Display`](fmt::Display)), and [`str::parse`] reads them back.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Sigma => "sigma",
+            Self::RowFlags => "rowflags",
+            Self::FlagCategories => "flagcategories",
+            Self::DataGroups => "datagroups",
+            Self::Tables => "tables",
+            Self::Columns => "columns",
+            Self::Defaulted => "defaulted",
+        }
+    }
+}
+
+impl fmt::Display for LossKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl std::str::FromStr for LossKind {
+    type Err = String;
+
+    /// The kind [`LossKind::name`] names, in any case.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.name().eq_ignore_ascii_case(text.trim()))
+            .ok_or_else(|| {
+                let names: Vec<_> = Self::ALL.iter().map(|kind| kind.name()).collect();
+                format!(
+                    "unknown loss kind {text:?}; expected one of {}",
+                    names.join(", ")
+                )
+            })
+    }
+}
+
 /// What a padded grid cell (one no acquisition filled) becomes in an MSv2
 /// destination.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PaddingRows {
     /// A row flagged throughout, its data, weights and UVW NaN, as the MSv2
-    /// creator writes padding (revision 2 design, D23); its interval is the
+    /// creator writes padding by default; its interval is the
     /// grid's, its exposure 0 and its time centroid its time, so that the
     /// row's keys stay valid. `FLAG_ROW` stays false: every element's flag
     /// already excludes the row, and a reader that folds `FLAG_ROW` into
@@ -159,8 +216,8 @@ pub enum PaddingRows {
     /// is known from the grids.
     #[default]
     Flagged,
-    /// No row: the declared policy that reproduces an original sparse MSv2
-    /// (D23), since a NaN weight is padding's one mark. The row count then
+    /// No row: the declared policy that reproduces an original sparse
+    /// MSv2, since a NaN weight is padding's one mark. The row count then
     /// needs the acquisitions counted first, from the weights.
     Omitted,
 }
@@ -191,6 +248,9 @@ impl CreationInput {
 /// How a plan reads its inputs and writes the MeasurementSet.
 #[derive(Clone, Debug)]
 pub struct CreationOptions {
+    /// Carry the inputs' pointing into the result. CASA's `concat` with
+    /// `copypointing=False` deliberately writes an empty POINTING table.
+    pub copy_pointing: bool,
     /// The data groups to write, the first carrying every role; `None`
     /// writes every group of the inputs, `base` first.
     pub data_groups: Option<Vec<String>>,

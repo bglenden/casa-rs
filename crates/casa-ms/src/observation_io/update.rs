@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Update sessions: one owner that reads a store and writes its declared
-//! targets back (`docs/measurement-set/contracts.md`, section 7).
+//! targets back.
 //!
 //! [`open_update`] takes this process's write intent on the store, opens it
 //! once for reading, and resolves the declared targets before any payload:
@@ -247,6 +247,23 @@ impl UpdateSession {
     ) -> Result<Self, ObservationError> {
         let intent = Intent::take(observation.path()?)?;
         let store = Store::V2(Box::new(Msv2Update::over(observation)?));
+        Self::with(store, targets, intent)
+    }
+
+    /// An update session over `observation`, an MSv4 processing set opened
+    /// already, writing `targets`: [`open_update`]'s session, without
+    /// opening the processing set a second time.
+    ///
+    /// # Errors
+    ///
+    /// As [`open_update`].
+    #[cfg(all(unix, feature = "msv4"))]
+    pub fn over_msv4(
+        observation: super::Msv4Observation,
+        targets: &[UpdateTarget],
+    ) -> Result<Self, ObservationError> {
+        let intent = Intent::take(observation.path())?;
+        let store = Store::V4(Msv4Update::over(observation));
         Self::with(store, targets, intent)
     }
 

@@ -1,0 +1,38 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": {
+    "GHz": {
+      "get_reffreqtype": "LSRK",
+      "get_restfreq": {
+        "unit": "GHz",
+        "value": 1.4204057517860003
+      },
+      "list_reffreqtype": "LSRK",
+      "list_restfreq": [
+        1.4204057517860003
+      ]
+    },
+    "Hz": {
+      "get_reffreqtype": "LSRK",
+      "get_restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "list_reffreqtype": "LSRK",
+      "list_restfreq": [
+        1420405751.7860003
+      ]
+    },
+    "MHz": {
+      "get_reffreqtype": "LSRK",
+      "get_restfreq": {
+        "unit": "MHz",
+        "value": 1420.405751786
+      },
+      "list_reffreqtype": "LSRK",
+      "list_restfreq": [
+        1420.405751786
+      ]
+    }
+  }
+}

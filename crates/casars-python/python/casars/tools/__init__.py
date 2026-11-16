@@ -1,4 +1,4 @@
-"""CASA tools for casa-rs, under CASA's class names (ADR-0019).
+"""CASA tools for casa-rs, under CASA's class names (ADR-0017).
 
 A CASA script changes only its imports::
 

@@ -103,7 +103,7 @@ fn t61_vlass_controls_reach_the_request_and_the_real_snapshot() -> Result<(), Bo
     let (_, request) = casars_imager::resolve_request(&parameters)?;
     request.validate()?;
     assert_eq!(request.imsize, [12_150; 2]);
-    assert_eq!(request.spw.as_deref(), Some(FIXTURE_SPW_SELECTOR));
+    assert_eq!(request.vis[0].spw.as_deref(), Some(FIXTURE_SPW_SELECTOR));
     assert!(!request.parallel);
     let Gridder::Awproject(AwProjection {
         wprojplanes,
@@ -111,13 +111,16 @@ fn t61_vlass_controls_reach_the_request_and_the_real_snapshot() -> Result<(), Bo
         normtype,
         cf_resident_mb,
         pointingoffsetsigdev,
+        conjbeams,
         cf_source: AwCfSource::CasaImport { cfcache },
+        ..
     }) = &request.gridder
     else {
         panic!("the VLASS controls make an imported-cache AW request: {request:?}");
     };
     assert_eq!(wprojplanes.map(usize::from), Some(32));
     assert!(*usepointing);
+    assert!(*conjbeams);
     assert_eq!(*normtype, ProductNormalization::FlatNoise);
     assert_eq!(*cf_resident_mb, Some(384));
     assert_eq!(pointingoffsetsigdev, &[0.0]);

@@ -14,7 +14,7 @@ use crate::convolution::{CellHold, ConvolutionFunctionSet};
 use crate::error::OperatorError;
 use crate::fft::PlaneFft;
 use crate::geometry::GridGeometry;
-use crate::polarization::PolarizationRouting;
+use crate::polarization::{PolarizationRouting, SumwtSource};
 use crate::sample::Placement;
 
 /// Frequency-domain model basis.
@@ -63,10 +63,17 @@ impl Basis {
 
     /// The Taylor expansion variable `(ν − ν₀)/ν₀` at `freq_hz`; 0 for
     /// other bases.
+    ///
+    /// CASA's `MultiTermFTNew` narrows each channel frequency to `Float`
+    /// before forming the variable against its `Double` reference frequency,
+    /// for both gridding weights and model prediction (#980).
     #[must_use]
     pub fn spectral(self, freq_hz: f64) -> f32 {
         match self {
-            Self::Taylor { reference_hz, .. } => ((freq_hz - reference_hz) / reference_hz) as f32,
+            Self::Taylor { reference_hz, .. } => {
+                let freq_hz = f64::from(freq_hz as f32);
+                ((freq_hz - reference_hz) / reference_hz) as f32
+            }
             Self::Constant | Self::ChannelLocal { .. } => 0.0,
         }
     }
@@ -285,12 +292,13 @@ impl MeasurementOperator {
             .geometry
             .locate(placement.u, placement.v, taps.oversampling());
         let w_positive = placement.prediction_w_positive;
+        let conjugate = self.cf.prediction_conjugates(placement.cf, w_positive);
         self.cf
             .mueller()
             .table(w_positive, true)
             .iter()
             .filter_map(|row| row[vpol])
-            .map(|mueller| crate::cpu::kernel::norm(&taps, location, mueller, !w_positive))
+            .map(|mueller| crate::cpu::kernel::norm(&taps, location, mueller, !conjugate))
             .sum()
     }
 
@@ -552,11 +560,18 @@ impl MeasurementOperator {
                     }
                     for pol in 0..pols {
                         images[slot].push(self.requested_image(pol, &gpol_images, mode));
-                        sumwt.push(acc.sumwt_at(
-                            plane_local,
-                            self.polarization.sumwt_source(pol),
-                            term,
-                        ));
+                        // `MultiTermFTNew::finalizeToSkyNew` gives every
+                        // Stokes plane of a Taylor term the first gridded
+                        // correlation's sum (`ToStokesSumWt` without
+                        // coordinates), where a single-term gridder pairs
+                        // the correlations each Stokes plane is formed from.
+                        let source = match self.basis {
+                            Basis::Taylor { .. } => SumwtSource::Plane(0),
+                            Basis::Constant | Basis::ChannelLocal { .. } => {
+                                self.polarization.sumwt_source(pol)
+                            }
+                        };
+                        sumwt.push(source.sumwt(|gpol| acc.sumwt_at(plane_local, gpol, term)));
                     }
                 }
             }
@@ -577,11 +592,12 @@ impl MeasurementOperator {
         })
     }
 
-    /// A channel cube transforms every plane with one plan, so measured
-    /// planning pays off; a constant or Taylor operator transforms a few
-    /// planes per pass.
+    /// Small channel-local cubes use estimated planning, as constant and
+    /// Taylor operators do: measuring a plan dominates their first pass.
+    /// Cubes with more than four planes retain measured planning so its
+    /// setup can be amortized over their transforms.
     const fn measured_fft(&self) -> bool {
-        matches!(self.basis, Basis::ChannelLocal { .. })
+        matches!(self.basis, Basis::ChannelLocal { planes } if planes > 4)
     }
 
     /// Correction (when `correct`) and crop of one transformed grid plane,

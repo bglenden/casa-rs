@@ -21,9 +21,12 @@ const POINT: Component = Component {
     spectral_index: 0.0,
 };
 
-/// Run `casars-imager` with `args` in `directory`.
+/// Run `casars-imager` with `args` in `directory`, asking for its run
+/// summary ([`casars_imager::RUN_SUMMARY_VARIABLE`]), whose echo of the
+/// resolved parameters this law compares.
 fn imager(directory: &Path, args: &[&str]) {
     let output = Command::new(env!("CARGO_BIN_EXE_casars-imager"))
+        .env(casars_imager::RUN_SUMMARY_VARIABLE, "1")
         .args(args)
         .current_dir(directory)
         .output()
@@ -121,7 +124,16 @@ fn command_line_and_json_runs_resolve_one_request_and_write_the_same_products() 
     assert_eq!(
         suffixes,
         BTreeSet::from(
-            [".image", ".mask", ".model", ".psf", ".residual", ".sumwt"].map(String::from)
+            [
+                ".image",
+                ".mask",
+                ".model",
+                ".pb",
+                ".psf",
+                ".residual",
+                ".sumwt"
+            ]
+            .map(String::from)
         )
     );
     assert_eq!(products(&directory, "json"), suffixes);

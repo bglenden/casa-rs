@@ -20,13 +20,22 @@ fn every_builtin_provider_validates_through_the_shared_envelope() {
         casars_simulation::simobserve_task_schema_bundle(),
     );
     assert_task_provider("mstransform", casa_ms::mstransform_task_schema_bundle());
+    assert_task_provider("concat", casa_ms::concat::concat_task_schema_bundle());
     assert_task_provider("flagdata", casa_ms::flagdata_task_schema_bundle());
     assert_task_provider("flagmanager", casa_ms::flagmanager_task_schema_bundle());
+    assert_task_provider(
+        "msconvert",
+        casars_msconvert::msconvert_task_schema_bundle(),
+    );
     assert_task_provider(
         "image-analysis",
         casa_images::analysis::image_analysis_task_schema_bundle(),
     );
     assert_task_provider("imager", casars_imager::imager_task_schema_bundle());
+    assert_task_provider(
+        "tsdimaging",
+        casars_imager::single_dish::tsdimaging_task_schema_bundle(),
+    );
 }
 
 fn assert_task_provider<E>(

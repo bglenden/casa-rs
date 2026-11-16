@@ -1,0 +1,253 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "getfreq",
+      "input": 0,
+      "result": {}
+    },
+    {
+      "method": "getfreq",
+      "input": -1,
+      "result": {}
+    },
+    {
+      "method": "getfreq",
+      "input": 1099511627776,
+      "result": {}
+    },
+    {
+      "method": "getfreq",
+      "input": true,
+      "result": {}
+    },
+    {
+      "method": "getfreq",
+      "input": 1.5,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfreq",
+      "input": "0",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfreq",
+      "input": null,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getfreq> returned a result with an exception set"
+      }
+    },
+    {
+      "method": "getfreq",
+      "input": [
+        0
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfreq",
+      "input": 1267650600228229401496703205376,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getfreq> returned a result with an exception set"
+      }
+    },
+    {
+      "method": "getfreqframe",
+      "input": 0,
+      "result": ""
+    },
+    {
+      "method": "getfreqframe",
+      "input": -1,
+      "result": ""
+    },
+    {
+      "method": "getfreqframe",
+      "input": 1099511627776,
+      "result": ""
+    },
+    {
+      "method": "getfreqframe",
+      "input": true,
+      "result": ""
+    },
+    {
+      "method": "getfreqframe",
+      "input": 1.5,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfreqframe",
+      "input": "0",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfreqframe",
+      "input": null,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getfreqframe> returned a result with an exception set"
+      }
+    },
+    {
+      "method": "getfreqframe",
+      "input": [
+        0
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfreqframe",
+      "input": 1267650600228229401496703205376,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getfreqframe> returned a result with an exception set"
+      }
+    },
+    {
+      "method": "getfrequnit",
+      "input": 0,
+      "result": ""
+    },
+    {
+      "method": "getfrequnit",
+      "input": -1,
+      "result": ""
+    },
+    {
+      "method": "getfrequnit",
+      "input": 1099511627776,
+      "result": ""
+    },
+    {
+      "method": "getfrequnit",
+      "input": true,
+      "result": ""
+    },
+    {
+      "method": "getfrequnit",
+      "input": 1.5,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfrequnit",
+      "input": "0",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfrequnit",
+      "input": null,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getfrequnit> returned a result with an exception set"
+      }
+    },
+    {
+      "method": "getfrequnit",
+      "input": [
+        0
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfrequnit",
+      "input": 1267650600228229401496703205376,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getfrequnit> returned a result with an exception set"
+      }
+    },
+    {
+      "method": "getfreqvalue",
+      "input": 0,
+      "result": 0.0
+    },
+    {
+      "method": "getfreqvalue",
+      "input": -1,
+      "result": 0.0
+    },
+    {
+      "method": "getfreqvalue",
+      "input": 1099511627776,
+      "result": 0.0
+    },
+    {
+      "method": "getfreqvalue",
+      "input": true,
+      "result": 0.0
+    },
+    {
+      "method": "getfreqvalue",
+      "input": 1.5,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfreqvalue",
+      "input": "0",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfreqvalue",
+      "input": null,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getfreqvalue> returned a result with an exception set"
+      }
+    },
+    {
+      "method": "getfreqvalue",
+      "input": [
+        0
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfreqvalue",
+      "input": 1267650600228229401496703205376,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getfreqvalue> returned a result with an exception set"
+      }
+    }
+  ]
+}

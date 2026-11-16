@@ -10,18 +10,12 @@ use serde::{Deserialize, Serialize};
 
 #[path = "casa_signature.rs"]
 mod casa_signature;
-#[path = "migration.rs"]
-mod migration;
-#[path = "migration_list.rs"]
-mod migration_list;
-#[path = "migration_set.rs"]
-mod migration_set;
+#[path = "surface_validation.rs"]
+mod surface_validation;
 
-use migration::validate_migrations;
-pub use migration::{MigrationStep, MigrationTransform, SurfaceMigration};
-pub use migration_list::ListElement;
+use surface_validation::{SurfaceContractRef, validate_surface_views};
 
-pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_repr};
+pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_float, python_repr};
 
 /// Current schema version for the catalog and surface-definition model.
 pub const PARAMETER_CATALOG_SCHEMA_VERSION: u32 = 1;
@@ -34,9 +28,9 @@ pub const SPW_CONCEPT_ID: &str = "ms.selection.spw";
 pub const OVERWRITE_CONCEPT_ID: &str = "output.overwrite";
 
 /// The surfaces whose `overwrite` defaults to true, as CASA's do: CASA's
-/// `simobserve` replaces only the files it writes inside its own project
+/// simulation tasks replace only the files they write inside their project
 /// directory. Every other `overwrite` defaults to false (#931).
-pub const PROJECT_DIRECTORY_OVERWRITE_SURFACES: [&str; 1] = ["simobserve"];
+pub const PROJECT_DIRECTORY_OVERWRITE_SURFACES: [&str; 2] = ["simobserve", "simanalyze"];
 
 /// Stable semantic identity of a parameter concept.
 #[derive(
@@ -90,22 +84,85 @@ impl ParameterConceptRef {
     }
 }
 
-/// JSON/TOML-compatible typed value used before provider adaptation.
+/// Element type for an empty array passed through a task parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EmptyArrayType {
+    Bool,
+    Integer,
+    Float,
+    Complex,
+    String,
+}
+
+/// A NumPy scalar type whose conversion can depend on its surrounding value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NumpyScalarType {
+    Bool,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    #[serde(rename = "uint8")]
+    UInt8,
+    #[serde(rename = "uint16")]
+    UInt16,
+    #[serde(rename = "uint32")]
+    UInt32,
+    #[serde(rename = "uint64")]
+    UInt64,
+    Float32,
+    Complex64,
+    Complex128,
+}
+
+/// Typed parameter value used before provider adaptation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ParameterValue {
     Bool(bool),
     Integer(i64),
-    Float(f64),
+    Float(
+        #[serde(with = "parameter_float_serde")]
+        #[schemars(with = "crate::CasaFloat")]
+        f64,
+    ),
+    /// A complex scalar, with real and imaginary components.
+    Complex([crate::CasaFloat; 2]),
+    /// An empty NumPy array, retaining its dimensions and element type.
+    EmptyArray {
+        dtype: EmptyArrayType,
+        shape: Vec<usize>,
+    },
+    /// A zero-dimensional NumPy array, retaining its scalar value.
+    ScalarArray(Box<ParameterValue>),
+    /// A NumPy scalar, including its native dtype and scalar value.
+    NumpyScalar {
+        dtype: NumpyScalarType,
+        value: Box<ParameterValue>,
+    },
     String(String),
     Array(Vec<ParameterValue>),
     Table(BTreeMap<String, ParameterValue>),
 }
 
+mod parameter_float_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::CasaFloat(*value).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        crate::CasaFloat::deserialize(deserializer).map(|value| value.0)
+    }
+}
+
 impl ParameterValue {
     /// The value as plain JSON, as requests and profiles spell it: `"none"`,
-    /// `512`, `["0.5arcsec", "0.5arcsec"]`. A non-finite float, which
-    /// normalization never admits, becomes `null`.
+    /// `512`, `["0.5arcsec", "0.5arcsec"]`. Non-finite floats become
+    /// `null`; use typed transport when their identity must be preserved.
     #[must_use]
     pub fn to_plain_json(&self) -> serde_json::Value {
         use serde_json::Value;
@@ -115,6 +172,12 @@ impl ParameterValue {
             Self::Float(value) => {
                 serde_json::Number::from_f64(*value).map_or(Value::Null, Value::Number)
             }
+            Self::Complex(value) => {
+                serde_json::to_value(value).expect("complex components are serializable")
+            }
+            Self::EmptyArray { .. } => Value::Array(Vec::new()),
+            Self::ScalarArray(value) => value.to_plain_json(),
+            Self::NumpyScalar { value, .. } => value.to_plain_json(),
             Self::String(value) => Value::String(value.clone()),
             Self::Array(values) => Value::Array(values.iter().map(Self::to_plain_json).collect()),
             Self::Table(values) => Value::Object(
@@ -123,6 +186,31 @@ impl ParameterValue {
                     .map(|(name, value)| (name.clone(), value.to_plain_json()))
                     .collect(),
             ),
+        }
+    }
+
+    /// Whether this value requires typed rather than plain JSON transport.
+    pub fn requires_typed_transport(&self) -> bool {
+        match self {
+            Self::Complex(_)
+            | Self::EmptyArray { .. }
+            | Self::ScalarArray(_)
+            | Self::NumpyScalar { .. } => true,
+            Self::Float(value) if !value.is_finite() => true,
+            Self::Array(values) => values.iter().any(Self::requires_typed_transport),
+            Self::Table(values) => values.values().any(Self::requires_typed_transport),
+            _ => false,
+        }
+    }
+
+    /// Maximum array/record nesting, for bounding typed transport depth.
+    pub fn nesting_depth(&self) -> usize {
+        match self {
+            Self::Array(values) => 1 + values.iter().map(Self::nesting_depth).max().unwrap_or(0),
+            Self::Table(values) => 1 + values.values().map(Self::nesting_depth).max().unwrap_or(0),
+            Self::ScalarArray(value) => 1 + value.nesting_depth(),
+            Self::NumpyScalar { value, .. } => 1 + value.nesting_depth(),
+            _ => 0,
         }
     }
 
@@ -222,6 +310,8 @@ pub enum UnitDimension {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ParameterType {
+    /// A CASA variant: any finite scalar, list, or string-keyed record.
+    Variant,
     Bool,
     Integer,
     Float,
@@ -288,13 +378,15 @@ pub const PROJECT_TOKEN: &str = "$project";
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NormalizationRule {
     Identity,
+    /// Preserve tclean FIELD text, including literal dollar signs.
+    TcleanField,
     Trim,
     Lowercase,
     Path,
     /// A path that may name the task's project as [`PROJECT_TOKEN`], which
     /// the task replaces (CASA's `simobserve` names `$project.ptg.txt`):
     /// cleaned as a [`Path`](Self::Path), the token kept. Any other `$` or
-    /// backtick is refused, as everywhere.
+    /// backtick in the path is refused.
     ProjectPath,
     CasaSelector {
         grammar: SelectorGrammar,
@@ -419,7 +511,15 @@ fn collect_selector_capabilities(
                 collect_selector_capabilities(grammar, value, used);
             }
         }
-        ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) => {}
+        ParameterValue::ScalarArray(value) => collect_selector_capabilities(grammar, value, used),
+        ParameterValue::NumpyScalar { value, .. } => {
+            collect_selector_capabilities(grammar, value, used)
+        }
+        ParameterValue::Bool(_)
+        | ParameterValue::Integer(_)
+        | ParameterValue::Float(_)
+        | ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. } => {}
     }
 }
 
@@ -736,8 +836,6 @@ pub struct SurfaceParameterBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface_note: Option<String>,
     pub projections: ParameterProjections,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub aliases: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewed_homonym: Option<ReviewedHomonym>,
     /// Set for a CASA parameter casa-rs accepts only at its default.
@@ -898,16 +996,9 @@ pub struct TaskDefinition {
     /// (#931); `None` for a surface not yet CASA-exact or a casa-rs task.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub casa_task: Option<String>,
-    /// The ids this surface had before it was renamed, which a saved
-    /// profile may still name: `imager`, re-surfaced as CASA's `tclean`
-    /// (#931). Its migrations carry such a profile to the current contract.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub former_ids: Vec<String>,
     #[serde(default)]
     pub execution: SurfaceExecutionProjection,
     pub bindings: Vec<SurfaceParameterBinding>,
-    #[serde(default)]
-    pub migrations: Vec<SurfaceMigration>,
 }
 
 /// Shared definition for every configurable executable surface. Every surface
@@ -945,26 +1036,12 @@ impl SurfaceDefinition {
         self.task().casa_task.as_deref()
     }
 
-    /// The ids the surface had before it was renamed.
-    pub fn former_ids(&self) -> &[String] {
-        &self.task().former_ids
-    }
-
-    /// Whether `id` names this surface, now or before it was renamed.
-    pub fn answers_to(&self, id: &str) -> bool {
-        self.id() == id || self.former_ids().iter().any(|former| former == id)
-    }
-
     pub fn bindings(&self) -> &[SurfaceParameterBinding] {
         &self.task().bindings
     }
 
     pub fn execution(&self) -> &SurfaceExecutionProjection {
         &self.task().execution
-    }
-
-    pub fn migrations(&self) -> &[SurfaceMigration] {
-        &self.task().migrations
     }
 
     pub fn display_name(&self) -> &str {
@@ -1006,10 +1083,7 @@ impl SurfaceCatalogBundle {
     /// The surface `id` names, now or, for a saved profile's header, before
     /// it was renamed.
     pub fn surface(&self, id: &str) -> Option<&SurfaceDefinition> {
-        self.surfaces
-            .iter()
-            .find(|surface| surface.id() == id)
-            .or_else(|| self.surfaces.iter().find(|surface| surface.answers_to(id)))
+        self.surfaces.iter().find(|surface| surface.id() == id)
     }
 
     pub fn embedded_surface(&self, id: &str) -> Option<SurfaceContractBundle> {
@@ -1037,17 +1111,16 @@ impl SurfaceCatalogBundle {
     }
 
     pub fn validate(&self) -> Result<(), Vec<ContractValidationError>> {
-        let bundles = self
+        let bundles: Vec<_> = self
             .surfaces
             .iter()
-            .cloned()
-            .map(|surface| SurfaceContractBundle {
+            .map(|surface| SurfaceContractRef {
                 schema_version: self.schema_version,
                 surface,
-                catalog: self.catalog.clone(),
+                catalog: &self.catalog,
             })
-            .collect::<Vec<_>>();
-        validate_surface_bundles(&bundles)
+            .collect();
+        validate_surface_views(&bundles, true)
     }
 }
 
@@ -1090,81 +1163,14 @@ fn validate_surface_bundles_internal(
     bundles: &[SurfaceContractBundle],
     validate_cross_surface_names: bool,
 ) -> Result<(), Vec<ContractValidationError>> {
-    let mut errors = Vec::new();
-    let mut merged = BTreeMap::<(ParameterConceptId, SemanticRevision), ParameterConcept>::new();
-    let mut surface_ids = BTreeSet::new();
-
-    for bundle in bundles {
-        if bundle.schema_version != PARAMETER_CATALOG_SCHEMA_VERSION
-            || bundle.catalog.schema_version != PARAMETER_CATALOG_SCHEMA_VERSION
-        {
-            errors.push(ContractValidationError::new(
-                "schema_version",
-                format!(
-                    "surface {} uses unsupported parameter schema {} / catalog {}",
-                    bundle.surface.id(),
-                    bundle.schema_version,
-                    bundle.catalog.schema_version
-                ),
-            ));
-        }
-        // A former id names the surface in saved profiles, so it may name no
-        // other surface, now or before.
-        for id in std::iter::once(bundle.surface.id())
-            .chain(bundle.surface.former_ids().iter().map(String::as_str))
-        {
-            if !surface_ids.insert(id.to_string()) {
-                errors.push(ContractValidationError::new(
-                    "duplicate_surface",
-                    format!("duplicate surface {id}"),
-                ));
-            }
-        }
-        for concept in &bundle.catalog.concepts {
-            let key = (concept.id.clone(), concept.semantic_revision);
-            match merged.get(&key) {
-                Some(existing) if existing != concept => errors.push(ContractValidationError::new(
-                    "divergent_concept",
-                    format!(
-                        "concept {} revision {} has divergent definitions",
-                        concept.id, concept.semantic_revision.0
-                    ),
-                )),
-                Some(_) => {}
-                None => {
-                    if let NormalizationRule::CasaSelector { capabilities, .. } =
-                        &concept.normalization
-                    {
-                        for capability in capabilities.iter().filter(|capability| {
-                            !SELECTOR_CAPABILITY_NAMES.contains(&capability.as_str())
-                        }) {
-                            errors.push(ContractValidationError::new(
-                                "unknown_selector_capability",
-                                format!(
-                                    "concept {} declares unknown selector capability {capability:?}",
-                                    concept.id
-                                ),
-                            ));
-                        }
-                    }
-                    merged.insert(key, concept.clone());
-                }
-            }
-        }
-        validate_one_surface(bundle, &mut errors);
-    }
-
-    if validate_cross_surface_names {
-        validate_repeated_names(bundles, &mut errors);
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
-    }
+    let views: Vec<_> = bundles.iter().map(SurfaceContractRef::from).collect();
+    validate_surface_views(&views, validate_cross_surface_names)
 }
 
-fn validate_one_surface(bundle: &SurfaceContractBundle, errors: &mut Vec<ContractValidationError>) {
+fn validate_one_surface(
+    bundle: &SurfaceContractRef<'_>,
+    errors: &mut Vec<ContractValidationError>,
+) {
     let surface = &bundle.surface;
     let mut names = BTreeSet::new();
     let mut orders = BTreeSet::new();
@@ -1173,8 +1179,6 @@ fn validate_one_surface(bundle: &SurfaceContractBundle, errors: &mut Vec<Contrac
         .iter()
         .map(|binding| binding.name.clone())
         .collect::<BTreeSet<_>>();
-
-    validate_aliases(surface, &known, errors);
 
     if surface.id().is_empty() || surface.contract_version() == 0 {
         errors.push(
@@ -1342,43 +1346,6 @@ fn validate_one_surface(bundle: &SurfaceContractBundle, errors: &mut Vec<Contrac
         validate_refinements(concept, binding, surface.id(), errors);
     }
     validate_default_cycles(surface, errors);
-    validate_migrations(surface, errors);
-}
-
-fn validate_aliases(
-    surface: &SurfaceDefinition,
-    canonical_names: &BTreeSet<String>,
-    errors: &mut Vec<ContractValidationError>,
-) {
-    let mut aliases = BTreeMap::<&str, &str>::new();
-    for binding in surface.bindings() {
-        for alias in &binding.aliases {
-            if canonical_names.contains(alias) {
-                errors.push(
-                    ContractValidationError::new(
-                        "alias_canonical_collision",
-                        format!(
-                            "alias {alias:?} for parameter {:?} collides with a canonical parameter name",
-                            binding.name
-                        ),
-                    )
-                    .at(surface.id(), Some(&binding.name)),
-                );
-            }
-            if let Some(existing) = aliases.insert(alias, &binding.name) {
-                errors.push(
-                    ContractValidationError::new(
-                        "duplicate_alias",
-                        format!(
-                            "alias {alias:?} for parameter {:?} is already used by parameter {existing:?}",
-                            binding.name
-                        ),
-                    )
-                    .at(surface.id(), Some(&binding.name)),
-                );
-            }
-        }
-    }
 }
 
 /// Runtime authority and UI/process state must never enter a portable profile.
@@ -1441,7 +1408,7 @@ fn validate_profile_parameter_name(
 /// own project directory keeps CASA's `true`
 /// ([`PROJECT_DIRECTORY_OVERWRITE_SURFACES`]).
 fn validate_overwrite_defaults(
-    bundle: &SurfaceContractBundle,
+    bundle: &SurfaceContractRef<'_>,
     errors: &mut Vec<ContractValidationError>,
 ) {
     let surface = &bundle.surface;
@@ -1472,11 +1439,18 @@ fn validate_reserved_name(
     surface: &str,
     errors: &mut Vec<ContractValidationError>,
 ) {
-    let designated = match binding.name.as_str() {
-        "imsize" => Some(IMSIZE_CONCEPT_ID),
-        "cell" => Some(CELL_CONCEPT_ID),
-        "field" => Some(FIELD_CONCEPT_ID),
-        "spw" => Some(SPW_CONCEPT_ID),
+    // Simulation analysis uses zero/empty geometry to inherit the sky model.
+    // Its CASA defaults differ from tclean's positive explicit geometry.
+    let designated = match (surface, binding.name.as_str()) {
+        ("tsdimaging", "imsize") => Some("single_dish.imsize"),
+        ("tsdimaging", "cell") => Some("single_dish.cell"),
+        ("simanalyze" | "simalma", "imsize") => Some("simulation.analysis.imsize"),
+        ("simalma", "cell") => Some("simulation.alma.cell"),
+        ("simanalyze", "cell") => Some("simulation.analysis.cell"),
+        (_, "imsize") => Some(IMSIZE_CONCEPT_ID),
+        (_, "cell") => Some(CELL_CONCEPT_ID),
+        (_, "field") => Some(FIELD_CONCEPT_ID),
+        (_, "spw") => Some(SPW_CONCEPT_ID),
         _ => None,
     };
     if let Some(designated) = designated
@@ -1533,6 +1507,7 @@ pub fn validate_parameter_value(
     domain: &ParameterType,
 ) -> Result<(), String> {
     match (value, domain) {
+        (value, ParameterType::Variant) => validate_variant_value(value),
         (ParameterValue::Bool(_), ParameterType::Bool)
         | (ParameterValue::Integer(_), ParameterType::Integer)
         | (ParameterValue::String(_), ParameterType::String)
@@ -1617,6 +1592,55 @@ pub fn validate_parameter_value(
     }
 }
 
+fn validate_variant_value(value: &ParameterValue) -> Result<(), String> {
+    // Each typed array or record introduces two JSON containers. Leave room
+    // for request and profile envelopes under serde_json's recursion limit.
+    if value.requires_typed_transport() && value.nesting_depth() > 48 {
+        return Err("typed values nested beyond 48 levels are unsupported (#977)".into());
+    }
+    fn validate(value: &ParameterValue) -> Result<(), String> {
+        match value {
+            ParameterValue::NumpyScalar { dtype, value } => {
+                use NumpyScalarType as N;
+                let fits_f32 = |value: f64| value.is_nan() || f64::from(value as f32) == value;
+                let valid = match (dtype, value.as_ref()) {
+                    (N::Bool, ParameterValue::Bool(_)) => true,
+                    (N::Int8, ParameterValue::Integer(v)) => i8::try_from(*v).is_ok(),
+                    (N::Int16, ParameterValue::Integer(v)) => i16::try_from(*v).is_ok(),
+                    (N::Int32, ParameterValue::Integer(v)) => i32::try_from(*v).is_ok(),
+                    (N::Int64, ParameterValue::Integer(_)) => true,
+                    (N::UInt8, ParameterValue::Integer(v)) => u8::try_from(*v).is_ok(),
+                    (N::UInt16, ParameterValue::Integer(v)) => u16::try_from(*v).is_ok(),
+                    (N::UInt32, ParameterValue::Integer(v)) => u32::try_from(*v).is_ok(),
+                    (N::UInt64, ParameterValue::Integer(v)) => *v >= 0,
+                    (N::Float32, ParameterValue::Float(value)) => fits_f32(*value),
+                    (N::Complex64, ParameterValue::Complex(value)) => value.iter().all(|part| fits_f32(part.0)),
+                    (N::Complex128, ParameterValue::Complex(_)) => true,
+                    _ => false,
+                };
+                if valid { Ok(()) } else { Err("NumPy scalar dtype and value do not match (#977)".into()) }
+            }
+            ParameterValue::ScalarArray(value)
+                if !matches!(value.as_ref(), ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) | ParameterValue::Complex(_) | ParameterValue::String(_)) =>
+            {
+                Err("zero-dimensional array must contain a scalar (#977)".into())
+            }
+            ParameterValue::EmptyArray { shape, .. }
+                if shape.is_empty() || shape.len() > 32 || !shape.contains(&0) || shape.iter().any(|&size| i32::try_from(size).is_err()) =>
+            {
+                Err(
+                    "empty array must have 1 to 32 dimensions, 32-bit dimension sizes, and a zero dimension (#977)"
+                        .into(),
+                )
+            }
+            ParameterValue::Array(values) => values.iter().try_for_each(validate),
+            ParameterValue::Table(values) => values.values().try_for_each(validate),
+            _ => Ok(()),
+        }
+    }
+    validate(value)
+}
+
 fn validate_parameter_domain(domain: &ParameterType) -> Result<(), String> {
     match domain {
         ParameterType::Quantity {
@@ -1633,7 +1657,8 @@ fn validate_parameter_domain(domain: &ParameterType) -> Result<(), String> {
             }
             Ok(())
         }
-        ParameterType::Bool
+        ParameterType::Variant
+        | ParameterType::Bool
         | ParameterType::Integer
         | ParameterType::Float
         | ParameterType::String
@@ -1919,7 +1944,11 @@ fn numeric_values(value: &ParameterValue) -> Vec<f64> {
         ParameterValue::String(value) => quantity_number(value).into_iter().collect(),
         ParameterValue::Array(values) => values.iter().flat_map(numeric_values).collect(),
         ParameterValue::Table(values) => values.values().flat_map(numeric_values).collect(),
-        ParameterValue::Bool(_) => Vec::new(),
+        ParameterValue::ScalarArray(value) => numeric_values(value),
+        ParameterValue::NumpyScalar { value, .. } => numeric_values(value),
+        ParameterValue::Bool(_)
+        | ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. } => Vec::new(),
     }
 }
 
@@ -2005,7 +2034,7 @@ fn detects_cycle(
 }
 
 fn validate_repeated_names(
-    bundles: &[SurfaceContractBundle],
+    bundles: &[SurfaceContractRef<'_>],
     errors: &mut Vec<ContractValidationError>,
 ) {
     let mut grouped = BTreeMap::<
@@ -2109,7 +2138,6 @@ mod tests {
                     hidden: false,
                 },
             },
-            aliases: Vec::new(),
             reviewed_homonym: None,
             unimplemented: None,
             unimplemented_forms: None,
@@ -2130,10 +2158,8 @@ mod tests {
                 summary: "Example".to_string(),
                 provider_family: "test".to_string(),
                 casa_task: None,
-                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![binding],
-                migrations: Vec::new(),
             }),
             catalog: ParameterCatalog {
                 schema_version: PARAMETER_CATALOG_SCHEMA_VERSION,
@@ -2145,16 +2171,6 @@ mod tests {
     fn set_surface_id(bundle: &mut SurfaceContractBundle, id: &str) {
         let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.id = id.to_string();
-    }
-
-    fn add_binding(
-        bundle: &mut SurfaceContractBundle,
-        concept: ParameterConcept,
-        binding: SurfaceParameterBinding,
-    ) {
-        bundle.catalog.concepts.push(concept);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-        definition.bindings.push(binding);
     }
 
     #[test]
@@ -2173,63 +2189,6 @@ mod tests {
     fn unsupported_pattern_constraints_are_rejected() {
         let serialized = serde_json::json!({"kind": "pattern", "pattern": "^value$"});
         assert!(serde_json::from_value::<Constraint>(serialized).is_err());
-    }
-
-    #[test]
-    fn aliases_cannot_shadow_canonical_parameter_names_regardless_of_order() {
-        let first = concept("example.first", "first", ParameterType::String);
-        let mut first_binding = binding(
-            &first,
-            DefaultSpec::Literal {
-                value: "first".into(),
-            },
-        );
-        first_binding.aliases.push("second".to_string());
-        let mut bundle = bundle(first, first_binding);
-
-        let second = concept("example.second", "second", ParameterType::String);
-        let mut second_binding = binding(
-            &second,
-            DefaultSpec::Literal {
-                value: "second".into(),
-            },
-        );
-        second_binding.order = 1;
-        add_binding(&mut bundle, second, second_binding);
-
-        let errors = bundle.validate().unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == "alias_canonical_collision")
-        );
-    }
-
-    #[test]
-    fn aliases_must_be_unique_across_the_entire_surface() {
-        let first = concept("example.first", "first", ParameterType::String);
-        let mut first_binding = binding(
-            &first,
-            DefaultSpec::Literal {
-                value: "first".into(),
-            },
-        );
-        first_binding.aliases.push("legacy".to_string());
-        let mut bundle = bundle(first, first_binding);
-
-        let second = concept("example.second", "second", ParameterType::String);
-        let mut second_binding = binding(
-            &second,
-            DefaultSpec::Literal {
-                value: "second".into(),
-            },
-        );
-        second_binding.order = 1;
-        second_binding.aliases.push("legacy".to_string());
-        add_binding(&mut bundle, second, second_binding);
-
-        let errors = bundle.validate().unwrap_err();
-        assert!(errors.iter().any(|error| error.code == "duplicate_alias"));
     }
 
     fn overwrite_bundle(default: bool) -> SurfaceContractBundle {
@@ -2255,11 +2214,17 @@ mod tests {
 
     #[test]
     fn a_project_directory_surface_keeps_casas_overwrite_default() {
-        for (default, valid) in [(true, true), (false, false)] {
-            let mut bundle = overwrite_bundle(default);
-            let SurfaceDefinition::Task(definition) = &mut bundle.surface;
-            definition.id = PROJECT_DIRECTORY_OVERWRITE_SURFACES[0].to_string();
-            assert_eq!(bundle.validate().is_ok(), valid, "default {default}");
+        for surface in PROJECT_DIRECTORY_OVERWRITE_SURFACES {
+            for (default, valid) in [(true, true), (false, false)] {
+                let mut bundle = overwrite_bundle(default);
+                let SurfaceDefinition::Task(definition) = &mut bundle.surface;
+                definition.id = surface.to_string();
+                assert_eq!(
+                    bundle.validate().is_ok(),
+                    valid,
+                    "{surface}: default {default}"
+                );
+            }
         }
     }
 
@@ -2761,10 +2726,8 @@ mod tests {
                 summary: "Cycle".to_string(),
                 provider_family: "test".to_string(),
                 casa_task: None,
-                former_ids: Vec::new(),
                 execution: SurfaceExecutionProjection::default(),
                 bindings: vec![first_binding, second_binding],
-                migrations: Vec::new(),
             }),
             catalog: ParameterCatalog {
                 schema_version: PARAMETER_CATALOG_SCHEMA_VERSION,
@@ -2773,32 +2736,6 @@ mod tests {
         };
         let errors = bundle.validate().unwrap_err();
         assert!(errors.iter().any(|error| error.code == "default_cycle"));
-    }
-
-    #[test]
-    fn empty_migrations_declare_a_current_only_surface() {
-        let concept = concept("example.name", "name", ParameterType::String);
-        let mut binding = binding(
-            &concept,
-            DefaultSpec::Literal {
-                value: "default".into(),
-            },
-        );
-        let mut current_only_bundle = bundle(concept.clone(), binding.clone());
-        let SurfaceDefinition::Task(definition) = &mut current_only_bundle.surface;
-        definition.contract_version = 2;
-        current_only_bundle.validate().unwrap();
-
-        binding.aliases.push("legacy_name".to_string());
-        let mut aliased_bundle = bundle(concept, binding);
-        let SurfaceDefinition::Task(definition) = &mut aliased_bundle.surface;
-        definition.contract_version = 2;
-        let errors = aliased_bundle.validate().unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == "current_only_alias")
-        );
     }
 
     #[test]

@@ -18,7 +18,8 @@ def test_catalog_generates_one_wrapper_for_every_task() -> None:
     surfaces = parameters.catalog()["surfaces"]
     assert {surface["kind"] for surface in surfaces} == {"task"}
     task_ids = tuple(surface["id"] for surface in surfaces)
-    assert len(task_ids) == 26
+    assert len(task_ids) == 31
+    assert "simanalyze" in task_ids
     assert tasks.TASK_SURFACES == task_ids
     assert all(callable(getattr(tasks, name)) for name in tasks.TASK_SURFACES)
     assert not hasattr(tasks, "plotcal")
@@ -67,6 +68,15 @@ def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -
         "imagename": "target",
         "imsize": 1024,
     }
+
+
+def test_tclean_hogbom_default_and_explicit_strict_override(monkeypatch) -> None:
+    captured = _capture_runs(monkeypatch)
+    assert inspect.signature(tasks.tclean).parameters["hogbom_iteration_mode"].default == "casa-inclusive"
+    tasks.tclean(vis="target.ms", imagename="target")
+    assert "hogbom_iteration_mode" not in captured["overrides"]
+    tasks.tclean(vis="target.ms", imagename="target", hogbom_iteration_mode="strict")
+    assert captured["overrides"]["hogbom_iteration_mode"] == "strict"
 
 
 def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
@@ -190,6 +200,9 @@ def test_generated_stubs_use_catalog_domains_and_surface_refinements() -> None:
     assert tclean["imsize"] == "int | list[int] | tuple[int, ...]"
     assert tclean["cell"] == "str | list[str] | tuple[str, ...]"
     assert tclean["write_pb"] == "bool"
+
+    imhead = _annotations(task_functions["imhead"])
+    assert imhead["hdvalue"] == "str | bool | int | float | dict[str, ParameterData] | list[ParameterData]"
 
     importvla = _annotations(task_functions["importvla"])
     assert importvla["archivefiles"] == "StrPath | list[StrPath] | tuple[StrPath, ...]"

@@ -281,63 +281,66 @@ impl StManArrayFileReader {
         })
     }
 
-    /// Read an array at the given file offset.
+    /// Read only an indirect cell's shape, without reading its payload.
     ///
-    /// Returns `None` if `offset == 0` (undefined cell).
-    /// Returns `Some((shape, Value::Array(...)))` on success.
+    /// This is `StManArrayFile::getShape`: offset zero is undefined; a
+    /// stored zero-dimensional empty array has the canonical shape `[0]`.
+    pub(crate) fn read_shape_at(
+        &mut self,
+        offset: i64,
+    ) -> Result<Option<Vec<usize>>, StorageError> {
+        if offset == 0 {
+            return Ok(None);
+        }
+        let target = u64::try_from(offset).map_err(|_| {
+            StorageError::FormatMismatch("negative indirect array offset".to_string())
+        })?;
+        if self.pos != target {
+            self.file.seek(SeekFrom::Start(target))?;
+        }
+        if self.version > 0 {
+            let _ref_count = read_u32(&mut self.file, self.bo)?;
+        }
+        let ndim = read_u32(&mut self.file, self.bo)? as usize;
+        let mut shape = Vec::with_capacity(ndim);
+        for _ in 0..ndim {
+            let dimension = read_i32(&mut self.file, self.bo)?;
+            shape.push(usize::try_from(dimension).map_err(|_| {
+                StorageError::FormatMismatch("negative indirect array dimension".to_string())
+            })?);
+        }
+        self.pos = target + if self.version > 0 { 4 } else { 0 } + 4 + ndim as u64 * 4;
+        if ndim == 0 {
+            shape.push(0);
+        }
+        Ok(Some(shape))
+    }
+
+    /// Read an array at the given file offset; zero is undefined.
     pub(crate) fn read_array_at(
         &mut self,
         offset: i64,
         dt: CasacoreDataType,
     ) -> Result<Option<Value>, StorageError> {
-        if offset == 0 {
+        let Some(shape) = self.read_shape_at(offset)? else {
             return Ok(None);
-        }
-
-        let target = offset as u64;
-        if self.pos != target {
-            self.file.seek(SeekFrom::Start(target))?;
-            self.pos = target;
-        }
-
-        // Skip refCount for version > 0.
-        if self.version > 0 {
-            let _ref_count = read_u32(&mut self.file, self.bo)?;
-        }
-
-        // Read shape.
-        let ndim = read_u32(&mut self.file, self.bo)? as usize;
-        let mut shape = Vec::with_capacity(ndim);
-        for _ in 0..ndim {
-            shape.push(read_i32(&mut self.file, self.bo)? as usize);
-        }
-
-        // A 0-dimensional shape is casacore's empty `IPosition`, an array of
-        // no elements (not the one element of an empty product): read as
-        // `[0]`, as the AipsIO reader reads one.
-        let total: usize = if ndim == 0 { 0 } else { shape.iter().product() };
+        };
+        let total = shape.iter().try_fold(1usize, |size, &dimension| {
+            size.checked_mul(dimension).ok_or_else(|| {
+                StorageError::FormatMismatch("indirect array shape overflows usize".to_string())
+            })
+        })?;
         if total == 0 {
-            if ndim == 0 {
-                shape.push(0);
-            }
-            let header_bytes = if self.version > 0 { 4u64 } else { 0 } + 4 + (ndim as u64 * 4);
-            self.pos = target + header_bytes;
             return Ok(Some(make_empty_array(dt, &shape)));
         }
-
-        // Read flat data in Fortran order, then construct ndarray.
+        let data_position = self.pos;
         let array_value = self.read_typed_data(dt, total, &shape)?;
-
-        // Update tracked position: header + shape + data bytes.
-        // For strings, internal seeks invalidate the position.
-        if dt == CasacoreDataType::TpString {
-            self.pos = u64::MAX;
+        // String payloads seek internally; other cells have a known length.
+        self.pos = if dt == CasacoreDataType::TpString {
+            u64::MAX
         } else {
-            let header_bytes = if self.version > 0 { 4u64 } else { 0 } + 4 + (ndim as u64 * 4);
-            let data_bytes = (total as f64 * canonical_elem_bytes(dt) + 0.95) as u64;
-            self.pos = target + header_bytes + data_bytes;
-        }
-
+            data_position + (total as f64 * canonical_elem_bytes(dt) + 0.95) as u64
+        };
         Ok(Some(Value::Array(array_value)))
     }
 
@@ -799,6 +802,41 @@ mod tests {
     use super::*;
     use ndarray::array;
     use tempfile::TempDir;
+
+    #[test]
+    fn shape_read_does_not_read_a_missing_payload() {
+        for big_endian in [false, true] {
+            for version in [0, 1] {
+                let directory = TempDir::new().unwrap();
+                let path = directory.path().join("shape.arr");
+                let mut writer = StManArrayFileWriter::create(&path, big_endian, version).unwrap();
+                let value = Value::Array(ArrayValue::Float32(ArrayD::from_elem(
+                    IxDyn(&[2, 4096]).f(),
+                    1.0,
+                )));
+                let offset = writer
+                    .write_array(&value, CasacoreDataType::TpFloat)
+                    .unwrap();
+                writer.finish().unwrap();
+                // Retain the full header, deliberately omit the numerical payload.
+                let header = if version > 0 { 4 } else { 0 } + 4 + 2 * 4;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_len(offset as u64 + header)
+                    .unwrap();
+                let mut reader = StManArrayFileReader::open(&path, big_endian).unwrap();
+                assert_eq!(reader.read_shape_at(0).unwrap(), None);
+                assert_eq!(reader.read_shape_at(offset).unwrap(), Some(vec![2, 4096]));
+                assert!(
+                    reader
+                        .read_array_at(offset, CasacoreDataType::TpFloat)
+                        .is_err()
+                );
+            }
+        }
+    }
 
     #[test]
     fn round_trip_float32_array() {

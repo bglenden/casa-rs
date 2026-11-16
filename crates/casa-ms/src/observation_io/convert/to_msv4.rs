@@ -18,7 +18,7 @@ use crate::observation_io::msv4::{STATION_NAMED, check_fields, kept_samples, uni
 use crate::observation_io::update::storage;
 use crate::observation_io::{
     Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
-    Msv4WriteCounters, OpenOptions,
+    Msv4WriteCounters, OpenOptions, PartitionScheme,
 };
 
 /// What converting one partition did.
@@ -54,7 +54,10 @@ struct Converted {
 /// holds are a reported loss), with the phase centre at each time as XRADIO
 /// states it. Partitions are
 /// converted [`ConversionOptions::workers`] at a time; nothing appears at
-/// `destination` until every dataset is complete.
+/// `destination` until every dataset is complete. An MSv2 is partitioned
+/// by the keys every partition has, XRADIO's `partition_scheme=[]`, its
+/// pointing is converted, and every dataset is chunked as
+/// [`ConversionOptions::chunks`] says; [`to_msv4_with`] chooses otherwise.
 ///
 /// # Errors
 ///
@@ -70,20 +73,70 @@ pub fn to_msv4(
     destination: &Path,
     options: &ConversionOptions,
 ) -> Result<ConversionReport, ObservationError> {
+    let chunks = options.chunks;
+    to_msv4_with(
+        source,
+        destination,
+        options,
+        &Msv4Conversion {
+            partition_scheme: PartitionScheme::default(),
+            pointing: true,
+            chunk_shape: &move |_| chunks,
+        },
+    )
+}
+
+/// The chunk shape `[time, baseline, frequency, polarization]` asked of a
+/// dataset of the given extents (in the same order), 0 for a whole axis;
+/// each axis is then clipped to the dataset's extent.
+pub type ChunkShape = dyn Fn([usize; 4]) -> [u64; 4] + Sync;
+
+/// What an MSv4 conversion chooses beyond [`ConversionOptions`], as
+/// XRADIO's converter's `partition_scheme`, `with_pointing` and
+/// `main_chunksize` choose it.
+pub struct Msv4Conversion<'a> {
+    /// The keys an MSv2 source is further partitioned by, each partition a
+    /// dataset; an MSv4 source keeps its datasets.
+    pub partition_scheme: PartitionScheme,
+    /// Whether the source's pointing is converted; without it, its
+    /// pointing is a reported loss ([`Loss::Table`]).
+    pub pointing: bool,
+    /// The chunk shape asked of each dataset by its extents: a fixed shape,
+    /// or [`xradio_chunks`](super::xradio_chunks), as XRADIO's converter
+    /// chunks it.
+    pub chunk_shape: &'a ChunkShape,
+}
+
+/// [`to_msv4`], partitioned, with or without pointing, and chunked as
+/// `conversion` chooses; [`ConversionOptions::chunks`] is not read.
+///
+/// # Errors
+///
+/// As [`to_msv4`].
+pub fn to_msv4_with(
+    source: &Path,
+    destination: &Path,
+    options: &ConversionOptions,
+    conversion: &Msv4Conversion<'_>,
+) -> Result<ConversionReport, ObservationError> {
     let Named {
         observation,
         catalogue: named,
         datasets,
-    } = open_named(source)?;
+    } = open_named(source, conversion.partition_scheme)?;
     let catalogue = observation.catalogue();
     let groups = losses::selected_groups(catalogue, options.data_groups.as_deref())?;
     let mut found = losses::inventory(source, catalogue, &groups, losses::Store::Msv4)?;
-    let (pointing, lost) = pointing_plan::plan(
-        source,
-        observation.as_ref(),
-        losses::Store::Msv4,
-        options.batch_bytes,
-    )?;
+    let (pointing, lost) = if conversion.pointing {
+        pointing_plan::plan(
+            source,
+            observation.as_ref(),
+            losses::Store::Msv4,
+            options.batch_bytes,
+        )?
+    } else {
+        pointing_plan::omitted(source)?
+    };
     found.extend(lost);
     found.extend(losses::unused_antennas(catalogue));
     found.extend(preflight_fields(observation.as_ref(), &groups[0])?);
@@ -106,6 +159,7 @@ pub fn to_msv4(
                             set: &set,
                             named: &named,
                             pointing: &pointing,
+                            chunk_shape: conversion.chunk_shape,
                         },
                         observation.as_ref(),
                         *id,
@@ -210,10 +264,13 @@ struct Named {
 }
 
 /// Open `source`, with the catalogue its datasets are declared with and
-/// each partition's dataset name: an MSv4's own, or an MSv2's with
-/// XRADIO's names.
-fn open_named(source: &Path) -> Result<Named, ObservationError> {
-    let options = OpenOptions::default();
+/// each partition's dataset name: an MSv4's own, or an MSv2's, partitioned
+/// by `partition_scheme`, with XRADIO's names.
+fn open_named(source: &Path, partition_scheme: PartitionScheme) -> Result<Named, ObservationError> {
+    let options = OpenOptions {
+        partition_scheme,
+        ..OpenOptions::default()
+    };
     if source.join("zarr.json").is_file() {
         let observation = Msv4Observation::open_with(source, &options)?;
         let catalogue = observation.catalogue().as_ref().clone();
@@ -313,6 +370,7 @@ struct Destination<'a> {
     set: &'a Msv4ProcessingSetWriter,
     named: &'a Catalogue,
     pointing: &'a PointingPlan,
+    chunk_shape: &'a ChunkShape,
 }
 
 /// Convert partition `id` into dataset `name` of the destination: its
@@ -330,6 +388,7 @@ fn partition(
         set,
         named,
         pointing,
+        chunk_shape,
     } = *destination;
     let grid = observation.grid(id, &groups[0])?;
     let entry = observation.catalogue().partition(id);
@@ -339,9 +398,10 @@ fn partition(
         entry.frequencies_hz.len(),
         entry.correlations.len(),
     ];
+    let requested = chunk_shape(extents);
     let chunks: [u64; 4] = std::array::from_fn(|axis| {
         let extent = extents[axis].max(1) as u64;
-        match options.chunks[axis] {
+        match requested[axis] {
             0 => extent,
             chunk => chunk.min(extent),
         }

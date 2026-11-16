@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native imaging on the major-cycle pass: the measurement operator built
 //! from the compiled problem, the MeasurementSet as a bounded source, and
-//! the loop of major and minor cycles (plan section 5.4).
+//! the loop of major and minor cycles.
 
 mod charts;
 mod continuum;
@@ -10,24 +10,42 @@ mod images;
 mod measurement;
 mod observation_source;
 mod setup;
-mod source;
 mod trace;
 mod visibility_write;
 
-pub(crate) use cycle::{ImagingInputs, SourceInput, plane_bounds, run};
-pub(crate) use measurement::{metal_kernel_set, row_samples, standard_kernel_set};
-pub(crate) use observation_source::{
-    BatchRoute, ObservationSource, PartitionSelection, RouteStore, SelectedPartition, WriteBack,
-    admit_batches, pointing_direction,
+pub(crate) use cycle::{
+    Forms, ImagingInputs, MvcCycleSpec, SeparatePsf, form_separate_psf, plane_bounds, run,
 };
-pub(crate) use visibility_write::{RowWriteTarget, VisibilityWriteTarget, VisibilityWriter};
+pub(crate) use images::prepare_model;
+pub(crate) use measurement::{
+    KernelAdmission, domain_operator, image_extent, metal_kernel_set, multi_store_kernel_set,
+    polarized_taylor_kernel_set, reference_frequency_hz, row_samples, selected_correlations,
+    standard_kernel_set,
+};
+pub(crate) use observation_source::{
+    BatchRoute, Batching, ObservationSource, PartitionSelection, RouteStore, SelectedPartition,
+    StoreBatches, StoreKeys, StoreRoute, WriteBack, admit_batches, pointing_direction,
+};
+pub(crate) use visibility_write::VisibilityWriteTarget;
 
 use casa_imaging_deconvolution::{
     MajorCycleError, MaskError, ModelLifecycleError, NormalStateError,
 };
+use casa_imaging_model::{CompiledProblem, FrequencyFrame};
 use casa_imaging_operator::OperatorError;
 use casa_imaging_runtime::pass::PassError;
 use casa_imaging_runtime::{Admission, Cancelled, MinorCycleRunError};
+
+/// CASA's REST AW channel map uses source-shifted frequencies, while
+/// AWProjectFT::setupVBStore supplies the native wavelengths to the gridder.
+fn rest_aw_uses_native_wavelengths(problem: &CompiledProblem) -> bool {
+    problem
+        .science()
+        .measurement_equation()
+        .aw_projection()
+        .is_some()
+        && problem.geometry().spectral().output_frame() == FrequencyFrame::Rest
+}
 
 /// A failure of a native imaging run.
 #[derive(Debug, thiserror::Error)]
@@ -50,9 +68,21 @@ pub(crate) enum ImagingError {
     /// A minor cycle failed.
     #[error(transparent)]
     Minor(#[from] MinorCycleRunError),
+    /// The ordinary Taylor flag rule discarded every channel because
+    /// the first selected correlation is fully flagged.
+    #[error(
+        "MT-MFS cannot image this selection: the first selected correlation {correlation:?} is fully flagged. Ordinary Stokes imaging discards a channel when any selected correlation is flagged. Image the surviving correlations in a separate MeasurementSet."
+    )]
+    FirstTaylorCorrelationFlagged {
+        /// The first selected correlation.
+        correlation: casa_types::Correlation,
+    },
     /// A normal state could not be assembled.
     #[error(transparent)]
     Normal(#[from] NormalStateError),
+    /// An MVC conversion or model handoff failed.
+    #[error("MVC handoff: {0}")]
+    Mvc(#[source] crate::ApplicationError),
     /// The model lifecycle rejected a generation or update.
     #[error(transparent)]
     Model(#[from] ModelLifecycleError),
@@ -77,8 +107,22 @@ pub(crate) enum ImagingError {
     /// The start model could not be read or regridded.
     #[error("startmodel: {0}")]
     StartModel(#[source] casa_images::ImageError),
+    /// The PSF, sums of weights or residual of an earlier run could not be
+    /// read (`calcpsf=False`, `calcres=False`).
+    #[error("an earlier run's products: {0}")]
+    Existing(#[source] casa_images::ImageError),
     /// A start model in flat-noise units could not be made physical with
     /// the initial pass's weights.
     #[error("startmodel units: {0}")]
     StartModelUnits(#[source] casa_imaging_products::ProductsError),
+}
+
+impl From<crate::native::NativeError> for ImagingError {
+    fn from(error: crate::native::NativeError) -> Self {
+        match error {
+            crate::native::NativeError::Admission(error) => Self::Admission(error),
+            crate::native::NativeError::Cancelled(error) => Self::Cancelled(error),
+            crate::native::NativeError::Other(error) => Self::Mvc(error),
+        }
+    }
 }

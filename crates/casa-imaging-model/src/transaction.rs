@@ -16,7 +16,7 @@ pub enum ModelColumnWrite {
     /// Do not mutate any MeasurementSet.
     Disabled,
     /// Replace the selected `MODEL_DATA` cells for every snapshot source.
-    SelectedRows,
+    SelectedSamples,
 }
 
 /// Whether a compiled imaging run persists transformed observations to `CORRECTED_DATA`.
@@ -204,7 +204,7 @@ pub fn compile_observation_transaction(
         };
     let mut visibility_columns = Vec::new();
     for source in snapshot.sources() {
-        if requirements.model_column_write == ModelColumnWrite::SelectedRows {
+        if requirements.model_column_write == ModelColumnWrite::SelectedSamples {
             visibility_columns.push(SelectedVisibilityWriteAccess {
                 measurement_set: source.input_ordinal(),
                 column: MsColumnKind::ModelData,
@@ -257,15 +257,22 @@ fn output_role_selection(
             if let Some(catalog) = selection.coordinate_catalog() {
                 output = output.with_coordinate_catalog(catalog.clone());
             }
+            if let Some(factors) = selection.first_buffer_beam_factors() {
+                output = output
+                    .with_first_buffer_beam_factors(factors)
+                    .expect("bound factors are finite and positive");
+            }
+            if let Some(bands) = selection.frequency_bands() {
+                output = output.with_frequency_bands(bands.clone());
+            }
             Ok(output)
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ObservationSelection::new(
-        selected.rows().clone(),
+        selected.samples(),
         selected.rows_filter().clone(),
-        selected.data_descriptions().to_vec(),
+        selected.partitions().to_vec(),
         spectral_windows,
-        selected.correlations().to_vec(),
     ))
 }
 

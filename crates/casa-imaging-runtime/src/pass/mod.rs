@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The major-cycle pass (plan section 5.4): one traversal of the selected
+//! The major-cycle pass: one traversal of the selected
 //! visibilities that accumulates the dirty or residual image terms, and the
 //! PSF on the initial pass, of every image domain, for every capability.
 //!
@@ -159,6 +159,9 @@ impl Cancel {
 pub enum SampleContent {
     /// Values, flags and weights: every gridding, prediction and write pass.
     Visibilities,
+    /// Flags and geometry for a separate final model prediction on the
+    /// parent selection; stored visibility values are not read.
+    Prediction,
     /// Flags and weights only, which is all density weighting reads, as
     /// CASA's does. Every value is zero; a stored value is checked when an
     /// imaging pass reads it.
@@ -170,7 +173,8 @@ pub enum SampleContent {
 /// Each wave of a pass begins one traversal. Rows are delivered in a fixed
 /// order, so repeated traversals see the same samples.
 ///
-/// The trait is a dependency boundary (plan §10 rule 7): the pass, here,
+/// The trait is a dependency boundary (imaging code rule 7 in
+/// `ARCHITECTURE.md`): the pass, here,
 /// traverses the MeasurementSet source of `casa-imaging-application`, its
 /// one production implementation, which this crate cannot name.
 pub trait BoundedSource: Send {
@@ -211,7 +215,7 @@ pub struct PassDomain<'a> {
 /// The gridding backend every owner of a pass dispatches to.
 ///
 /// With [`BackendChoice::Metal`] each owner grids on the shared Metal
-/// device into an `f32` accumulator in device memory (D2), so every
+/// device into an `f32` accumulator in device memory (ADR-0016 decision 6), so every
 /// operator of the pass must be `f32`. The model is degridded on the device
 /// too: fused into the residual, or, for the native-channel residual of a
 /// multi-domain or linearly interpolated pass, in each row chunk's
@@ -235,6 +239,9 @@ pub struct MajorCyclePass<'a> {
     pub weighting: &'a WeightingGeneration,
     /// Modes accumulated: data and PSF on the initial pass, data later.
     pub modes: ModeSet,
+    /// Sum data-gridding weights on a restart with an unfilled scalar
+    /// field even though this pass forms no PSF.
+    pub refill_scalar_sum_weight: bool,
     /// Model grids of a domain's planes; `None` grids the data themselves
     /// (an initial pass without a start model).
     pub model: Option<&'a ModelPreparation<'a>>,
@@ -309,10 +316,10 @@ impl MajorCyclePass<'_> {
     /// Whether the pass sums `sumwt`: without a model, or when it forms the
     /// PSF, as the initial pass from a start model does. A residual pass's
     /// sums are not read, since CASA keeps the PSF gridding's `.sumwt`
-    /// through the data passes (`FTMachine::finalizeToSkyNew`), so its
-    /// images carry zero sums.
+    /// through the data passes (`FTMachine::finalizeToSkyNew`), unless an
+    /// earlier run left a field with an unfilled sum.
     fn sums_weights(&self) -> bool {
-        self.model.is_none() || self.modes.psf
+        self.model.is_none() || self.modes.psf || self.refill_scalar_sum_weight
     }
 
     /// `acc`, summing `sumwt` only when the pass does.
@@ -443,8 +450,7 @@ pub fn run_major_cycle(
 /// Bytes the passes hold for a source whose largest block is `block`: the
 /// native blocks a pass's stream double-buffers and the model visibilities
 /// of one block, which a pass with a model predicts. They grow with the
-/// source's block, so the source's admission holds them
-/// ([`crate::finalize_source_access`]).
+/// source's block, so the source's admission holds them.
 #[must_use]
 pub const fn source_block_bytes(block: BlockShape) -> u64 {
     stream::bytes(block) + wave::prediction_bytes(block)
@@ -511,9 +517,8 @@ pub struct RowSamples {
 /// rather than its placement cap: each owner's buffer and the weight
 /// owner's can take every placement of a row with its native endpoints, and
 /// the chunk's prediction batch every degridded sample and the row's native
-/// terms. The source sizes its blocks with it
-/// ([`crate::finalize_source_access`]); [`WaveDemand::bytes`] charges the
-/// chunks exactly.
+/// terms. The source sizes its blocks with it; [`WaveDemand::bytes`]
+/// charges the chunks exactly.
 #[must_use]
 pub const fn chunk_bytes_per_row(layout: BlockShape, row: RowSamples, workers: usize) -> u64 {
     (workers as u64 + 1) * SampleBuffer::sourced_bytes(layout.correlations, row.placed)
@@ -548,8 +553,10 @@ fn chunk_ranges(
 
 /// Bytes a density pass over blocks of `block` on `workers` workers holds:
 /// its grid of `shape` ([`DensityGridShape::bytes`]), which it returns, and
-/// its row chunks' sample buffers, which it frees. The stream's native
-/// blocks are the source's ([`source_block_bytes`]).
+/// its row chunks, which it frees: each chunk's row range and sample buffer
+/// and the team's result for it on each call
+/// ([`WorkerTeam::for_each_mut`]). The stream's native blocks are the
+/// source's ([`source_block_bytes`]).
 #[must_use]
 pub fn density_pass_bytes(
     resampler: &SpectralResampler,
@@ -560,7 +567,9 @@ pub fn density_pass_bytes(
     let chunks = workers * DENSITY_CHUNKS_PER_WORKER;
     let row = resampler.density_samples_per_row(shape, block.spectrum);
     let placements = chunk_rows(row, block.rows, chunks, CHUNK_PLACEMENTS) * row;
-    shape.bytes() + chunks as u64 * SampleBuffer::bytes(1, placements)
+    let containers =
+        size_of::<(std::ops::Range<usize>, SampleBuffer)>() + size_of::<Result<(), PassError>>();
+    shape.bytes() + chunks as u64 * (SampleBuffer::bytes(1, placements) + containers as u64)
 }
 
 /// Accumulate the weight-density grid of `shape` over one traversal of the
@@ -586,7 +595,7 @@ pub fn run_density_pass(
             SampleContent::FlagsAndWeights,
         )
         .map_err(PassError::Source)?;
-    let mut grid = DensityGrid::new(shape);
+    let mut grid = DensityGrid::new(shape.clone());
     let maximum = source.maximum_block();
     let count = team.workers() * DENSITY_CHUNKS_PER_WORKER;
     let row = resampler.density_samples_per_row(&shape, maximum.spectrum);

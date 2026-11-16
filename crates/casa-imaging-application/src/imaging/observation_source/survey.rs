@@ -10,7 +10,7 @@ use casa_imaging_runtime::pass::SourceError;
 use casa_observation::{BatchBuffers, ReadEvent};
 use casa_types::measures::MjdHighPrec;
 
-use super::BatchRoute;
+use super::StoreRoute;
 use super::requests;
 use super::window::FactorRange;
 
@@ -26,13 +26,14 @@ pub(super) struct PartitionSurvey {
     pub(super) factors: Option<FactorRange>,
 }
 
-/// Each of `route`'s partitions surveyed, with their conversion factors
-/// when `factors`. The survey's batches hold at most its admitted bytes
-/// ([`super::Batching::survey_bytes`]), in buffers of their own.
-/// Partitions observed at the same times towards the same field in the same
-/// frame share each conversion.
+/// Each of one store's `route`'s partitions surveyed, with their conversion
+/// factors when `factors`. The survey's batches hold at most its admitted
+/// `survey_bytes` ([`super::Batching::survey_bytes`]), in buffers of their
+/// own. Partitions observed at the same times towards the same field in
+/// the same frame share each conversion.
 pub(super) fn survey(
-    route: &BatchRoute,
+    route: &StoreRoute,
+    survey_bytes: usize,
     factors: bool,
 ) -> Result<Vec<PartitionSurvey>, SourceError> {
     let catalogue = route.observation().catalogue();
@@ -49,7 +50,7 @@ pub(super) fn survey(
                 (&route.selection, &route.plan),
                 entry,
                 partition,
-                route.batching.survey_bytes(),
+                survey_bytes,
             );
             let mut traversal = route.observation().bind_read(&request)?;
             let mut span: Option<[f64; 2]> = None;
@@ -60,16 +61,26 @@ pub(super) fn survey(
                 };
                 let centroids = batch.timing.centroid.map(|centroid| centroid.offsets_s());
                 let times = batch.time.offsets_s();
-                for time_s in times.iter().chain(centroids.iter().flatten()) {
-                    let [low, high] = span.get_or_insert([*time_s; 2]);
-                    *low = low.min(*time_s);
-                    *high = high.max(*time_s);
-                }
-                if !factors {
-                    continue;
-                }
                 let scale = batch.time.reference();
+                let baselines = batch.samples_per_time();
                 for time in 0..batch.times() {
+                    if !route.selection.time_holds(&batch, time)? {
+                        continue;
+                    }
+                    let mut include = |time_s: f64| {
+                        let [low, high] = span.get_or_insert([time_s; 2]);
+                        *low = low.min(time_s);
+                        *high = high.max(time_s);
+                    };
+                    include(times[time]);
+                    if let Some(centroids) = &centroids {
+                        for sample in time * baselines..(time + 1) * baselines {
+                            include(centroids[sample]);
+                        }
+                    }
+                    if !factors {
+                        continue;
+                    }
                     let time_mjd_s = batch.time.seconds_since(time, origin);
                     let field = batch.field[time];
                     let key = (entry.frequency_frame, field, scale, time_mjd_s.to_bits());

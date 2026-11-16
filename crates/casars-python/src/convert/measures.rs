@@ -66,11 +66,15 @@ pub(crate) fn epoch(value: &Variant) -> ConvertResult<Option<MEpoch>> {
             }
         }
         Variant::Empty => Ok(Some(MEpoch::from_mjd(0.0, EpochRef::UTC))),
+        Variant::ComplexArray { values, .. } if values.is_empty() => {
+            Ok(Some(MEpoch::from_mjd(0.0, EpochRef::UTC)))
+        }
         Variant::Number(days) => Ok(Some(MEpoch::from_mjd(*days, EpochRef::UTC))),
         Variant::Bool(_)
         | Variant::Numbers(_)
         | Variant::Complex(_)
         | Variant::Complexes(_)
+        | Variant::ComplexArray { .. }
         | Variant::Array { .. }
         | Variant::Other(_) => Err(ConvertError::Type(format!(
             "cannot convert {} to an epoch",
@@ -196,10 +200,14 @@ pub(crate) fn frequency(value: &Variant) -> ConvertResult<(Option<MFrequency>, O
         },
         Variant::Number(hz) => Ok((Some(MFrequency::new(*hz, FrequencyRef::LSRK)), None)),
         Variant::Empty => Ok((Some(MFrequency::new(0.0, FrequencyRef::LSRK)), None)),
+        Variant::ComplexArray { values, .. } if values.is_empty() => {
+            Ok((Some(MFrequency::new(0.0, FrequencyRef::LSRK)), None))
+        }
         Variant::Bool(_)
         | Variant::Numbers(_)
         | Variant::Complex(_)
         | Variant::Complexes(_)
+        | Variant::ComplexArray { .. }
         | Variant::Array { .. }
         | Variant::Other(_) => Err(ConvertError::Type(format!(
             "cannot convert {} to a frequency",

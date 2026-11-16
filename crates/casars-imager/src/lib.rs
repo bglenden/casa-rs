@@ -14,8 +14,9 @@
 //! ([`tclean_record`]).
 
 mod casa_return;
+mod history;
 pub mod interrupt;
-mod schema;
+pub mod single_dish;
 mod task_contract;
 
 use std::{path::PathBuf, time::Instant};
@@ -27,8 +28,7 @@ use casa_task_runtime::{
 };
 use serde_json::{Map, Value};
 
-pub use casa_return::tclean_record;
-pub use schema::command_schema;
+pub use casa_return::{RunReturn, tclean_record};
 pub use task_contract::*;
 
 fn imager_surface() -> Result<SurfaceContractBundle, String> {
@@ -46,7 +46,7 @@ fn workspace() -> Result<PathBuf, String> {
 fn request_from(
     resolved: Map<String, Value>,
 ) -> Result<(ImagingParameters, ImagingRequest), TaskFailure> {
-    let request = ImagingRequest::from_tclean(&resolved).map_err(|refusal| {
+    let mut request = ImagingRequest::from_tclean(&resolved).map_err(|refusal| {
         let failure = TaskFailure::validation(refusal.message);
         if refusal.parameter.is_empty() {
             failure
@@ -54,6 +54,14 @@ fn request_from(
             failure.at(refusal.parameter)
         }
     })?;
+    // AWP2 reads the same physical dish data as CASA when the host has
+    // the local data tree. The imaging library takes an explicit path.
+    if let casa_imaging_application::Gridder::Awp2 { evla_surface, .. } = &mut request.gridder
+        && evla_surface.is_none()
+    {
+        *evla_surface = std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join(".casa/data/nrao/VLA/VLA.surface"));
+    }
     Ok((ImagingParameters(resolved), request))
 }
 
@@ -67,38 +75,79 @@ pub fn resolve_request(
     request_from(resolved).map_err(|failure| failure.message)
 }
 
-/// Run `request`, resolved as `parameters`: the run summary, with the
-/// parameters as its echo, is written beside the products
-/// (`<imagename>.summary.json`); SIGINT cancels the run.
+/// The environment variable that asks the `casars-imager` binary for its
+/// run summary. CASA's `tclean` writes nothing beside its image products, so
+/// neither does a tclean run here (owner decision of 2026-11-02, #980); set
+/// to `1`, the binary also writes `<imagename>.summary.json`, the run's
+/// status, resolved parameters, backend and each phase's time and memory,
+/// for performance tooling ([`casa_imaging_application::RunSummary`]).
+pub const RUN_SUMMARY_VARIABLE: &str = "CASA_RS_IMAGER_RUN_SUMMARY";
+
+/// Whether this process was asked for run summaries
+/// ([`RUN_SUMMARY_VARIABLE`]).
+fn run_summary_requested() -> bool {
+    std::env::var_os(RUN_SUMMARY_VARIABLE).is_some_and(|value| value == "1")
+}
+
+/// Run `request`, resolved as `parameters`, as CASA's tclean does: it
+/// writes the image products and nothing else beside them. SIGINT cancels
+/// the run.
 pub fn run(
     parameters: ImagingParameters,
     request: &ImagingRequest,
 ) -> Result<ImagerRunTaskResult, String> {
+    run_with_return(parameters, request, false).map(|(result, _)| result)
+}
+
+/// Keep what the CASA return needs beyond the report in memory, without
+/// adding fields to the serialized task report or the run summary, which is
+/// written beside the products only when `summary` asks for it.
+fn run_with_return(
+    parameters: ImagingParameters,
+    request: &ImagingRequest,
+    summary: bool,
+) -> Result<(ImagerRunTaskResult, RunReturn), String> {
+    // Task continuation is distinct from internal atomic output replacement.
+    let restart = parameters
+        .0
+        .get("restart")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "resolved tclean restart must be boolean".to_owned())?;
+    let request = request
+        .with_tclean_output_policy(restart)
+        .map_err(|error| error.to_string())?;
+    let request = &request;
     let started = Instant::now();
-    let mut summary = request.imagename.clone().into_os_string();
-    summary.push(".summary.json");
+    let summary = summary.then(|| {
+        let mut path = request.imagename.clone().into_os_string();
+        path.push(".summary.json");
+        SummaryTarget {
+            path: path.into(),
+            request: Value::Object(parameters.0.clone()),
+        }
+    });
     let context = RunContext {
         host: HostResources::detect().map_err(|error| error.to_string())?,
         policy: request.resource_policy(),
         cancel: interrupt::token().clone(),
-        summary: Some(SummaryTarget {
-            path: summary.into(),
-            request: Value::Object(parameters.0.clone()),
-        }),
+        summary,
     };
     let outcome = execute(request, context).map_err(|error| error.to_string())?;
-    Ok(ImagerRunTaskResult::from_outcome(
-        parameters,
-        request,
-        &outcome,
-        started.elapsed(),
+    let result =
+        ImagerRunTaskResult::from_outcome(parameters, request, &outcome, started.elapsed());
+    Ok((
+        result,
+        RunReturn {
+            statistics: outcome.final_residual_statistics,
+            plane_rows: outcome.plane_rows,
+        },
     ))
 }
 
 /// The front end of the `casars-imager` binary, which hosts `tclean`.
 pub fn task_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
-    TaskFrontEnd::new(
+    TaskFrontEnd::new_with_deferred_schema(
         "casars-imager",
         imager_task_schema_bundle(),
         &["tclean"],
@@ -134,13 +183,14 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     interrupt::install().map_err(|error| {
         TaskFailure::execution(format!("install the interrupt handler: {error}"))
     })?;
-    let result = run(parameters, &request).map_err(|error| {
-        if interrupt::token().is_cancelled() {
-            TaskFailure::interrupted(format!("{error}; nothing was published"))
-        } else {
-            TaskFailure::execution(error)
-        }
-    })?;
+    let (result, held) =
+        run_with_return(parameters, &request, run_summary_requested()).map_err(|error| {
+            if interrupt::token().is_cancelled() {
+                TaskFailure::interrupted(format!("{error}; nothing was published"))
+            } else {
+                TaskFailure::execution(error)
+            }
+        })?;
     let text = format!(
         "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, \
          {} reported minor iterations, {} actual components, stop={:?})\n",
@@ -151,6 +201,7 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         result.run.actual_minor_iterations,
         result.run.clean_stop_reason,
     );
-    let value = tclean_record(&request, &result.run, &values);
+    let value = tclean_record(&request, &result.run, &values, &held);
+    history::write_tclean_history(&request.imagename, task);
     Ok(TaskSuccess::new(value, &result)?.with_text(text))
 }

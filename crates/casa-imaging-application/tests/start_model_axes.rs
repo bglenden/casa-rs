@@ -4,7 +4,7 @@
 //! pixels, so an axis `regrid` would let through by keeping the input's
 //! coordinate (one pixel in both images) is checked by the start model
 //! itself:
-//! - its Stokes are the image's, plane for plane, a single plane included;
+//! - its Stokes are copied by plane position, with a warning for differing labels;
 //! - an MFS image's start model has one spectral plane, at any frequency,
 //!   as CASA's regrid replicates a degenerate spectral axis;
 //! - a cube's start model has the cube's spectral axis.
@@ -17,6 +17,23 @@ use casa_images::{PagedImage, RegridTemplate};
 use casa_imaging_application::start_model_law::{main_samples, seeding_bytes};
 use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use std::{
+    io::Write,
+    sync::{Arc, Mutex},
+};
+
+#[derive(Clone, Default)]
+struct WarningLog(Arc<Mutex<Vec<u8>>>);
+
+impl Write for WarningLog {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 const ARCSEC: f64 = std::f64::consts::PI / (180.0 * 3600.0);
 const SIDE: usize = 16;
@@ -76,12 +93,27 @@ fn template(stokes: &[StokesType], channels: usize, frequency_hz: f64) -> Regrid
 }
 
 #[test]
-fn a_single_stokes_plane_must_be_the_images_stokes() {
+fn a_single_stokes_plane_is_copied_as_casa_does_even_if_its_label_differs() {
     let dir = tempfile::tempdir().expect("dir");
     let q = start_model(dir.path(), &[StokesType::Q], 1, 1.0e9);
-    let refused = seeding_bytes(&q, template(&[StokesType::I], 1, 1.0e9))
-        .expect_err("a Stokes Q start model of a Stokes I image");
-    assert!(refused.contains("Stokes"), "{refused}");
+    let warnings = WarningLog::default();
+    let output = warnings.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(move || output.clone())
+        .finish();
+    let samples = tracing::subscriber::with_default(subscriber, || {
+        main_samples(&q, template(&[StokesType::I], 1, 1.0e9))
+    })
+    .expect("CASA copies Q into I by position");
+    let warning = String::from_utf8(warnings.0.lock().unwrap().clone()).unwrap();
+    assert!(warning.contains("copying planes by position"), "{warning}");
+    assert!(warning.contains("no polarization conversion"), "{warning}");
+    assert_eq!(
+        samples,
+        main_samples(&q, template(&[StokesType::Q], 1, 1.0e9)).unwrap()
+    );
     seeding_bytes(&q, template(&[StokesType::Q], 1, 1.0e9)).expect("Q onto Q");
 }
 
@@ -97,7 +129,9 @@ fn a_full_stokes_start_model_seeds_each_plane_of_its_own() {
         assert_eq!(first, 2.0 + 3.0 + offset, "plane {plane}");
     }
     let swapped = [StokesType::I, StokesType::U, StokesType::Q, StokesType::V];
-    seeding_bytes(&path, template(&swapped, 1, 1.0e9)).expect_err("IUQV is not IQUV");
+    let copied = main_samples(&path, template(&swapped, 1, 1.0e9))
+        .expect("CASA copies Stokes by plane position");
+    assert_eq!(copied, samples);
 }
 
 #[test]
@@ -107,9 +141,16 @@ fn an_mfs_start_model_has_one_plane_at_any_frequency() {
     let samples =
         main_samples(&path, template(&[StokesType::I], 1, 1.2e9)).expect("another frequency");
     assert_eq!(samples[SIDE + 2], 5.0, "the plane is seeded as it is");
+    // A cube is refused as CASA refuses it: `ImageRegrid::_checkAxes` removes
+    // the MFS image's axis of unit length from those it regrids, and then
+    // the shapes differ on an axis it does not regrid.
     let cube = start_model(dir.path(), &[StokesType::I], 4, 1.0e9);
-    seeding_bytes(&cube, template(&[StokesType::I], 1, 1.0e9))
-        .expect_err("four planes are not an MFS start model");
+    let refused = main_samples(&cube, template(&[StokesType::I], 1, 1.0015e9))
+        .expect_err("a cube start model of an MFS image");
+    assert!(
+        refused.contains("same input and output shapes"),
+        "{refused}"
+    );
 }
 
 #[test]
@@ -124,7 +165,18 @@ fn a_cube_start_model_has_the_cubes_spectral_axis() {
             "channel {channel}"
         );
     }
-    seeding_bytes(&cube, template(&[StokesType::I], 4, 1.1e9)).expect_err("another spectral axis");
+    // Another spectral axis is regridded along frequency (#1067): half a
+    // channel above, each channel takes the line between two of the
+    // model's, and the last, beyond the model, its last channel's value.
+    let shifted = main_samples(&cube, template(&[StokesType::I], 4, 1.0005e9))
+        .expect("another spectral axis");
+    for (channel, expected) in [505.0, 1505.0, 2505.0, 3005.0].into_iter().enumerate() {
+        assert_eq!(
+            shifted[channel * SIDE * SIDE + SIDE + 2],
+            expected,
+            "channel {channel}"
+        );
+    }
     let plane = start_model(dir.path(), &[StokesType::I], 1, 1.0e9);
     seeding_bytes(&plane, template(&[StokesType::I], 4, 1.0e9))
         .expect_err("one plane is not a cube's start model");

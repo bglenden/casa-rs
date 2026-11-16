@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's `table` tool (tb) over [`casa_tables::Table`]: every method of CASA
-//! 6.7.6.14's binding, with its signature (ADR-0019, #1025). A method
+//! 6.7.6.14's binding, with its signature (ADR-0017, #1025). A method
 //! casa-rs does not implement yet raises `NotImplementedError` naming #1028
 //! (`stubs.rs`).
 //!
@@ -13,7 +13,7 @@
 //! as `float64`, complex numbers as `complex128`, a column's rows last.
 //!
 //! The class is `frozen` and keeps the open table behind a `Mutex`, and
-//! every call runs with the GIL released (ADR-0019 item 4). What CASA logs
+//! every call runs with the GIL released (ADR-0017). What CASA logs
 //! goes to the Python logger `casars.tools.table`, its INFO at INFO, WARN at
 //! WARNING and SEVERE at ERROR.
 
@@ -36,7 +36,7 @@ mod statistics;
 mod stubs;
 pub(crate) mod surface;
 mod testincr;
-mod values;
+pub(crate) mod values;
 mod write;
 mod write_cells;
 mod write_structure;
@@ -56,6 +56,75 @@ use slices::Corners;
 use state::{Fail, LockRequest, State};
 use write::InfoUpdate;
 
+/// A table keyword value prepared while Python's GIL is held.
+pub(crate) struct ComponentKeywordValue(Incoming);
+
+/// Notify already-open table tools of a component-list metadata write.
+pub(crate) fn component_keyword_published(path: &std::path::Path) {
+    registry::keyword_published(path);
+}
+
+/// Convert a component-list keyword value. CASA's empty variant is a bool
+/// array; typed empty NumPy arrays retain their own element type.
+pub(crate) fn component_keyword_value(
+    py: Python<'_>,
+    value: Option<&Bound<'_, PyAny>>,
+) -> PyResult<ComponentKeywordValue> {
+    Ok(ComponentKeywordValue(component_keyword_incoming(
+        py, value,
+    )?))
+}
+
+fn component_keyword_incoming(
+    py: Python<'_>,
+    value: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Incoming> {
+    use pyo3::types::PyTuple;
+    if let Some(record) = value.and_then(|v| v.cast::<PyDict>().ok()) {
+        let mut fields = Vec::with_capacity(record.len());
+        for (name, item) in record.iter() {
+            // CASA drops a None-valued record field; at top level None is
+            // instead the empty variant below.
+            if !item.is_none() {
+                fields.push((
+                    name.extract::<String>()?,
+                    component_keyword_incoming(py, Some(&item))?,
+                ));
+            }
+        }
+        return Ok(Incoming::Record(fields));
+    }
+    let empty = value.is_none_or(|v| {
+        v.is_none()
+            || v.cast::<PyList>().is_ok_and(|list| list.is_empty())
+            || v.cast::<PyTuple>().is_ok_and(|tuple| tuple.is_empty())
+    });
+    if empty {
+        let options = PyDict::new(py);
+        options.set_item("dtype", "bool")?;
+        let array = py
+            .import("numpy")?
+            .call_method("empty", (0,), Some(&options))?;
+        Incoming::from_python(&array)
+    } else {
+        Incoming::from_python(value.expect("nonempty value"))
+    }
+}
+
+/// Apply the same typed keyword conversion and replacement rules as `tb`.
+pub(crate) fn define_component_keyword(
+    record: &mut casa_types::RecordValue,
+    name: String,
+    value: ComponentKeywordValue,
+) -> crate::convert::ConvertResult<()> {
+    write::put(record, &KeywordRef::Name(name), value.0, false).map_err(|fail| match fail {
+        Fail::Runtime(message) | Fail::Unsupported(message) => {
+            crate::convert::ConvertError::Runtime(message)
+        }
+        Fail::Type(message) => crate::convert::ConvertError::Type(message),
+    })
+}
+
 /// The issue that records the methods casa-rs refuses.
 const ISSUE: u32 = 1028;
 
@@ -68,7 +137,7 @@ fn stub(method: &str) -> PyResult<Py<PyAny>> {
 }
 
 /// The tool keeps its table behind a `Mutex` and releases the GIL around
-/// Rust work (ADR-0019 item 4), which needs the table to be `Send`.
+/// Rust work (ADR-0017), which needs the table to be `Send`.
 const _: fn() = || {
     fn is_send<T: Send>() {}
     is_send::<State>();

@@ -6,7 +6,8 @@
 //! CASA predicts the model at its image frequencies, interpolates it to each
 //! native channel (`FTMachine::interpolateFrequencyFromgrid`), subtracts it
 //! there and interpolates the residual to its gridding frequencies
-//! (`interpolateFrequencyTogrid`). Both interpolations are linear, so a
+//! (`interpolateFrequencyTogrid`). Both interpolations are linear in the
+//! values they interpolate, linear or cubic in frequency, so a
 //! backend grids `W·e^{iφ}·interp(V) − W·e^{iφ}·interp(M)`: the observed
 //! value the host places, less the model at the same native endpoints with
 //! the same factors. The host computes each placement's observed value, its
@@ -21,39 +22,41 @@ use num_complex::Complex32;
 /// No prediction or native cell: the term contributes zero.
 pub const NO_CELL: u32 = u32::MAX;
 
+/// The most points one spectral interpolation reads: the four of a cubic
+/// polynomial (casacore `InterpolateArray1D::cubic`); a linear one reads
+/// two and a nearest one one, the rest [`NO_CELL`] with factor zero.
+pub const STENCIL: usize = 4;
+
 /// The model at one native cell (`npol` values from `cell · npol`): the
-/// predictions of a batch at the two output-channel points the native
-/// channel lies between, `P_low + (P_high − P_low)·fraction` for each
-/// unflagged polarization and zero for a flagged one. A missing prediction
-/// ([`NO_CELL`]) is zero.
+/// predictions of a batch at the output-channel points it interpolates,
+/// `Σ factors · P[points]` for each unflagged polarization and zero for a
+/// flagged one. A missing prediction ([`NO_CELL`]) is zero.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct NativeTerm {
     /// Native cell of the model.
     pub cell: u32,
-    /// Batch index of the prediction at the lower point.
-    pub low: u32,
-    /// Batch index of the prediction at the upper point.
-    pub high: u32,
-    /// Position of the native channel between the two points.
-    pub fraction: f32,
+    /// Batch indices of the predictions the model interpolates.
+    pub points: [u32; STENCIL],
+    /// Interpolation factor of each point.
+    pub factors: [f32; STENCIL],
     /// Bit `p`: polarization `p` is flagged and its model stays zero.
     pub flags: u32,
 }
 
-/// The native endpoints of one placed sample: its value interpolates the
+/// The native points of one placed sample: its value interpolates the
 /// observed values at `cells` with `factors`, and the backend subtracts
 /// `scale · Σ factors · M[cells]`, where `scale = W·e^{iφ}` is the factor the
-/// placement's values already carry. A sample at one native channel has the
-/// second cell [`NO_CELL`] and factor zero, so a flagged neighbour's value,
-/// which may be NaN, never reaches it.
+/// placement's values already carry. Unused points are [`NO_CELL`] with
+/// factor zero, so a sample at one native channel reads no neighbour, whose
+/// value may be NaN.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct NativeSource {
-    /// Native cells of the two endpoints.
-    pub cells: [u32; 2],
-    /// Interpolation factor of each endpoint.
-    pub factors: [f32; 2],
+    /// Native cells of the points.
+    pub cells: [u32; STENCIL],
+    /// Interpolation factor of each point.
+    pub factors: [f32; STENCIL],
     /// The imaging weight times the phase-centre phasor, `W·e^{iφ}`.
     pub scale: Complex32,
 }
@@ -181,11 +184,14 @@ pub(crate) fn interpolate_terms(
         for pol in 0..npol {
             let model = if (term.flags >> pol) & 1 == 1 {
                 Complex32::default()
-            } else if term.low == term.high {
-                at(term.low, pol)
             } else {
-                let (a, b) = (at(term.low, pol), at(term.high, pol));
-                a + (b - a) * term.fraction
+                term.points
+                    .iter()
+                    .zip(term.factors)
+                    .filter(|(point, _)| **point != NO_CELL)
+                    .fold(Complex32::default(), |model, (point, factor)| {
+                        model + at(*point, pol) * factor
+                    })
             };
             if add {
                 cells[base + pol] += model;

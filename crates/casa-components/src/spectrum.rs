@@ -26,10 +26,13 @@
 //! parameters; casa-rs writes the same.)
 
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::{Quantity, Unit};
+use casa_types::quanta::{Quantity, Unit, UnitDim};
 
 use crate::component_type::SpectralType;
 use crate::error::ComponentError;
+
+/// Dimensions of physical frequency, independent of user unit overrides.
+pub(crate) const FREQUENCY_DIM: UnitDim = UnitDim::new([0, 0, -1, 0, 0, 0, 0, 0, 0, 0]);
 
 /// A spectral index: the flux scales as (ν/ν₀)^α.
 ///
@@ -354,6 +357,9 @@ impl SpectralKind {
 #[derive(Debug, Clone)]
 pub struct SpectralModel {
     reference_frequency: MFrequency,
+    /// An explicit record unit. When absent, the error's original unit is
+    /// the record unit, avoiding an allocation for CASA's default GHz.
+    frequency_unit: Option<Box<Unit>>,
     reference_frequency_error: Quantity,
     kind: SpectralKind,
 }
@@ -365,6 +371,7 @@ impl SpectralModel {
         Self {
             reference_frequency,
             reference_frequency_error: zero_frequency_error(),
+            frequency_unit: None,
             kind,
         }
     }
@@ -399,6 +406,41 @@ impl SpectralModel {
         self.reference_frequency = reference_frequency;
     }
 
+    /// Unit used for the reference frequency in CASA spectrum records.
+    /// The reference frequency itself remains in Hz and keeps its frame.
+    pub fn frequency_unit(&self) -> &Unit {
+        self.frequency_unit
+            .as_deref()
+            .unwrap_or_else(|| self.reference_frequency_error.unit())
+    }
+
+    /// Replace the record unit without changing the reference frequency or its error.
+    ///
+    /// # Errors
+    ///
+    /// [`ComponentError::Spectrum`] when `unit` does not have frequency dimensions.
+    pub fn set_frequency_unit(&mut self, unit: Unit) -> Result<(), ComponentError> {
+        if unit.val().dim != FREQUENCY_DIM {
+            return Err(ComponentError::Spectrum {
+                spectrum: "frequency unit",
+                reason: format!("unit '{}' is not a frequency", unit.name()),
+            });
+        }
+        self.frequency_unit = if same_unit(&unit, self.reference_frequency_error.unit()) {
+            None
+        } else {
+            Some(Box::new(unit))
+        };
+        Ok(())
+    }
+
+    /// Heap bytes owned exclusively by the optional record unit.
+    pub(crate) fn frequency_unit_bytes(&self) -> usize {
+        self.frequency_unit
+            .as_ref()
+            .map_or(0, |unit| std::mem::size_of::<Unit>() + unit.name().len())
+    }
+
     /// The reference frequency's error (`refFrequencyError`).
     pub fn reference_frequency_error(&self) -> &Quantity {
         &self.reference_frequency_error
@@ -419,6 +461,13 @@ impl SpectralModel {
                 value: error.value(),
                 unit: error.unit().name().to_string(),
             });
+        }
+        // If the record unit still shares the error's original unit, retain
+        // it before replacing the error with a differently defined unit.
+        if self.frequency_unit.is_none()
+            && !same_unit(self.reference_frequency_error.unit(), error.unit())
+        {
+            self.frequency_unit = Some(Box::new(self.reference_frequency_error.unit().clone()));
         }
         self.reference_frequency_error = error;
         Ok(())
@@ -541,6 +590,7 @@ impl PartialEq for SpectralModel {
     fn eq(&self, other: &Self) -> bool {
         self.reference_frequency.refer() == other.reference_frequency.refer()
             && self.reference_frequency.hz() == other.reference_frequency.hz()
+            && same_unit(self.frequency_unit(), other.frequency_unit())
             && self.reference_frequency_error == other.reference_frequency_error
             && self.kind == other.kind
     }
@@ -549,6 +599,13 @@ impl PartialEq for SpectralModel {
 /// CASA's default reference-frequency error, 0 GHz.
 pub(crate) fn zero_frequency_error() -> Quantity {
     Quantity::with_unit(0.0, Unit::new("GHz").expect("GHz is a unit"))
+}
+
+/// Compare cached definitions as well as names; a user can redefine a unit.
+fn same_unit(left: &Unit, right: &Unit) -> bool {
+    left.name() == right.name()
+        && left.val().dim == right.val().dim
+        && left.val().factor.to_bits() == right.val().factor.to_bits()
 }
 
 fn non_negative_error(spectrum: &'static str, error: f64) -> Result<f64, ComponentError> {
@@ -565,6 +622,24 @@ fn non_negative_error(spectrum: &'static str, error: f64) -> Result<f64, Compone
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changing_frequency_error_does_not_change_the_record_unit() {
+        let mut model = SpectralModel::constant(MFrequency::new(1.4e9, FrequencyRef::LSRK));
+        model
+            .set_reference_frequency_error(Quantity::new(1.5, "MHz").unwrap())
+            .unwrap();
+        assert_eq!(model.frequency_unit().name(), "GHz");
+        model.set_frequency_unit(Unit::new("MHz").unwrap()).unwrap();
+        model
+            .set_reference_frequency_error(Quantity::new(2.0, "kHz").unwrap())
+            .unwrap();
+        assert_eq!(model.frequency_unit().name(), "MHz");
+        assert_eq!(model.reference_frequency_error().unit().name(), "kHz");
+        assert!(model.set_frequency_unit(Unit::new("m").unwrap()).is_err());
+        assert_eq!(model.frequency_unit().name(), "MHz");
+        assert_eq!(model.reference_frequency().hz(), 1.4e9);
+    }
 
     #[test]
     fn power_log_polynomial_errors_resize_the_coefficients() {

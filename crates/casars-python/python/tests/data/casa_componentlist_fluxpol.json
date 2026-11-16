@@ -1,0 +1,67 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "getfluxpol",
+      "input": 0,
+      "result": ""
+    },
+    {
+      "method": "getfluxpol",
+      "input": -1,
+      "result": ""
+    },
+    {
+      "method": "getfluxpol",
+      "input": 1099511627776,
+      "result": ""
+    },
+    {
+      "method": "getfluxpol",
+      "input": true,
+      "result": ""
+    },
+    {
+      "method": "getfluxpol",
+      "input": 1.5,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfluxpol",
+      "input": "0",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfluxpol",
+      "input": null,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getfluxpol> returned a result with an exception set"
+      }
+    },
+    {
+      "method": "getfluxpol",
+      "input": [
+        0
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "method": "getfluxpol",
+      "input": 1267650600228229401496703205376,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_getfluxpol> returned a result with an exception set"
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The MSv2/MSv4 trial's padding preparation for the scale check
-//! (`docs/measurement-set/trial/README.md`): removes every MAIN row of one
+//! (`ms_trial_probe`): removes every MAIN row of one
 //! antenna from the second half of the times it has rows at, in place, as an
 //! antenna that leaves the array early does. The trial adapter then pads
 //! those cells, so every later batch takes its placement path.

@@ -634,7 +634,5 @@ mod tests {
                 .definitions
                 .contains_key("CalibrationTableSummary")
         );
-        let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
-        assert_eq!(form["command_id"], "calibrate");
     }
 }

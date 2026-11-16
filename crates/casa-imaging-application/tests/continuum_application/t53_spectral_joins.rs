@@ -125,6 +125,10 @@ fn read_product(prefix: &Path, suffix: &str) -> (Vec<usize>, ArrayD<f32>) {
     (shape, values)
 }
 
+/// Output channels a quarter channel above the data's sample an affine
+/// spectrum by linear interpolation. The output width equals the data's:
+/// CASA refuses a channel narrower than every data channel
+/// (`MSTransformRegridder::regridChanBounds`).
 #[test]
 fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -152,19 +156,21 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
             ms.save().expect("save unit spectrum");
         }
         let image_name = case.join("image");
+        // In the rows' own frequencies (`cubedata`): a TOPO `cube` is
+        // gridded through LSRK, so each row samples the spectrum where its
+        // Doppler drift from the first time puts it.
         let imaging = request(
             &measurement_set,
             &image_name,
             json!({
                 "niter": 0,
                 "imsize": 64,
-                "spw": "0:0~1",
+                "spw": "0:0~2",
                 "channel_count": 2,
-                "specmode": "cube",
-                "outframe": "TOPO",
+                "specmode": "cubedata",
                 "interpolation": "linear",
                 "start": "44000250000Hz",
-                "width": "500000Hz",
+                "width": "1000000Hz",
             }),
         );
         let result =
@@ -191,9 +197,9 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
         assert_eq!(shape, actual_shape);
         assert_eq!(shape[3], 2, "two output planes for {suffix}");
         if matches!(suffix.as_str(), ".residual" | ".image") {
-            // The source spectrum rises from one to two; output channels
-            // sample one quarter and three quarters of that interval.
-            for (channel, factor) in [1.25_f64, 1.75].into_iter().enumerate() {
+            // The source spectrum rises by one a channel from one; output
+            // channels sample it a quarter channel above channels 0 and 1.
+            for (channel, factor) in [1.25_f64, 2.25].into_iter().enumerate() {
                 let expected = unit
                     .index_axis(ndarray::Axis(3), channel)
                     .mapv(|value| f64::from(value) * factor);
@@ -215,4 +221,56 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
             assert_eq!(unit, actual, "spectrum-independent {suffix}");
         }
     }
+}
+
+#[test]
+fn optical_cube_publishes_only_the_original_table_and_extrapolates_remaining_planes() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_measurement_set(root.path());
+    let prefix = root.path().join("optical-cube");
+    let imaging = request(
+        &measurement_set,
+        &prefix,
+        json!({
+            "niter": 0,
+            "imsize": 16,
+            "specmode": "cube",
+            "outframe": "LSRK",
+            "veltype": "OPTICAL",
+            "restfreq": ["44.015GHz", "44.02GHz"],
+            "start": "-90km/s",
+            "width": "12km/s",
+            "channel_count": 24,
+        }),
+    );
+    execute(&imaging).expect("native tabular optical cube");
+    let psf = PagedImage::<f32>::open(root.path().join("optical-cube.psf")).expect("PSF");
+    let coordinates = psf.coordinates();
+    let axis = (0..coordinates.n_coordinates())
+        .find_map(|index| match coordinates.coordinate(index) {
+            casa_coordinates::CoordinateModel::Spectral(axis) => Some(axis),
+            _ => None,
+        })
+        .expect("published spectral axis");
+    let record = coordinates.to_record();
+    let spectral = record.get("spectral2").expect("spectral coordinate record");
+    let casa_types::Value::Record(spectral) = spectral else {
+        panic!("spectral coordinate record");
+    };
+    let Some(casa_types::Value::Record(table)) = spectral.get("tabular") else {
+        panic!("the published frequency axis retains its CASA table");
+    };
+    let Some(casa_types::Value::Array(casa_types::ArrayValue::Float64(values))) =
+        table.get("worldvalues")
+    else {
+        panic!("the spectral coordinate contains its frequency values");
+    };
+    let count = values.len();
+    assert!((3..24).contains(&count), "stored table length {count}");
+    let values: Vec<_> = values.iter().copied().collect();
+    let tail = values[count - 1] + (24 - count) as f64 * (values[count - 1] - values[count - 2]);
+    assert!((axis.world_frequency_hz(23.0).unwrap() - tail).abs() < 1e-5);
+    assert_ne!(values[1] - values[0], values[count - 1] - values[count - 2]);
+    assert_eq!(axis.rest_frequency(), 44.015e9);
 }

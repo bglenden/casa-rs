@@ -2,27 +2,35 @@
 
 //! Product-local completion of one released MT-MFS normal family.
 
-use std::borrow::Cow;
-
-use casa_imaging_deconvolution::FinalNormalStateWindow;
+use casa_imaging_deconvolution::invert_taylor_hessian;
+use casa_imaging_deconvolution::{FinalNormalStateWindow, PlaneShape};
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
-    ProductTerm, ProductValidityRule, RestoringBeamPolicy, TaylorSupportReference,
+    ProductTerm, ProductValidityRule, TaylorSupportReference,
 };
-use casa_numerics::{EvlaBand, EvlaPowerPattern, VlaBand, solve_symmetric_ldlt_casacore_dynamic};
 
 use crate::AnalyticPrimaryBeamModel;
-use crate::beam::{RestoringBeam, fit_restoring_beam};
+use crate::beam::{PlaneBeam, RestoringBeam, fit_plane_beam, settle_beams};
 use crate::error::ProductsError;
 use crate::normalization::{
     MosaicSensitivity, ResidualFamily, normalize_plane, normalized_psf_value, psf_peak,
 };
-use crate::restore::{fft_convolve, gaussian_beam_image};
+use crate::restore::{fft_convolve, gaussian_beam_image, rescale_residual_to_beam};
 use crate::source::ContinuumProductInputs;
-use casa_numerics::AnnularApertureVoltageTable;
 
+mod blank;
+
+/// The products of a Taylor reconstruction: one family per polarization,
+/// in the reconstruction's order. CASA cleans and restores each Stokes
+/// plane as a Taylor family of its own (`SDAlgorithmMSMFS::restore` loops
+/// over polarization planes), so each has its own beam.
 pub(crate) struct TaylorProducts {
     shape: [usize; 2],
+    planes: Vec<TaylorPlane>,
+}
+
+/// One polarization's Taylor family of products.
+struct TaylorPlane {
     psf: Vec<Vec<f32>>,
     principal_psf_peak: f32,
     residual: Vec<Vec<f32>>,
@@ -33,14 +41,23 @@ pub(crate) struct TaylorProducts {
     sum_weights: Vec<f32>,
     primary_beam: Vec<Vec<f32>>,
     pb_corrected: Vec<Vec<f32>>,
-    alpha: Vec<f32>,
-    alpha_pbcor: Vec<f32>,
-    alpha_error: Vec<f32>,
-    alpha_validity: Vec<bool>,
+    /// `None` unless the products publish one: CASA's
+    /// `SIImageStoreMultiTerm::calculateAlphaBeta` forms it only for two
+    /// terms or more of a Stokes I image.
+    spectral_index: Option<SpectralIndexProducts>,
     primary_beam_validity: Vec<bool>,
     clean_mask: Vec<f32>,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
+}
+
+/// The spectral index of a family of two or more Taylor terms, its error,
+/// its PB correction (zero unless published) and its support.
+struct SpectralIndexProducts {
+    alpha: Vec<f32>,
+    alpha_pbcor: Vec<f32>,
+    alpha_error: Vec<f32>,
+    alpha_validity: Vec<bool>,
 }
 
 fn primary_beam_correct_spectral_index(
@@ -116,24 +133,29 @@ struct TaylorFamily {
 }
 
 impl TaylorFamily {
+    /// Polarization `polarization`'s family.
     fn read(
         inputs: &ContinuumProductInputs<'_>,
-        state: &FinalNormalStateWindow<'_>,
+        (state, polarization): (&FinalNormalStateWindow<'_>, usize),
         primary_beam_model: Option<AnalyticPrimaryBeamModel>,
         directional: Option<MosaicSensitivity<'_>>,
-        residual_sum_weight: f64,
+        residual_sum_weight: Option<f64>,
     ) -> Result<Self, ProductsError> {
         let principal_sum_weight = state
-            .normal_moment(0)
+            .normal_moment(0, polarization)
             .expect("the zeroth normal moment")
             .sum_weight();
-        let published_sums = state.published_sum_weights();
         let moments = state.normal_moment_count();
         let mut psf = Vec::with_capacity(moments);
         let mut weight = Vec::with_capacity(moments);
         let mut sum_weights = Vec::with_capacity(moments);
-        for (moment, published) in published_sums.iter().copied().enumerate().take(moments) {
-            let source = state.normal_moment(moment).expect("every normal moment");
+        for moment in 0..moments {
+            let source = state
+                .normal_moment(moment, polarization)
+                .expect("every normal moment");
+            let published = state
+                .published_sum_weight(moment, polarization)
+                .expect("every normal moment's published sum of weights");
             let approximation = source
                 .normal_approximation()
                 .iter()
@@ -175,11 +197,12 @@ impl TaylorFamily {
         let residual = (0..state.coefficient_term_count())
             .map(|term| {
                 let residual = state
-                    .coefficient_term(term)
+                    .coefficient_term(term, polarization)
                     .expect("every coefficient term")
                     .residual();
-                match directional {
-                    Some(response) => residual
+                match (residual_sum_weight, directional) {
+                    (None, _) => Ok(residual.iter().map(|value| value.re as f32).collect()),
+                    (Some(residual_sum_weight), Some(response)) => residual
                         .iter()
                         .enumerate()
                         .map(|(index, value)| {
@@ -193,7 +216,7 @@ impl TaylorFamily {
                             )? as f32)
                         })
                         .collect(),
-                    None => Ok(normalize_plane(
+                    (Some(residual_sum_weight), None) => Ok(normalize_plane(
                         &residual
                             .iter()
                             .map(|value| value.re as f32)
@@ -204,11 +227,14 @@ impl TaylorFamily {
             })
             .collect::<Result<Vec<_>, ProductsError>>()?;
         let mut model = (0..state.coefficient_term_count())
-            .map(|term| model_term(inputs, term, state.shape()))
+            .map(|term| model_term(inputs, (term, polarization), state.shape()))
             .collect::<Result<Vec<_>, _>>()?;
-        // CASA restores and publishes the flat-noise model in apparent units
-        // (`SynthesisNormalizer::multiplyModelByWeight`).
-        if let Some(response) = directional {
+        // CASA restores and publishes the flat-noise and pbsquare model in
+        // apparent units, through the PB (flat noise) or PB² (pbsquare)
+        // (`SynthesisNormalizer::multiplyModelByWeight`). A restore-only
+        // continuation reads both saved residuals and model in image units
+        // (`SDAlgorithmMSMFS::restore` and `SIImageStore::restore`).
+        if let (Some(response), Some(_)) = (directional, residual_sum_weight) {
             for plane in &mut model {
                 for (index, value) in plane.iter_mut().enumerate() {
                     *value = response.physical_to_apparent(
@@ -231,7 +257,9 @@ impl TaylorFamily {
 }
 
 /// The Taylor normal block at the PSF peak, inverted, and the principal
-/// solution's residuals it gives.
+/// solution's residuals it gives. Direct AW restoration selects the peak
+/// in the central patch used by `MatrixCleaner::validatePsf`. An off-axis
+/// grating lobe can be brighter than the central peak.
 ///
 /// CASA forms the block from the published PSFs, every term divided by the
 /// term-0 PSF's peak (`SIImageStore::normPSF`, then
@@ -241,14 +269,23 @@ impl TaylorFamily {
 fn principal_residuals(
     psf: &[Vec<f32>],
     residual: &[Vec<f32>],
+    central_patch: Option<PlaneShape>,
 ) -> Result<(Vec<f64>, Vec<Vec<f32>>), ProductsError> {
     let terms = residual.len();
-    let peak = psf[0]
-        .iter()
-        .enumerate()
-        .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
-        .map(|(index, _)| index)
-        .expect("a PSF plane has pixels");
+    let peak = if let Some(shape) = central_patch {
+        casa_imaging_deconvolution::psf_peak(&psf[0], shape)
+            .filter(|&peak| psf[0][peak].is_finite() && psf[0][peak] > 0.0)
+            .ok_or_else(|| {
+                ProductsError::BeamFitFailed("no positive central Taylor PSF peak".into())
+            })?
+    } else {
+        psf[0]
+            .iter()
+            .enumerate()
+            .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
+            .map(|(index, _)| index)
+            .expect("a PSF plane has pixels")
+    };
     let psf_scale = f64::from(psf_peak(psf[0].iter().copied())?);
     let mut normal = vec![0.0; terms * terms];
     for row in 0..terms {
@@ -256,16 +293,8 @@ fn principal_residuals(
             normal[row * terms + column] = f64::from(psf[row + column][peak]) / psf_scale;
         }
     }
-    let mut inverse = vec![0.0; terms * terms];
-    for column in 0..terms {
-        let mut unit = vec![0.0; terms];
-        unit[column] = 1.0;
-        let solution = solve_symmetric_ldlt_casacore_dynamic(normal.clone(), &unit)
-            .ok_or_else(|| ProductsError::BeamFitFailed("singular Taylor normal block".into()))?;
-        for row in 0..terms {
-            inverse[row * terms + column] = solution[row];
-        }
-    }
+    let inverse = invert_taylor_hessian(&normal, terms)
+        .map_err(|_| ProductsError::BeamFitFailed("singular Taylor normal block".into()))?;
     let cells = residual[0].len();
     let mut principal = vec![vec![0.0; cells]; terms];
     for cell in 0..cells {
@@ -279,25 +308,36 @@ fn principal_residuals(
 }
 
 /// Each term's model convolved with the restoring beam, plus its principal
-/// residual.
+/// residual. CASA restores every Taylor term with `SIImageStore::restore`,
+/// whose `rescaleResolution` first brings a residual from the PSF's fitted
+/// beam to a restoring beam the request gives; with the fitted beam itself
+/// the residual is added as it is.
 fn restored_terms(
     model: &[Vec<f32>],
     principal_residual: &[Vec<f32>],
-    beam: &RestoringBeam,
+    (fitted, beam): (RestoringBeam, RestoringBeam),
     shape: [usize; 2],
     cell_size_rad: [f64; 2],
-) -> Vec<Vec<f32>> {
-    let kernel = gaussian_beam_image(shape, beam, cell_size_rad);
+) -> Result<Vec<Vec<f32>>, ProductsError> {
+    let kernel = gaussian_beam_image(shape, &beam, cell_size_rad);
     model
         .iter()
         .zip(principal_residual)
         .map(|(model, residual)| {
+            let rescaled;
+            let residual = if beam == fitted {
+                residual.as_slice()
+            } else {
+                rescaled = rescale_residual_to_beam(residual, shape, cell_size_rad, fitted, beam)?
+                    .into_values();
+                rescaled.as_slice()
+            };
             let mut image = fft_convolve(model, kernel.as_slice().expect("contiguous"), shape);
             image
                 .iter_mut()
                 .zip(residual)
                 .for_each(|(image, residual)| *image += residual);
-            image
+            Ok(image)
         })
         .collect()
 }
@@ -316,7 +356,9 @@ fn directional_response<'a>(
     let directional = primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         && matches!(
             inputs.problem().products().normalization(),
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+            ProductNormalization::FlatNoise
+                | ProductNormalization::FlatSky
+                | ProductNormalization::PbSquare
         );
     directional
         .then(|| {
@@ -335,6 +377,7 @@ fn spectral_index(
     validity: casa_imaging_model::ProductValidityPolicies,
     principal_residual: &[Vec<f32>],
     restored: &[Vec<f32>],
+    peak_mask: Option<&[bool]>,
 ) -> Result<SpectralIndexPlanes, ProductsError> {
     let policy = validity.taylor();
     if policy.reference() != TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum
@@ -349,6 +392,7 @@ fn spectral_index(
         &restored[0],
         &restored[1],
         policy.peak_fraction(),
+        peak_mask,
     ))
 }
 
@@ -397,25 +441,18 @@ fn publishes(inputs: &ContinuumProductInputs<'_>, role: impl Fn(ProductRole) -> 
 fn principal_primary_beam(
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &casa_imaging_model::ImageDomainRole,
-    shape: [usize; 2],
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     directional: Option<MosaicSensitivity<'_>>,
     weight0: &[f32],
 ) -> Result<Vec<f32>, ProductsError> {
+    if let Some(beam) = inputs.taylor_primary_beam() {
+        return Ok(beam.to_vec());
+    }
+    if let Some(beam) = primary_beam_model.and_then(|model| inputs.analytic_primary_beam(model)) {
+        return beam.plane(domain_role, 0);
+    }
     Ok(match primary_beam_model {
-        Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
-            analytic_evla_primary_beam(inputs, domain_role, shape, 0)?
-        }
-        Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
-            analytic_vla_primary_beam(inputs, domain_role, shape, 0)?
-        }
-        Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => {
-            analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 10.7)?
-        }
-        Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => {
-            analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 6.25)?
-        }
-        Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => match directional {
+        Some(_) => match directional {
             Some(response) => response
                 .weighted_primary_beam(inputs.problem().products().validity().primary_beam())?,
             None => MosaicSensitivity::primary_beam_from_weight(weight0)?,
@@ -433,31 +470,51 @@ fn principal_primary_beam(
     })
 }
 
-impl TaylorProducts {
-    pub(crate) fn build(
+/// One polarization's Taylor family, read and solved for its principal
+/// residuals, with its fitted beam: what restoring it needs.
+struct SolvedFamily<'a> {
+    polarization: usize,
+    family: TaylorFamily,
+    directional: Option<MosaicSensitivity<'a>>,
+    sensitivity: Vec<f32>,
+    inverse: Vec<f64>,
+    principal_residual: Vec<Vec<f32>>,
+    fit: PlaneBeam,
+}
+
+impl<'a> SolvedFamily<'a> {
+    /// Read polarization `polarization`'s family from `state`, solve its
+    /// principal residuals and fit its PSF's beam when a member records one.
+    fn read(
         inputs: &ContinuumProductInputs<'_>,
-        psf_cutoff: f32,
-        primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+        state: &'a FinalNormalStateWindow<'_>,
+        polarization: usize,
+        planned: &crate::PlannedContinuumGeneration,
     ) -> Result<Self, ProductsError> {
-        let state = inputs.normal_state();
-        // Binding the inputs established one domain, `terms` coefficient
-        // terms and 2·terms − 1 normal moments.
-        let state = &state.read_window(state.slab().core_range())?;
-        let domain_role = state
-            .domain(0)
-            .expect("a Taylor run images one domain")
-            .role();
-        let shape = state.shape();
-        let cells = shape[0] * shape[1];
-        let terms = state.coefficient_term_count();
-        let principal_normal = state.normal_moment(0).expect("the zeroth normal moment");
+        let primary_beam_model = planned.primary_beam_model;
+        let principal_normal = state
+            .normal_moment(0, polarization)
+            .expect("the zeroth normal moment");
         let principal_sum_weight = principal_normal.sum_weight();
         // Direct CASA AW Taylor completion keeps two principal sums: the
         // WTCF normal sum scales PSF/sensitivity products, while the CFS
         // publication sum scales dirty/residual image products. They are
         // equal for non-AW direct Taylor reconstruction.
-        let residual_sum_weight = state.published_sum_weights()[0];
-        for sum_weight in [principal_sum_weight, residual_sum_weight] {
+        let published_sum_weight = state
+            .published_sum_weight(0, polarization)
+            .expect("the zeroth published sum of weights");
+        let residual_sum_weight = inputs
+            .taylor_residual_sum_weight()
+            .unwrap_or(published_sum_weight);
+        // Every Stokes plane of a Taylor term has the first correlation's
+        // sum of weights (`MultiTermFTNew`). With none, CASA writes every
+        // plane as zeros, whatever the other correlations hold; casa-rs
+        // refuses (#1109, `docs/CASA (C++) bugs.md`).
+        for sum_weight in [
+            principal_sum_weight,
+            published_sum_weight,
+            residual_sum_weight,
+        ] {
             if !(sum_weight.is_finite() && sum_weight > 0.0) {
                 return Err(ProductsError::PrincipalSumWeight { sum_weight });
             }
@@ -470,76 +527,170 @@ impl TaylorProducts {
         )?;
         let family = TaylorFamily::read(
             inputs,
-            state,
+            (state, polarization),
             primary_beam_model,
             directional,
-            residual_sum_weight,
+            planned
+                .saved_residual_mask_read_bytes
+                .is_none()
+                .then_some(residual_sum_weight),
         )?;
         let sensitivity = principal_normal
             .sensitivity()
             .iter()
             .map(|value| *value as f32)
             .collect::<Vec<_>>();
-        let (inverse, principal_residual) = principal_residuals(&family.psf, &family.residual)?;
-
-        let cell_size = inputs.cell_size_rad_for_domain(domain_role);
+        let [nx, ny] = state.shape();
+        let central_patch = inputs
+            .problem()
+            .science()
+            .measurement_equation()
+            .aw_projection()
+            .map(|_| PlaneShape::new(nx, ny));
+        let (inverse, principal_residual) =
+            principal_residuals(&family.psf, &family.residual, central_patch)?;
         let list = inputs.problem().product_list();
-        let fitted_beam = list
-            .publication()
-            .members()
-            .iter()
-            .any(|id| {
-                list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
-            })
-            .then(|| fit_restoring_beam(&family.psf[0], shape, cell_size, psf_cutoff))
-            .transpose()?;
-        let restoring_beam = match inputs.problem().products().restoring_beam() {
-            RestoringBeamPolicy::None => None,
-            RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => fitted_beam,
+        let needs_beam = list.publication().members().iter().any(|id| {
+            list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
+        });
+        let fit = if !needs_beam {
+            PlaneBeam::Blank
+        } else if let Some(saved) = inputs.saved_psf_beams(0) {
+            PlaneBeam::Fitted(saved[polarization])
+        } else {
+            fit_plane_beam(
+                &family.psf[0],
+                state.shape(),
+                inputs.cell_size_rad_for_domain(domain_role(state)),
+                planned.psf_cutoff,
+            )?
         };
-        let restored = restoring_beam.map_or_else(
-            || vec![vec![0.0; cells]; terms],
-            |beam| restored_terms(&family.model, &principal_residual, &beam, shape, cell_size),
-        );
-
-        let pb0 = principal_primary_beam(
-            inputs,
-            domain_role,
-            shape,
-            primary_beam_model,
+        Ok(Self {
+            polarization,
+            family,
             directional,
-            &family.weight[0],
-        )?;
-        let (primary_beam_validity, pb_corrected) =
-            primary_beam_corrected(inputs.problem().products().validity(), &pb0, &restored)?;
+            sensitivity,
+            inverse,
+            principal_residual,
+            fit,
+        })
+    }
+
+    /// Restore every term with `restoring_beam` (none when the products
+    /// restore nothing) and form the PB, PB-corrected and spectral-index
+    /// planes.
+    fn restore(
+        self,
+        inputs: &ContinuumProductInputs<'_>,
+        state: &FinalNormalStateWindow<'_>,
+        fitted_beam: Option<RestoringBeam>,
+        restoring_beam: Option<RestoringBeam>,
+        planned: &crate::PlannedContinuumGeneration,
+        output: &crate::CasaImageWriter,
+    ) -> Result<TaylorPlane, ProductsError> {
+        let Self {
+            polarization,
+            family,
+            directional,
+            sensitivity,
+            inverse,
+            principal_residual,
+            fit: _,
+        } = self;
+        let domain_role = domain_role(state);
+        let primary_beam_model = planned.primary_beam_model;
+        let shape = state.shape();
+        let cells = shape[0] * shape[1];
+        let terms = state.coefficient_term_count();
+        let restored = match fitted_beam.zip(restoring_beam) {
+            Some(beams) => restored_terms(
+                &family.model,
+                &principal_residual,
+                beams,
+                shape,
+                inputs.cell_size_rad_for_domain(domain_role),
+            )?,
+            None => vec![vec![0.0; cells]; terms],
+        };
+
+        let saved_beam = inputs.saved_mosaic_beam();
+        let (pb0, primary_beam_validity, pb_corrected) = if let Some(beam) =
+            saved_beam.filter(|_| {
+                publishes(inputs, |role| {
+                    matches!(role, ProductRole::PbCorrectedImage(_))
+                })
+            }) {
+            // SIImageStore::pbcor divides by positive saved PB values and
+            // copies the saved pixel mask independently of pblimit.
+            let pb = beam.read_values(0, polarization)?;
+            let mask = beam.read_mask(0, polarization)?;
+            let corrected = restored
+                .iter()
+                .map(|image| crate::plane::correct_primary_beam(image, &pb, 0.0))
+                .collect::<Result<_, _>>()?;
+            (pb, mask, corrected)
+        } else {
+            let pb = principal_primary_beam(
+                inputs,
+                domain_role,
+                primary_beam_model,
+                directional,
+                &family.weight[0],
+            )?;
+            let (mut mask, corrected) =
+                primary_beam_corrected(inputs.problem().products().validity(), &pb, &restored)?;
+            if let Some(beam) = saved_beam {
+                mask = beam.read_mask(0, polarization)?;
+            }
+            (pb, mask, corrected)
+        };
         let mut primary_beam = vec![vec![0.0; cells]; terms];
         primary_beam[0] = pb0;
 
-        let (alpha, alpha_error, alpha_validity) = spectral_index(
-            inputs.problem().products().validity(),
-            &principal_residual,
-            &restored,
-        )?;
-        let alpha_pbcor = if publishes(inputs, |role| role == ProductRole::PbCorrectedSpectralIndex)
-        {
-            if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
-                return Err(ProductsError::UnsupportedProblem);
-            }
-            primary_beam_correct_spectral_index(
-                &alpha,
-                &sensitivity,
-                &family.weight,
-                &inverse,
-                terms,
-                &alpha_validity,
-                &primary_beam_validity,
-            )?
-        } else {
-            vec![0.0; cells]
-        };
+        let spectral_index = publishes(inputs, |role| role == ProductRole::SpectralIndex)
+            .then(|| {
+                // The residual lattice's masked maximum sets the cutoff
+                // in SIImageStoreMultiTerm::calculateAlphaBeta. The alpha
+                // support itself comes from the restored intensity.
+                let peak_mask = if planned.saved_residual_mask_read_bytes.is_some() {
+                    output.saved_residual_mask(domain_role, ProductTerm::Taylor(0), false, false)?
+                } else {
+                    None
+                };
+                let (alpha, alpha_error, alpha_validity) = spectral_index(
+                    inputs.problem().products().validity(),
+                    &principal_residual,
+                    &restored,
+                    peak_mask.as_deref(),
+                )?;
+                drop(peak_mask);
+                let alpha_pbcor =
+                    if publishes(inputs, |role| role == ProductRole::PbCorrectedSpectralIndex) {
+                        if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
+                            return Err(ProductsError::UnsupportedProblem);
+                        }
+                        primary_beam_correct_spectral_index(
+                            &alpha,
+                            &sensitivity,
+                            &family.weight,
+                            &inverse,
+                            terms,
+                            &alpha_validity,
+                            &primary_beam_validity,
+                        )?
+                    } else {
+                        vec![0.0; cells]
+                    };
+                Ok(SpectralIndexProducts {
+                    alpha,
+                    alpha_pbcor,
+                    alpha_error,
+                    alpha_validity,
+                })
+            })
+            .transpose()?;
 
-        Ok(Self {
-            shape,
+        Ok(TaylorPlane {
             principal_psf_peak: psf_peak(family.psf[0].iter().copied())?,
             psf: family.psf,
             residual: family.residual,
@@ -550,26 +701,163 @@ impl TaylorProducts {
             sum_weights: family.sum_weights,
             primary_beam,
             pb_corrected,
-            alpha,
-            alpha_pbcor,
-            alpha_error,
-            alpha_validity,
+            spectral_index,
             primary_beam_validity,
-            clean_mask: crate::plane::reconstruction_support_plane(inputs, domain_role, cells),
+            // A Taylor family is one channel.
+            clean_mask: crate::plane::reconstruction_support_plane(
+                inputs,
+                domain_role,
+                (0, polarization),
+                cells,
+            ),
             fitted_beam,
             restoring_beam,
         })
     }
+}
 
-    pub(crate) const fn fitted_beam(&self) -> Option<RestoringBeam> {
-        self.fitted_beam
+/// The role of a Taylor run's one image domain.
+fn domain_role<'a>(
+    state: &'a FinalNormalStateWindow<'_>,
+) -> &'a casa_imaging_model::ImageDomainRole {
+    state
+        .domain(0)
+        .expect("a Taylor run images one domain")
+        .role()
+}
+
+impl TaylorProducts {
+    pub(crate) fn build(
+        inputs: &ContinuumProductInputs<'_>,
+        planned: &crate::PlannedContinuumGeneration,
+        output: &crate::CasaImageWriter,
+    ) -> Result<Self, ProductsError> {
+        let primary_beam_model = planned.primary_beam_model;
+        let state = inputs.normal_state();
+        // Binding the inputs established one domain, `terms` coefficient
+        // terms and 2·terms − 1 normal moments per polarization.
+        let state = &state.read_window(state.slab().core_range())?;
+        if inputs.taylor_primary_beam().is_some()
+            && inputs.taylor_residual_sum_weight() == Some(1.0)
+            && state.polarization_count() == 1
+            && state.published_sum_weight(0, 0) == Some(0.0)
+        {
+            return blank::build(inputs, state, primary_beam_model);
+        }
+        let solved = (0..state.polarization_count())
+            .map(|polarization| SolvedFamily::read(inputs, state, polarization, planned))
+            .collect::<Result<Vec<_>, _>>()?;
+        // The restoring-beam policy applies across the polarizations as
+        // across any image's planes: each its own, one enclosing them all,
+        // or the one the request gives.
+        let fits = solved.iter().map(|family| family.fit).collect::<Vec<_>>();
+        let fitted = settle_beams(&fits, fits.len());
+        let restoring = crate::generation::restoring_beams(inputs, &fitted)?;
+        let planes = solved
+            .into_iter()
+            .enumerate()
+            .map(|(polarization, family)| {
+                let beam = restoring.get(polarization).copied().flatten();
+                family.restore(inputs, state, fitted[polarization], beam, planned, output)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            shape: state.shape(),
+            planes,
+        })
     }
 
-    pub(crate) const fn restoring_beam(&self) -> Option<RestoringBeam> {
-        self.restoring_beam
+    /// Each polarization's fitted beam, in the reconstruction's order.
+    pub(crate) fn fitted_beams(&self) -> Box<[Option<RestoringBeam>]> {
+        self.planes.iter().map(|plane| plane.fitted_beam).collect()
     }
 
+    /// Each polarization's restoring beam, in the reconstruction's order.
+    pub(crate) fn restoring_beams(&self) -> Box<[Option<RestoringBeam>]> {
+        self.planes
+            .iter()
+            .map(|plane| plane.restoring_beam)
+            .collect()
+    }
+
+    /// `role`'s values in storage order: x-major, the polarization fastest
+    /// (a Taylor image's axes are direction, polarization and its one
+    /// channel).
     pub(crate) fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
+        Ok(interleave(
+            self.planes
+                .iter()
+                .map(|plane| plane.payload(role))
+                .collect::<Result<_, _>>()?,
+        ))
+    }
+
+    /// The pixels `rule` holds valid, in [`Self::payload`]'s order.
+    pub(crate) fn validity(
+        &self,
+        role: ProductRole,
+        rule: ProductValidityRule,
+        refresh_mvc_mask: bool,
+    ) -> Result<Vec<bool>, ProductsError> {
+        Ok(interleave(
+            self.planes
+                .iter()
+                .map(|plane| plane.validity(role, rule, self.shape, refresh_mvc_mask))
+                .collect::<Result<_, _>>()?,
+        ))
+    }
+}
+
+/// One plane per polarization merged into storage order: a cell's
+/// polarizations side by side.
+fn interleave<T: Copy>(mut planes: Vec<Vec<T>>) -> Vec<T> {
+    if planes.len() == 1 {
+        return planes.pop().expect("one plane");
+    }
+    let cells = planes.first().map_or(0, Vec::len);
+    (0..cells)
+        .flat_map(|cell| planes.iter().map(move |plane| plane[cell]))
+        .collect()
+}
+
+impl TaylorPlane {
+    /// The spectral index's support; planning names it only for a family of
+    /// two or more terms.
+    fn spectral_index_validity(&self) -> Result<&[bool], ProductsError> {
+        self.spectral_index
+            .as_ref()
+            .map(|index| index.alpha_validity.as_slice())
+            .ok_or(ProductsError::UnsupportedProblem)
+    }
+
+    /// CASA's `SIImageStoreMultiTerm::calculateAlphaBeta` spectral curvature.
+    /// Use the same support as alpha and form the payload only when publishing.
+    fn spectral_curvature(&self) -> Option<Vec<f32>> {
+        let spectral_index = self.spectral_index.as_ref()?;
+        let taylor0 = self.restored.first()?;
+        let taylor2 = self.restored.get(2)?;
+        Some(
+            taylor0
+                .iter()
+                .zip(taylor2)
+                .zip(
+                    spectral_index
+                        .alpha
+                        .iter()
+                        .zip(&spectral_index.alpha_validity),
+                )
+                .map(|((&image0, &image2), (&alpha, &valid))| {
+                    if valid {
+                        image2 / image0 - 0.5 * alpha * (alpha - 1.0)
+                    } else {
+                        0.0
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
         let term = |term: ProductTerm| match term {
             ProductTerm::Taylor(term) => Ok(term),
             ProductTerm::Single => Err(ProductsError::UnsupportedProductRole { role }),
@@ -589,9 +877,18 @@ impl TaylorProducts {
             ProductRole::Weight(value) => self.weight.get(term(value)?),
             ProductRole::PrimaryBeam(value) => self.primary_beam.get(term(value)?),
             ProductRole::PbCorrectedImage(value) => self.pb_corrected.get(term(value)?),
-            ProductRole::SpectralIndex => return Ok(self.alpha.clone()),
-            ProductRole::PbCorrectedSpectralIndex => return Ok(self.alpha_pbcor.clone()),
-            ProductRole::SpectralIndexError => return Ok(self.alpha_error.clone()),
+            ProductRole::SpectralIndex => self.spectral_index.as_ref().map(|index| &index.alpha),
+            ProductRole::SpectralCurvature => {
+                return self
+                    .spectral_curvature()
+                    .ok_or(ProductsError::UnsupportedProductRole { role });
+            }
+            ProductRole::PbCorrectedSpectralIndex => {
+                self.spectral_index.as_ref().map(|index| &index.alpha_pbcor)
+            }
+            ProductRole::SpectralIndexError => {
+                self.spectral_index.as_ref().map(|index| &index.alpha_error)
+            }
             ProductRole::CleanMask => return Ok(self.clean_mask.clone()),
             ProductRole::Sensitivity => return Ok(self.sensitivity.clone()),
             ProductRole::SumWeights(value) => return Ok(vec![self.sum_weights[term(value)?]]),
@@ -601,15 +898,38 @@ impl TaylorProducts {
         .ok_or(ProductsError::UnsupportedProductRole { role })
     }
 
-    pub(crate) fn validity(&self, rule: ProductValidityRule) -> Result<Vec<bool>, ProductsError> {
+    fn validity(
+        &self,
+        role: ProductRole,
+        rule: ProductValidityRule,
+        shape: [usize; 2],
+        refresh_mvc_mask: bool,
+    ) -> Result<Vec<bool>, ProductsError> {
         match rule {
             ProductValidityRule::All | ProductValidityRule::FinalNormalState => {
-                Ok(vec![true; self.shape[0] * self.shape[1]])
+                Ok(vec![true; shape[0] * shape[1]])
+            }
+            ProductValidityRule::PrimaryBeam(policy)
+                if refresh_mvc_mask
+                    && matches!(
+                        role,
+                        ProductRole::Residual(_) | ProductRole::RestoredImage(_)
+                    ) =>
+            {
+                // MVC's cube2tt recreates each residual and applies the
+                // current cutoff to the saved PB lattice. Restore copies
+                // this mask; pbcor separately uses the saved PB mask.
+                Ok(self
+                    .primary_beam_validity
+                    .iter()
+                    .zip(&self.primary_beam[0])
+                    .map(|(&valid, &pb)| valid && pb > policy.cutoff())
+                    .collect())
             }
             ProductValidityRule::PrimaryBeam(_) => Ok(self.primary_beam_validity.clone()),
-            ProductValidityRule::Taylor(_) => Ok(self.alpha_validity.clone()),
+            ProductValidityRule::Taylor(_) => Ok(self.spectral_index_validity()?.to_vec()),
             ProductValidityRule::TaylorAndPrimaryBeam { .. } => Ok(self
-                .alpha_validity
+                .spectral_index_validity()?
                 .iter()
                 .zip(&self.primary_beam_validity)
                 .map(|(taylor, pb)| *taylor && *pb)
@@ -624,6 +944,7 @@ fn taylor_alpha_products(
     restored_taylor0: &[f32],
     restored_taylor1: &[f32],
     peak_fraction: f32,
+    peak_mask: Option<&[bool]>,
 ) -> (Vec<f32>, Vec<f32>, Vec<bool>) {
     let cells = restored_taylor0.len();
     let mut alpha = vec![0.0; cells];
@@ -632,7 +953,11 @@ fn taylor_alpha_products(
     let Some(positive_maximum) = principal_residual_taylor0
         .iter()
         .copied()
-        .filter(|value| value.is_finite() && *value > 0.0)
+        .enumerate()
+        .filter_map(|(index, value)| {
+            (value.is_finite() && value > 0.0 && peak_mask.is_none_or(|mask| mask[index]))
+                .then_some(value)
+        })
         .reduce(f32::max)
     else {
         return (alpha, alpha_error, validity);
@@ -654,213 +979,18 @@ fn taylor_alpha_products(
     (alpha, alpha_error, validity)
 }
 
-/// The beam centres (pixels), cell increments (radians) and frequency of
-/// one domain's plane.
-struct BeamGeometry<'a> {
-    centres: Cow<'a, [[f64; 2]]>,
-    increment_rad: [f64; 2],
-    frequency_hz: f64,
-}
-
-fn beam_geometry<'a>(
-    inputs: &ContinuumProductInputs<'a>,
-    domain_role: &casa_imaging_model::ImageDomainRole,
-    output_channel: usize,
-) -> Result<BeamGeometry<'a>, ProductsError> {
-    let domain = inputs
-        .problem()
-        .geometry()
-        .domains()
-        .iter()
-        .find(|domain| domain.role() == domain_role)
-        .ok_or(ProductsError::UnsupportedProblem)?;
-    let direction = domain.direction();
-    let frequency_hz = inputs
-        .problem()
-        .geometry()
-        .spectral()
-        .channel_centre_hz(output_channel)
-        .ok_or(ProductsError::UnsupportedProblem)?;
-    Ok(BeamGeometry {
-        centres: inputs.primary_beam_centres(domain_role, direction.reference_pixel()),
-        increment_rad: direction.increment_rad(),
-        frequency_hz,
-    })
-}
-
-/// CASA's analytic PB on one plane of `shape`: a beam centred on each
-/// pointing, summed (`SIMapper::addPB`), and divided by its peak where that
-/// exceeds one (`SIImageStore::makePBImage`). With no pointing it is zero.
-/// `add_beam` adds one pointing's beam into the plane, which is the only
-/// allocation whatever the number of pointings.
-fn summed_beams(
-    shape: [usize; 2],
-    centres: &[[f64; 2]],
-    add_beam: impl Fn(&mut [f32], [f64; 2]),
-) -> Vec<f32> {
-    let mut sum = vec![0.0; shape[0] * shape[1]];
-    for centre in centres {
-        add_beam(&mut sum, *centre);
-    }
-    let peak = sum.iter().fold(0.0_f32, |peak, value| peak.max(*value));
-    if peak > 1.0 {
-        for value in &mut sum {
-            *value /= peak;
-        }
-    }
-    sum
-}
-
-pub(crate) fn analytic_evla_primary_beam(
-    inputs: &ContinuumProductInputs<'_>,
-    domain_role: &casa_imaging_model::ImageDomainRole,
-    shape: [usize; 2],
-    output_channel: usize,
-) -> Result<Vec<f32>, ProductsError> {
-    let BeamGeometry {
-        centres,
-        increment_rad,
-        frequency_hz,
-    } = beam_geometry(inputs, domain_role, output_channel)?;
-    let pattern = evla_common_pattern(frequency_hz).ok_or(ProductsError::UnsupportedProblem)?;
-    Ok(summed_beams(shape, &centres, |plane, centre| {
-        add_evla_common_power(plane, shape, centre, increment_rad, frequency_hz, pattern);
-    }))
-}
-
-/// Add the EVLA common beam centred on pixel `centre` into `values`.
-fn add_evla_common_power(
-    values: &mut [f32],
-    shape: [usize; 2],
-    centre: [f64; 2],
-    increment_rad: [f64; 2],
-    frequency_hz: f64,
-    pattern: EvlaPowerPattern,
-) {
-    let increment_deg = increment_rad.map(f64::to_degrees);
-    let frequency_factor = 60.0 * frequency_hz / 1.0e9;
-    for x in 0..shape[0] {
-        let rx2 = ((x as f64 - centre[0]) * increment_deg[0]).powi(2) as f32;
-        for y in 0..shape[1] {
-            let ry2 = ((y as f64 - centre[1]) * increment_deg[1]).powi(2) as f32;
-            // PBMath1D::apply stores squared degree offsets and scaled radius
-            // as Float. Rounding before the table lookup matters at bin edges.
-            let radius_arcmin_ghz = (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32;
-            values[x * shape[1] + y] += pattern.power(f64::from(radius_arcmin_ghz));
-        }
-    }
-}
-
-pub(crate) fn analytic_vla_primary_beam(
-    inputs: &ContinuumProductInputs<'_>,
-    domain_role: &casa_imaging_model::ImageDomainRole,
-    shape: [usize; 2],
-    output_channel: usize,
-) -> Result<Vec<f32>, ProductsError> {
-    let BeamGeometry {
-        centres,
-        increment_rad,
-        frequency_hz,
-    } = beam_geometry(inputs, domain_role, output_channel)?;
-    let table = vla_band_voltage_table(frequency_hz)?;
-    Ok(summed_beams(shape, &centres, |plane, centre| {
-        add_annular_aperture_power(plane, shape, centre, increment_rad, frequency_hz, &table);
-    }))
-}
-
-pub(crate) fn analytic_alma_airy_primary_beam(
-    inputs: &ContinuumProductInputs<'_>,
-    domain_role: &casa_imaging_model::ImageDomainRole,
-    shape: [usize; 2],
-    output_channel: usize,
-    effective_diameter_m: f64,
-) -> Result<Vec<f32>, ProductsError> {
-    let BeamGeometry {
-        centres,
-        increment_rad,
-        frequency_hz,
-    } = beam_geometry(inputs, domain_role, output_channel)?;
-    let table = AnnularApertureVoltageTable::new(effective_diameter_m, 0.75, 3.568 * 60.0);
-    Ok(summed_beams(shape, &centres, |plane, centre| {
-        add_annular_aperture_power(plane, shape, centre, increment_rad, frequency_hz, &table);
-    }))
-}
-
-/// Add the annular-aperture beam power centred on pixel `centre` into
-/// `values`.
-fn add_annular_aperture_power(
-    values: &mut [f32],
-    shape: [usize; 2],
-    centre: [f64; 2],
-    increment_rad: [f64; 2],
-    frequency_hz: f64,
-    table: &AnnularApertureVoltageTable,
-) {
-    let increment_deg = increment_rad.map(f64::to_degrees);
-    let frequency_factor = 60.0 * frequency_hz / 1.0e9;
-    for x in 0..shape[0] {
-        let pixel_x = x as f64 - centre[0];
-        let rx2 = (pixel_x * increment_deg[0]).powi(2) as f32;
-        for y in 0..shape[1] {
-            let pixel_y = y as f64 - centre[1];
-            let ry2 = (pixel_y * increment_deg[1]).powi(2) as f32;
-            let radius_arcmin_ghz =
-                (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32 as f64;
-            let voltage = table.evaluate(radius_arcmin_ghz);
-            values[x * shape[1] + y] += voltage * voltage;
-        }
-    }
-}
-
-fn vla_band_voltage_table(frequency_hz: f64) -> Result<AnnularApertureVoltageTable, ProductsError> {
-    // CASA selects VLA_L and VLA_Q in these open intervals. Both use this
-    // aperture; SIMapper::addPB applies BeamSquint::NONE for PB images.
-    // Other legacy-VLA bands retain their explicit unsupported boundary.
-    if vla_band_supported(frequency_hz) {
-        Ok(AnnularApertureVoltageTable::new(25.0, 2.36, 0.8564 * 60.0))
-    } else {
-        Err(ProductsError::UnsupportedProblem)
-    }
-}
-
-fn vla_band_supported(frequency_hz: f64) -> bool {
-    matches!(VlaBand::of(frequency_hz), Some(VlaBand::L | VlaBand::Q))
-}
-
-pub(crate) fn primary_beam_frequency_supported(
-    model: AnalyticPrimaryBeamModel,
-    frequency_hz: f64,
-) -> bool {
-    match model {
-        AnalyticPrimaryBeamModel::CasaVlaBand => vla_band_supported(frequency_hz),
-        AnalyticPrimaryBeamModel::CasaEvlaCommon => evla_common_pattern(frequency_hz).is_some(),
-        AnalyticPrimaryBeamModel::CasaAlma12mAiry
-        | AnalyticPrimaryBeamModel::CasaAca7mAiry
-        | AnalyticPrimaryBeamModel::MosaicSensitivity => true,
-    }
-}
-
-/// The EVLA common beam CASA applies at `frequency_hz`
-/// ([`EvlaPowerPattern::at`]) in the bands imaging supports, L, S and C
-/// ([`EvlaBand::of`], with CASA's precedence where they overlap). Other
-/// frequencies fail closed instead of borrowing another band's beam.
-fn evla_common_pattern(frequency_hz: f64) -> Option<EvlaPowerPattern> {
-    matches!(
-        EvlaBand::of(frequency_hz),
-        Some(EvlaBand::L | EvlaBand::S | EvlaBand::C)
-    )
-    .then(|| EvlaPowerPattern::at(frequency_hz))
-}
-
+/// Model term `coefficient` of polarization `polarization`, x-major. A
+/// Taylor run images one domain (the availability gate and the inputs'
+/// binding).
 fn model_term(
     inputs: &ContinuumProductInputs<'_>,
-    coefficient: usize,
+    (coefficient, polarization): (usize, usize),
     shape: [usize; 2],
 ) -> Result<Vec<f32>, ProductsError> {
-    // A Taylor run images Stokes I on one domain (the availability gate and
-    // the inputs' binding).
     let mut plane = vec![0.0; shape[0] * shape[1]];
-    let samples = inputs.final_model().read_plane(0, coefficient, 0)?;
+    let samples = inputs
+        .final_model()
+        .read_plane(0, coefficient, polarization)?;
     for y in 0..shape[1] {
         for x in 0..shape[0] {
             plane[x * shape[1] + y] = samples[y * shape[0] + x].value().value() as f32;
@@ -874,73 +1004,6 @@ mod tests {
     use casa_imaging_model::ProductNormalization;
 
     use super::ResidualFamily;
-
-    #[test]
-    fn evla_common_beams_cover_the_l_s_and_c_bands_only() {
-        // casa-numerics holds CASA's fits and their nearest-frequency rule;
-        // imaging fails closed outside L, S and C.
-        for (frequency_hz, supported) in [
-            (850.0e6, false),
-            (1.4e9, true),
-            (2.0e9, true),
-            (3.0e9, true),
-            (6.0e9, true),
-            (8.4e9, false),
-            (0.3e9, false),
-        ] {
-            assert_eq!(
-                super::evla_common_pattern(frequency_hz).is_some(),
-                supported,
-                "{frequency_hz} Hz"
-            );
-        }
-    }
-
-    #[test]
-    fn vla_pb_channel_455_edge_matches_casa_support() {
-        let table = super::vla_band_voltage_table(44.91e9).expect("VLA Q-band table");
-        let mut plane = vec![0.0; 3 * 43];
-        super::add_annular_aperture_power(
-            &mut plane,
-            [3, 43],
-            [512.0, 512.0],
-            [-2.908_882_086_657_215_7e-7, 2.908_882_086_657_215_7e-7],
-            44.91e9,
-            &table,
-        );
-        let edge = plane[2 * 43 + 42];
-        assert!((edge - 0.200_095_06).abs() < 1e-6, "edge PB={edge}");
-        assert!(edge > 0.2, "CASA keeps this channel-455 PB pixel");
-    }
-
-    #[test]
-    fn beam_coverage_preserves_the_existing_open_band_boundaries() {
-        use crate::AnalyticPrimaryBeamModel::{CasaEvlaCommon, CasaVlaBand};
-        for (model, frequency_hz, supported) in [
-            (CasaVlaBand, 1.0e9, false),
-            (CasaVlaBand, 1.4e9, true),
-            (CasaVlaBand, 2.0e9, false),
-            (CasaVlaBand, 8.0e9, false),
-            (CasaVlaBand, 35.0e9, false),
-            (CasaVlaBand, 44.0e9, true),
-            (CasaVlaBand, 45.022e9, true),
-            (CasaVlaBand, 54.880e9, true),
-            (CasaVlaBand, 55.0e9, false),
-            (CasaVlaBand, 55.008e9, false),
-            (CasaEvlaCommon, 0.9e9, false),
-            (CasaEvlaCommon, 1.4e9, true),
-            (CasaEvlaCommon, 3.0e9, true),
-            (CasaEvlaCommon, 6.0e9, true),
-            (CasaEvlaCommon, 8.001e9, false),
-            (CasaEvlaCommon, 44.0e9, false),
-        ] {
-            assert_eq!(
-                super::primary_beam_frequency_supported(model, frequency_hz),
-                supported,
-                "{model:?} at {frequency_hz}"
-            );
-        }
-    }
 
     #[test]
     fn mosaic_primary_beam_takes_casa_abs_of_the_weight() {
@@ -968,6 +1031,8 @@ mod tests {
         for (normalization, expected) in [
             (ProductNormalization::FlatNoise, [4.0, 4.0, 4.0, 0.0]),
             (ProductNormalization::FlatSky, [4.0, 8.0, 16.0, 0.0]),
+            // Every pixel ÷ PBScale² = 16 / 8 = 2, with no cutoff.
+            (ProductNormalization::PbSquare, [4.0, 2.0, 1.0, 0.5]),
         ] {
             let normalized = raw
                 .iter()
@@ -1025,6 +1090,52 @@ mod tests {
     }
 
     #[test]
+    fn aw_principal_taylor_solution_uses_the_central_psf_patch() {
+        let shape = super::PlaneShape::new(100, 100);
+        let mut psf = vec![vec![0.0; shape.len()]; 3];
+        let central = shape.index(49, 50);
+        let outer = shape.index(9, 50);
+        for (moment, (inner, outside)) in
+            psf.iter_mut().zip([(0.5, 1.0), (0.125, 0.0), (0.25, 0.5)])
+        {
+            moment[central] = inner;
+            moment[outer] = outside;
+        }
+        let residual = vec![vec![1.5; shape.len()], vec![1.25; shape.len()]];
+        let (_, restored) = super::principal_residuals(&psf, &residual, Some(shape)).unwrap();
+        assert_eq!(restored[0][central], 2.0);
+        assert_eq!(restored[1][central], 4.0);
+    }
+
+    #[test]
+    fn restoring_rejects_a_nearly_dependent_taylor_normal_block() {
+        // The second pivot is positive, but CASA's spectral row-spread
+        // check rejects this block before its principal residual solve.
+        let psf = [vec![1.0], vec![0.1], vec![0.010_000_001]];
+        let residual = [vec![1.0], vec![0.0]];
+        let error = super::principal_residuals(&psf, &residual, None).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::ProductsError::BeamFitFailed(reason) if reason == "singular Taylor normal block"
+        ));
+    }
+
+    #[test]
+    fn saved_taylor_mask_changes_the_peak_but_does_not_mask_alpha() {
+        let (alpha, _, validity) = super::taylor_alpha_products(
+            &[10.0, 5.0, 0.75, 0.5],
+            &[2.0; 4],
+            &[10.0, 5.0, 0.75, 0.5],
+            &[2.0; 4],
+            0.1,
+            Some(&[false, true, true, true]),
+        );
+        assert_eq!(validity, [true, true, true, false]);
+        assert_eq!(alpha[0], 0.2);
+        assert_eq!(alpha[3], 0.0);
+    }
+
+    #[test]
     fn negative_only_principal_residual_has_no_taylor_support_or_payload() {
         let (alpha, alpha_error, validity) = super::taylor_alpha_products(
             &[f32::NEG_INFINITY, f32::NAN, -4.0, -1.0, 0.0],
@@ -1032,89 +1143,10 @@ mod tests {
             &[8.0, 4.0, 2.0, 1.0, 0.5],
             &[2.0; 5],
             0.1,
+            None,
         );
         assert!(validity.iter().all(|valid| !valid));
         assert!(alpha.iter().all(|value| *value == 0.0));
         assert!(alpha_error.iter().all(|value| *value == 0.0));
-    }
-
-    #[test]
-    fn evla_common_s_band_uses_casa_sampled_power_lookup() {
-        let frequency_hz = 2.091_980_123e9_f64;
-        let pattern =
-            super::evla_common_pattern(frequency_hz).expect("T44 frequency is in EVLA S band");
-        assert_eq!(
-            pattern.coefficients(),
-            &[1.000, -1.429e-3, 7.52e-7, -1.47e-10]
-        );
-        let sample_index = 2_210.0_f64;
-        let inverse_increment = 9_999.0_f64 / 58.0;
-        let sampled_radius_arcmin_ghz = sample_index / inverse_increment;
-        let radius_arcmin_ghz = sampled_radius_arcmin_ghz + 0.75 / inverse_increment;
-        let x2 = sampled_radius_arcmin_ghz * sampled_radius_arcmin_ghz;
-        let expected_power = 1.0 - 1.429e-3 * x2 + 7.52e-7 * x2.powi(2) - 1.47e-10 * x2.powi(3);
-        let actual = pattern.power(radius_arcmin_ghz);
-        assert!((actual - expected_power as f32).abs() < 1.0e-7);
-        assert!(super::evla_common_pattern(850.0e6).is_none());
-    }
-
-    #[test]
-    fn evla_radial_bin_edges_use_casa_float_rounding_and_voltage_squared() {
-        let coefficients = super::evla_common_pattern(6.0e9).unwrap();
-        let cell = (0.05_f64 / 3600.0).to_radians();
-        // Measured CASA PBMath1D pixels (8,693), (8,890), (29,59) on the
-        // 4096-square 6-GHz pilot. Double-radius lookup picks adjacent bins.
-        for (offset, expected) in [
-            ([2040.0, 1355.0], 0.800_096_45_f32),
-            ([2040.0, 1158.0], 0.815_362_93_f32),
-            ([2019.0, 1989.0], 0.739_581_9_f32),
-        ] {
-            let mut actual = [0.0];
-            super::add_evla_common_power(
-                &mut actual,
-                [1, 1],
-                offset,
-                [-cell, cell],
-                6.0e9,
-                coefficients,
-            );
-            assert_eq!(actual, [expected]);
-        }
-    }
-
-    #[test]
-    fn vla_l_and_q_bands_use_casa_annular_airy_lookup_and_other_bands_fail_closed() {
-        let frequency_hz = 45_469_370_205.156_37;
-        let table = super::vla_band_voltage_table(frequency_hz)
-            .expect("issue #607 representative frequency is in VLA Q band");
-        assert_eq!(table.maximum_radius(), 0.8564 * 60.0);
-
-        let voltage = table.evaluate(29.919_033_706_45);
-        assert_eq!((voltage * voltage).to_bits(), 0x3e6d_1a6e);
-
-        // The L band shares the same CASA annular aperture inside its open
-        // 1--2 GHz interval.
-        let l_band = super::vla_band_voltage_table(1.5e9).expect("VLA L band is supported");
-        assert_eq!(l_band.maximum_radius(), table.maximum_radius());
-        assert_eq!(
-            l_band.evaluate(29.919_033_706_45).to_bits(),
-            table.evaluate(29.919_033_706_45).to_bits()
-        );
-
-        for unsupported_hz in [
-            f64::NAN,
-            55.0e9,
-            35.0e9,
-            25.0e9,
-            15.0e9,
-            9.0e9,
-            5.0e9,
-            2.0e9,
-            1.0e9,
-            0.3e9,
-            0.05e9,
-        ] {
-            assert!(super::vla_band_voltage_table(unsupported_hz).is_err());
-        }
     }
 }

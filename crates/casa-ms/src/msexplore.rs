@@ -3920,7 +3920,6 @@ fn build_generic_visibility_scatter(
             field_id_value,
             row_time_value,
             chan_freq.as_ref(),
-            &spectral_window,
             derived_engine.as_ref(),
         )?;
 
@@ -4778,7 +4777,6 @@ fn build_generic_visibility_scatter_with_averaging(
             field_id_value,
             row_time_value,
             chan_freq.as_ref(),
-            &spectral_window,
             derived_engine.as_ref(),
         )?;
 
@@ -5501,7 +5499,6 @@ fn parse_velocity_definition(value: &str) -> Result<DopplerRef, String> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_spectral_context(
     spec: &MsPlotSpec,
     spw_id: i32,
@@ -5509,7 +5506,6 @@ fn resolve_spectral_context(
     field_id_value: i32,
     row_time_value: f64,
     chan_freq: Option<&ChanFreqColumn<'_>>,
-    spectral_window: &crate::subtables::MsSpectralWindow<'_>,
     derived_engine: Option<&MsCalEngine>,
 ) -> Result<Option<SpectralContext>, String> {
     let needs_spectral_coordinates = spec.x_axis.uses_spectral_coordinates()
@@ -5538,12 +5534,12 @@ fn resolve_spectral_context(
         ));
     }
 
-    let source_ref = FrequencyRef::from_casacore_code(
-        spectral_window
-            .meas_freq_ref(spw_index)
+    let source_ref = match source_channel_frequencies.first() {
+        Some(frequency) => frequency.refer(),
+        None => chan_freq
+            .frequency_reference(spw_index)
             .map_err(|error| error.to_string())?,
-    )
-    .ok_or_else(|| format!("unsupported MEAS_FREQ_REF code for SPECTRAL_WINDOW row {spw_id}"))?;
+    };
     let target_ref =
         parse_frequency_frame(spec.transforms.freqframe.as_deref())?.unwrap_or(source_ref);
     let channel_frequencies_hz = if target_ref == source_ref {

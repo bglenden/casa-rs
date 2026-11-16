@@ -14,7 +14,7 @@ use casa_observation::ObservationError;
 use zarrs::array::ArrayMetadata;
 use zarrs_filesystem::FilesystemStore;
 
-use super::metadata::{open_array, storage};
+use super::metadata::{chunk_bytes, open_array, storage};
 
 /// Times their files' size the processing set's metadata (`zarr.json`)
 /// holds once parsed: array descriptions and attributes.
@@ -109,6 +109,12 @@ fn decoded(
     let Some(size) = array.data_type().fixed_size() else {
         return Ok(0);
     };
-    let elements = usize::try_from(array.shape().iter().product::<u64>()).unwrap_or(usize::MAX);
-    Ok(elements.saturating_mul(3 * size + 2 * size_of::<String>()))
+    let elements = array.shape().iter().fold(1_usize, |product, extent| {
+        product.saturating_mul(usize::try_from(*extent).unwrap_or(usize::MAX))
+    });
+    Ok(elements
+        .saturating_mul(3 * size + 2 * size_of::<String>())
+        // A chunk may be larger than the logical array and decode beside
+        // its output. Opening reads one chunk at a time.
+        .saturating_add(chunk_bytes(&array)?.saturating_mul(2)))
 }

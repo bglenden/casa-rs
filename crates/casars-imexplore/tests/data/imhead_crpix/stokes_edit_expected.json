@@ -1,0 +1,191 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "get": [
+        "Q"
+      ],
+      "history": [
+        "Modified crval3 from [I] to \"Q\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval3\", hdvalue=\"Q\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval3",
+      "value": "Q"
+    },
+    {
+      "get": [
+        "Q"
+      ],
+      "history": [
+        "Modified crval3 from [I] to \"q\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval3\", hdvalue=\"q\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval3",
+      "value": "q"
+    },
+    {
+      "get": [
+        "RR"
+      ],
+      "history": [
+        "Modified crval3 from [I] to \"RR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval3\", hdvalue=\"RR\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval3",
+      "value": "RR"
+    },
+    {
+      "get": [
+        "V"
+      ],
+      "history": [
+        "Modified crval3 from [I] to [V]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval3\", hdvalue=['V'], verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval3",
+      "value": [
+        "V"
+      ]
+    },
+    {
+      "error": "Exception: There are 1 polarization values, so a string array of that length is needed.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "get": [
+        "I"
+      ],
+      "history": [],
+      "image": "normal",
+      "key": "crval3",
+      "value": [
+        "Q",
+        "U"
+      ]
+    },
+    {
+      "error": "Exception: Data type to put must be either a string array or string.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "get": [
+        "I"
+      ],
+      "history": [],
+      "image": "normal",
+      "key": "crval3",
+      "value": []
+    },
+    {
+      "error": "Exception: Data type to put must be either a string array or string.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "get": [
+        "I"
+      ],
+      "history": [],
+      "image": "normal",
+      "key": "crval3",
+      "value": 1
+    },
+    {
+      "get": [
+        "U"
+      ],
+      "history": [
+        "Modified crval1 from [I] to \"U\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval1\", hdvalue=\"U\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "crval1",
+      "value": "U"
+    },
+    {
+      "get": [
+        "V",
+        "U",
+        "Q",
+        "I"
+      ],
+      "history": [
+        "Modified crval3 from [I, Q, U, V] to [V, U, Q, I]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval3\", hdvalue=['V', 'U', 'Q', 'I'], verbose=False)"
+      ],
+      "image": "stokes_four",
+      "key": "crval3",
+      "value": [
+        "V",
+        "U",
+        "Q",
+        "I"
+      ]
+    },
+    {
+      "error": "You have specified the same Stokes more than once",
+      "get": [
+        "I",
+        "Q",
+        "U",
+        "V"
+      ],
+      "history": [],
+      "image": "stokes_four",
+      "key": "crval3",
+      "value": [
+        "I",
+        "I",
+        "Q",
+        "V"
+      ]
+    },
+    {
+      "error": "Exception: There are 4 polarization values, so a string array of that length is needed.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "get": [
+        "I",
+        "Q",
+        "U",
+        "V"
+      ],
+      "history": [],
+      "image": "stokes_four",
+      "key": "crval3",
+      "value": "Q"
+    },
+    {
+      "error": "Exception: There are 4 polarization values, so a string array of that length is needed.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "get": [
+        "I",
+        "Q",
+        "U",
+        "V"
+      ],
+      "history": [],
+      "image": "stokes_four",
+      "key": "crval3",
+      "value": [
+        "I",
+        "Q"
+      ]
+    },
+    {
+      "error": "You have specified the same Stokes more than once",
+      "get": [
+        "I",
+        "Q",
+        "U",
+        "V"
+      ],
+      "history": [],
+      "image": "stokes_four",
+      "key": "crval3",
+      "value": [
+        "i",
+        "I",
+        "Q",
+        "V"
+      ]
+    }
+  ]
+}

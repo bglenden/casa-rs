@@ -71,6 +71,7 @@ pub mod image;
 pub mod image_expr;
 mod image_expr_ops;
 pub mod image_info;
+mod linear_mosaic;
 pub mod regrid;
 pub mod saved_region;
 pub mod subimage;
@@ -88,15 +89,17 @@ pub use analysis::{
     ImmomentsRequest, ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest,
     ImstatRequest, ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary, export_fits,
     feather, image_analysis_protocol_descriptor, image_analysis_task_schema_bundle, imhead,
-    imhead_put, immath, immoments, impbcor, import_fits, impv, imregrid, imstat, imsubimage,
-    parse_image_channel_selection, run_image_analysis_task,
+    imhead_add_delete, imhead_extrema, imhead_put, immath, immoments, impbcor, import_fits, impv,
+    imregrid, imstat, imsubimage, parse_image_channel_selection, run_image_analysis_task,
 };
-pub use beam::{GaussianBeam, ImageBeamSet};
+pub use beam::{BeamComponent, GaussianBeam, ImageBeamSet, StoredGaussianBeam};
 pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
-pub use casa_return::{imhead_list_record, imhead_summary_record, imstat_record};
+pub use casa_return::{
+    ImheadGetError, imhead_get_value, imhead_list_record, imhead_summary_record, imstat_record,
+};
 pub use convolve2d::{Convolved, convolve2d};
 pub use error::ImageError;
-pub use fits_read::{FitsImage, read_fits_image};
+pub use fits_read::{FitsImage, fits_image_shape, read_fits_image};
 pub use image::{
     AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
     PagedImage, image_pixel_type,
@@ -106,7 +109,11 @@ pub use image_expr::{
     MaskExprBuilder, MaskExpression, MaskLogicalOp, ReductionOp,
 };
 pub use image_info::{ImageInfo, ImageType};
-pub use regrid::{RegridMethod, RegridTemplate, Regridded, check_regrid, regrid};
+pub use linear_mosaic::linearmosaic;
+pub use regrid::{
+    RegridMethod, RegridTemplate, Regridded, check_regrid, check_regrid_along_frequency, regrid,
+    regrid_along_frequency,
+};
 pub use saved_region::{PolygonRegion, RegionStatistics};
 pub use subimage::{SubImage, SubImageMut};
 pub use task_front_end::{image_task_front_end, image_task_returning, image_task_success};

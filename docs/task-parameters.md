@@ -10,8 +10,8 @@ loaded by a task executable's command line or manipulated from Python without
 changing the parameter names or their meaning. Every parameter surface is a
 task (ADR-0017).
 
-This guide describes the implemented interface from ADR-0006, with current-only
-surface evolution defined by ADR-0012. Provider JSON requests, results, and
+This guide describes the implemented interface from ADR-0006, including
+current-only surface evolution. Provider JSON requests, results, and
 progress remain machine transports; TOML is the sole human-authored
 parameter-profile format.
 
@@ -29,7 +29,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 29
+contract = 42
 
 [parameters]
 vis = "data/target.ms"
@@ -55,16 +55,11 @@ duplicate, inactive, or wrong-surface parameters are errors with source
 locations where possible. A compound value is replaced as one value; profiles
 are not recursive merge patches.
 
-A surface retains older profiles only when its canonical definition publishes
-an explicit ordered migration chain; other stale contracts and historical
-aliases are rejected rather than silently interpreted. The imager surface
-became CASA's `tclean` at contract 29 (#931): a profile naming surface
-`imager` at contract 28, its last, migrates. Its casa-rs names move to
-CASA's (`phasecenter_field` to `phasecenter`, `mask_box` and `mask_image` to
-`mask`, `minor_cycle_length` to `cycleniter`, and `dirty_only = true` to
-`niter = 0`), its values to CASA's forms, and an omitted value whose default
-changed (`imsize`, `cell`, `cycleniter`, `nterms`) takes tclean's with a
-warning. Older imager contracts are refused.
+Use the version emitted by the current executable's profile template.
+Older and newer profile versions are rejected with an error. To use an old
+file, start from the current template and copy the values you still need,
+using current parameter names. An omitted optional value uses the current
+default.
 
 Relative dataset and product paths resolve against the explicit workspace or
 the process current directory. They do not resolve relative to the profile file
@@ -92,6 +87,13 @@ available through the same CLI flags, task JSON, sparse profiles, and generated
 Python wrapper. Profiles store the requested paths/action/bounds, not compiled
 plans, generated cells, cache inventory, or publication state. This exposes the
 frozen EVLA case, not general telescope support.
+
+The native cells follow tclean's terms as CASA's `AWProjectFT` reads them:
+`aterm`, `psterm`, `wbawp` (cells at each window's frequency, or at the image
+reference frequency alone; without the aperture CASA drops it), `conjbeams`
+(the weight cell's conjugate beam) and `wprojplanes` (one plane is co-planar).
+An imported CASA cache already holds the cells its run made; with it only
+`conjbeams` changes the run, choosing the cell each sample grids with.
 
 ## Sources and precedence
 
@@ -282,9 +284,8 @@ Rust-owned.
 
 The CASA-named wrappers and their type stubs are generated from the catalog,
 under `casars.tasks`; there is no second provider-specific task API. A
-surface that names its CASA task (`casa_task`; the image tasks, `flagdata`,
-`flagmanager`, `importvla`, `mstransform`, `split`, `applycal`, `gaincal`,
-`bandpass`, `fluxscale`, `gencal` and `simobserve` so far) has CASA's exact
+surface that names its CASA task (`casa_task`; every surface but the casa-rs
+tasks `calibrate`, `msexplore` and `msconvert`, and `plotms`) has CASA's exact
 signature: CASA's parameters in CASA's order, positional or by keyword, with
 CASA's defaults, then casa-rs's own controls, keyword-only. Its wrapper
 returns CASA's value: `imstat`'s statistics dictionary with NumPy arrays,
@@ -295,7 +296,7 @@ and `bandpass`'s tables and selected data, `fluxscale`'s flux densities,
 only at CASA's
 default and refused at any other value, naming its issue; the wrapper's
 docstring lists them. The other wrappers take keyword arguments and return
-the `TaskCompletion` until their families are converted (#931).
+the `TaskCompletion`.
 [CASA compatibility](reference/casa-compatibility.md) compares each surface
 with its CASA task.
 

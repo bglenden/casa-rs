@@ -1,0 +1,2437 @@
+{
+ "casa_version": "6.7.6-14",
+ "generator": "tools/simulation/simutil_helpers_oracle.py",
+ "is4d": {
+  "dfs_cube.fits": {
+   "value": false,
+   "log": []
+  },
+  "dfs_cube.im": {
+   "value": false,
+   "log": []
+  },
+  "dir_freq.im": {
+   "value": false,
+   "log": []
+  },
+  "dir_freq_linear.im": {
+   "value": false,
+   "log": []
+  },
+  "dirstokes.im": {
+   "value": false,
+   "log": []
+  },
+  "dsf.im": {
+   "value": true,
+   "log": []
+  },
+  "freq_first.im": {
+   "value": false,
+   "log": []
+  },
+  "galactic.im": {
+   "value": true,
+   "log": []
+  },
+  "iquv_1ch.im": {
+   "value": true,
+   "log": []
+  },
+  "iquv_cube.im": {
+   "value": true,
+   "log": []
+  },
+  "iv.im": {
+   "value": true,
+   "log": []
+  },
+  "jybeam.im": {
+   "value": true,
+   "log": []
+  },
+  "jybeam_nobeam.im": {
+   "value": true,
+   "log": []
+  },
+  "kelvin.im": {
+   "value": true,
+   "log": []
+  },
+  "linear2d.im": {
+   "value": false,
+   "log": []
+  },
+  "lsrd.im": {
+   "value": true,
+   "log": []
+  },
+  "masked_cube.im": {
+   "value": true,
+   "log": []
+  },
+  "plain2d.fits": {
+   "value": false,
+   "log": [
+    [
+     "INFO",
+     "FITSCoordinateUtil::fromFITSHeader",
+     "passing empty or nonexistant spectral Coordinate axis"
+    ]
+   ]
+  },
+  "plain2d.im": {
+   "value": false,
+   "log": []
+  },
+  "ra_right.im": {
+   "value": true,
+   "log": []
+  },
+  "rotated.im": {
+   "value": true,
+   "log": []
+  },
+  "southpole.im": {
+   "value": true,
+   "log": []
+  }
+ },
+ "spectral": {
+  "dfs_cube.fits": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       3
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "dfs_cube.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       3
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "dir_freq.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       3
+      ],
+      "dtype": "int64"
+     },
+     "-2000000.0Hz"
+    ]
+   },
+   "log": [
+    [
+     "WARN",
+     "image::open (file /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/image/image_cmpt.cc, line 4208)",
+     "Another image is already open, closing first"
+    ]
+   ]
+  },
+  "dir_freq_linear.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       2
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "dirstokes.im": {
+   "value": 0.0,
+   "log": [
+    [
+     "WARN",
+     "image::open (file /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/image/image_cmpt.cc, line 4208)",
+     "Another image is already open, closing first"
+    ]
+   ]
+  },
+  "dsf.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       1
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "freq_first.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       3
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "galactic.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       1
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "iquv_1ch.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       1
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "iquv_cube.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       3
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "iv.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       3
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "jybeam.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       1
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "jybeam_nobeam.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       1
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "kelvin.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       1
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "linear2d.im": {
+   "value": 0.0,
+   "log": [
+    [
+     "WARN",
+     "image::open (file /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/image/image_cmpt.cc, line 4208)",
+     "Another image is already open, closing first"
+    ]
+   ]
+  },
+  "lsrd.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       1
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "masked_cube.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       2
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "plain2d.fits": {
+   "value": 0.0,
+   "log": [
+    [
+     "WARN",
+     "image::open (file /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/image/image_cmpt.cc, line 4208)",
+     "Another image is already open, closing first"
+    ],
+    [
+     "INFO",
+     "FITSCoordinateUtil::fromFITSHeader",
+     "passing empty or nonexistant spectral Coordinate axis"
+    ]
+   ]
+  },
+  "plain2d.im": {
+   "value": 0.0,
+   "log": [
+    [
+     "WARN",
+     "image::open (file /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/image/image_cmpt.cc, line 4208)",
+     "Another image is already open, closing first"
+    ]
+   ]
+  },
+  "ra_right.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       1
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "rotated.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       1
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  },
+  "southpole.im": {
+   "value": {
+    "tuple": [
+     {
+      "ndarray": [
+       1
+      ],
+      "dtype": "int64"
+     },
+     "2000000.0Hz"
+    ]
+   },
+   "log": []
+  }
+ },
+ "dir_s2m": [
+  {
+   "verbose": false,
+   "direction": "J2000 12h00m00 -30d00m00",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 3.141592653589793
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.5235987755982988
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "direction": "12h00m00 -30d00m00",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 3.141592653589793
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.5235987755982988
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "direction": "B1950 10 20",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 0.17453292519943295
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 0.3490658503988659
+     },
+     "refer": "B1950",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "direction": "GALACTIC 10deg -5.5deg",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 0.17453292519943295
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.09599310885968812
+     },
+     "refer": "GALACTIC",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "direction": "J2000 23h59m59.9 +89d59m59",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": -7.272205216036345e-06
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 1.5707914786476573
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "direction": [
+    "J2000 0h00m00 0d00m00",
+    "J2000 1h00m00 10d00m00"
+   ],
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 0.1308996938995747
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 0.08726646259971647
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": true,
+   "direction": "J2000 12h00m00 -30d00m00",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 3.141592653589793
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.5235987755982988
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": true,
+   "direction": "12h00m00 -30d00m00",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 3.141592653589793
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.5235987755982988
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "[simutil.s2m] \u001b[0massuming J2000 for 12h00m00 -30d00m00"
+     ],
+     [
+      "INFO",
+      "simutil.s2m::simutil.s2m::casa",
+      "assuming J2000 for 12h00m00 -30d00m00"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "direction": "B1950 10 20",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 0.17453292519943295
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 0.3490658503988659
+     },
+     "refer": "B1950",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": true,
+   "direction": "GALACTIC 10deg -5.5deg",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 0.17453292519943295
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.09599310885968812
+     },
+     "refer": "GALACTIC",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": true,
+   "direction": "J2000 23h59m59.9 +89d59m59",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": -7.272205216036345e-06
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 1.5707914786476573
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": true,
+   "direction": [
+    "J2000 0h00m00 0d00m00",
+    "J2000 1h00m00 10d00m00"
+   ],
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 0.1308996938995747
+     },
+     "m1": {
+      "unit": "rad",
+      "value": 0.08726646259971647
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "direction": null,
+   "self_direction": "J2000 3h00m00 -20d00m00",
+   "result": {
+    "value": {
+     "m0": {
+      "unit": "rad",
+      "value": 0.7853981633974483
+     },
+     "m1": {
+      "unit": "rad",
+      "value": -0.3490658503988659
+     },
+     "refer": "J2000",
+     "type": "direction"
+    },
+    "log": []
+   }
+  }
+ ],
+ "msg": [
+  {
+   "verbose": false,
+   "priority": null,
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": null,
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "info",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "info",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "INFO",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "INFO",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "warn",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "WARN",
+      "simutil::simutil::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "warn",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "WARN",
+      "simobserve::simobserve::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "WARNING",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "WARNING",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "debug",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "debug",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "DEBUG2",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "DEBUG2",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "other",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "other",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with WARNING and ERROR in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "error",
+   "origin": null,
+   "result": {
+    "raises": "Exception",
+    "message": "a message with WARNING and ERROR in it",
+    "log": []
+   }
+  },
+  {
+   "verbose": false,
+   "priority": "error",
+   "origin": "simobserve",
+   "result": {
+    "raises": "Exception",
+    "message": "a message with WARNING and ERROR in it",
+    "log": []
+   }
+  },
+  {
+   "verbose": true,
+   "priority": null,
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": null,
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "[simobserve] \u001b[0ma message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "info",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "info",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "\u001b[32m[simobserve] \u001b[0ma message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "INFO",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "INFO",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "\u001b[32m[simobserve] \u001b[0ma message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "warn",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "warn",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "\u001b[35m[simobserve] \u001b[0ma message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "WARNING",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "WARNING",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "\u001b[35m[simobserve] \u001b[0ma message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "debug",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "debug",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "[simobserve] \u001b[0ma message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "DEBUG2",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "DEBUG2",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "[simobserve] \u001b[0ma message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "other",
+   "origin": null,
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simutil::simutil::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "other",
+   "origin": "simobserve",
+   "result": {
+    "value": null,
+    "log": [
+     [
+      "INFO",
+      "::casa",
+      "[simobserve] \u001b[0ma message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ],
+     [
+      "INFO",
+      "simobserve::simobserve::casa",
+      "a message with \u001b[35mWARNING\u001b[0m and \u001b[31mERROR\u001b[0m in it"
+     ]
+    ]
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "error",
+   "origin": null,
+   "result": {
+    "raises": "Exception",
+    "message": "a message with WARNING and ERROR in it",
+    "log": []
+   }
+  },
+  {
+   "verbose": true,
+   "priority": "error",
+   "origin": "simobserve",
+   "result": {
+    "raises": "Exception",
+    "message": "a message with WARNING and ERROR in it",
+    "log": []
+   }
+  }
+ ],
+ "report": {
+  "steps": [
+   [
+    "isreport, no reportfile",
+    {
+     "value": false,
+     "log": []
+    }
+   ],
+   [
+    "openreport, no reportfile",
+    {
+     "raises": "Exception",
+     "message": "Can't open reportfile because it's not defined",
+     "log": []
+    }
+   ],
+   [
+    "isreport, closed",
+    {
+     "value": false,
+     "log": []
+    }
+   ],
+   [
+    "openreport",
+    {
+     "value": null,
+     "log": []
+    }
+   ],
+   [
+    "isreport, open",
+    {
+     "value": true,
+     "log": []
+    }
+   ],
+   [
+    "msg to the report",
+    {
+     "value": null,
+     "log": [
+      [
+       "INFO",
+       "::casa",
+       "[simanalyze] \u001b[0mfirst line"
+      ],
+      [
+       "INFO",
+       "simanalyze::simanalyze::casa",
+       "first line"
+      ]
+     ]
+    }
+   ],
+   [
+    "msg without origin",
+    {
+     "value": null,
+     "log": [
+      [
+       "INFO",
+       "::casa",
+       "second line"
+      ],
+      [
+       "INFO",
+       "simutil::simutil::casa",
+       "second line"
+      ]
+     ]
+    }
+   ],
+   [
+    "closereport",
+    {
+     "value": null,
+     "log": []
+    }
+   ],
+   [
+    "isreport, after closereport",
+    {
+     "value": true,
+     "log": []
+    }
+   ],
+   [
+    "msg after closereport",
+    {
+     "raises": "ValueError",
+     "message": "I/O operation on closed file.",
+     "log": []
+    }
+   ],
+   [
+    "openreport, file exists",
+    {
+     "value": null,
+     "log": []
+    }
+   ],
+   [
+    "msg, reopened",
+    {
+     "value": null,
+     "log": [
+      [
+       "INFO",
+       "::casa",
+       "[simalma] \u001b[0mfourth line"
+      ],
+      [
+       "INFO",
+       "simalma::simalma::casa",
+       "fourth line"
+      ]
+     ]
+    }
+   ],
+   [
+    "closereport again",
+    {
+     "value": null,
+     "log": []
+    }
+   ],
+   [
+    "msg, not verbose",
+    {
+     "value": null,
+     "log": [
+      [
+       "INFO",
+       "simutil::simutil::casa",
+       "not in the report"
+      ]
+     ]
+    }
+   ],
+   [
+    "closereport, never opened",
+    {
+     "raises": "AttributeError",
+     "message": "'simutil' object has no attribute 'report'",
+     "log": []
+    }
+   ]
+  ],
+  "report": "[simanalyze] first line\nsecond line\n[simalma] fourth line\n"
+ },
+ "setcfg": [
+  {
+   "telescope": "ALMA",
+   "mounttype": null,
+   "result": {
+    "value": "alt-az",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "ALMA",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "alt-az"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "ALMA",
+   "mounttype": "X-Y",
+   "result": {
+    "value": "X-Y",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "ALMA",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "X-Y"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "WSRT",
+   "mounttype": null,
+   "result": {
+    "value": "EQUATORIAL",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "WSRT",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "EQUATORIAL"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "WSRT",
+   "mounttype": "X-Y",
+   "result": {
+    "value": "X-Y",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "WSRT",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "X-Y"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "askap",
+   "mounttype": null,
+   "result": {
+    "value": "EQUATORIAL",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "askap",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "EQUATORIAL"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "askap",
+   "mounttype": "X-Y",
+   "result": {
+    "value": "X-Y",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "askap",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "X-Y"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "DRAO",
+   "mounttype": null,
+   "result": {
+    "value": "EQUATORIAL",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "DRAO",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "EQUATORIAL"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "DRAO",
+   "mounttype": "X-Y",
+   "result": {
+    "value": "X-Y",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "DRAO",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "X-Y"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "LOFAR",
+   "mounttype": null,
+   "result": {
+    "value": "BIZARRE",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "LOFAR",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "BIZARRE"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "LOFAR",
+   "mounttype": "X-Y",
+   "result": {
+    "value": "X-Y",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "LOFAR",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "X-Y"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "lwa",
+   "mounttype": null,
+   "result": {
+    "value": "BIZARRE",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "lwa",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "BIZARRE"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "lwa",
+   "mounttype": "X-Y",
+   "result": {
+    "value": "X-Y",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "lwa",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "X-Y"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "MOST",
+   "mounttype": null,
+   "result": {
+    "value": "BIZARRE",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "MOST",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "BIZARRE"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "MOST",
+   "mounttype": "X-Y",
+   "result": {
+    "value": "X-Y",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "MOST",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "X-Y"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "VLA",
+   "mounttype": null,
+   "result": {
+    "value": "alt-az",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "VLA",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "alt-az"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "VLA",
+   "mounttype": "X-Y",
+   "result": {
+    "value": "X-Y",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "VLA",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "X-Y"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "telescope": "ALMA",
+   "mounttype": null,
+   "refused": true,
+   "result": {
+    "raises": "ValueError",
+    "message": "Error setting the configuration",
+    "log": []
+   },
+   "calls": [
+    [
+     "setconfig",
+     {
+      "telescopename": "ALMA",
+      "x": [
+       1.0,
+       2.0,
+       3.0
+      ],
+      "y": [
+       4.0,
+       5.0,
+       6.0
+      ],
+      "z": [
+       7.0,
+       8.0,
+       9.0
+      ],
+      "dishdiameter": [
+       12.0,
+       12.0,
+       7.0
+      ],
+      "mount": [
+       "alt-az"
+      ],
+      "padname": [
+       "A001",
+       "A002",
+       "A003"
+      ],
+      "coordsystem": "global",
+      "referencelocation": {
+       "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+       },
+       "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+       },
+       "m2": {
+        "unit": "m",
+        "value": 5056.8
+       },
+       "refer": "WGS84",
+       "type": "position"
+      }
+     }
+    ],
+    [
+     "close"
+    ]
+   ]
+  },
+  {
+   "telescope": "ALMA",
+   "mounttype": null,
+   "diam_list": true,
+   "result": {
+    "raises": "AttributeError",
+    "message": "'list' object has no attribute 'tolist'",
+    "log": []
+   },
+   "calls": []
+  }
+ ]
+}

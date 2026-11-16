@@ -20,32 +20,53 @@
 //! lock and creates the column when its writer begins, before the first
 //! block is read.
 //!
-//! Each write leaves what today's route leaves: padding, samples the UV
+//! Each write leaves what it does not image: padding, samples the UV
 //! selection excludes, the channels of a batch's span the selection leaves
 //! out, the fit-only channels of a continuum transform, and the products
-//! not routed. Flagged samples are written.
+//! not routed. Flagged samples are written, as CASA writes them.
+//!
+//! Which of a time's channels are written follows CASA's final write. Its
+//! last major cycle writes on the tuned selection of
+//! `CubeMajorCycleAlgorithm`'s imager, whose iterator leaves a channel the
+//! time's frequency bands miss out of the buffer it writes back
+//! (`VisibilityIteratorImpl2::putColumnRows`), so that channel keeps its
+//! contents. `SynthesisImagerVi2::predictModel`, which overwrites it where
+//! tclean goes on to call it, reads the parent imager's selection, which is
+//! not tuned: its per-time bands select the parent channels, including those
+//! that do not reach the cube. The source keeps these predictions distinct
+//! from the channels and flags used for gridding ([`WriteBack::by_band`]).
 
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
 
-use casa_imaging_model::SequentialContinuumTransform;
+use casa_imaging_model::{
+    CompiledProblem, InstrumentResponse, ReconstructionBasis, SequentialContinuumTransform,
+};
 use casa_imaging_runtime::pass::{NativeBlock, STREAM_SLOTS, SourceError};
-use casa_ms::observation_io::{Msv2Observation, UpdateSession};
+use casa_ms::observation_io::UpdateSession;
 use casa_observation::{
-    AccessRequest, BatchAddress, Correlation, Deliver, Observation, ObservationError, PatchValues,
-    UpdateTarget, Updater, WritableRole,
+    AccessRequest, BatchAddress, Correlation, Deliver, ObservationError, PatchValues, UpdateTarget,
+    Updater, WritableRole,
 };
 use casa_types::measures::MjdHighPrec;
 use ndarray::ArrayView3;
 use num_complex::Complex32;
 
+use super::BatchRoute;
+use crate::compile::OpenedStore;
 use crate::imaging::visibility_write::writes_channel;
 
 /// What a writing traversal queues for its sink, in delivery order.
 #[derive(Debug)]
 pub(super) enum Delivered {
-    /// A partition bound: the request the sink binds its updater to.
-    Partition(AccessRequest),
+    /// A partition bound: its store, and the request the sink binds that
+    /// store's updater to.
+    Partition {
+        /// The store's place in the route.
+        store: usize,
+        /// The partition's request.
+        request: AccessRequest,
+    },
     /// A block filled.
     Block(Provenance),
 }
@@ -57,7 +78,11 @@ pub(super) struct Provenance {
     pub(super) address: BatchAddress,
     /// The batch sample of each of its rows.
     pub(super) samples: Vec<u32>,
-    /// The spectral window its rows carry.
+    /// Whether the window's frequency bands select each of the block's
+    /// channels at each of the batch's times, `[time][channel]`; empty when
+    /// every channel is written.
+    pub(super) in_band: Vec<bool>,
+    /// The spectral window key its rows carry ([`super::StoreKeys`]).
     pub(super) spectral_window: u32,
 }
 
@@ -65,63 +90,105 @@ pub(super) struct Provenance {
 #[derive(Debug, Default)]
 struct Queue {
     armed: bool,
+    parent_prediction: bool,
     entries: VecDeque<Delivered>,
 }
 
-/// The update session a writing run reads and writes, the columns it
-/// writes, and the queue between its source and its sink.
+/// What a writing run's stores share: the columns each store's update
+/// session writes, and the queue between the source and its sink.
 pub(crate) struct WriteBack {
-    session: UpdateSession,
-    /// Whether the session's targets are the model's (first) and the
+    /// Whether the sessions' targets are the model's (first) and the
     /// corrected data's.
     model: bool,
     corrected: bool,
+    /// Whether a time's frequency bands limit the channels written.
+    by_band: bool,
+    /// Whether CASA's standard continuum GridFT suppresses every model
+    /// correlation of a partly flagged native channel.
+    collapse_model_flags: bool,
     queue: Mutex<Queue>,
 }
 
 impl WriteBack {
-    /// An update session over `observation`, writing the model when
-    /// `model` and the corrected data when `corrected`. A `MODEL_DATA`
-    /// MAIN lacks is created with CASA's initial model, as today's route
-    /// creates it; `CORRECTED_DATA` is written only where it exists, as
-    /// today's route requires it.
+    /// The write-back of a run writing the model when `model` and the
+    /// corrected data when `corrected`, limited at each time to the
+    /// channels its frequency bands select when `by_band`.
+    pub(crate) fn new(
+        problem: &CompiledProblem,
+        model: bool,
+        corrected: bool,
+        by_band: bool,
+    ) -> Self {
+        let equation = problem.science().measurement_equation();
+        // GridFT::get uses FTMachine::getInterpolateArrays. Its direct
+        // continuum path calls setSpectralFlag, which ORs correlations
+        // for the non-pseudo-I imaging modes supported here. MultiTermFTNew
+        // invokes the same GridFT for each Taylor term.
+        let collapse_model_flags = model
+            && problem.visibility_transform().is_none()
+            && matches!(
+                problem.reconstruction().basis(),
+                ReconstructionBasis::Constant | ReconstructionBasis::Taylor { .. }
+            )
+            && equation.instrument_response() == InstrumentResponse::Scalar
+            && equation.w_projection().is_none()
+            && equation.aw_projection().is_none();
+        Self {
+            model,
+            corrected,
+            by_band,
+            collapse_model_flags,
+            queue: Mutex::default(),
+        }
+    }
+
+    /// An update session over `observation`, one store of the run, writing
+    /// this write-back's columns. A MeasurementSet's `MODEL_DATA` MAIN lacks
+    /// is created with CASA's initial model; an MSv4 cannot add a data
+    /// group, so its `model` group must exist. `CORRECTED_DATA` is written
+    /// only where it exists.
     ///
     /// # Errors
     ///
     /// When the session cannot open over the observation or a target
-    /// cannot be resolved ([`UpdateSession::over_msv2`]).
-    pub(crate) fn open(
-        observation: Msv2Observation,
-        model: bool,
-        corrected: bool,
-    ) -> Result<Self, ObservationError> {
+    /// cannot be resolved ([`UpdateSession::over_msv2`],
+    /// [`UpdateSession::over_msv4`]).
+    pub(crate) fn session(
+        &self,
+        observation: OpenedStore,
+    ) -> Result<UpdateSession, ObservationError> {
         let mut targets = Vec::with_capacity(2);
-        if model {
+        if self.model {
             targets.push(UpdateTarget {
                 create: true,
                 ..UpdateTarget::new("model", WritableRole::Visibilities)
             });
         }
-        if corrected {
+        if self.corrected {
             targets.push(UpdateTarget::new("corrected", WritableRole::Visibilities));
         }
-        Ok(Self {
-            session: UpdateSession::over_msv2(observation, &targets)?,
-            model,
-            corrected,
-            queue: Mutex::default(),
-        })
+        match observation {
+            OpenedStore::V2(observation) => UpdateSession::over_msv2(*observation, &targets),
+            OpenedStore::V4(observation) => UpdateSession::over_msv4(observation, &targets),
+        }
     }
 
-    /// The observation the session reads.
-    pub(crate) fn observation(&self) -> &dyn Observation {
-        self.session.observation()
+    /// Whether a time's frequency bands limit the channels written.
+    pub(super) const fn by_band(&self) -> bool {
+        self.by_band
     }
 
-    /// The session's targets, every one of which each write gives values
+    /// The sessions' targets, every one of which each write gives values
     /// for.
-    fn targets(&self) -> Vec<usize> {
-        (0..usize::from(self.model) + usize::from(self.corrected)).collect()
+    fn targets(&self, model: bool, corrected: bool) -> Vec<usize> {
+        let mut targets = Vec::with_capacity(2);
+        if model {
+            targets.push(0);
+        }
+        if corrected {
+            targets.push(usize::from(self.model));
+        }
+        targets
     }
 
     fn queue(&self) -> std::sync::MutexGuard<'_, Queue> {
@@ -144,23 +211,44 @@ impl WriteBack {
         Ok(queue.armed)
     }
 
+    /// Whether the armed traversal reads the untuned parent selection.
+    pub(crate) fn parent_prediction(&self) -> bool {
+        self.queue().parent_prediction
+    }
+
+    /// Whether this write needs CASA's separate final parent prediction.
+    pub(crate) const fn predicts_final_model(&self) -> bool {
+        self.model && !self.by_band
+    }
+
+    /// Whether the route writes continuum-corrected data.
+    pub(crate) const fn writes_corrected(&self) -> bool {
+        self.corrected
+    }
+
     /// Queue `entry` for the sink.
     pub(super) fn deliver(&self, entry: Delivered) {
         self.queue().entries.push_back(entry);
     }
 
     /// What one partition's write holds beyond the passes', for its
-    /// traversal `request` ([`WriteCharge`]).
-    pub(super) fn write_bytes(&self, request: &AccessRequest) -> Result<WriteCharge, SourceError> {
-        let targets = self.targets();
-        let updater = self.session.write_bytes(request, &targets)?;
-        let estimate = self.observation().estimate(request)?;
+    /// traversal `request` of its store's `session` ([`WriteCharge`]).
+    /// `bands` says whether a time reads only some of its channels.
+    pub(super) fn write_bytes(
+        &self,
+        session: &UpdateSession,
+        request: &AccessRequest,
+        bands: bool,
+    ) -> Result<WriteCharge, SourceError> {
+        let targets = self.targets(self.model, self.corrected);
+        let updater = session.write_bytes(request, &targets)?;
+        let estimate = session.observation().estimate(request)?;
         let partition = estimate
             .partitions
             .first()
             .ok_or("an estimate without its partition")?;
         let samples = partition.samples_per_batch();
-        let entry = self
+        let entry = session
             .observation()
             .catalogue()
             .partition(partition.partition);
@@ -171,12 +259,18 @@ impl WriteBack {
         let elements = samples * request.channels.len() * products;
         let patch = elements * (targets.len() * size_of::<Complex32>() + size_of::<bool>());
         // The blocks in flight and the one being written, each with its
-        // batch's times and products.
+        // batch's times and products and which channels each time reads.
+        let in_band = if bands {
+            partition.times_per_batch * request.channels.len() * size_of::<bool>()
+        } else {
+            0
+        };
         let provenance = (STREAM_SLOTS + 1)
             * (samples * size_of::<u32>()
                 + size_of::<Delivered>()
                 + partition.times_per_batch * size_of::<f64>()
-                + products * size_of::<Correlation>());
+                + products * size_of::<Correlation>()
+                + in_band);
         Ok(WriteCharge {
             updater: updater as u64,
             patch: patch as u64,
@@ -219,10 +313,13 @@ impl WriteCharge {
 
 /// The sink of a writing pass on the batch route: each block's values
 /// written to its batch, at the samples, channels and products the block
-/// holds.
+/// holds, through its store's update session.
 pub(crate) struct BatchWriter<'a> {
+    route: &'a BatchRoute,
     write_back: &'a WriteBack,
     transform: Option<&'a SequentialContinuumTransform>,
+    model_target: bool,
+    corrected_target: bool,
     updater: Option<Box<dyn Updater + 'a>>,
     /// The patch's mask and each column's values, reused from batch to
     /// batch.
@@ -233,23 +330,57 @@ pub(crate) struct BatchWriter<'a> {
 }
 
 impl<'a> BatchWriter<'a> {
-    /// A sink for the next visibility traversal, which the source then
-    /// records the provenance of. `CORRECTED_DATA` holds the output of
-    /// `transform`.
+    /// A sink for the next visibility traversal of `route`, which the
+    /// source then records the provenance of. `CORRECTED_DATA` holds the
+    /// output of `transform`.
     pub(crate) fn begin(
-        write_back: &'a WriteBack,
+        route: &'a BatchRoute,
         transform: Option<&'a SequentialContinuumTransform>,
     ) -> Result<Self, SourceError> {
-        if write_back.corrected && transform.is_none() {
+        let write_back = route
+            .write_back()
+            .ok_or("the batch route was opened to read only")?;
+        Self::begin_targets(
+            route,
+            transform,
+            write_back.model,
+            write_back.corrected,
+            false,
+        )
+    }
+
+    /// A single-column traversal, either the parent model prediction or
+    /// the tuned continuum-corrected data.
+    pub(crate) fn begin_targets(
+        route: &'a BatchRoute,
+        transform: Option<&'a SequentialContinuumTransform>,
+        model: bool,
+        corrected: bool,
+        parent_prediction: bool,
+    ) -> Result<Self, SourceError> {
+        let write_back = route
+            .write_back()
+            .ok_or("the batch route was opened to read only")?;
+        if (model && !write_back.model)
+            || (corrected && !write_back.corrected)
+            || (!model && !corrected)
+        {
+            return Err("the traversal's write targets were not opened".into());
+        }
+        if corrected && transform.is_none() {
             return Err("CORRECTED_DATA is written only by a continuum transform".into());
         }
         let mut queue = write_back.queue();
         queue.entries.clear();
         queue.armed = true;
+        queue.parent_prediction = parent_prediction;
         drop(queue);
         Ok(Self {
+            route,
             write_back,
             transform,
+            model_target: model,
+            corrected_target: corrected,
             updater: None,
             written: Vec::new(),
             model: Vec::new(),
@@ -260,7 +391,7 @@ impl<'a> BatchWriter<'a> {
 
     /// Whether the write needs model predictions.
     pub(crate) const fn needs_predictions(&self) -> bool {
-        self.write_back.model
+        self.model_target
     }
 
     /// Write `block`'s predictions, `[row][channel][correlation]`, to the
@@ -274,11 +405,15 @@ impl<'a> BatchWriter<'a> {
         let provenance = self.next_block()?;
         check(block, &provenance)?;
         let Provenance {
-            address, samples, ..
+            address,
+            samples,
+            in_band,
+            ..
         } = provenance;
         let [batch_samples, channels, products] = address.shape();
         let first = address.channels().start;
         let entry = address.catalogue().partition(address.partition());
+        let per_time = entry.baselines.len();
         let channel_of = block
             .channel_indices()
             .iter()
@@ -301,7 +436,7 @@ impl<'a> BatchWriter<'a> {
             .collect::<Option<Vec<_>>>()
             .ok_or("a block holds a product its batch does not deliver")?;
         let len = batch_samples * channels * products;
-        let (model, corrected) = (self.write_back.model, self.write_back.corrected);
+        let (model, corrected) = (self.model_target, self.corrected_target);
         reset(&mut self.written, len, true, false);
         reset(&mut self.model, len, model, Complex32::default());
         reset(&mut self.corrected, len, corrected, Complex32::default());
@@ -309,19 +444,32 @@ impl<'a> BatchWriter<'a> {
         let columns = u64::from(model) + u64::from(corrected);
         for (row, sample) in samples.iter().enumerate() {
             let context = block.header(row).context;
+            // A continuum transform reads one MeasurementSet (compile
+            // refuses several), whose keys are its own numbers.
             let rule = self.transform.and_then(|transform| {
                 transform.rule(context.field as i32, context.spectral_window)
             });
             let values = block.row(0, row).values;
+            let model_flags = (model && self.write_back.collapse_model_flags)
+                .then(|| block.prediction_row(0, row).flags);
             for (k, channel) in channel_of.iter().enumerate() {
-                if !writes_channel(rule, block.channel_indices()[k]) {
+                let read = in_band.is_empty()
+                    || in_band[*sample as usize / per_time * block.channels() + k];
+                if !read || !writes_channel(rule, block.channel_indices()[k]) {
                     continue;
                 }
+                let first_cell = k * block.correlations();
+                let write_prediction = model
+                    && model_flags.is_none_or(|flags| {
+                        !flags[first_cell..first_cell + block.correlations()].contains(&true)
+                    });
+                // CASA starts its model buffer at zero and writes the
+                // suppressed channels too, replacing any previous model.
                 for (j, product) in product_of.iter().enumerate() {
                     let at = (*sample as usize * channels + channel) * products + product;
-                    let cell = k * block.correlations() + j;
+                    let cell = first_cell + j;
                     self.written[at] = true;
-                    if model {
+                    if write_prediction {
                         self.model[at] = predictions[row * cells + cell];
                     }
                     if corrected {
@@ -355,20 +503,25 @@ impl<'a> BatchWriter<'a> {
         loop {
             let next = self.write_back.queue().entries.pop_front();
             match next.ok_or("a block without its batch's provenance")? {
-                Delivered::Partition(request) => self.bind(&request)?,
+                Delivered::Partition { store, request } => self.bind(store, &request)?,
                 Delivered::Block(provenance) => return Ok(provenance),
             }
         }
     }
 
-    /// Bind the updater of the partition `request` reads, then finish the
-    /// last partition's: the two overlap, so an MSv2 session keeps MAIN's
-    /// lock.
-    fn bind(&mut self, request: &AccessRequest) -> Result<(), SourceError> {
-        let updater = self
-            .write_back
-            .session
-            .updater(request, &self.write_back.targets())?;
+    /// Bind the updater of the partition `request` of store `store` reads,
+    /// then finish the last partition's: the two overlap, so an MSv2
+    /// session keeps MAIN's lock from one of its partitions to the next.
+    fn bind(&mut self, store: usize, request: &AccessRequest) -> Result<(), SourceError> {
+        let session = self.route.stores[store]
+            .session()
+            .ok_or("a writing run's store was opened to read only")?;
+        let updater = session.updater(
+            request,
+            &self
+                .write_back
+                .targets(self.model_target, self.corrected_target),
+        )?;
         if let Some(last) = self.updater.replace(updater) {
             last.finish()?;
         }
@@ -381,10 +534,10 @@ impl<'a> BatchWriter<'a> {
         // their updaters prepare the columns as the others did.
         let rest: Vec<Delivered> = self.write_back.queue().entries.drain(..).collect();
         for entry in rest {
-            let Delivered::Partition(request) = entry else {
+            let Delivered::Partition { store, request } = entry else {
                 return Err("a block's provenance was left unwritten".into());
             };
-            self.bind(&request)?;
+            self.bind(store, &request)?;
         }
         if let Some(last) = self.updater.take() {
             last.finish()?;
@@ -421,12 +574,15 @@ fn check(block: &NativeBlock, provenance: &Provenance) -> Result<(), SourceError
     let Provenance {
         address,
         samples,
+        in_band,
         spectral_window,
     } = provenance;
     let baselines = &address.catalogue().partition(address.partition()).baselines;
     let time = address.time();
     let mjd_zero = MjdHighPrec::new(0.0, 0.0);
     let matches = samples.len() == block.len()
+        && (in_band.is_empty()
+            || in_band.len() == address.samples() / baselines.len() * block.channels())
         && samples.iter().enumerate().all(|(row, sample)| {
             let sample = *sample as usize;
             let context = &block.header(row).context;

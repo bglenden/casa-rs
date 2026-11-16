@@ -347,6 +347,16 @@ def simulated_table(rows: int = 4) -> dict:
 
 
 class CalibrationTableTests(unittest.TestCase):
+    def test_channel_axes_use_the_existing_numeric_tolerance(self) -> None:
+        casa, native = simulated_table(), simulated_table()
+        casa["windows"] = [(1, [float(np.nextafter(8e9, -np.inf))], [20e6])]
+        native["windows"] = [(1, [8e9], [20e6])]
+        self.assertEqual(table_differences(casa, native), [])
+        native["windows"] = [(1, [8e9 + 1.0], [20e6])]
+        self.assertTrue(any("CHAN_FREQ" in item for item in table_differences(casa, native)))
+        native["windows"] = [(2, [8e9], [20e6])]
+        self.assertTrue(any("NUM_CHAN" in item for item in table_differences(casa, native)))
+
     def test_tables_alike_but_for_the_draws_agree(self) -> None:
         self.assertEqual(table_differences(simulated_table(), simulated_table()), [])
 

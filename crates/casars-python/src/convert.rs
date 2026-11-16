@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's argument conventions, shared by every `casars.tools` class
-//! (ADR-0019 item 5).
+//! (ADR-0017).
 //!
 //! CASA tools take three kinds of loosely typed arguments, and scripts rely on
 //! how CASA's C++ layer (`CasacSupport.cc` in casatools) reads each:
@@ -38,7 +38,7 @@ use num_complex::Complex64;
 use numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyString};
+use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
 /// The speed of light, m/s (casacore's `C::c`).
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
@@ -80,6 +80,40 @@ impl From<ConvertError> for PyErr {
 /// The result of a conversion.
 pub(crate) type ConvertResult<T> = Result<T, ConvertError>;
 
+/// The original scalar kind of a record's `value`, retained for CASA's
+/// QuantumHolder conversion while leaving the record's ordinary values intact.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum RecordScalarKind {
+    NativeInteger(i64),
+    IntegerVector(Option<i32>),
+    EmptyFloatVector,
+    NumpyUnsupported,
+}
+
+/// A record and optional information erased by the numeric variant conversion.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct VariantRecord {
+    fields: BTreeMap<String, Variant>,
+    scalar_kind: Option<RecordScalarKind>,
+}
+
+impl From<BTreeMap<String, Variant>> for VariantRecord {
+    fn from(fields: BTreeMap<String, Variant>) -> Self {
+        Self {
+            fields,
+            scalar_kind: None,
+        }
+    }
+}
+
+impl std::ops::Deref for VariantRecord {
+    type Target = BTreeMap<String, Variant>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.fields
+    }
+}
+
 /// A Python value passed to an `any` parameter (CASA's `casac::variant`),
 /// captured before the call releases the GIL.
 #[derive(Debug, Clone, PartialEq)]
@@ -104,13 +138,24 @@ pub(crate) enum Variant {
     /// A NumPy array of two or more dimensions, its values in Fortran
     /// (column-major) order, as casatools' `variant` holds them.
     Array { shape: Vec<usize>, values: Vec<f64> },
+    /// A complex NumPy array, retaining its shape and Fortran-order values.
+    ComplexArray {
+        shape: Vec<usize>,
+        values: Vec<Complex64>,
+    },
     /// A `dict` with `str` keys.
-    Record(BTreeMap<String, Variant>),
+    Record(VariantRecord),
     /// Anything else, kept as its `repr` for messages.
     Other(String),
 }
 
 impl Variant {
+    /// Whether this has the empty-vector behavior of CASA's variant.
+    pub(crate) fn is_empty_sequence(&self) -> bool {
+        matches!(self, Self::Empty)
+            || matches!(self, Self::ComplexArray { values, .. } if values.is_empty())
+    }
+
     /// The value as CASA's `variant::toString` would show it in a message.
     pub(crate) fn describe(&self) -> String {
         match self {
@@ -136,7 +181,7 @@ impl Variant {
             ),
             // C++'s `std::complex` output.
             Self::Complex(value) => format!("({},{})", value.re, value.im),
-            Self::Complexes(values) => format!(
+            Self::Complexes(values) | Self::ComplexArray { values, .. } => format!(
                 "[{}]",
                 values
                     .iter()
@@ -170,14 +215,67 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
         return Ok(Variant::Text(text.to_str()?.to_string()));
     }
     if let Ok(dict) = object.cast::<PyDict>() {
+        // CASA does not accept a NumPy complex64 scalar in a quantity
+        // record. Keep that diagnostic separate from the preserved value.
+        let complex64_scalar = match dict.get_item("value")? {
+            Some(value) => is_numpy_complex64_scalar(&value)?,
+            None => false,
+        };
+        let has_unit = dict.get_item("unit")?.is_some();
         let mut record = BTreeMap::new();
         for (key, value) in dict.iter() {
             let key = key
                 .extract::<String>()
                 .map_err(|_| PyTypeError::new_err("a CASA record argument must have str keys"))?;
-            record.insert(key, variant_from_python(&value)?);
+            let converted = if key == "value" && has_unit {
+                match zero_dim_record_float(&value)? {
+                    Some(array) => array,
+                    None => variant_from_python(&value)?,
+                }
+            } else {
+                variant_from_python(&value)?
+            };
+            record.insert(key, converted);
         }
-        return Ok(Variant::Record(record));
+        let scalar_kind = if complex64_scalar {
+            Some(RecordScalarKind::NumpyUnsupported)
+        } else {
+            match dict.get_item("value")? {
+                Some(value)
+                    if value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyBool>() =>
+                {
+                    value
+                        .extract::<i64>()
+                        .ok()
+                        .map(RecordScalarKind::NativeInteger)
+                }
+                Some(value)
+                    if !value.is_instance_of::<PyFloat>()
+                        && !value.is_instance_of::<PyComplex>()
+                        && matches!(
+                            value
+                                .getattr("dtype")
+                                .and_then(|d| d.getattr("kind"))
+                                .and_then(|k| k.extract::<String>())
+                                .as_deref(),
+                            Ok("i" | "u" | "f" | "b")
+                        ) =>
+                {
+                    let scalar = value.py().import("numpy")?.getattr("generic")?;
+                    if value.is_instance(&scalar)? {
+                        Some(RecordScalarKind::NumpyUnsupported)
+                    } else {
+                        record_vector_kind(&value)?
+                    }
+                }
+                Some(value) => record_vector_kind(&value)?,
+                None => None,
+            }
+        };
+        return Ok(Variant::Record(VariantRecord {
+            fields: record,
+            scalar_kind,
+        }));
     }
     if let Ok(value) = object.cast::<PyComplex>() {
         return Ok(Variant::Complex(complex_of(value)));
@@ -191,14 +289,156 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
     if is_sequence(object)? {
         return sequence_variant(object);
     }
+    if is_numpy_complex64_scalar(object)? {
+        let re = object.getattr("real")?.extract::<f64>()?;
+        let im = object.getattr("imag")?.extract::<f64>()?;
+        return Ok(Variant::Complex(Complex64::new(re, im)));
+    }
     if let Ok(number) = object.extract::<f64>() {
         return Ok(Variant::Number(number));
     }
     Ok(Variant::Other(object.repr()?.to_string()))
 }
 
-/// A numeric NumPy array of two or more dimensions as [`Variant::Array`];
-/// `None` for anything else (one-dimensional arrays are sequences).
+/// CASA rejects NumPy's complex64 scalar in quantity records, unlike Python
+/// complex and NumPy complex128. Do not classify zero-dimensional arrays.
+fn is_numpy_complex64_scalar(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let Ok(dtype) = value.getattr("dtype") else {
+        return Ok(false);
+    };
+    if !matches!(
+        dtype
+            .getattr("kind")
+            .and_then(|k| k.extract::<String>())
+            .as_deref(),
+        Ok("c")
+    ) || dtype
+        .getattr("itemsize")
+        .and_then(|n| n.extract::<usize>())
+        .ok()
+        != Some(8)
+    {
+        return Ok(false);
+    }
+    value.is_instance(&value.py().import("numpy")?.getattr("generic")?)
+}
+
+/// Keep the integer kind and low 32 bits of one-dimensional record arrays.
+fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarKind>> {
+    let array_kind = value
+        .getattr("dtype")
+        .and_then(|d| d.getattr("kind"))
+        .and_then(|k| k.extract::<String>());
+    if matches!(array_kind.as_deref(), Ok("f"))
+        && matches!(
+            value
+                .getattr("dtype")
+                .and_then(|d| d.getattr("itemsize"))
+                .and_then(|n| n.extract::<usize>()),
+            Ok(4 | 8)
+        )
+        && value
+            .getattr("ndim")
+            .and_then(|n| n.extract::<usize>())
+            .ok()
+            == Some(1)
+        && value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)?
+        && value.len()? == 0
+    {
+        return Ok(Some(RecordScalarKind::EmptyFloatVector));
+    }
+    let is_array = matches!(array_kind.as_deref(), Ok("i" | "u" | "b"))
+        && value
+            .getattr("ndim")
+            .and_then(|n| n.extract::<usize>())
+            .ok()
+            == Some(1)
+        && value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)?;
+    let values = if is_array {
+        if matches!(array_kind.as_deref(), Ok("b")) {
+            return Ok(Some(RecordScalarKind::NumpyUnsupported));
+        }
+        value.call_method0("tolist")?
+    } else if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
+        value.clone()
+    } else {
+        return Ok(None);
+    };
+    let values = values.try_iter()?.collect::<PyResult<Vec<_>>>()?;
+    if values.is_empty() {
+        return Ok(is_array.then_some(RecordScalarKind::IntegerVector(None)));
+    }
+    if values.iter().all(|v| v.is_instance_of::<PyBool>()) {
+        return Ok(Some(RecordScalarKind::NumpyUnsupported));
+    }
+    let native_integer =
+        |v: &Bound<'_, PyAny>| v.is_instance_of::<PyInt>() && !v.is_instance_of::<PyBool>();
+    if !values.iter().all(native_integer) {
+        let signed_integer = value.py().import("numpy")?.getattr("signedinteger")?;
+        for item in &values {
+            if !native_integer(item) && !item.is_instance(&signed_integer)? {
+                return Ok(None);
+            }
+        }
+    }
+    if values.len() > 1 {
+        return Ok(Some(RecordScalarKind::IntegerVector(None)));
+    }
+    let first = &values[0];
+    let narrowed = first.extract::<i64>().map(|n| n as i32).ok().or_else(|| {
+        is_array
+            .then(|| first.extract::<u64>().ok().map(|n| n as i32))
+            .flatten()
+    });
+    Ok(narrowed.map(|value| RecordScalarKind::IntegerVector(Some(value))))
+}
+
+/// Preserve a zero-dimensional floating array inside a quantity-like record.
+/// Bare arguments keep their existing conversion until their callers can
+/// handle arrays without discarding their values.
+fn zero_dim_record_float(object: &Bound<'_, PyAny>) -> PyResult<Option<Variant>> {
+    if object.is_instance_of::<PyFloat>()
+        || object.is_instance_of::<PyInt>()
+        || object.is_instance_of::<PyString>()
+        || object.is_instance_of::<PyComplex>()
+        || object
+            .getattr("ndim")
+            .and_then(|n| n.extract::<usize>())
+            .ok()
+            != Some(0)
+    {
+        return Ok(None);
+    }
+    let is_float = matches!(
+        object
+            .getattr("dtype")
+            .and_then(|dtype| dtype.getattr("kind"))
+            .and_then(|kind| kind.extract::<String>())
+            .as_deref(),
+        Ok("f")
+    );
+    if !is_float
+        || !matches!(
+            object
+                .getattr("dtype")
+                .and_then(|dtype| dtype.getattr("itemsize"))
+                .and_then(|size| size.extract::<usize>()),
+            Ok(4 | 8)
+        )
+        || !object.is_instance(&object.py().import("numpy")?.getattr("ndarray")?)?
+    {
+        return Ok(None);
+    }
+    let doubles = object.call_method1("astype", ("float64",))?;
+    let array = doubles.extract::<PyReadonlyArrayDyn<'_, f64>>()?;
+    Ok(Some(Variant::Array {
+        shape: array.shape().to_vec(),
+        values: array.as_array().iter().copied().collect(),
+    }))
+}
+
+/// A numeric NumPy array with a retained shape. Complex arrays also handle
+/// zero and one dimensions without discarding their imaginary parts.
 fn numeric_array(object: &Bound<'_, PyAny>) -> PyResult<Option<Variant>> {
     let Ok(ndim) = object
         .getattr("ndim")
@@ -206,13 +446,25 @@ fn numeric_array(object: &Bound<'_, PyAny>) -> PyResult<Option<Variant>> {
     else {
         return Ok(None);
     };
-    if ndim < 2 || !object.hasattr("astype")? {
+    if !object.hasattr("astype")? {
         return Ok(None);
     }
     let kind = object
         .getattr("dtype")
         .and_then(|dtype| dtype.getattr("kind"))
         .and_then(|kind| kind.extract::<String>());
+    if matches!(kind.as_deref(), Ok("c"))
+        && object.is_instance(&object.py().import("numpy")?.getattr("ndarray")?)?
+    {
+        let complexes = object.call_method1("astype", ("complex128",))?;
+        let array = complexes.extract::<PyReadonlyArrayDyn<'_, Complex64>>()?;
+        let shape = array.shape().to_vec();
+        let values = array.as_array().t().iter().copied().collect();
+        return Ok(Some(Variant::ComplexArray { shape, values }));
+    }
+    if ndim < 2 {
+        return Ok(None);
+    }
     if !matches!(kind.as_deref(), Ok("f" | "i" | "u")) {
         return Ok(None);
     }
@@ -306,7 +558,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for RecordArg {
             return Err(PyTypeError::new_err("is not a dictionary"));
         }
         match variant_from_python(&object)? {
-            Variant::Record(record) => Ok(Self(record)),
+            Variant::Record(record) => Ok(Self(record.fields)),
             _ => unreachable!("a dict reads as a record"),
         }
     }
@@ -459,8 +711,8 @@ pub(crate) fn quantity(value: &Variant) -> ConvertResult<Quantity> {
             " in converting quantity",
         )),
         // A record of several values reads, then fails to be one quantity.
-        Variant::Record(record) => quantity_record(record).map_err(|error| {
-            if error.starts_with("Wrong") {
+        Variant::Record(record) => quantity_variant_record(record).map_err(|error| {
+            if error.starts_with("Wrong") || error.starts_with("Unit::check Illegal unit string ") {
                 ConvertError::runtime(error)
             } else {
                 ConvertError::runtime(format!("Error {error} in converting quantity"))
@@ -468,7 +720,7 @@ pub(crate) fn quantity(value: &Variant) -> ConvertResult<Quantity> {
         }),
         Variant::Number(number) => Ok(Quantity::dimensionless(*number)),
         Variant::Bool(flag) => Ok(Quantity::dimensionless(f64::from(u8::from(*flag)))),
-        Variant::Complex(_) => Err(ConvertError::runtime(
+        Variant::Complex(_) | Variant::ComplexArray { .. } => Err(ConvertError::runtime(
             "Wrong QuantumHolder to convert asQuantumDouble",
         )),
         Variant::Empty
@@ -489,6 +741,7 @@ pub(crate) fn complex_values(value: &Variant) -> Option<Vec<Complex64>> {
         Variant::Numbers(numbers) => Some(numbers.iter().copied().map(real).collect()),
         Variant::Complex(value) => Some(vec![*value]),
         Variant::Complexes(values) => Some(values.clone()),
+        Variant::ComplexArray { shape, values } if shape.len() <= 1 => Some(values.clone()),
         _ => None,
     }
 }
@@ -548,6 +801,30 @@ fn quantity_read_error(text: &str, context: &str) -> ConvertError {
     ))
 }
 
+/// A Python quantity record, preserving CASA's scalar integer distinctions.
+pub(crate) fn quantity_variant_record(record: &VariantRecord) -> Result<Quantity, String> {
+    let Some(Variant::Text(unit)) = record.get("unit") else {
+        return Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string());
+    };
+    match record.scalar_kind {
+        Some(RecordScalarKind::NativeInteger(value)) => Ok(Quantity::with_unit(
+            f64::from(value as i32),
+            casacore_unit(unit)?,
+        )),
+        Some(RecordScalarKind::IntegerVector(Some(value))) => {
+            Ok(Quantity::with_unit(f64::from(value), casacore_unit(unit)?))
+        }
+        Some(RecordScalarKind::IntegerVector(None) | RecordScalarKind::EmptyFloatVector) => {
+            casacore_unit(unit)?;
+            Err("Wrong QuantumHolder to convert asQuantumDouble".to_string())
+        }
+        Some(RecordScalarKind::NumpyUnsupported) => {
+            Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string())
+        }
+        None => quantity_record(&record.fields),
+    }
+}
+
 /// `QuantumHolder::fromRecord` for a scalar quantity: `{'value': number,
 /// 'unit': str}`. The error is casacore's wording without the context.
 pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quantity, String> {
@@ -557,7 +834,20 @@ pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quan
     let value = match value {
         Variant::Number(number) => *number,
         Variant::Numbers(numbers) if numbers.len() == 1 => numbers[0],
-        _ => return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string()),
+        // Numeric arrays and complex values are valid QuantumHolders, so
+        // CASA checks their unit before a scalar operation refuses them.
+        Variant::Numbers(_)
+        | Variant::Array { .. }
+        | Variant::Complex(_)
+        | Variant::Complexes(_)
+        | Variant::ComplexArray { .. } => {
+            casacore_unit(unit)?;
+            return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string());
+        }
+        Variant::Other(_) => {
+            return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string());
+        }
+        _ => return Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string()),
     };
     Ok(Quantity::with_unit(value, casacore_unit(unit)?))
 }

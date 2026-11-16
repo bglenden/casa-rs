@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "record": "tclean-taylor-pb-mfs",
+  "date": "2026-10-31",
+  "scope": "Scoped production-route comparisons and affected gates; not complete tclean, full representative T2, numeric returns or general persistence acceptance.",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "source": {
+    "taylor_frequency": "7cd1ae440e331b3ef685221482debd864eb560d6",
+    "vla_pb": "2d91e001c3b4c37ee4994958a2e6fcc31e332b47",
+    "mfs_metadata": "b6a87fa91271e5bf809b86c68e40a979974c1368",
+    "unwired_measurements": "ac41519a63e4700506a699b63c869a0545b969c0"
+  },
+  "production_build": {
+    "fftw": "Homebrew 3.3.11 static fftw3[f][_threads]",
+    "resolved_library_path": "/opt/homebrew/Cellar/fftw/3.3.11/lib",
+    "neon_n1fv_codelets": 0,
+    "mfs_binary_sha256": "c32e26cdde18cc0f5f17b327ed623f658227f64ba1522d77cd9801ad896be153",
+    "note": "Focused MFS Rust laws used the separately documented SIMD pkgconfig path; they are not timing evidence."
+  },
+  "moving_mfs": {
+    "receipt": "evidence/mfs-envelope-fixed/receipt.json",
+    "runs": 6,
+    "previous_increment_hz": 125020999.61227417,
+    "casa_increment_hz": 125020996.11132812,
+    "corrected_increment_hz": 125020996.11132812,
+    "checks": "Product NRMS<=1e-3; exact inventory/masks/finite support; recorded units/Stokes/WCS values (relative 2e-10, reference pixels absolute 1e-8); beam axes 1e-3 and PA .01 degree when noncircular; sumwt 5e-5.",
+    "native_pb_opt_out": "moving-Uranus only; moving PB remains unfinished",
+    "cases": {
+      "fixed512": {
+        "cpu64": {
+          "passed": true,
+          "maximum_product_nrms": 1.010776598059823e-07,
+          "spectral_increment_hz": 125029467.91235352
+        },
+        "cpu32": {
+          "passed": true,
+          "maximum_product_nrms": 8.945015188611011e-07,
+          "spectral_increment_hz": 125029467.91235352
+        },
+        "gpu32": {
+          "passed": true,
+          "maximum_product_nrms": 8.766549819251559e-07,
+          "spectral_increment_hz": 125029467.91235352
+        }
+      },
+      "moving-uranus": {
+        "cpu64": {
+          "passed": true,
+          "maximum_product_nrms": 1.4880950705284816e-07,
+          "spectral_increment_hz": 125020996.11132812
+        },
+        "cpu32": {
+          "passed": true,
+          "maximum_product_nrms": 9.049176978701983e-07,
+          "spectral_increment_hz": 125020996.11132812
+        },
+        "gpu32": {
+          "passed": true,
+          "maximum_product_nrms": 8.390371721673959e-07,
+          "spectral_increment_hz": 125020996.11132812
+        }
+      }
+    }
+  },
+  "vla_primary_beam": {
+    "receipt": "evidence/vla-nvss-casa/receipt.json",
+    "runs": 2,
+    "scope": "Legacy VLA named-band annular aperture plus VLA_NVSS 24.5m/unobstructed frequency gaps; ordinary-default W/Hogbom20 products. EVLA unsupported bands remain explicitly refused.",
+    "checks": "All seven products and recorded inventory/mask/finite/WCS/beam/sumwt checks",
+    "results": {
+      "cpu64": {
+        "passed": true,
+        "pb_nrms": 0.0,
+        "maximum_product_nrms": 5.946690762042477e-06
+      },
+      "cpu32": {
+        "passed": true,
+        "pb_nrms": 0.0,
+        "maximum_product_nrms": 7.667404045978e-06
+      }
+    }
+  },
+  "taylor_frequency": {
+    "receipt": "evidence/taylor-frequency-casa/receipt.json",
+    "runs": 5,
+    "correction": "Shared Taylor basis narrows channel frequency to Float before Double reference subtraction/division, then narrows ratio to Float, matching CASA get and put.",
+    "raw_rule": ".weight.tt1 NRMS<=1e-3 unchanged; .sumwt.tt1 retains existing approved #690 scaling.",
+    "results": {
+      "alma-mosaic-mtmfs-hogbom": {
+        "cpu64": {
+          "passed": true,
+          "failures": [],
+          "weight_tt1_nrms": 2.5469722832660317e-07,
+          "proposed_only_e2": 1.1875137329661867e-12,
+          "proposed_only_emax": 7.789230116703124e-12,
+          "all_other_recorded_checks_passed": true
+        },
+        "cpu32": {
+          "passed": false,
+          "failures": [
+            "image.weight.tt1"
+          ],
+          "weight_tt1_nrms": 0.0019186807533375311,
+          "proposed_only_e2": 8.945757905321663e-09,
+          "proposed_only_emax": 6.519422066055138e-08,
+          "all_other_recorded_checks_passed": true
+        },
+        "gpu32": {
+          "passed": true,
+          "failures": [],
+          "weight_tt1_nrms": 0.0008840036367430064,
+          "proposed_only_e2": 4.121624980065494e-09,
+          "proposed_only_emax": 4.196578673558674e-08,
+          "all_other_recorded_checks_passed": true
+        }
+      },
+      "mawproject-mtmfs-hogbom": {
+        "cpu64": {
+          "passed": false,
+          "failures": [
+            "image.weight.tt1"
+          ],
+          "weight_tt1_nrms": 0.0016186912948083193,
+          "proposed_only_e2": 2.497335598726891e-09,
+          "proposed_only_emax": 2.2909781284087715e-08,
+          "all_other_recorded_checks_passed": true
+        },
+        "cpu32": {
+          "passed": false,
+          "failures": [
+            "image.weight.tt1"
+          ],
+          "weight_tt1_nrms": 0.002217320219532237,
+          "proposed_only_e2": 3.4209072080482795e-09,
+          "proposed_only_emax": 3.4655600695795804e-08,
+          "all_other_recorded_checks_passed": true
+        }
+      }
+    }
+  },
+  "proposed_weight_rule": {
+    "status": "Not activated; owner decision pending; current raw failures remain failures.",
+    "proposal": "docs/Planning/tclean-taylor-weight-comparison-proposal-20261031.md",
+    "measurement": "evidence/taylor-weight-candidate-measurement.json",
+    "helper_tests": 72,
+    "eligibility_reference_rho_l2_and_pb_max": 0.001,
+    "proposed_e2_and_emax_limits": 1e-06,
+    "helper_sha256": "a090e5e624c0e40b2709781f959762d179a594d7a39333c7b1a3d83f70608260"
+  },
+  "review": {
+    "status": "No open actionable findings in independently reviewed VLA PB, MFS metadata and guarded unwired Taylor helper; stable-root-ratio finding repaired.",
+    "external_review": "No additional external review was submitted or counted as a pass"
+  },
+  "archive": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/taylor-pb-mfs-evidence-20261031.tar",
+    "sha256": "e90ea9054791827d6a637bb7468e5f37a15162bf3fb04c6ebbef7b286ec6a311",
+    "bytes": 336635904,
+    "regular_files": 1566,
+    "verified_manifest_entries": 1565,
+    "manifest_sha256": "4a8ff0d03b32cce00d63c884b9aea6f5f7bbd71d8742c6554a3a5b0dbf52b705",
+    "source_patch": "a000aefe514f15c9c2f8592285980d68faf140d8..ac41519a63e4700506a699b63c869a0545b969c0",
+    "source_patch_sha256": "fb85ac892306a8ec86be14f0a19b2ea2f1bb4135e1db76e31521c586d10d4eda",
+    "verification": "Full reread archive hash on SSD and NAS; extracted manifest checked. Frozen CASA originals remain in referenced prior verified archive."
+  },
+  "gates": {
+    "tested_native_revision": "ac41519a63e4700506a699b63c869a0545b969c0",
+    "command": "PYTHON=<SSD>/perf-tools-venv/bin/python CARGO_INCREMENTAL=0 bash /private/tmp/check-adopted-defaults.sh",
+    "scope": "Same just quick checks with nextest --no-fail-fast; all were executed, no additional source edits during gates.",
+    "workspace_passed": 4676,
+    "workspace_skipped": 45,
+    "workspace_seconds": 398.363,
+    "doctests": "pass",
+    "workspace_clippy": "pass",
+    "architecture_spdx_format": "pass",
+    "cli_hosts": 21,
+    "performance_tools_passed": 827,
+    "performance_subtests_passed": 307,
+    "log": "/Volumes/home/casa-rs/tclean/20261031/taylor-pb-mfs-quick.log",
+    "log_sha256": "045e1cd2918d6898c1e7c5c610e7427c7d135ea9be9d4583fe25d0de027910ea",
+    "log_bytes": 558473
+  }
+}

@@ -1,0 +1,268 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "getformat",
+      "args": [],
+      "result": "F"
+    },
+    {
+      "method": "getformat",
+      "args": [
+        ""
+      ],
+      "result": "F"
+    },
+    {
+      "method": "getformat",
+      "args": [
+        "prec"
+      ],
+      "result": "F"
+    },
+    {
+      "method": "getformat",
+      "args": [
+        "unknown"
+      ],
+      "result": "F"
+    },
+    {
+      "method": "getformat",
+      "args": [
+        {
+          "bytes": [
+            112,
+            114,
+            101,
+            99
+          ]
+        }
+      ],
+      "result": "F"
+    },
+    {
+      "method": "getformat",
+      "args": [
+        {
+          "bytes": [
+            255
+          ]
+        }
+      ],
+      "result": "F"
+    },
+    {
+      "method": "getformat",
+      "args": [
+        null
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _t must be a string"
+      }
+    },
+    {
+      "method": "getformat",
+      "args": [
+        1
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _t must be a string"
+      }
+    },
+    {
+      "method": "getformat",
+      "args": [
+        true
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _t must be a string"
+      }
+    },
+    {
+      "method": "getformat",
+      "args": [
+        []
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _t must be a string"
+      }
+    },
+    {
+      "method": "getformat",
+      "args": [
+        {}
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _t must be a string"
+      }
+    },
+    {
+      "method": "setformat",
+      "args": [],
+      "result": false
+    },
+    {
+      "method": "setformat",
+      "args": [
+        ""
+      ],
+      "result": false
+    },
+    {
+      "method": "setformat",
+      "args": [
+        "prec"
+      ],
+      "result": false
+    },
+    {
+      "method": "setformat",
+      "args": [
+        "unknown"
+      ],
+      "result": false
+    },
+    {
+      "method": "setformat",
+      "args": [
+        {
+          "bytes": [
+            112,
+            114,
+            101,
+            99
+          ]
+        }
+      ],
+      "result": false
+    },
+    {
+      "method": "setformat",
+      "args": [
+        {
+          "bytes": [
+            255
+          ]
+        }
+      ],
+      "result": false
+    },
+    {
+      "method": "setformat",
+      "args": [
+        null
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _t must be a string"
+      }
+    },
+    {
+      "method": "setformat",
+      "args": [
+        1
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _t must be a string"
+      }
+    },
+    {
+      "method": "setformat",
+      "args": [
+        true
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _t must be a string"
+      }
+    },
+    {
+      "method": "setformat",
+      "args": [
+        []
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _t must be a string"
+      }
+    },
+    {
+      "method": "setformat",
+      "args": [
+        {}
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _t must be a string"
+      }
+    },
+    {
+      "method": "setformat",
+      "args": [
+        "prec",
+        "4"
+      ],
+      "result": false
+    },
+    {
+      "method": "setformat",
+      "args": [
+        "",
+        ""
+      ],
+      "result": false
+    },
+    {
+      "method": "setformat",
+      "args": [
+        "prec",
+        {
+          "bytes": [
+            255
+          ]
+        }
+      ],
+      "result": false
+    },
+    {
+      "method": "setformat",
+      "args": [
+        "prec",
+        null
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _v must be a string"
+      }
+    },
+    {
+      "method": "setformat",
+      "args": [
+        "prec",
+        4
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _v must be a string"
+      }
+    },
+    {
+      "method": "setformat",
+      "args": [
+        "prec",
+        []
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _v must be a string"
+      }
+    }
+  ]
+}

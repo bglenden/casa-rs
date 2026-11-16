@@ -12,7 +12,7 @@ A CASA script changes only its import::
 In CASA, `simutil` is a Python helper class in the private `simutil` module of
 CASA's task package, not a CASA tool, so it is not in `casars.tools` or in the
 object-surface bundle. casa-rs implements, in Rust (the class lives in the
-`casars._core` extension, ADR-0018), the parts `sm` scripts and `simobserve`
+`casars._core` extension, ADR-0017), the parts `sm` scripts and `simobserve`
 use:
 - `readantenna`;
 - the pointings `calc_pointings2`, `read_pointings` and `write_pointings`;
@@ -20,7 +20,18 @@ use:
   `median_direction`, `dir_m2s`, `wrapang`, `isquantity` and `isdirection`;
 - `noisetemp`, `bandname` and `polsettings`;
 - `itrf2loc`, `baselineLengths` and `approxBeam`;
-- the sky-model helpers `modifymodel` and `flatimage`.
+- the sky-model helpers `modifymodel` and `flatimage`;
+- the analysis helpers `ismstp`, `cellsize`, `statim` and `convimage`;
+- `newfig`, `nextfig`, `endfig`, `plotants` and `ephemeris`, with native
+  scientific preparation and Matplotlib presentation (install the `plot`
+  extra); `statim` draws its complete plane by default;
+- the geodesy helpers, `getdatum` through `itrf2locname`;
+- `msg`, the report file (`isreport`, `openreport`, `closereport`),
+  `dir_s2m`, `is4d`, `spectral` and `setcfg`.
+
+CASA's other public methods exist with CASA's signatures and raise
+`NotImplementedError` naming issue #1053, which records which ones casa-rs
+will implement.
 
 `casars.simutil` is the class's public import: CASA's `private` path would
 mislabel a supported entry point.

@@ -108,6 +108,16 @@ pub trait Observation: Sync {
     /// [`ObservationError::InvalidStore`] for malformed pointing, including
     /// an MSv2 row of more polynomial terms than its reader takes.
     fn pointing(&self, request: &PointingRequest) -> Result<PointingSeries, ObservationError>;
+
+    /// The most bytes one pointing query ([`Self::pointing`]) reads and
+    /// holds, whatever its partition, antennas and times: a
+    /// [`PointingRequest::budget_bytes`] no query is refused for. Zero for
+    /// a store without pointing.
+    ///
+    /// # Errors
+    ///
+    /// When the store's pointing cannot be read.
+    fn pointing_bytes(&self) -> Result<usize, ObservationError>;
 }
 
 /// A bound traversal of one partition of an [`Observation`].

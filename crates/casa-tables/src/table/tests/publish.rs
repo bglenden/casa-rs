@@ -111,6 +111,26 @@ fn a_read_locked_handle_resyncs_to_what_another_handle_published() {
 }
 
 #[test]
+fn upgrading_a_read_lock_refreshes_a_write_from_another_handle() {
+    let options = one_row_table("upgrade_refresh");
+    let mut reader = handle(&options);
+    assert!(reader.lock(LockType::Read, 1).expect("read lock"));
+    let mut writer = handle(&options);
+    assert!(writer.lock(LockType::Write, 1).expect("write lock"));
+    mark(&mut writer, "OTHER");
+    writer.unlock().expect("publish");
+
+    assert!(reader.keywords().get("OTHER").is_none());
+    assert!(reader.lock(LockType::Write, 1).expect("upgrade"));
+    assert!(reader.keywords().get("OTHER").is_some());
+    mark(&mut reader, "MINE");
+    reader.unlock().expect("publish both");
+    let result = handle(&options);
+    assert!(result.keywords().get("OTHER").is_some());
+    assert!(result.keywords().get("MINE").is_some());
+}
+
+#[test]
 fn a_write_locked_handle_is_not_resynced() {
     let options = one_row_table("resync_write_locked");
     let mut writer = handle(&options);

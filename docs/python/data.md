@@ -6,7 +6,8 @@ The module also publishes its canonical object-surface contract directly from
 Rust:
 
 - `protocol_info()` returns the stable object protocol descriptor
-- `schema_bundle()` returns the canonical schema bundle for `Image` and `Table`
+- `schema_bundle()` returns the canonical schema bundle for `Image`, `Table`
+  and the `casars.tools` classes
 
 ## Images
 
@@ -28,6 +29,46 @@ Image writes are part of the supported v1 API, but only in a narrow form:
 - not part of v1: general metadata authoring beyond the persisted fields exposed for read access
 
 In other words, `casars.data.Image` is a stable read/write pixel-access surface for existing images, not a full Python image-construction or image-metadata editing API.
+
+### Stitch independently CLEANed pointings
+
+Run `tclean` for each field with the same spectral selection, reference
+frequency and restoring beam. Pass each restored `.image` and its `.pb` to
+`linearmosaic`. Use the uncorrected `.image` from each clean. A separate
+`tclean(niter=0)` can supply the output grid if none of the pointing images
+covers the region you want.
+
+```python
+from casars.data import linearmosaic
+from casars.tasks import tclean
+
+common = dict(
+    vis="two-pointings.ms", datacolumn="data", gridder="standard",
+    specmode="mfs", reffreq="1.5GHz", cell="8arcsec", interactive=False,
+    pblimit=0.01,
+)
+for field in (0, 1):
+    tclean(**common, field=str(field), imagename=f"point{field}",
+           imsize=288, niter=20, restoringbeam=["80arcsec", "80arcsec", "0deg"])
+
+tclean(**common, field="0", imagename="mosaic-grid", imsize=96, niter=0,
+       phasecenter="J2000 19h59m28.5 +40d50m01.5")
+
+linearmosaic(
+    [(f"point{field}.image", f"point{field}.pb") for field in (0, 1)],
+    template="mosaic-grid.image",
+    output="stitched.image",
+    output_weight="stitched.weight",
+)
+```
+
+Choose the reference frequency, angular cell size, restoring beam and
+output coordinates for your observation. Only the template's grid is used.
+`stitched.weight` gives the beam-squared coverage on that grid. The
+flux-correct image is zero where coverage is at most `1e-6` of peak coverage.
+Both outputs are CASA images, and both paths must be new.
+When a projected footprint edge falls exactly halfway between output pixels,
+coordinate rounding can move the edge by a pixel compared with CASA.
 
 ## Tables
 

@@ -21,6 +21,8 @@ pub(super) struct OutlierDomain {
     pub(super) cell_arcsec: [f64; 2],
     pub(super) phase_center: String,
     pub(super) mask: DomainMask,
+    /// An explicit empty value overrides the main field's default.
+    pub(super) start_model: Option<String>,
 }
 
 pub(super) fn read_outlier_domains(
@@ -41,18 +43,38 @@ fn outlier_domains(
     default_size: [usize; 2],
     default_cell_arcsec: [f64; 2],
 ) -> Result<Vec<OutlierDomain>, OutlierProblem> {
+    read_records(path)?
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, fields)| compile_record(ordinal, fields, default_size, default_cell_arcsec))
+        .collect()
+}
+
+/// Read only names, using compile's syntax and resolution. In particular,
+/// never allocate an image-sized mask before resource admission (#944).
+pub(super) fn read_output_prefixes(path: &Path) -> Result<Vec<PathBuf>, PrepareError> {
+    let read = || {
+        read_records(path)?
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, mut fields)| {
+                take_required(&mut fields, "imagename", ordinal).map(|name| output_path(&name))
+            })
+            .collect::<Result<Vec<_>, OutlierProblem>>()
+    };
+    read().map_err(|problem| PrepareError::OutlierFile {
+        path: path.into(),
+        problem,
+    })
+}
+
+fn read_records(path: &Path) -> Result<Vec<BTreeMap<String, String>>, OutlierProblem> {
     let text = fs::read_to_string(path).map_err(OutlierProblem::Read)?;
     let records = parse_records(&text)?;
     if records.is_empty() {
         return Err(OutlierProblem::Empty);
     }
-    records
-        .into_iter()
-        .enumerate()
-        .map(|(ordinal, fields)| {
-            compile_record(path, ordinal, fields, default_size, default_cell_arcsec)
-        })
-        .collect()
+    Ok(records)
 }
 
 fn parse_records(text: &str) -> Result<Vec<BTreeMap<String, String>>, OutlierProblem> {
@@ -94,15 +116,21 @@ fn parse_records(text: &str) -> Result<Vec<BTreeMap<String, String>>, OutlierPro
     Ok(records)
 }
 
+/// An outlier's output prefix, as tclean's `imagename` reads: from the working
+/// directory, wherever the file is (`ImagerParameters.parseOutlierFile` joins
+/// nothing).
+fn output_path(name: &str) -> PathBuf {
+    std::path::absolute(name).unwrap_or_else(|_| PathBuf::from(name))
+}
+
 fn compile_record(
-    path: &Path,
     ordinal: usize,
     mut fields: BTreeMap<String, String>,
     default_size: [usize; 2],
     default_cell_arcsec: [f64; 2],
 ) -> Result<OutlierDomain, OutlierProblem> {
     let name = take_required(&mut fields, "imagename", ordinal)?;
-    let output = resolve_output(path, &name);
+    let output = output_path(&name);
     let image_size = fields
         .remove("imsize")
         .map(|value| parse_size(&value))
@@ -114,6 +142,7 @@ fn compile_record(
         .transpose()?
         .unwrap_or(default_cell_arcsec);
     let phase_center = take_required(&mut fields, "phasecenter", ordinal)?;
+    let start_model = fields.remove("startmodel");
     let mask = fields
         .remove("mask")
         .filter(|value| !value.is_empty())
@@ -129,7 +158,7 @@ fn compile_record(
     admit_default(&mut fields, "deconvolver", &["", "hogbom"])?;
     admit_default(&mut fields, "wprojplanes", &["", "1"])?;
     // CASA lets these be empty; a value is a feature the slice lacks.
-    for unsupported in ["startmodel", "start", "width", "reffreq"] {
+    for unsupported in ["start", "width", "reffreq"] {
         if fields
             .get(unsupported)
             .is_some_and(|value| value.is_empty())
@@ -150,6 +179,7 @@ fn compile_record(
         cell_arcsec,
         phase_center,
         mask,
+        start_model,
     })
 }
 
@@ -257,7 +287,10 @@ fn circle_mask(text: &str, image_size: [usize; 2]) -> Result<DomainMask, Outlier
             support.push(dx * dx + dy * dy <= radius_squared);
         }
     }
-    Ok(DomainMask::PixelSupport(support.into_boxed_slice()))
+    Ok(DomainMask::PixelSupport {
+        planes: casa_imaging_deconvolution::MaskPlanes::SHARED,
+        support: support.into(),
+    })
 }
 
 fn parse_pixels(text: &str) -> Result<f64, OutlierProblem> {
@@ -287,18 +320,6 @@ fn trim_string(value: &str) -> &str {
         .trim()
 }
 
-fn resolve_output(outlier_file: &Path, name: &str) -> PathBuf {
-    let output = PathBuf::from(name);
-    if output.is_absolute() {
-        output
-    } else {
-        outlier_file
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .map_or(output.clone(), |parent| parent.join(output))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,8 +337,14 @@ mod tests {
         assert_eq!(domains.len(), 1);
         assert_eq!(domains[0].image_size, [80, 80]);
         assert_eq!(domains[0].cell_arcsec, [8.0, 8.0]);
-        assert_eq!(domains[0].output, directory.path().join("outlier"));
-        let DomainMask::PixelSupport(support) = &domains[0].mask else {
+        assert_eq!(domains[0].output, output_path("outlier"));
+        assert_eq!(
+            domains[0].output,
+            std::env::current_dir()
+                .expect("the working directory")
+                .join("outlier")
+        );
+        let DomainMask::PixelSupport { support, .. } = &domains[0].mask else {
             panic!("expected pixel support");
         };
         assert!(support[40 * 80 + 40]);
@@ -336,7 +363,7 @@ mod tests {
         let domains = read_outlier_domains(&path, [100; 2], [4.0; 2]).expect("compile outlier");
         assert_eq!(domains[0].image_size, [60, 40]);
         assert_eq!(domains[0].cell_arcsec, [8.0, 6.0]);
-        let DomainMask::PixelSupport(support) = &domains[0].mask else {
+        let DomainMask::PixelSupport { support, .. } = &domains[0].mask else {
             panic!("expected pixel support");
         };
         assert_eq!(support.len(), 60 * 40);

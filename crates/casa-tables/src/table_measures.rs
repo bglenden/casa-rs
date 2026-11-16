@@ -42,6 +42,7 @@
 //! assert!(TableMeasDesc::has_measinfo(&table, "TIME"));
 //! ```
 
+use crate::ColumnType;
 use crate::table::{Table, TableError};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
@@ -49,7 +50,7 @@ use casa_types::measures::epoch::{EpochRef, MEpoch, MjdHighPrec};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::position::{MPosition, PositionRef};
 use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 
 // ─── Keyword names (matching C++ casacore) ──────────────────────────────────
 
@@ -318,6 +319,25 @@ impl TableMeasDesc {
                     tab_ref_types: types,
                     tab_ref_codes: codes,
                 }
+            } else if measure_type == MeasureType::Frequency
+                && measinfo.get(TAB_REF_TYPES_KW).is_none()
+                && measinfo.get(TAB_REF_CODES_KW).is_none()
+                && table
+                    .schema()
+                    .and_then(|schema| schema.column(var_col))
+                    .is_some_and(|column| {
+                        matches!(column.column_type(), ColumnType::Scalar)
+                            && column.data_type() == Some(PrimitiveType::Int32)
+                    })
+            {
+                // Casacore recognizes the integer companion even without
+                // mapping keywords and initializes the canonical type map.
+                let (tab_ref_types, tab_ref_codes) = default_frequency_ref_map();
+                MeasRefDesc::VariableInt {
+                    ref_column: var_col.clone(),
+                    tab_ref_types,
+                    tab_ref_codes,
+                }
             } else {
                 MeasRefDesc::VariableString {
                     ref_column: var_col.clone(),
@@ -548,6 +568,16 @@ fn resolve_ref_string(
                     )));
                 }
             };
+            if desc.measure_type == MeasureType::Frequency {
+                return frequency_ref_for_table_code(tab_ref_types, tab_ref_codes, code)
+                    .map(|frame| frame.as_str().to_string())
+                    .ok_or_else(|| {
+                        TableError::Storage(format!(
+                            "invalid frequency ref code {code} in TabRefCodes for column '{}'",
+                            desc.column_name
+                        ))
+                    });
+            }
             // Find this code in the mapping table
             for (i, &c) in tab_ref_codes.iter().enumerate() {
                 if c == code {
@@ -574,6 +604,121 @@ fn resolve_ref_string(
             }
         }
     }
+}
+
+/// Resolve a measure's reference to the code stored by this table. The
+/// descriptor's codes need not equal the current casacore enumeration.
+fn table_ref_code(desc: &TableMeasDesc, refer: &str) -> Result<i32, TableError> {
+    let MeasRefDesc::VariableInt {
+        tab_ref_types,
+        tab_ref_codes,
+        ..
+    } = &desc.ref_desc
+    else {
+        return Err(TableError::Storage(
+            "integer reference mapping required".to_string(),
+        ));
+    };
+    ref_string_to_code(desc.measure_type, refer)?;
+    let position = tab_ref_types.iter().position(|name| name == refer);
+    if let Some(position) = position {
+        return tab_ref_codes.get(position).copied().ok_or_else(|| {
+            TableError::Storage(format!(
+                "TabRefCodes index {position} out of bounds (len={}) for column '{}'",
+                tab_ref_codes.len(),
+                desc.column_name
+            ))
+        });
+    }
+    if desc.measure_type == MeasureType::Frequency
+        && let Some((_, code)) = inferred_frequency_ref(tab_ref_types, tab_ref_codes, |frame, _| {
+            frame.as_str() == refer
+        })
+    {
+        return Ok(code);
+    }
+    Err(TableError::Storage(format!(
+        "reference '{refer}' not found in TabRefTypes for column '{}'",
+        desc.column_name
+    )))
+}
+
+/// The common CASA frequency mapping uses the current casacore codes, so
+/// writing it does not need to scan the per-table mapping for every row.
+fn has_standard_frequency_codes(desc: &TableMeasDesc) -> bool {
+    let MeasRefDesc::VariableInt {
+        tab_ref_types,
+        tab_ref_codes,
+        ..
+    } = &desc.ref_desc
+    else {
+        return false;
+    };
+    if desc.measure_type != MeasureType::Frequency
+        || tab_ref_types.len() != FrequencyRef::ALL.len() + 1
+        || tab_ref_codes.len() != tab_ref_types.len()
+    {
+        return false;
+    }
+    FrequencyRef::ALL
+        .into_iter()
+        .chain(std::iter::once(FrequencyRef::Undefined))
+        .zip(tab_ref_types.iter().zip(tab_ref_codes))
+        .all(|(frame, (name, code))| name == frame.as_str() && *code == frame.casacore_code())
+}
+
+/// Find a frequency frame for a table code absent from its recorded mapping.
+/// Casacore fills missing current reference types in memory, assigning each
+/// the next code after the largest recorded code, in `MFrequency` type order.
+/// Returns `None` for malformed mappings, overflow or an unknown code.
+fn inferred_frequency_ref_for_code(
+    types: &[String],
+    codes: &[i32],
+    code: i32,
+) -> Option<FrequencyRef> {
+    inferred_frequency_ref(types, codes, |_, inferred| inferred == code).map(|(frame, _)| frame)
+}
+
+/// Resolve a frequency reference code using a table's explicit mapping and
+/// casacore's inferred entries for any current types absent from that mapping.
+/// Returns `None` for an unknown code, invalid reference name or malformed map.
+#[must_use]
+pub fn frequency_ref_for_table_code(
+    types: &[String],
+    codes: &[i32],
+    code: i32,
+) -> Option<FrequencyRef> {
+    if types.len() != codes.len() {
+        return None;
+    }
+    if let Some(index) = codes.iter().position(|value| *value == code) {
+        let frame: FrequencyRef = types[index].parse().ok()?;
+        return (frame.as_str() == types[index]).then_some(frame);
+    }
+    inferred_frequency_ref_for_code(types, codes, code)
+}
+
+fn inferred_frequency_ref(
+    types: &[String],
+    codes: &[i32],
+    matches: impl Fn(FrequencyRef, i32) -> bool,
+) -> Option<(FrequencyRef, i32)> {
+    if types.len() != codes.len() || codes.iter().any(|code| *code < 0) {
+        return None;
+    }
+    let mut max_code = *codes.iter().max()?;
+    for frame in FrequencyRef::ALL
+        .into_iter()
+        .chain(std::iter::once(FrequencyRef::Undefined))
+    {
+        if !types.iter().any(|name| name == frame.as_str()) {
+            max_code = max_code.checked_add(1)?;
+            if matches(frame, max_code) {
+                return Some((frame, max_code));
+            }
+        }
+    }
+    None
 }
 
 /// Creates a MeasureValue from raw f64 values and a reference string.
@@ -809,6 +954,7 @@ pub struct ScalarMeasColumnMut<'a> {
     table: &'a mut Table,
     column_name: String,
     desc: TableMeasDesc,
+    standard_frequency_codes: bool,
 }
 
 impl<'a> ScalarMeasColumnMut<'a> {
@@ -817,10 +963,12 @@ impl<'a> ScalarMeasColumnMut<'a> {
         let desc = TableMeasDesc::reconstruct(table, column).ok_or_else(|| {
             TableError::Storage(format!("column '{column}' has no MEASINFO keywords"))
         })?;
+        let standard_frequency_codes = has_standard_frequency_codes(&desc);
         Ok(Self {
             table,
             column_name: column.to_owned(),
             desc,
+            standard_frequency_codes,
         })
     }
 
@@ -831,11 +979,21 @@ impl<'a> ScalarMeasColumnMut<'a> {
 
     /// Writes a measure at `row`.
     pub fn put(&mut self, row: usize, mv: &MeasureValue) -> Result<(), TableError> {
+        let refer = measure_ref_string(mv);
+        let code = if matches!(&self.desc.ref_desc, MeasRefDesc::VariableInt { .. }) {
+            Some(if self.standard_frequency_codes {
+                ref_string_to_code(self.desc.measure_type, &refer)?
+            } else {
+                table_ref_code(&self.desc, &refer)?
+            })
+        } else {
+            None
+        };
         let vals = measure_values(mv);
         self.table
             .cell_accessor_mut(row, &self.column_name)?
             .set(Value::Array(ArrayValue::from_f64_vec(vals)))?;
-        self.write_ref(row, mv)?;
+        self.write_ref(row, refer, code)?;
         Ok(())
     }
 
@@ -849,12 +1007,17 @@ impl<'a> ScalarMeasColumnMut<'a> {
         self.put(row, &MeasureValue::Direction(dir.clone()))
     }
 
-    fn write_ref(&mut self, row: usize, mv: &MeasureValue) -> Result<(), TableError> {
-        let refer = measure_ref_string(mv);
+    fn write_ref(
+        &mut self,
+        row: usize,
+        refer: String,
+        code: Option<i32>,
+    ) -> Result<(), TableError> {
         match &self.desc.ref_desc {
             MeasRefDesc::Fixed { .. } => Ok(()),
             MeasRefDesc::VariableInt { ref_column, .. } => {
-                let code = ref_string_to_code(self.desc.measure_type, &refer)?;
+                let code =
+                    code.expect("integer reference was validated before the value was written");
                 let ref_column = ref_column.clone();
                 self.table
                     .cell_accessor_mut(row, &ref_column)?
@@ -881,6 +1044,7 @@ pub struct ArrayMeasColumnMut<'a> {
     table: &'a mut Table,
     column_name: String,
     desc: TableMeasDesc,
+    standard_frequency_codes: bool,
 }
 
 impl<'a> ArrayMeasColumnMut<'a> {
@@ -889,10 +1053,12 @@ impl<'a> ArrayMeasColumnMut<'a> {
         let desc = TableMeasDesc::reconstruct(table, column).ok_or_else(|| {
             TableError::Storage(format!("column '{column}' has no MEASINFO keywords"))
         })?;
+        let standard_frequency_codes = has_standard_frequency_codes(&desc);
         Ok(Self {
             table,
             column_name: column.to_owned(),
             desc,
+            standard_frequency_codes,
         })
     }
 
@@ -901,12 +1067,13 @@ impl<'a> ArrayMeasColumnMut<'a> {
     /// All measures must have the same reference frame. For variable-ref
     /// columns, the reference of the first measure is written.
     pub fn put(&mut self, row: usize, measures: &[MeasureValue]) -> Result<(), TableError> {
+        let refer = measures.first().map(measure_ref_string);
         // Validate all measures share the same reference
         if measures.len() > 1 {
-            let first_ref = measure_ref_string(&measures[0]);
+            let first_ref = refer.as_ref().expect("nonempty measures");
             for (i, mv) in measures.iter().enumerate().skip(1) {
                 let r = measure_ref_string(mv);
-                if r != first_ref {
+                if &r != first_ref {
                     return Err(TableError::Storage(format!(
                         "ArrayMeasColumnMut::put: measure[{i}] has reference '{r}' \
                          but measure[0] has '{first_ref}'; all measures in a row \
@@ -915,6 +1082,20 @@ impl<'a> ArrayMeasColumnMut<'a> {
                 }
             }
         }
+        let code = if matches!(&self.desc.ref_desc, MeasRefDesc::VariableInt { .. }) {
+            refer
+                .as_ref()
+                .map(|name| {
+                    if self.standard_frequency_codes {
+                        ref_string_to_code(self.desc.measure_type, name)
+                    } else {
+                        table_ref_code(&self.desc, name)
+                    }
+                })
+                .transpose()?
+        } else {
+            None
+        };
         let n = self.desc.measure_type.values_per_measure();
         let mut all_values = Vec::with_capacity(measures.len() * n);
         for mv in measures {
@@ -924,12 +1105,12 @@ impl<'a> ArrayMeasColumnMut<'a> {
             .cell_accessor_mut(row, &self.column_name)?
             .set(Value::Array(ArrayValue::from_f64_vec(all_values)))?;
         // Write reference from first measure if variable
-        if !measures.is_empty() {
-            let refer = measure_ref_string(&measures[0]);
+        if let Some(refer) = refer {
             match &self.desc.ref_desc {
                 MeasRefDesc::Fixed { .. } => {}
                 MeasRefDesc::VariableInt { ref_column, .. } => {
-                    let code = ref_string_to_code(self.desc.measure_type, &refer)?;
+                    let code = code
+                        .expect("integer reference was validated before the values were written");
                     let ref_column = ref_column.clone();
                     self.table
                         .cell_accessor_mut(row, &ref_column)?
@@ -991,426 +1172,20 @@ pub fn default_direction_ref_map() -> (Vec<String>, Vec<i32>) {
 
 /// Returns the default `(TabRefTypes, TabRefCodes)` for frequency variable-int columns.
 pub fn default_frequency_ref_map() -> (Vec<String>, Vec<i32>) {
-    let types: Vec<String> = FrequencyRef::ALL
+    let mut types: Vec<String> = FrequencyRef::ALL
         .iter()
         .map(|r| r.as_str().to_owned())
         .collect();
-    let codes: Vec<i32> = FrequencyRef::ALL
+    let mut codes: Vec<i32> = FrequencyRef::ALL
         .iter()
         .map(|r| r.casacore_code())
         .collect();
+    // MFrequency::allTypes includes its extra Undefined reference (64).
+    types.push(FrequencyRef::Undefined.as_str().to_owned());
+    codes.push(FrequencyRef::Undefined.casacore_code());
     (types, codes)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use casa_types::measures::record;
-    use casa_types::*;
-
-    use crate::{ColumnSchema, TableSchema};
-
-    fn make_epoch_table(fixed_ref: &str) -> Table {
-        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-            "TIME",
-            PrimitiveType::Float64,
-            vec![1],
-        )])
-        .unwrap();
-        let mut table = Table::with_schema(schema);
-        let desc = TableMeasDesc::new_fixed("TIME", MeasureType::Epoch, fixed_ref);
-        desc.write(&mut table).unwrap();
-        table
-    }
-
-    #[test]
-    fn rr_epoch_fixed_ref() {
-        let mut table = make_epoch_table("UTC");
-        let epochs = [
-            MEpoch::from_mjd(51544.5, EpochRef::UTC),
-            MEpoch::from_mjd(51545.0, EpochRef::UTC),
-            MEpoch::from_mjd(51546.5, EpochRef::UTC),
-        ];
-        for e in &epochs {
-            table
-                .add_row(RecordValue::new(vec![RecordField::new(
-                    "TIME",
-                    Value::Array(ArrayValue::from_f64_vec(vec![e.value().as_mjd()])),
-                )]))
-                .unwrap();
-        }
-
-        let col = ScalarMeasColumn::new(&table, "TIME").unwrap();
-        for (i, expected) in epochs.iter().enumerate() {
-            let got = col.get_epoch(i).unwrap();
-            assert_eq!(got.refer(), expected.refer());
-            assert!((got.value().as_mjd() - expected.value().as_mjd()).abs() < 1e-12);
-        }
-    }
-
-    #[test]
-    fn rr_epoch_var_int_ref() {
-        let schema = TableSchema::new(vec![
-            ColumnSchema::array_fixed("TIME", PrimitiveType::Float64, vec![1]),
-            ColumnSchema::scalar("TimeRef", PrimitiveType::Int32),
-        ])
-        .unwrap();
-        let mut table = Table::with_schema(schema);
-
-        let (types, codes) = default_epoch_ref_map();
-        let desc =
-            TableMeasDesc::new_variable_int("TIME", MeasureType::Epoch, "TimeRef", types, codes)
-                .unwrap();
-        desc.write(&mut table).unwrap();
-
-        // Add rows with different refs
-        let data = [
-            (51544.5, EpochRef::UTC),
-            (51545.0, EpochRef::TAI),
-            (51546.5, EpochRef::TT),
-        ];
-        for &(mjd, refer) in &data {
-            table
-                .add_row(RecordValue::new(vec![
-                    RecordField::new("TIME", Value::Array(ArrayValue::from_f64_vec(vec![mjd]))),
-                    RecordField::new(
-                        "TimeRef",
-                        Value::Scalar(ScalarValue::Int32(refer.casacore_code())),
-                    ),
-                ]))
-                .unwrap();
-        }
-
-        let col = ScalarMeasColumn::new(&table, "TIME").unwrap();
-        for (i, &(mjd, refer)) in data.iter().enumerate() {
-            let got = col.get_epoch(i).unwrap();
-            assert_eq!(got.refer(), refer, "row {i}");
-            assert!((got.value().as_mjd() - mjd).abs() < 1e-12);
-        }
-    }
-
-    #[test]
-    fn rr_epoch_var_str_ref() {
-        let schema = TableSchema::new(vec![
-            ColumnSchema::array_fixed("TIME", PrimitiveType::Float64, vec![1]),
-            ColumnSchema::scalar("TimeRefStr", PrimitiveType::String),
-        ])
-        .unwrap();
-        let mut table = Table::with_schema(schema);
-
-        let desc = TableMeasDesc::new_variable_string("TIME", MeasureType::Epoch, "TimeRefStr");
-        desc.write(&mut table).unwrap();
-
-        let data = [(51544.5, "UTC"), (51545.0, "TAI"), (51546.5, "TT")];
-        for &(mjd, refer_str) in &data {
-            table
-                .add_row(RecordValue::new(vec![
-                    RecordField::new("TIME", Value::Array(ArrayValue::from_f64_vec(vec![mjd]))),
-                    RecordField::new(
-                        "TimeRefStr",
-                        Value::Scalar(ScalarValue::String(refer_str.to_owned())),
-                    ),
-                ]))
-                .unwrap();
-        }
-
-        let col = ScalarMeasColumn::new(&table, "TIME").unwrap();
-        for (i, &(mjd, refer_str)) in data.iter().enumerate() {
-            let got = col.get_epoch(i).unwrap();
-            assert_eq!(got.refer().as_str(), refer_str, "row {i}");
-            assert!((got.value().as_mjd() - mjd).abs() < 1e-12);
-        }
-    }
-
-    #[test]
-    fn rr_direction_fixed_ref() {
-        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-            "DIR",
-            PrimitiveType::Float64,
-            vec![2],
-        )])
-        .unwrap();
-        let mut table = Table::with_schema(schema);
-        let desc = TableMeasDesc::new_fixed("DIR", MeasureType::Direction, "J2000");
-        desc.write(&mut table).unwrap();
-
-        let dirs = [
-            MDirection::from_angles(1.0, 0.5, DirectionRef::J2000),
-            MDirection::from_angles(2.0, -0.3, DirectionRef::J2000),
-            MDirection::from_angles(0.0, 1.5, DirectionRef::J2000),
-        ];
-        for d in &dirs {
-            let (lon, lat) = d.as_angles();
-            table
-                .add_row(RecordValue::new(vec![RecordField::new(
-                    "DIR",
-                    Value::Array(ArrayValue::from_f64_vec(vec![lon, lat])),
-                )]))
-                .unwrap();
-        }
-
-        let col = ScalarMeasColumn::new(&table, "DIR").unwrap();
-        for (i, expected) in dirs.iter().enumerate() {
-            let got = col.get_direction(i).unwrap();
-            assert_eq!(got.refer(), expected.refer());
-            let (e_lon, e_lat) = expected.as_angles();
-            let (g_lon, g_lat) = got.as_angles();
-            assert!((e_lon - g_lon).abs() < 1e-12);
-            assert!((e_lat - g_lat).abs() < 1e-12);
-        }
-    }
-
-    #[test]
-    fn rr_direction_array() {
-        let schema = TableSchema::new(vec![ColumnSchema::array_variable(
-            "DIRS",
-            PrimitiveType::Float64,
-            Some(1),
-        )])
-        .unwrap();
-        let mut table = Table::with_schema(schema);
-        let desc = TableMeasDesc::new_fixed("DIRS", MeasureType::Direction, "GALACTIC");
-        desc.write(&mut table).unwrap();
-
-        let dirs = vec![
-            MDirection::from_angles(0.1, 0.2, DirectionRef::GALACTIC),
-            MDirection::from_angles(0.3, 0.4, DirectionRef::GALACTIC),
-        ];
-        let mut values = Vec::new();
-        for d in &dirs {
-            let (lon, lat) = d.as_angles();
-            values.push(lon);
-            values.push(lat);
-        }
-        table
-            .add_row(RecordValue::new(vec![RecordField::new(
-                "DIRS",
-                Value::Array(ArrayValue::from_f64_vec(values)),
-            )]))
-            .unwrap();
-
-        let col = ArrayMeasColumn::new(&table, "DIRS").unwrap();
-        let got = col.get(0).unwrap();
-        assert_eq!(got.len(), 2);
-        for (i, (expected, got_mv)) in dirs.iter().zip(got.iter()).enumerate() {
-            let d = got_mv.as_direction().unwrap();
-            let (e_lon, e_lat) = expected.as_angles();
-            let (g_lon, g_lat) = d.as_angles();
-            assert!((e_lon - g_lon).abs() < 1e-12, "dir {i} lon");
-            assert!((e_lat - g_lat).abs() < 1e-12, "dir {i} lat");
-        }
-    }
-
-    #[test]
-    fn rr_measinfo_reconstruct() {
-        let table = make_epoch_table("TAI");
-        let desc = TableMeasDesc::reconstruct(&table, "TIME").unwrap();
-        assert_eq!(desc.measure_type(), MeasureType::Epoch);
-        match desc.ref_desc() {
-            MeasRefDesc::Fixed { refer } => assert_eq!(refer, "TAI"),
-            _ => panic!("expected Fixed ref"),
-        }
-    }
-
-    #[test]
-    fn rr_epoch_fixed_offset() {
-        let mut table = make_epoch_table("TAI");
-        // Overwrite with offset
-        let offset_rec = record::epoch_to_record(&MEpoch::from_mjd(51544.0, EpochRef::UTC));
-        let desc = TableMeasDesc::new_fixed("TIME", MeasureType::Epoch, "TAI")
-            .with_fixed_offset(offset_rec.clone());
-        desc.write(&mut table).unwrap();
-
-        let reconstructed = TableMeasDesc::reconstruct(&table, "TIME").unwrap();
-        assert!(reconstructed.offset_desc().is_some());
-        match reconstructed.offset_desc().unwrap() {
-            MeasOffsetDesc::Fixed { offset } => {
-                let epoch = record::epoch_from_record(offset).unwrap();
-                assert_eq!(epoch.refer(), EpochRef::UTC);
-                assert!((epoch.value().as_mjd() - 51544.0).abs() < 1e-12);
-            }
-            _ => panic!("expected Fixed offset"),
-        }
-    }
-
-    #[test]
-    fn rr_quantum_units_coexist() {
-        use crate::table_quantum::TableQuantumDesc;
-
-        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-            "TIME",
-            PrimitiveType::Float64,
-            vec![1],
-        )])
-        .unwrap();
-        let mut table = Table::with_schema(schema);
-
-        // Write quantum units
-        TableQuantumDesc::with_unit("TIME", "d")
-            .write(&mut table)
-            .unwrap();
-        // Write measinfo
-        TableMeasDesc::new_fixed("TIME", MeasureType::Epoch, "UTC")
-            .write(&mut table)
-            .unwrap();
-
-        // Both should be present
-        assert!(TableQuantumDesc::has_quanta(&table, "TIME"));
-        assert!(TableMeasDesc::has_measinfo(&table, "TIME"));
-    }
-
-    #[test]
-    fn rr_scalar_meas_column_mut() {
-        let schema = TableSchema::new(vec![
-            ColumnSchema::array_fixed("TIME", PrimitiveType::Float64, vec![1]),
-            ColumnSchema::scalar("TimeRef", PrimitiveType::String),
-        ])
-        .unwrap();
-        let mut table = Table::with_schema(schema);
-
-        let desc = TableMeasDesc::new_variable_string("TIME", MeasureType::Epoch, "TimeRef");
-        desc.write(&mut table).unwrap();
-
-        // Add empty rows
-        for _ in 0..3 {
-            table
-                .add_row(RecordValue::new(vec![
-                    RecordField::new("TIME", Value::Array(ArrayValue::from_f64_vec(vec![0.0]))),
-                    RecordField::new("TimeRef", Value::Scalar(ScalarValue::String(String::new()))),
-                ]))
-                .unwrap();
-        }
-
-        // Write measures
-        {
-            let mut col = ScalarMeasColumnMut::new(&mut table, "TIME").unwrap();
-            col.put_epoch(0, &MEpoch::from_mjd(51544.5, EpochRef::UTC))
-                .unwrap();
-            col.put_epoch(1, &MEpoch::from_mjd(51545.0, EpochRef::TAI))
-                .unwrap();
-            col.put_epoch(2, &MEpoch::from_mjd(51546.5, EpochRef::TT))
-                .unwrap();
-        }
-
-        // Read back
-        let col = ScalarMeasColumn::new(&table, "TIME").unwrap();
-        let e0 = col.get_epoch(0).unwrap();
-        assert_eq!(e0.refer(), EpochRef::UTC);
-        assert!((e0.value().as_mjd() - 51544.5).abs() < 1e-12);
-
-        let e1 = col.get_epoch(1).unwrap();
-        assert_eq!(e1.refer(), EpochRef::TAI);
-
-        let e2 = col.get_epoch(2).unwrap();
-        assert_eq!(e2.refer(), EpochRef::TT);
-    }
-
-    #[test]
-    fn measure_type_values_per_measure() {
-        assert_eq!(MeasureType::Epoch.values_per_measure(), 1);
-        assert_eq!(MeasureType::Direction.values_per_measure(), 2);
-        assert_eq!(MeasureType::Position.values_per_measure(), 3);
-        assert_eq!(MeasureType::Frequency.values_per_measure(), 1);
-        assert_eq!(MeasureType::Doppler.values_per_measure(), 1);
-        assert_eq!(MeasureType::RadialVelocity.values_per_measure(), 1);
-    }
-
-    #[test]
-    fn default_ref_maps() {
-        let (types, codes) = default_epoch_ref_map();
-        assert_eq!(types.len(), 12);
-        assert_eq!(codes.len(), 12);
-        assert_eq!(types[6], "UTC");
-        assert_eq!(codes[6], 6);
-
-        let (types, codes) = default_direction_ref_map();
-        assert_eq!(types.len(), 19);
-        // J2000 should be code 0
-        let j2000_idx = types.iter().position(|t| t == "J2000").unwrap();
-        assert_eq!(codes[j2000_idx], 0);
-
-        let (types, codes) = default_frequency_ref_map();
-        assert_eq!(types.len(), 9);
-        assert_eq!(types[0], "REST");
-        assert_eq!(codes[0], 0);
-    }
-
-    #[test]
-    fn array_meas_put_rejects_mixed_references() {
-        let schema = TableSchema::new(vec![ColumnSchema::array_variable(
-            "DIRS",
-            PrimitiveType::Float64,
-            Some(1),
-        )])
-        .unwrap();
-        let mut table = Table::with_schema(schema);
-        let desc = TableMeasDesc::new_fixed("DIRS", MeasureType::Direction, "J2000");
-        desc.write(&mut table).unwrap();
-
-        table.add_row(RecordValue::default()).unwrap();
-
-        let measures = vec![
-            MeasureValue::Direction(MDirection::from_angles(1.0, 0.5, DirectionRef::J2000)),
-            MeasureValue::Direction(MDirection::from_angles(2.0, -0.3, DirectionRef::GALACTIC)),
-        ];
-        let mut col = ArrayMeasColumnMut::new(&mut table, "DIRS").unwrap();
-        let err = col.put(0, &measures).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("measure[1]") && msg.contains("GALACTIC") && msg.contains("J2000"),
-            "unexpected error: {msg}"
-        );
-    }
-
-    #[test]
-    fn new_variable_int_rejects_mismatched_lengths() {
-        let types = vec!["UTC".to_owned(), "TAI".to_owned()];
-        let codes = vec![0]; // length mismatch
-        let err =
-            TableMeasDesc::new_variable_int("TIME", MeasureType::Epoch, "TimeRef", types, codes)
-                .unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("TabRefTypes length (2)") && msg.contains("TabRefCodes length (1)"),
-            "unexpected error: {msg}"
-        );
-    }
-
-    #[test]
-    fn resolve_ref_string_returns_error_for_corrupted_measinfo() {
-        // Construct a table with a variable-int ref column but
-        // with a manually corrupted TabRefTypes/TabRefCodes mapping
-        let schema = TableSchema::new(vec![
-            ColumnSchema::array_fixed("TIME", PrimitiveType::Float64, vec![1]),
-            ColumnSchema::scalar("TimeRef", PrimitiveType::Int32),
-        ])
-        .unwrap();
-        let mut table = Table::with_schema(schema);
-
-        // Use a valid ref map to write MEASINFO
-        let (types, codes) = default_epoch_ref_map();
-        let desc =
-            TableMeasDesc::new_variable_int("TIME", MeasureType::Epoch, "TimeRef", types, codes)
-                .unwrap();
-        desc.write(&mut table).unwrap();
-
-        // Add a row with a code that doesn't exist in the mapping
-        table
-            .add_row(RecordValue::new(vec![
-                RecordField::new(
-                    "TIME",
-                    Value::Array(ArrayValue::from_f64_vec(vec![51544.5])),
-                ),
-                RecordField::new("TimeRef", Value::Scalar(ScalarValue::Int32(9999))),
-            ]))
-            .unwrap();
-
-        let col = ScalarMeasColumn::new(&table, "TIME").unwrap();
-        let err = col.get_epoch(0).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("ref code 9999 not found"),
-            "unexpected error: {msg}"
-        );
-    }
-}
+#[path = "table_measures_tests.rs"]
+mod tests;

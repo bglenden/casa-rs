@@ -1,0 +1,5 @@
+# Pointings without dwell times use the requested integration.
+
+J2000 10h00m00 +34d00m00
+J2000 10h00m00.3 +34d00m00
+J2000 10h00m00 +34d00m03

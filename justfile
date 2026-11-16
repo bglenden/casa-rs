@@ -85,7 +85,7 @@ imaging-t48-heterogeneous-response-casa:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p target/t48-testdata/imaging/t48
-    CARGO_INCREMENTAL=0 cargo run --release -p casa-ms --bin synthetic-ms -- --json-run tools/perf/imager/fixtures/t48-mixed-alma-aca-request.json
+    CARGO_INCREMENTAL=0 cargo run --release -p casa-simulation --bin synthetic-ms -- --json-run tools/perf/imager/fixtures/t48-mixed-alma-aca-request.json
     CASA_RS_TESTDATA_ROOT="{{justfile_directory()}}/target/t48-testdata" python3 tools/perf/imager/run_workload.py t48-heterogeneous-mosaic-mfs --stream-log
 
 # Focused #528 MT-MFS weight grouping and Taylor reconstruction gate.
@@ -136,12 +136,13 @@ arch-check:
 docs-check:
     bash scripts/docs-check.sh
 
-# List (or with --apply, remove) worktrees and local branches already merged into origin/main.
+# List (or with --apply, remove) worktrees and local branches already merged or squash-merged into origin/main.
 tidy *args:
     bash scripts/tidy-git.sh {{args}}
 
-graph:
-    bash scripts/generate-graphs.sh
+# Run the daily housekeeping now (merged worktrees and branches, old build output, stale target/ scratch); add --dry-run to preview.
+housekeeping *args:
+    bash scripts/housekeeping-if-due.sh --now {{args}}
 
 install-local *args:
     bash scripts/install-local.sh {{args}}

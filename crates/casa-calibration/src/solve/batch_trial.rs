@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! MSv2/MSv4 trial, example B (`docs/measurement-set/trial/README.md`): the
-//! production gain accumulation and solver fed from
-//! `casa_observation::VisibilityBatch`es of both stores, with 60 s solution
-//! groups that cross batch boundaries.
+//! MSv2/MSv4 trial, example B: the production gain accumulation and solver
+//! fed from `casa_observation::VisibilityBatch`es of both stores, with 60 s
+//! solution groups that cross batch boundaries.
 //!
 //! `cargo test -p casa-calibration --lib batch_trial -- --nocapture` prints
-//! the measurements the evidence records.
+//! its measurements.
 
 //!
 //! The solve itself is [`feed`], which sees only the shared observation
@@ -515,11 +514,10 @@ fn solutions_recover_the_fixture_gains() {
     for row in &expected {
         let interval = usize::from(row.time_seconds > start + 1.0);
         let antenna = row.antenna_id as usize;
-        for receptor in 0..2 {
+        for (receptor, &solved) in row.gains.iter().enumerate() {
             let reference = truth(interval, 0, receptor);
             let true_gain =
                 truth(interval, antenna, receptor) * reference.conj() / reference.norm();
-            let solved = row.gains[receptor];
             phase = worse(phase, (solved / true_gain).arg().abs());
             amplitude = worse(amplitude, (solved.norm() / true_gain.norm() - 1.0).abs());
         }

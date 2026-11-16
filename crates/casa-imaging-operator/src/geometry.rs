@@ -91,10 +91,25 @@ pub struct CellLocation {
     pub x: i64,
     /// Anchor cell along y.
     pub y: i64,
-    /// Fine-offset row along x in `0..=oversampling`.
+    /// Fine-offset row along x in `0..Self::fine_rows(oversampling)`.
     pub ox: u16,
-    /// Fine-offset row along y in `0..=oversampling`.
+    /// Fine-offset row along y in `0..Self::fine_rows(oversampling)`.
     pub oy: u16,
+}
+
+impl CellLocation {
+    /// The index of the zero-offset tap row. CASA rounds both endpoints
+    /// of the half-cell interval away from zero.
+    #[must_use]
+    pub const fn fine_centre(oversampling: u16) -> u16 {
+        oversampling.div_ceil(2)
+    }
+
+    /// Number of fine offsets, including both half-cell endpoints.
+    #[must_use]
+    pub const fn fine_rows(oversampling: u16) -> usize {
+        2 * Self::fine_centre(oversampling) as usize + 1
+    }
 }
 
 impl GridGeometry {
@@ -205,19 +220,19 @@ impl GridGeometry {
     /// Grid cell and fine-offset rows of one sample.
     ///
     /// The anchor is the nearest cell; the fine offset is
-    /// `round((anchor − coordinate) · oversampling) + oversampling / 2`,
-    /// which is why `oversampling` must be even. This is the only place
-    /// that rounds sample coordinates; CPU and Metal kernels both use it.
+    /// `round((anchor − coordinate) · oversampling) + ceil(oversampling / 2)`.
+    /// This is the only place that rounds sample coordinates. CPU and Metal
+    /// both use it.
     #[must_use]
     pub fn locate(&self, u: f64, v: f64, oversampling: u16) -> CellLocation {
-        debug_assert!(oversampling.is_multiple_of(2), "oversampling must be even");
+        let fine_centre = f64::from(CellLocation::fine_centre(oversampling));
         let oversampling = f64::from(oversampling);
         let cx = u * self.scale[0] + (self.grid_shape[0] / 2) as f64;
         let cy = v * self.scale[1] + (self.grid_shape[1] / 2) as f64;
         let x = cx.round();
         let y = cy.round();
-        let ox = ((x - cx) * oversampling).round() + oversampling / 2.0;
-        let oy = ((y - cy) * oversampling).round() + oversampling / 2.0;
+        let ox = ((x - cx) * oversampling).round() + fine_centre;
+        let oy = ((y - cy) * oversampling).round() + fine_centre;
         CellLocation {
             x: x as i64,
             y: y as i64,
@@ -237,6 +252,18 @@ impl GridGeometry {
             && location.x + hx < self.grid_shape[0] as i64
             && location.y - hy >= 0
             && location.y + hy < self.grid_shape[1] as i64
+    }
+
+    /// Whether a kernel with `half_support` taps on each side of the anchor
+    /// reaches the padded grid at all ([`crate::GridEdge::Clipped`]).
+    #[must_use]
+    pub fn reaches(&self, location: CellLocation, half_support: [u16; 2]) -> bool {
+        let hx = i64::from(half_support[0]);
+        let hy = i64::from(half_support[1]);
+        location.x + hx >= 0
+            && location.x - hx < self.grid_shape[0] as i64
+            && location.y + hy >= 0
+            && location.y - hy < self.grid_shape[1] as i64
     }
 
     /// The pointing phase gradient in radians per grid cell `[g_x, g_y]`
@@ -304,6 +331,19 @@ mod tests {
     }
 
     #[test]
+    fn odd_sampling_keeps_both_rounded_half_cell_offsets() {
+        let image = geometry(100, 100);
+        let [scale_x, scale_y] = image.scale();
+        let at_half = image.locate(0.5 / scale_x, -0.5 / scale_y, 9);
+        let below_half = image.locate(0.49 / scale_x, -0.49 / scale_y, 9);
+        let at_centre = image.locate(0.0, 0.0, 9);
+        assert_eq!(CellLocation::fine_rows(9), 11);
+        assert_eq!([at_half.ox, at_half.oy], [10, 10]);
+        assert_eq!([below_half.ox, below_half.oy], [1, 9]);
+        assert_eq!([at_centre.ox, at_centre.oy], [5, 5]);
+    }
+
+    #[test]
     fn casa_padding_is_even_and_composite() {
         let tclean = PaddingFactor::TCLEAN;
         assert_eq!(casa_composite_padded_len(64, tclean), 80);
@@ -357,6 +397,20 @@ mod tests {
         let sample = geometry.locate(-0.6 * cell, 0.0, 100);
         assert_eq!(sample.x, 39);
         assert_eq!(sample.ox, 10);
+    }
+
+    #[test]
+    fn a_clipped_support_reaches_the_grid_with_one_tap() {
+        let geometry = geometry(64, 64);
+        let [nx, ny] = geometry.grid_shape().map(|n| n as i64);
+        let at = |x, y| CellLocation { x, y, ox: 0, oy: 0 };
+        // `onmosgrid`: a support whose last tap is the grid's first cell
+        // reaches it; one cell further does not.
+        assert!(geometry.reaches(at(-3, 10), [3, 3]));
+        assert!(!geometry.reaches(at(-4, 10), [3, 3]));
+        assert!(geometry.reaches(at(10, ny + 2), [3, 3]));
+        assert!(!geometry.reaches(at(10, ny + 3), [3, 3]));
+        assert!(geometry.reaches(at(nx + 2, -3), [3, 3]));
     }
 
     #[test]

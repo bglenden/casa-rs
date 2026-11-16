@@ -15,8 +15,7 @@
 //! rows into [`Placement`]s, and CASA's visibility-domain continuum fit
 //! ([`fit_and_subtract_continuum`]).
 //!
-//! The design is `docs/imaging-architecture/imaging-foundation-plan-20261007.md`
-//! section 5.3 and ADR-0016.
+//! The design is ADR-0016 (decision 1).
 //!
 //! # Conventions
 //!
@@ -35,10 +34,13 @@
 mod accumulator;
 mod aw;
 mod backend;
+mod boxcar;
+mod compensation;
 mod continuum;
 mod convolution;
 mod cpu;
 mod dense;
+mod edge;
 mod error;
 mod fft;
 mod geometry;
@@ -57,30 +59,37 @@ pub use accumulator::{
     GridStorage, Mode, ModeSet, PlaneRange, Tile,
 };
 pub use aw::{
-    AwCatalog, AwCatalogError, AwIndexing, CacheBound, CacheCharge, EvlaApertureGrid,
-    EvlaApertureModel, EvlaAwWorkspace, NativeAwGenerationError, NativeAwPair, NativeAwPlane,
-    NativeCacheLock, NativeCacheState, NativeManifest,
+    AwCatalog, AwCatalogError, AwIndexing, AwPaRotation, Awp2, Awp2Sampling, Awp2Screens,
+    CacheBound, CacheCharge, EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace,
+    NativeAwGenerationError, NativeAwPair, NativeAwPlane, NativeCacheLock, NativeCacheState,
+    NativeManifest, first_covered_pa, stored_pa_rad,
 };
 pub use backend::{GridBackend, ModelPlaneGrids, PreparedModelGrids, Work};
+/// A mosaic dish class's voltage pattern ([`MosaicPb::screens`]).
+pub use casa_numerics::PrimaryBeam;
 pub use continuum::{
     ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumRowResult, ContinuumSample,
     fit_and_subtract_continuum,
 };
 pub use convolution::{
-    CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
+    CellHold, ConvolutionFunctionSet, DenseCell, GridEdge, ImageCorrection, KernelNormalisation,
     MuellerRouting, RowContext, TapFootprint, TapLayout,
 };
 pub use cpu::CpuBackend;
+pub use edge::{CellBox, Reach, clipped_kernel_sum};
 pub use error::{DeviceFailure, OperatorError};
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent, PaddingFactor};
 pub use mosaic::{
-    AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicRules, MosaicScreens, MosaicWindow, pair_plane,
+    AiryDish, MOSAIC_OVERSAMPLING, MosaicBufferBand, MosaicPb, MosaicRules, MosaicScreens,
+    MosaicWindow, SimpleMosaicScreens, pair_plane,
 };
-pub use native::{DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm};
+pub use native::{
+    DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm, STENCIL,
+};
 pub use operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
 };
-pub use polarization::{FeedBasis, GridPolarization, PolarizationRouting};
+pub use polarization::{FeedBasis, GridPolarization, PolarizationRouting, SumwtSource};
 pub use resample::{
     NativeRow, PlacedRow, PredictionScratch, RowSpectrum, SpectralAxis, SpectralKernel,
     SpectralResampler, WeightSlots,
@@ -88,8 +97,8 @@ pub use resample::{
 pub use sample::{CfKey, Placement, SampleBlock, SampleBuffer};
 pub use spheroidal::{SPHEROIDAL_OVERSAMPLING, SPHEROIDAL_SUPPORT, Spheroidal, grdsf};
 pub use weighting::{
-    BandwidthTaper, DensityCellRule, DensityGrid, DensityGridShape, DensityUv, RobustFactors,
-    Taper, WeightingGeneration, build_density_grid,
+    BandwidthTaper, DensityCellRule, DensityFieldKeys, DensityGrid, DensityGridShape, DensityUv,
+    RobustFactors, Taper, WeightingGeneration, build_density_grid,
 };
 pub use wplanes::{MAX_W_PLANES, WPlaneCount, WPlanes, WScreens};
 
@@ -105,3 +114,6 @@ pub const FFT_PLAN_CACHE_BYTES: usize = casa_fft::PLAN_CACHE_BYTES;
 pub const fn grid_planning_bytes(cells: usize) -> u64 {
     casa_fft::planning_bytes::<f64>(cells)
 }
+
+// CASA simulator GridFT BOX mode.
+pub use boxcar::Boxcar;

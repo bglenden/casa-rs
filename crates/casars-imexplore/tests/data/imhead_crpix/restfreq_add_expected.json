@@ -1,0 +1,80 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "get": {
+        "unit": "Hz",
+        "value": 1200000000.0
+      },
+      "history": [
+        "Modified restfreq from 0 to \"1.2GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"restfreq\", hdvalue=\"1.2GHz\", verbose=False)"
+      ],
+      "image": "restfreq_zero",
+      "key": "restfreq",
+      "value": "1.2GHz"
+    },
+    {
+      "get": {
+        "unit": "Hz",
+        "value": 1500000000.0
+      },
+      "history": [
+        "Modified restfreq from 0 to   unit: String \"MHz\"\n  value: Double 1500",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"RESTFREQ\", hdvalue={'unit': 'MHz', 'value': 1500.0}, verbose=False)"
+      ],
+      "image": "restfreq_zero",
+      "key": "RESTFREQ",
+      "value": {
+        "unit": "MHz",
+        "value": 1500.0
+      }
+    },
+    {
+      "error": "Exception: Unable to set rest frequency to 0Hz.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": {
+        "unit": "Hz",
+        "value": 0.0
+      },
+      "history": [],
+      "image": "restfreq_zero",
+      "key": "restfreq",
+      "value": "0Hz"
+    },
+    {
+      "error": "Exception: Error converting bad to Quantity.\n... thrown by static casacore::Quantity casa::ImageMetaDataRW<T>::_getQuantity(const casacore::ValueHolder&) [with T = float; casacore::Quantity = casacore::Quantum<double>]",
+      "get": {
+        "unit": "Hz",
+        "value": 0.0
+      },
+      "history": [],
+      "image": "restfreq_zero",
+      "key": "restfreq",
+      "value": "bad"
+    },
+    {
+      "error": "Exception: The rest frequency (restfreq=1.42041e+09Hz) already exists. It may be modified but not added by this application. If you wish to append a rest frequency to an already existing list, use cs.setrestfrequency()..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::add(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "history": [],
+      "image": "normal",
+      "key": "restfreq",
+      "value": "1GHz"
+    },
+    {
+      "error": "Exception: The rest frequency (RESTFREQ=1.42041e+09Hz) already exists. It may be modified but not added by this application. If you wish to append a rest frequency to an already existing list, use cs.setrestfrequency()..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::add(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "history": [],
+      "image": "normal",
+      "key": "RESTFREQ",
+      "value": "bad"
+    }
+  ]
+}

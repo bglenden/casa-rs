@@ -222,11 +222,13 @@ impl State {
             })?;
             self.open = Some(Open {
                 table,
-                name: target,
+                name: target.clone(),
                 writable: true,
                 lock,
                 memory_added_columns: Default::default(),
                 last_modify_counter: 0,
+                keyword_epoch: super::registry::keyword_epoch(&target),
+                seen_keyword_epoch: 0,
             });
             return Ok(CasaValue::Bool(true));
         }

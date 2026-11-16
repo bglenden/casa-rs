@@ -204,6 +204,15 @@ impl MeasureColumn {
                 .ok_or_else(|| {
                     cell_error(path, row, column, "expected a frame code".to_string())
                 })?;
+                if self.measure == MeasureType::Frequency {
+                    return casa_tables::table_measures::frequency_ref_for_table_code(
+                        types, codes, code,
+                    )
+                    .map(|frame| frame.as_str().to_string())
+                    .ok_or_else(|| {
+                        cell_error(path, row, column, format!("unknown frame code {code}"))
+                    });
+                }
                 if let Some(position) = codes.iter().position(|candidate| *candidate == code) {
                     return types.get(position).cloned().ok_or_else(|| {
                         cell_error(path, row, column, format!("frame code {code} has no name"))

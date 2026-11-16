@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Laws of the trial observation adapters on the MSv2/MSv4 trial fixtures
-//! (`docs/measurement-set/trial/README.md`): the MSv4 store XRADIO wrote
-//! from the MSv2, read through both adapters into the same batches.
+//! (`tests/fixtures/ms_trial`): the MSv4 store XRADIO wrote from the MSv2,
+//! read through both adapters into the same batches.
 
+#[cfg(unix)]
+#[path = "observation_io/arrays.rs"]
+mod arrays;
+#[cfg(unix)]
+#[path = "observation_io/channel_order.rs"]
+mod channel_order;
 #[cfg(unix)]
 #[path = "observation_io/convert.rs"]
 mod convert;
@@ -26,8 +32,14 @@ mod metadata;
 #[cfg(unix)]
 #[path = "observation_io/namespace.rs"]
 mod namespace;
+#[cfg(unix)]
+#[path = "observation_io/receptors.rs"]
+mod receptors;
 #[path = "observation_io/refusals.rs"]
 mod refusals;
+#[cfg(unix)]
+#[path = "observation_io/sources.rs"]
+mod sources;
 #[path = "observation_io/split.rs"]
 mod split;
 #[path = "observation_io/times.rs"]
@@ -101,6 +113,13 @@ pub(crate) const COMET: [casa_test_support::ephemeris_table::EphemerisRow; 3] = 
 /// (−1 for none), each id's table holding [`COMET`].
 pub(crate) fn follow_ephemerides(path: &Path, ids: &[i32]) {
     let mut ms = casa_ms::MeasurementSet::open(path).expect("ms");
+    let reference_time = ms
+        .main_table()
+        .cell_accessor(0, "TIME")
+        .unwrap()
+        .scalar()
+        .unwrap()
+        .clone();
     let field = ms.subtable_mut(casa_ms::SubtableId::Field).expect("FIELD");
     field
         .add_column(
@@ -111,6 +130,15 @@ pub(crate) fn follow_ephemerides(path: &Path, ids: &[i32]) {
         )
         .expect("EPHEMERIS_ID");
     for (row, id) in ids.iter().enumerate() {
+        if *id >= 0 {
+            field
+                .fill_column_range(
+                    "TIME",
+                    casa_tables::RowRange::new(row, row + 1),
+                    casa_types::Value::Scalar(reference_time.clone()),
+                )
+                .unwrap();
+        }
         field
             .fill_column_range(
                 "EPHEMERIS_ID",
@@ -889,7 +917,7 @@ fn a_correlation_subset_carries_the_flags_it_is_asked_for() {
     }
 }
 
-/// D1: the correlation axis lives once. Every batch of an all-products
+/// The correlation axis lives once. Every batch of an all-products
 /// traversal borrows the catalogue's list, every batch of a subset
 /// traversal shares the one axis resolved at binding, and a piece packed
 /// from a batch shares its batch's: no fill or pack copies the list.

@@ -5,8 +5,8 @@ use std::path::{Component, Path};
 
 use casa_provider_contracts::{
     Constraint, NarrowingConstraint, NormalizationRule, PROJECT_TOKEN, ParameterConcept,
-    ParameterType, ParameterValue, SurfaceParameterBinding, validate_parameter_value,
-    validate_selector_capabilities,
+    ParameterType, ParameterValue, SelectorGrammar, SurfaceParameterBinding,
+    validate_parameter_value, validate_selector_capabilities,
 };
 use casa_types::quanta::{Quantity, Unit};
 use thiserror::Error;
@@ -16,7 +16,12 @@ pub fn normalize_value(
     value: &ParameterValue,
     concept: &ParameterConcept,
 ) -> Result<ParameterValue, NormalizationError> {
-    reject_forbidden_strings(value, names_project(&concept.normalization))?;
+    validate_wrapped_values(value)?;
+    reject_forbidden_strings(
+        value,
+        names_project(&concept.normalization),
+        matches!(concept.normalization, NormalizationRule::TcleanField),
+    )?;
     let value = if reads_numbers_as_text(&concept.normalization) {
         number_as_text(value)
     } else {
@@ -28,6 +33,20 @@ pub fn normalize_value(
         .map_err(NormalizationError::Type)?;
     validate_constraints(&normalized, &concept.base_constraints)?;
     Ok(normalized)
+}
+
+// NumberAsText and other normalization must not erase malformed typed values
+// before their scalar dtype and nesting invariants have been checked.
+fn validate_wrapped_values(value: &ParameterValue) -> Result<(), NormalizationError> {
+    match value {
+        ParameterValue::ScalarArray(_) | ParameterValue::NumpyScalar { .. } => {
+            validate_parameter_value(value, &ParameterType::Variant)
+                .map_err(NormalizationError::Type)
+        }
+        ParameterValue::Array(values) => values.iter().try_for_each(validate_wrapped_values),
+        ParameterValue::Table(values) => values.values().try_for_each(validate_wrapped_values),
+        _ => Ok(()),
+    }
 }
 
 /// Whether `rule` reads a number given for text as its text.
@@ -47,6 +66,10 @@ fn number_as_text(value: &ParameterValue) -> ParameterValue {
         ParameterValue::Array(values) => {
             ParameterValue::Array(values.iter().map(number_as_text).collect())
         }
+        ParameterValue::ScalarArray(value) => {
+            ParameterValue::ScalarArray(Box::new(number_as_text(value)))
+        }
+        ParameterValue::NumpyScalar { value, .. } => number_as_text(value),
         other => other.clone(),
     }
 }
@@ -65,6 +88,7 @@ fn names_project(rule: &NormalizationRule) -> bool {
 fn reject_forbidden_strings(
     value: &ParameterValue,
     project: bool,
+    tclean_field: bool,
 ) -> Result<(), NormalizationError> {
     match value {
         ParameterValue::String(value) => {
@@ -76,21 +100,36 @@ fn reject_forbidden_strings(
             } else {
                 value.clone()
             };
-            if checked.contains('$') || checked.contains('`') {
+            let forbidden_dollar = if tclean_field {
+                field_has_expansion(&checked)
+            } else {
+                checked.contains('$')
+            };
+            if forbidden_dollar || checked.contains('`') {
                 return Err(NormalizationError::EnvironmentExpression(value.clone()));
             }
         }
         ParameterValue::Array(values) => {
             for value in values {
-                reject_forbidden_strings(value, project)?;
+                reject_forbidden_strings(value, project, tclean_field)?;
             }
         }
         ParameterValue::Table(values) => {
             for value in values.values() {
-                reject_forbidden_strings(value, project)?;
+                reject_forbidden_strings(value, project, tclean_field)?;
             }
         }
-        ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) => {}
+        ParameterValue::ScalarArray(value) => {
+            reject_forbidden_strings(value, project, tclean_field)?
+        }
+        ParameterValue::NumpyScalar { value, .. } => {
+            reject_forbidden_strings(value, project, tclean_field)?
+        }
+        ParameterValue::Bool(_)
+        | ParameterValue::Integer(_)
+        | ParameterValue::Float(_)
+        | ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. } => {}
     }
     Ok(())
 }
@@ -105,6 +144,31 @@ pub fn validate_value(
     validate_constraints(value, &concept.base_constraints)?;
     validate_refinements(value, concept, refinements)?;
     Ok(())
+}
+
+// FIELD treats a bare dollar and regex end anchor as text. Keep rejecting
+// shell substitution prefixes, including a dollar before an opening quote.
+fn field_has_expansion(value: &str) -> bool {
+    let mut delimiter = None;
+    for (index, byte) in value.bytes().enumerate() {
+        match (delimiter, byte) {
+            (None, b'"' | b'/') => delimiter = Some(byte),
+            (Some(closing), byte) if closing == byte => delimiter = None,
+            (_, b'$') => {
+                let Some(&next) = value.as_bytes().get(index + 1) else {
+                    continue;
+                };
+                let field_boundary = matches!(next, b'/' | b',' | b')' | b'|' | b']')
+                    || next.is_ascii_whitespace()
+                    || (next == b'"' && delimiter == Some(b'"'));
+                if !field_boundary {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Compare two values after invariant normalization.
@@ -122,7 +186,26 @@ fn normalize_domain(
     value: &ParameterValue,
     domain: &ParameterType,
 ) -> Result<ParameterValue, NormalizationError> {
+    if matches!(
+        value,
+        ParameterValue::ScalarArray(_) | ParameterValue::NumpyScalar { .. }
+    ) {
+        validate_parameter_value(value, &ParameterType::Variant)
+            .map_err(NormalizationError::Type)?;
+    }
+    if !matches!(
+        domain,
+        ParameterType::Variant | ParameterType::Optional { .. }
+    ) && let ParameterValue::ScalarArray(scalar)
+    | ParameterValue::NumpyScalar { value: scalar, .. } = value
+    {
+        return normalize_domain(scalar, domain);
+    }
     match domain {
+        ParameterType::Variant => {
+            validate_parameter_value(value, domain).map_err(NormalizationError::Type)?;
+            Ok(value.clone())
+        }
         ParameterType::Bool => match value {
             ParameterValue::Bool(value) => Ok(ParameterValue::Bool(*value)),
             _ => type_error(value, domain),
@@ -254,6 +337,9 @@ fn normalize_domain(
             ParameterValue::String(value) if states.contains(value) => {
                 Ok(ParameterValue::String(value.clone()))
             }
+            ParameterValue::ScalarArray(value) if matches!(value.as_ref(), ParameterValue::String(state) if states.contains(state)) => {
+                Ok(value.as_ref().clone())
+            }
             // CASA spells the empty value of a parameter of several types
             // both '' and [] (flagdata's timedev): where '' is an absence
             // state, [] is that state (#931).
@@ -278,7 +364,7 @@ fn apply_rule(
     rule: &NormalizationRule,
 ) -> Result<ParameterValue, NormalizationError> {
     match rule {
-        NormalizationRule::Identity => Ok(value),
+        NormalizationRule::Identity | NormalizationRule::TcleanField => Ok(value),
         NormalizationRule::Trim => map_strings(value, |value| Ok(value.trim().to_string())),
         NormalizationRule::Lowercase => {
             map_strings(value, |value| Ok(value.trim().to_ascii_lowercase()))
@@ -289,7 +375,13 @@ fn apply_rule(
             grammar,
             capabilities,
         } => {
-            let value = map_strings(value, |value| Ok(normalize_selector(value)))?;
+            let value = map_strings(value, |value| {
+                Ok(if *grammar == SelectorGrammar::Field {
+                    normalize_field_selector(value)
+                } else {
+                    normalize_selector(value)
+                })
+            })?;
             validate_selector_capabilities(*grammar, &value, capabilities)
                 .map_err(NormalizationError::Constraint)?;
             Ok(value)
@@ -321,44 +413,6 @@ fn map_strings(
             .map(ParameterValue::Array),
         other => Ok(other),
     }
-}
-
-pub(crate) fn normalize_quantity_unit(
-    value: ParameterValue,
-    canonical_unit: &str,
-) -> Result<ParameterValue, NormalizationError> {
-    reject_forbidden_strings(&value, false)?;
-    map_strings(value, |value| normalize_quantity(value, canonical_unit))
-}
-
-/// A profile's old comma-separated numbers (`"0.1,10"`) as a list of
-/// numbers, and its old explicit absence (`"none"` or empty) as CASA's
-/// `-1`: the `number_list` migration transform (#931). Any other value is
-/// kept.
-pub(crate) fn number_list(
-    value: ParameterValue,
-    parameter: &str,
-) -> Result<ParameterValue, crate::profile::ProfileError> {
-    let ParameterValue::String(text) = value else {
-        return Ok(value);
-    };
-    let text = text.trim();
-    if text.is_empty() || text.eq_ignore_ascii_case("none") {
-        return Ok(ParameterValue::Integer(-1));
-    }
-    text.split(',')
-        .map(|part| {
-            part.trim()
-                .parse::<f64>()
-                .map(ParameterValue::Float)
-                .map_err(|error| {
-                    crate::profile::ProfileError::Contract(format!(
-                        "migration expected numbers for {parameter:?}, got {text:?}: {error}"
-                    ))
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(ParameterValue::Array)
 }
 
 fn normalize_quantity(value: &str, canonical_unit: &str) -> Result<String, NormalizationError> {
@@ -458,6 +512,42 @@ fn normalize_project_path(value: &str) -> Result<String, NormalizationError> {
             }
             other => other,
         })
+}
+
+/// Preserve the spaces in a bare NAME or a quoted pattern, and still
+/// trim around FIELD list and range separators.
+fn normalize_field_selector(value: &str) -> String {
+    if value.trim().is_empty() {
+        return "none".to_owned();
+    }
+    let mut quoted = false;
+    let parts = value.split(|character| {
+        if character == '"' {
+            quoted = !quoted;
+        }
+        character == ',' && !quoted
+    });
+    let mut normalized = String::with_capacity(value.len());
+    for (index, part) in parts.enumerate() {
+        // Spaces next to a regex delimiter or comparison operator can
+        // invalidate a FIELD expression. Leave these lists to the parser.
+        if part.trim_start().starts_with(['/', '<', '>', '(']) {
+            return value.to_owned();
+        }
+        if index > 0 {
+            normalized.push(',');
+        }
+        let part = part.trim();
+        match part.split_once('~') {
+            Some((start, end)) if !part.contains('"') => {
+                normalized.push_str(start.trim_end());
+                normalized.push('~');
+                normalized.push_str(end.trim_start());
+            }
+            _ => normalized.push_str(part),
+        }
+    }
+    normalized
 }
 
 fn normalize_selector(value: &str) -> String {
@@ -649,7 +739,11 @@ fn numeric_values(value: &ParameterValue) -> Vec<f64> {
             .unwrap_or_default(),
         ParameterValue::Array(values) => values.iter().flat_map(numeric_values).collect(),
         ParameterValue::Table(values) => values.values().flat_map(numeric_values).collect(),
-        ParameterValue::Bool(_) => Vec::new(),
+        ParameterValue::ScalarArray(value) => numeric_values(value),
+        ParameterValue::NumpyScalar { value, .. } => numeric_values(value),
+        ParameterValue::Bool(_)
+        | ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. } => Vec::new(),
     }
 }
 
@@ -665,12 +759,51 @@ fn length(value: &ParameterValue) -> Option<usize> {
 fn values_semantically_equal(left: &ParameterValue, right: &ParameterValue) -> bool {
     match (left, right) {
         (ParameterValue::Float(left), ParameterValue::Float(right)) => {
-            let scale = left.abs().max(right.abs()).max(1.0);
-            (left - right).abs() <= scale * 1.0e-12
+            left == right
+                || (left.is_nan() && right.is_nan())
+                || (left.is_finite()
+                    && right.is_finite()
+                    && (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1.0e-12)
         }
+        (ParameterValue::Complex(left), ParameterValue::Complex(right)) => {
+            left.iter().zip(right).all(|(left, right)| {
+                let (left, right) = (left.0, right.0);
+                left == right
+                    || (left.is_nan() && right.is_nan())
+                    || (left.is_finite()
+                        && right.is_finite()
+                        && (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1.0e-12)
+            })
+        }
+        (ParameterValue::ScalarArray(left), ParameterValue::ScalarArray(right)) => {
+            values_semantically_equal(left, right)
+        }
+        (
+            ParameterValue::NumpyScalar {
+                dtype: ld,
+                value: left,
+            },
+            ParameterValue::NumpyScalar {
+                dtype: rd,
+                value: right,
+            },
+        ) => ld == rd && values_semantically_equal(left, right),
+        (
+            ParameterValue::EmptyArray {
+                dtype: ld,
+                shape: ls,
+            },
+            ParameterValue::EmptyArray {
+                dtype: rd,
+                shape: rs,
+            },
+        ) => ld == rd && ls == rs,
         (ParameterValue::Integer(left), ParameterValue::Integer(right)) => left == right,
         (ParameterValue::Integer(left), ParameterValue::Float(right))
         | (ParameterValue::Float(right), ParameterValue::Integer(left)) => {
+            if !right.is_finite() {
+                return false;
+            }
             let left = *left as f64;
             let scale = left.abs().max(right.abs()).max(1.0);
             (left - right).abs() <= scale * 1.0e-12
@@ -743,6 +876,81 @@ impl NormalizationError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn zero_dimensional_optional_states_keep_their_original_meaning() {
+        use casa_provider_contracts::{ParameterType, ParameterValue};
+        let domain = ParameterType::Optional {
+            value: Box::new(ParameterType::Float),
+            states: vec!["auto".into()],
+        };
+        let scalar = ParameterValue::ScalarArray(Box::new(ParameterValue::String("auto".into())));
+        assert_eq!(
+            super::normalize_domain(&scalar, &domain).unwrap(),
+            ParameterValue::String("auto".into())
+        );
+        let number = ParameterValue::ScalarArray(Box::new(ParameterValue::Float(3.0)));
+        assert_eq!(
+            super::normalize_domain(&number, &domain).unwrap(),
+            ParameterValue::Float(3.0)
+        );
+        let malformed = ParameterValue::ScalarArray(Box::new(ParameterValue::Array(vec![
+            ParameterValue::Integer(16),
+            ParameterValue::Integer(32),
+        ])));
+        assert!(super::normalize_domain(&malformed, &domain).is_err());
+        let nested = ParameterValue::ScalarArray(Box::new(ParameterValue::ScalarArray(Box::new(
+            ParameterValue::Integer(16),
+        ))));
+        assert!(super::normalize_domain(&nested, &ParameterType::Integer).is_err());
+        let invalid_numpy = ParameterValue::NumpyScalar {
+            dtype: casa_provider_contracts::NumpyScalarType::Int8,
+            value: Box::new(ParameterValue::Integer(1000)),
+        };
+        assert!(super::normalize_domain(&invalid_numpy, &ParameterType::Integer).is_err());
+        let invalid_float = ParameterValue::NumpyScalar {
+            dtype: casa_provider_contracts::NumpyScalarType::Float32,
+            value: Box::new(ParameterValue::Float(1e300)),
+        };
+        assert!(super::normalize_domain(&invalid_float, &ParameterType::Float).is_err());
+    }
+
+    #[test]
+    fn complex_semantic_equality_handles_nested_and_nonfinite_components() {
+        use casa_provider_contracts::{CasaFloat, ParameterValue};
+        let complex = |real, imag| ParameterValue::Complex([CasaFloat(real), CasaFloat(imag)]);
+        assert!(super::values_semantically_equal(
+            &complex(1.0, -0.0),
+            &complex(1.0, 0.0)
+        ));
+        assert!(super::values_semantically_equal(
+            &complex(f64::NAN, f64::INFINITY),
+            &complex(f64::NAN, f64::INFINITY)
+        ));
+        assert!(!super::values_semantically_equal(
+            &complex(1.0, f64::INFINITY),
+            &complex(1.0, f64::NEG_INFINITY)
+        ));
+        let nested = ParameterValue::Table(std::collections::BTreeMap::from([(
+            "value".into(),
+            complex(2.0, -3.0),
+        )]));
+        assert!(super::values_semantically_equal(&nested, &nested));
+    }
+
+    #[test]
+    fn variant_nonfinite_values_keep_type_and_compare_safely() {
+        let nan = ParameterValue::Float(f64::NAN);
+        let infinity = ParameterValue::Float(f64::INFINITY);
+        assert!(values_semantically_equal(&nan, &nan));
+        assert!(values_semantically_equal(&infinity, &infinity));
+        assert!(!values_semantically_equal(
+            &infinity,
+            &ParameterValue::Integer(1)
+        ));
+        let encoded = serde_json::to_string(&nan).unwrap();
+        let decoded: ParameterValue = serde_json::from_str(&encoded).unwrap();
+        assert!(matches!(decoded, ParameterValue::Float(value) if value.is_nan()));
+    }
     use casa_provider_contracts::{
         CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, ParameterConceptId, ParameterDocs, ParameterRole,
         PersistenceClass, SelectorGrammar, SemanticRevision, UnitDimension,
@@ -750,27 +958,6 @@ mod tests {
     };
 
     use super::*;
-
-    #[test]
-    fn an_old_number_text_migrates_to_a_list_of_numbers() {
-        let text = |text: &str| ParameterValue::String(text.into());
-        assert_eq!(
-            number_list(text(" 0.1, 10 "), "includepix").unwrap(),
-            ParameterValue::Array(vec![
-                ParameterValue::Float(0.1),
-                ParameterValue::Float(10.0)
-            ])
-        );
-        assert_eq!(
-            number_list(text("none"), "includepix").unwrap(),
-            ParameterValue::Integer(-1)
-        );
-        assert_eq!(
-            number_list(ParameterValue::Integer(-1), "includepix").unwrap(),
-            ParameterValue::Integer(-1)
-        );
-        assert!(number_list(text("0.1,lots"), "includepix").is_err());
-    }
 
     fn concept(domain: ParameterType, rule: NormalizationRule) -> ParameterConcept {
         ParameterConcept {
@@ -917,6 +1104,42 @@ mod tests {
     }
 
     #[test]
+    fn imhead_variant_preserves_types_including_nested_nonfinite_numbers() {
+        let catalog = builtin_surface_catalog().unwrap();
+        let concept = catalog
+            .catalog
+            .concepts
+            .iter()
+            .find(|concept| concept.id.as_str() == "parameter.hdvalue")
+            .unwrap();
+        let values = [
+            ParameterValue::String("  literal  ".into()),
+            ParameterValue::Bool(true),
+            ParameterValue::Integer(42),
+            ParameterValue::Float(3.25),
+            ParameterValue::Array(vec![
+                ParameterValue::Integer(2),
+                ParameterValue::String("x".into()),
+            ]),
+            ParameterValue::Table(BTreeMap::from([
+                ("unit".into(), ParameterValue::String("Hz".into())),
+                ("value".into(), ParameterValue::Float(1.5)),
+            ])),
+        ];
+        for value in values {
+            assert_eq!(accepted(value.clone(), concept).unwrap(), value);
+        }
+        let value = ParameterValue::Array(vec![
+            ParameterValue::Float(f64::NAN),
+            ParameterValue::Float(f64::INFINITY),
+        ]);
+        assert!(values_semantically_equal(
+            &accepted(value.clone(), concept).unwrap(),
+            &value
+        ));
+    }
+
+    #[test]
     fn every_builtin_imsize_binding_takes_casas_forms() {
         let catalog = builtin_surface_catalog().unwrap();
         let mut surfaces = Vec::new();
@@ -926,7 +1149,14 @@ mod tests {
                 .iter()
                 .filter(|binding| binding.name == "imsize")
             {
-                assert_eq!(binding.concept.id.as_str(), IMSIZE_CONCEPT_ID);
+                let expected_concept = if surface.id() == "tsdimaging" {
+                    "single_dish.imsize"
+                } else if matches!(surface.id(), "simanalyze" | "simalma") {
+                    "simulation.analysis.imsize"
+                } else {
+                    IMSIZE_CONCEPT_ID
+                };
+                assert_eq!(binding.concept.id.as_str(), expected_concept);
                 let concept = catalog.catalog.concept(&binding.concept).unwrap();
                 // tclean's `imsize=1024` is its one-element list, and both
                 // mean a square image.
@@ -945,7 +1175,7 @@ mod tests {
             }
         }
         surfaces.sort();
-        assert_eq!(surfaces, ["tclean"]);
+        assert_eq!(surfaces, ["simalma", "simanalyze", "tclean", "tsdimaging"]);
     }
 
     #[test]
@@ -1134,8 +1364,9 @@ mod tests {
     fn legacy_empty_shared_selectors_normalize_to_canonical_none() {
         let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
         for concept in catalog.catalog.concepts.iter().filter(|concept| {
-            concept.id.as_str().starts_with("ms.selection.")
-                || concept.id.as_str().starts_with("image.selection.")
+            concept.semantic_revision.0 == 1
+                && (concept.id.as_str().starts_with("ms.selection.")
+                    || concept.id.as_str().starts_with("image.selection."))
         }) {
             assert_eq!(
                 normalize_value(&ParameterValue::String("  ".into()), concept).unwrap(),
@@ -1151,6 +1382,36 @@ mod tests {
                 )
                 .unwrap()
             );
+        }
+    }
+
+    #[test]
+    fn numeric_selector_revision_two_preserves_validity_distinctions() {
+        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        for concept in catalog.catalog.concepts.iter().filter(|concept| {
+            concept.semantic_revision.0 == 2
+                && matches!(
+                    concept.id.as_str(),
+                    "ms.selection.scan"
+                        | "ms.selection.observation"
+                        | "ms.selection.antenna"
+                        | "ms.selection.timerange"
+                )
+        }) {
+            for text in ["", "  ", "none", "None", " none ", " 1 ", "1~2", ">1"] {
+                let value = ParameterValue::String(text.into());
+                assert_eq!(normalize_value(&value, concept).unwrap(), value);
+            }
+            for text in ["  ", "none", "None", " none "] {
+                assert!(
+                    !semantic_eq(
+                        &ParameterValue::String(String::new()),
+                        &ParameterValue::String(text.into()),
+                        concept
+                    )
+                    .unwrap()
+                );
+            }
         }
     }
 

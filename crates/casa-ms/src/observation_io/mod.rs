@@ -8,12 +8,9 @@
 //! once per bind and once per batch. Algorithm code takes that interface
 //! and imports neither concrete adapter.
 //!
-//! **Trial status.** These adapters implement the cases the MSv2/MSv4
-//! trial's examples need (`docs/measurement-set/trial/README.md`), at the
-//! trial's second revision (`revision-2-design.md`): the MSv2 adapter grids
-//! rows onto time × baseline at opening and partitions them as XRADIO's
-//! converter does, so both adapters deliver the same batches. The
-//! production readers and writers are unchanged.
+//! The MSv2 adapter grids rows onto time × baseline at opening and
+//! partitions them as XRADIO's converter does, so both adapters deliver
+//! the same batches.
 
 #[cfg(all(feature = "msv4", unix))]
 pub mod convert;
@@ -31,7 +28,7 @@ use std::path::Path;
 
 use casa_observation::{Observation, ObservationError};
 
-pub use msv2::{Msv2Cursor, Msv2Observation};
+pub use msv2::{MainRowKeys, Msv2Cursor, Msv2Observation};
 #[cfg(feature = "msv4")]
 pub use msv4::{
     Msv4Codec, Msv4Cursor, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
@@ -81,11 +78,46 @@ pub struct OpenOptions {
     pub group_closure: GroupClosure,
     /// How an MSv2 is partitioned; see [`PartitionScheme`].
     pub partition_scheme: PartitionScheme,
+    /// Probe spectral weight availability before the optional field or scan
+    /// splits. Imaging keeps one weight extent across the resulting grids.
+    pub weight_spectrum_unsplit: bool,
+    /// Interpret an incomplete MSv2 frequency descriptor as CASA's
+    /// visibility iterator does: use the row's `MEAS_FREQ_REF` for its
+    /// channel frame. General measure metadata retains its own reference.
+    pub visibility_frequency_frame: bool,
 }
 
-/// Open the observation at `path`, choosing its adapter from the store:
-/// a Zarr processing set (a `zarr.json` at its root) is MSv4, a casacore
-/// table directory is MSv2.
+/// Whether the store at `path` is an MSv4 processing set: a Zarr group,
+/// with a `zarr.json` at its root. Anything else is taken for a
+/// MeasurementSet v2, a casacore table directory; this is the one rule
+/// [`open`] chooses an adapter by.
+#[must_use]
+pub fn is_msv4_store(path: &Path) -> bool {
+    path.join("zarr.json").is_file()
+}
+
+/// Whether the directory at `path` holds a MeasurementSet, as a reader
+/// would take it: an MSv4 processing set (a Zarr group whose root
+/// attributes say `type: processing_set`), or a MeasurementSet v2 (a
+/// casacore table whose `table.info` says `Type = Measurement Set`). A
+/// subtable, an image, a calibration table or a dataset inside a
+/// processing set is none.
+#[must_use]
+pub fn is_measurement_set(path: &Path) -> bool {
+    if is_msv4_store(path) {
+        return std::fs::read(path.join("zarr.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .is_some_and(|root| root["attributes"]["type"] == "processing_set");
+    }
+    std::fs::read_to_string(path.join("table.info")).is_ok_and(|info| {
+        casa_tables::TableInfo::parse(&info).table_type == crate::ms::CASACORE_MS_TABLE_TYPE
+    })
+}
+
+/// Open the observation at `path`, choosing its adapter from the store
+/// ([`is_msv4_store`]): a Zarr processing set is MSv4, a casacore table
+/// directory is MSv2.
 ///
 /// # Errors
 ///
@@ -97,7 +129,7 @@ pub fn open(
     options: &OpenOptions,
 ) -> Result<Box<dyn Observation>, ObservationError> {
     let path = path.as_ref();
-    if path.join("zarr.json").is_file() {
+    if is_msv4_store(path) {
         #[cfg(feature = "msv4")]
         return Ok(Box::new(Msv4Observation::open_with(path, options)?));
         #[cfg(not(feature = "msv4"))]

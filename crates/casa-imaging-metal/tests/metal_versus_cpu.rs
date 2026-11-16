@@ -18,11 +18,12 @@ use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, CpuBackend, GridBackend, GridPrecision, GridScalar,
     MeasurementOperator, Mode, ModeSet, ModelPrescale, NO_CELL, NativeModel, NativeSource,
-    NativeTarget, NativeTerm, PlaneRange, SampleBlock, SampleBuffer, Tile, Work,
+    NativeTarget, NativeTerm, PlaneRange, STENCIL, SampleBlock, SampleBuffer, Tile, Work,
 };
 use common::{
     ALL_KERNELS, Kernels, MOSAIC_DISHES_M, MOSAIC_FREQUENCIES_HZ, Rng, assert_close,
     assert_same_grids, block, edge_placements, metal, model, operator, placements,
+    sectioned_edge_placements, w_planes_operator,
 };
 use num_complex::Complex32;
 
@@ -262,6 +263,39 @@ fn the_mosaic_sets_edge_placements_grid_alike() {
     }
 }
 
+/// #980 review: W projection's sectioned edge (`GridEdge::Sectioned`)
+/// grids and weighs alike on both backends. On three W planes of
+/// different supports, both signs of `w`, the samples about each of the
+/// grid's four edges ([`sectioned_edge_placements`]): supports overrunning
+/// it with the anchor on the grid and off it, a support with one tap on the
+/// grid or none, and one whose last tap lies on the last column or row the
+/// sectors leave out. Each backend clips the spread to the sectors and adds
+/// `W · Re Σ` of the kept taps to `sumwt`, so the grids agree to `f32`
+/// additions and `sumwt` exactly, in the data and the PSF modes.
+#[test]
+fn the_w_sets_sectioned_edge_placements_grid_alike() {
+    let mut rng = Rng::new(61);
+    let operator = w_planes_operator();
+    let Some(mut metal) = metal(&operator) else {
+        return;
+    };
+    let placed = sectioned_edge_placements(&operator, &mut rng);
+    assert_eq!(
+        placed.len(),
+        3 * 2 * 2 * 13,
+        "three planes, both signs of w, both axes, thirteen anchors"
+    );
+    let buffer = block(&placed, &mut rng);
+    grid_both(
+        &operator,
+        &mut metal,
+        &buffer,
+        full(&operator),
+        ModeSet::DATA_PSF,
+        "W planes' sectioned edges",
+    );
+}
+
 #[test]
 fn every_kernel_set_grids_data_psf_and_weight_like_the_cpu() {
     for kernels in ALL_KERNELS {
@@ -430,8 +464,9 @@ fn predictions_match_the_cpu_for_both_tap_layouts() {
 const NATIVE_CELLS: usize = 3_000;
 
 /// Random native terms for every cell over a batch of `samples`
-/// predictions: endpoints in the batch or missing, every fifth term on one
-/// prediction (a nearest or direct channel), some polarizations flagged.
+/// predictions: points in the batch or missing, every fifth term on one
+/// prediction (a nearest or direct channel), every third of the rest on
+/// four (a cubic), some polarizations flagged.
 fn native_terms(samples: usize, rng: &mut Rng) -> Vec<NativeTerm> {
     let index = |rng: &mut Rng| {
         if rng.next_u64().is_multiple_of(8) {
@@ -442,13 +477,21 @@ fn native_terms(samples: usize, rng: &mut Rng) -> Vec<NativeTerm> {
     };
     (0..NATIVE_CELLS as u32)
         .map(|cell| {
-            let low = index(rng);
-            let high = if cell % 5 == 0 { low } else { index(rng) };
+            let used = match cell {
+                cell if cell % 5 == 0 => 1,
+                cell if cell % 3 == 0 => STENCIL,
+                _ => 2,
+            };
+            let mut points = [NO_CELL; STENCIL];
+            let mut factors = [0.0; STENCIL];
+            for point in 0..used {
+                points[point] = index(rng);
+                factors[point] = rng.signed() as f32;
+            }
             NativeTerm {
                 cell,
-                low,
-                high,
-                fraction: rng.unit() as f32,
+                points,
+                factors,
                 flags: if rng.next_u64().is_multiple_of(6) {
                     (rng.next_u64() % 3 + 1) as u32
                 } else {
@@ -459,20 +502,24 @@ fn native_terms(samples: usize, rng: &mut Rng) -> Vec<NativeTerm> {
         .collect()
 }
 
-/// A block of random samples with random native endpoints, one endpoint
-/// for a third of them.
+/// A block of random samples with random native points: one for a third
+/// of them, four (a cubic) for another third, two for the rest.
 fn sourced_block(operator: &MeasurementOperator, keys: &[CfKey], rng: &mut Rng) -> SampleBuffer {
     let placed = placements(operator, keys, full(operator), SAMPLES, 1, rng);
     let plain = block(&placed, rng);
     let mut sourced = SampleBuffer::new(2);
     let cell = |rng: &mut Rng| (rng.next_u64() % NATIVE_CELLS as u64) as u32;
     for (index, placement) in placed.iter().enumerate() {
-        let one = rng.next_u64().is_multiple_of(3);
-        let source = NativeSource {
-            cells: [cell(rng), if one { NO_CELL } else { cell(rng) }],
-            factors: [rng.unit() as f32, if one { 0.0 } else { rng.unit() as f32 }],
+        let used = [1, 2, STENCIL][(rng.next_u64() % 3) as usize];
+        let mut source = NativeSource {
+            cells: [NO_CELL; STENCIL],
+            factors: [0.0; STENCIL],
             scale: Complex32::new(rng.signed() as f32, rng.signed() as f32),
         };
+        for point in 0..used {
+            source.cells[point] = cell(rng);
+            source.factors[point] = rng.signed() as f32;
+        }
         let block = plain.block();
         sourced.push_sourced(
             *placement,
@@ -520,8 +567,7 @@ fn native_models_and_residuals_match_the_cpu() {
         let none = (0..NATIVE_CELLS as u32)
             .map(|cell| NativeTerm {
                 cell,
-                low: NO_CELL,
-                high: NO_CELL,
+                points: [NO_CELL; STENCIL],
                 ..NativeTerm::default()
             })
             .collect::<Vec<_>>();
@@ -1127,6 +1173,40 @@ fn refused_before_the_device(defer: bool) {
         <f32 as GridScalar>::cells(tiled.storage()),
         <f32 as GridScalar>::cells(cpu.storage()),
         "the committed sub-blocks",
+    );
+    // #991: after a mid-dispatch panic, reset must clear device-only
+    // correction storage as well. A tiny fresh signal exposes stale losses.
+    let mut tiny = SampleBuffer::new(2);
+    for placement in &committed.block().placements[..32] {
+        tiny.push(*placement, &[Complex32::new(1e-12, -1e-12); 2], &[1e-12; 2]);
+    }
+    tiled.reset();
+    cpu.reset();
+    CpuBackend::new()
+        .apply(
+            &tiny.block(),
+            operator.cf(),
+            Work::Grid {
+                mode: Mode::Data,
+                acc: &mut cpu,
+            },
+        )
+        .expect("fresh cpu");
+    metal
+        .apply(
+            &tiny.block(),
+            operator.cf(),
+            Work::Grid {
+                mode: Mode::Data,
+                acc: &mut tiled,
+            },
+        )
+        .expect("fresh device after reset");
+    metal.complete().expect("fresh device completed");
+    assert_same_grids(
+        &tiled,
+        &cpu,
+        "fresh signal after interrupted apply and reset",
     );
     let mut host = operator.accumulator(planes, None, ModeSet::DATA);
     let message = panic_message(catch_unwind(AssertUnwindSafe(|| {

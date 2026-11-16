@@ -1,0 +1,49 @@
+{
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "task": "simobserve",
+      "args": {
+        "overwrite": "bad"
+      },
+      "type": "AssertionError",
+      "message": "{'overwrite': ['must be of cBool type']}"
+    },
+    {
+      "task": "simobserve",
+      "args": {
+        "obsmode": 42
+      },
+      "type": "AssertionError",
+      "message": "{'obsmode': ['must be of cStr type']}"
+    },
+    {
+      "task": "tclean",
+      "args": {
+        "vis": "$EXISTING",
+        "robust": "bad"
+      },
+      "type": "AssertionError",
+      "message": "{'robust': ['must be of cFloat type']}"
+    },
+    {
+      "task": "tclean",
+      "args": {
+        "vis": "$EXISTING",
+        "pbcor": 42
+      },
+      "type": "AssertionError",
+      "message": "{'pbcor': ['must be of cBool type']}"
+    },
+    {
+      "task": "split",
+      "args": {
+        "vis": "$EXISTING",
+        "outputvis": 42
+      },
+      "type": "AssertionError",
+      "message": "{'outputvis': ['must be of cPath type']}"
+    }
+  ]
+}

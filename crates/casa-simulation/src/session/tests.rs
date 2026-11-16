@@ -378,13 +378,12 @@ fn setmosaicfield_centres_its_grid_on_the_field_centre() {
     assert!((over.direction_rad[0] - (-170.0_f64).to_radians()).abs() < 1e-12);
 }
 
-/// `setdata` takes the selections that keep every row observed so far, as
-/// CASA's does when it selects them all or none (an empty selection
-/// reverts to every row); one that keeps some, or a TaQL string, is not yet
-/// implemented.
+/// Field/window subsets and supported row-header TaQL retain CASA's empty
+/// selection fallback. Numerical behavior is independently checked in selection.rs.
 #[test]
-fn setdata_takes_selections_that_keep_every_row() {
-    let mut session = ready(Path::new("unused.ms"));
+fn setdata_takes_subsets_and_supported_header_queries() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut session = ready(&directory.path().join("selected.ms"));
     session
         .set_spectral_window(&window("CBand"))
         .expect("second window");
@@ -407,17 +406,19 @@ fn setdata_takes_selections_that_keep_every_row() {
             .unwrap_or_else(|error| panic!("{windows:?} {fields:?}: {error}"));
     }
     for (windows, fields) in [(vec![0], vec![0]), (vec![], vec![1])] {
-        let (outcome, message) = refusal(session.set_data(&windows, &fields, ""));
-        assert_eq!(
-            outcome,
-            CasaOutcome::NotYetImplemented,
-            "{windows:?} {fields:?}"
-        );
-        assert!(message.contains("1 of the 2 scans"), "{message}");
+        session
+            .set_data(&windows, &fields, "")
+            .expect("field subset");
     }
-    let (outcome, message) = refusal(session.set_data(&[0], &[0, 1], "ANTENNA1==0"));
+    session
+        .set_data(&[0], &[0, 1], "ANTENNA1==0")
+        .expect("row subset");
+    session
+        .set_data(&[0], &[0, 1], "UVW[1]>0")
+        .expect("stored-cell predicate");
+    let (outcome, message) = refusal(session.set_data(&[0], &[0, 1], "gcount()>0"));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("msselect"), "{message}");
+    assert!(message.contains("#1053"), "{message}");
 }
 
 #[test]

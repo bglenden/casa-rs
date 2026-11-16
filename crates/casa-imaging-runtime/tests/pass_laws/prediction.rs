@@ -7,8 +7,8 @@
 //! the T0 law, `max|metal − cpu| ≤ 1e-4·max|cpu|`.
 
 use casa_imaging_operator::{
-    Basis, CpuBackend, GridPrecision, MeasurementOperator, PlaneRange, PredictionScratch,
-    PreparedModelGrids, SpectralResampler,
+    Basis, CpuBackend, GridPrecision, MeasurementOperator, ModelImages, ModelPlane, PlaneRange,
+    PredictionScratch, PreparedModelGrids, SpectralResampler,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockPredictor, PassError, PredictionDomain, WorkerTeam,
@@ -117,7 +117,7 @@ fn the_cpu_block_predictor_predicts_each_row_as_alone() {
         let operator = operator(GridPrecision::F64, base.basis());
         let model = model_of(&operator, 3);
         let rows = prediction_rows(90, 13, &operator, 1);
-        for resampler in [base, base.predicting_autocorrelations()] {
+        for resampler in [base.clone(), base.predicting_autocorrelations()] {
             let domains = [PredictionDomain {
                 operator: &operator,
                 resampler: &resampler,
@@ -214,6 +214,59 @@ fn a_block_predictor_sums_its_domains() {
     );
 }
 
+/// An uncovered mosaic domain excludes only its own signal. A centered
+/// one-Jy point contributes one Jy at zero baseline, so two domains give
+/// 0, 1 or 2 Jy independently of batching; the shared flag excludes both.
+#[test]
+fn domain_exclusion_preserves_other_domains_and_shared_flags() {
+    let resampler = SpectralResampler::direct(Basis::Constant)
+        .expect("direct")
+        .predicting_autocorrelations();
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let mut image = ndarray::Array2::zeros((IMAGE, IMAGE));
+    image[[IMAGE / 2, IMAGE / 2]] = 1.;
+    let model = window_of(
+        &operator,
+        &ModelImages {
+            first_plane: 0,
+            planes: vec![ModelPlane {
+                images: vec![image],
+            }],
+        },
+        PlaneRange::new(0, 1),
+    );
+    let mut rows = prediction_rows(80, 29, &operator, 2);
+    for (index, row) in rows.rows.iter_mut().enumerate() {
+        row.flags.fill(false);
+        for (domain, projection) in row.projections.iter_mut().enumerate() {
+            projection.uvw_m = [0.; 3];
+            projection.phase_shift_m = 0.;
+            projection.row_flag = (index + domain) % 3 == 0;
+        }
+    }
+    let domains = [0, 1].map(|_| PredictionDomain {
+        operator: &operator,
+        resampler: &resampler,
+        model: (&model).into(),
+    });
+    for (workers, block_rows) in [(1, BLOCK_ROWS), (3, 5), (2, 1)] {
+        let predicted = predict(&domains, &rows, BackendChoice::Cpu, workers, block_rows);
+        for (index, values) in predicted.chunks(rows.frequencies.len() * 2).enumerate() {
+            let expected = if row_kind(index) == RowKind::Flagged {
+                0.
+            } else {
+                (0..2).filter(|domain| (index + domain) % 3 != 0).count() as f32
+            };
+            for value in values {
+                assert!(
+                    (*value - Complex32::new(expected, 0.)).norm() < 1e-5,
+                    "row {index}: {value}, expected {expected}"
+                );
+            }
+        }
+    }
+}
+
 /// A predictor needs a domain and a worker.
 #[test]
 fn a_block_predictor_without_domains_or_workers_is_refused() {
@@ -248,7 +301,7 @@ fn metal_block_predictions_equal_the_cpus() {
         return;
     }
     for base in [nearest_cube(), offset_linear_cube()] {
-        let resampler = base.predicting_autocorrelations();
+        let resampler = base.clone().predicting_autocorrelations();
         let first = operator(GridPrecision::F32, resampler.basis());
         let second = operator(GridPrecision::F32, resampler.basis());
         let (first_model, second_model) = (model_of(&first, 29), model_of(&second, 31));

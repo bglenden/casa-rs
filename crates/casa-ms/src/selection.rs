@@ -31,11 +31,24 @@ use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 use thiserror::Error;
 
+pub mod antenna_expr;
 mod edit;
 pub(crate) mod parser;
+pub mod spw_expr;
 pub mod syntax;
+pub mod time_expr;
 
+pub use antenna_expr::{AntennaRow, BaselineSelection, resolve_antenna_selector};
 pub use edit::{MsSelectorEditContext, validate_ms_selector_edit};
+pub use parser::{FieldSelectorRow, resolve_field_selector_rows};
+pub use spw_expr::{
+    ChannelFrequencyRange, ChannelRange, DataDescriptionRow, SpectralWindowRow, SpwSelection,
+    resolve_spw_selector,
+};
+pub use time_expr::{
+    LogicalRowFilter, TimeCondition, TimeDefaults, TimeListEntry, TimeSelection, TimeSelector,
+    TimeSelectorDefaults, TimeTerm, msselection_first_logical_row, resolve_time_selector,
+};
 
 /// Builder for MS row selection criteria.
 ///
@@ -102,8 +115,8 @@ impl Default for MsSelection {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CompiledMsSelection {
-    field_ids: Vec<i32>,
-    spw_ids: Vec<i32>,
+    pub(crate) field_ids: Option<Vec<i32>>,
+    pub(crate) spw_ids: Vec<i32>,
     spw_channel_selections: BTreeMap<i32, ChannelSelection>,
     data_desc_ids: Vec<i32>,
     antenna_ids: Vec<i32>,
@@ -145,6 +158,55 @@ pub(crate) struct UvSelectionRange {
     pub(crate) lower: Option<UvBound>,
     pub(crate) upper: Option<UvBound>,
     pub(crate) unit: UvUnit,
+}
+
+/// One bound of a [`UvDistanceInterval`]: its value, scaled to metres or
+/// wavelengths, and whether the interval holds it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UvDistanceLimit {
+    /// The bound's value.
+    pub value: f64,
+    /// Whether a distance equal to the bound is selected.
+    pub inclusive: bool,
+}
+
+/// One interval of a CASA `uvrange` selector, as its syntax states it:
+/// each bound, if stated, in metres or (when `wavelengths`) in wavelengths.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UvDistanceInterval {
+    /// The lower bound.
+    pub lower: Option<UvDistanceLimit>,
+    /// The upper bound.
+    pub upper: Option<UvDistanceLimit>,
+    /// Whether the bounds are in wavelengths, not metres.
+    pub wavelengths: bool,
+}
+
+/// The intervals of the CASA `uvrange` selector `text`, unit prefixes
+/// applied (`klambda`, `km`, …).
+///
+/// # Errors
+///
+/// [`MsError::InvalidInput`] for text that is not `uvrange` syntax.
+pub fn parse_uv_distance_intervals(text: &str) -> MsResult<Vec<UvDistanceInterval>> {
+    Ok(parser::parse_uvrange_selector(text)?
+        .into_iter()
+        .map(|range| {
+            let (scale, wavelengths) = match range.unit {
+                UvUnit::Meters(scale) => (scale, false),
+                UvUnit::Lambda(scale) => (scale, true),
+            };
+            let limit = |bound: UvBound| UvDistanceLimit {
+                value: bound.value * scale,
+                inclusive: matches!(bound.op, UvBoundOp::GreaterEqual | UvBoundOp::LessEqual),
+            };
+            UvDistanceInterval {
+                lower: range.lower.map(limit),
+                upper: range.upper.map(limit),
+                wavelengths,
+            }
+        })
+        .collect())
 }
 
 /// Explicit resource inputs for deterministic selected-row block planning.
@@ -391,7 +453,7 @@ impl MsSelection {
         }
     }
 
-    fn compile(&self, ms: &MeasurementSet) -> MsResult<CompiledMsSelection> {
+    pub(crate) fn compile(&self, ms: &MeasurementSet) -> MsResult<CompiledMsSelection> {
         if !self.selectdata && !self.has_text_selection() {
             return Ok(CompiledMsSelection::default());
         }
@@ -602,9 +664,9 @@ impl CompiledMsSelection {
         Self::default()
     }
 
-    /// Select rows matching the given FIELD_IDs.
-    pub(crate) fn field(mut self, ids: &[i32]) -> Self {
-        self.field_ids.extend_from_slice(ids);
+    /// Set the FIELD predicate: `None` selects all; `Some([])` selects no rows.
+    pub(crate) fn field(mut self, ids: Option<Vec<i32>>) -> Self {
+        self.field_ids = ids;
         self
     }
 
@@ -809,8 +871,12 @@ impl CompiledMsSelection {
     fn where_clauses(&self) -> Vec<String> {
         let mut clauses = Vec::new();
 
-        if !self.field_ids.is_empty() {
-            clauses.push(format!("FIELD_ID IN [{}]", int_list(&self.field_ids)));
+        if let Some(ids) = &self.field_ids {
+            clauses.push(if ids.is_empty() {
+                "FALSE".to_string()
+            } else {
+                format!("FIELD_ID IN [{}]", int_list(ids))
+            });
         }
 
         if !self.spw_ids.is_empty() {
@@ -1035,8 +1101,11 @@ fn validate_io_budget(io: MsSelectionIoBudget) -> Result<(), MsSelectionError> {
     Ok(())
 }
 
+/// The host's physical memory in bytes, or `None` where it cannot be
+/// read; what [`MsSelectionIoBudget::from_system_memory`] takes an eighth
+/// of.
 #[cfg(target_os = "macos")]
-fn system_physical_memory_bytes() -> Option<usize> {
+pub fn system_physical_memory_bytes() -> Option<usize> {
     let mut value = 0u64;
     let mut size = std::mem::size_of::<u64>() as libc::size_t;
     let result = unsafe {
@@ -1051,8 +1120,11 @@ fn system_physical_memory_bytes() -> Option<usize> {
     (result == 0 && value > 0).then_some(value as usize)
 }
 
+/// The host's physical memory in bytes, or `None` where it cannot be
+/// read; what [`MsSelectionIoBudget::from_system_memory`] takes an eighth
+/// of.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn system_physical_memory_bytes() -> Option<usize> {
+pub fn system_physical_memory_bytes() -> Option<usize> {
     let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     if pages <= 0 || page_size <= 0 {
@@ -1061,8 +1133,11 @@ fn system_physical_memory_bytes() -> Option<usize> {
     (pages as usize).checked_mul(page_size as usize)
 }
 
+/// The host's physical memory in bytes, or `None` where it cannot be
+/// read; what [`MsSelectionIoBudget::from_system_memory`] takes an eighth
+/// of.
 #[cfg(not(unix))]
-fn system_physical_memory_bytes() -> Option<usize> {
+pub fn system_physical_memory_bytes() -> Option<usize> {
     None
 }
 
@@ -1073,7 +1148,10 @@ fn apply_structured_selection(
     rows_per_block: Option<usize>,
 ) -> MsResult<Vec<usize>> {
     let setup_started_at = Instant::now();
-    let field_ids: HashSet<i32> = sel.field_ids.iter().copied().collect();
+    if sel.field_ids.as_ref().is_some_and(Vec::is_empty) {
+        return Ok(Vec::new());
+    }
+    let field_ids: HashSet<i32> = sel.field_ids.iter().flatten().copied().collect();
     let spw_ddids: HashSet<i32> = effective_ddids.iter().copied().collect();
     let data_desc_ids: HashSet<i32> = sel.data_desc_ids.iter().copied().collect();
     let antenna_ids: HashSet<i32> = sel.antenna_ids.iter().copied().collect();
@@ -1597,6 +1675,30 @@ mod tests {
     use crate::schema::SubtableId;
     use crate::test_helpers::{default_value, default_value_for_def};
 
+    fn add_selection_test_fields(ms: &mut MeasurementSet, count: usize) {
+        use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+        for id in 0..count {
+            let fields = crate::schema::field::REQUIRED_COLUMNS
+                .iter()
+                .map(|column| {
+                    let value = match column.name {
+                        "NAME" => Value::Scalar(ScalarValue::String(format!("field-{id}"))),
+                        "SOURCE_ID" => Value::Scalar(ScalarValue::Int32(-1)),
+                        "DELAY_DIR" | "PHASE_DIR" | "REFERENCE_DIR" => {
+                            Value::Array(ArrayValue::Float64(ndarray::ArrayD::zeros(vec![2, 1])))
+                        }
+                        _ => default_value_for_def(column),
+                    };
+                    RecordField::new(column.name, value)
+                })
+                .collect();
+            ms.subtable_mut(SubtableId::Field)
+                .unwrap()
+                .add_row(RecordValue::new(fields))
+                .unwrap();
+        }
+    }
+
     fn apply_for_test(selection: &MsSelection, ms: &MeasurementSet) -> Vec<usize> {
         selection.compile(ms).unwrap().apply(ms).unwrap()
     }
@@ -1806,12 +1908,51 @@ mod tests {
     }
 
     #[test]
+    fn unmatched_numeric_fields_select_no_rows_in_structured_and_taql_paths() {
+        let mut ms =
+            MeasurementSet::create_memory(crate::builder::MeasurementSetBuilder::new()).unwrap();
+        add_selection_test_fields(&mut ms, 1);
+        let fields = ms
+            .main_table()
+            .schema()
+            .unwrap()
+            .columns()
+            .iter()
+            .map(|column| casa_types::RecordField::new(column.name(), default_value(column.name())))
+            .collect();
+        ms.main_table_mut()
+            .add_row(casa_types::RecordValue::new(fields))
+            .unwrap();
+        for selector in ["999", "9~2147483647"] {
+            let request = MsSelection {
+                field: Some(selector.to_string()),
+                ..MsSelection::new()
+            };
+            let compiled = request.compile(&ms).unwrap();
+            assert_eq!(compiled.to_taql(), "SELECT * WHERE FALSE");
+            assert!(compiled.apply(&ms).unwrap().is_empty());
+            let with_taql = request.taql("FIELD_ID == 0").compile(&ms).unwrap();
+            assert!(with_taql.apply(&ms).unwrap().is_empty());
+            assert!(ms.resolve_field_selector(selector).is_err());
+        }
+        for selector in [None, Some("".to_string()), Some(" ".to_string())] {
+            let request = MsSelection {
+                field: selector,
+                ..MsSelection::new()
+            };
+            assert_eq!(apply_for_test(&request, &ms), vec![0]);
+            assert_eq!(apply_for_test(&request.taql("FIELD_ID == 0"), &ms), vec![0]);
+        }
+    }
+
+    #[test]
     fn apply_field_selection() {
         use crate::builder::MeasurementSetBuilder;
         use crate::test_helpers::default_value;
         use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        add_selection_test_fields(&mut ms, 3);
 
         // Add rows with different FIELD_IDs
         let schema = ms.main_table().schema().unwrap().clone();
@@ -2001,6 +2142,7 @@ mod tests {
         use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        add_selection_test_fields(&mut ms, 2);
 
         ms.subtable_mut(SubtableId::DataDescription)
             .unwrap()

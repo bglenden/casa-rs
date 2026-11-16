@@ -38,8 +38,11 @@ mod corrupt;
 pub mod predict;
 pub mod readantenna;
 pub mod session;
+pub mod simalma;
+pub mod simanalyze;
 pub mod simobserve;
 pub mod simutil;
+pub mod synthetic;
 mod write;
 
 pub use session::array::{ArrayConfig, CoordinateSystem};

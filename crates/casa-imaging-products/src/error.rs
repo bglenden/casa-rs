@@ -62,10 +62,62 @@ pub enum ProductsError {
     /// implement.
     #[error("the compiled problem asks for a product rule the products do not implement")]
     UnsupportedProblem,
+    /// A supplied Taylor primary beam is invalid or does not belong to a Taylor family.
+    #[error(
+        "a supplied Taylor primary beam must be finite, non-negative, and belong to a Taylor family"
+    )]
+    InvalidTaylorPrimaryBeam,
+    /// The supplied cube correction beam or its normal state is invalid.
+    #[error(
+        "a cube Taylor primary beam needs a finite non-negative plane and a single-domain, single-polarization cube"
+    )]
+    InvalidCubeTaylorPrimaryBeam,
+    /// The saved primary beam contains an invalid value.
+    #[error("the saved mosaic primary beam contains a negative or non-finite value")]
+    InvalidSavedMosaicBeam,
+    /// The saved mosaic PB does not match the dimensions of the normal state.
+    #[error("saved mosaic PB shape {saved:?} does not match the image grid {expected:?}")]
+    SavedMosaicBeamShape {
+        /// Saved CASA image axes.
+        saved: [usize; 4],
+        /// Expected CASA image axes.
+        expected: [usize; 4],
+    },
+    /// The saved primary beam image or its default mask could not be read.
+    #[error("reading saved mosaic primary beam {}: {source}", path.display())]
+    SavedMosaicBeam {
+        /// Path to the saved CASA image.
+        path: PathBuf,
+        /// Image or mask read error.
+        #[source]
+        source: casa_images::ImageError,
+    },
+    /// A supplied Taylor residual normalization divisor is invalid.
+    #[error("Taylor residual normalization needs a positive finite divisor and a Taylor family")]
+    InvalidTaylorResidualSumWeight,
+    /// A cube-to-Taylor image reduction received invalid data.
+    #[error(
+        "Taylor moment reduction needs valid matching planes, frequencies, weights and positive support"
+    )]
+    InvalidTaylorMomentReduction,
+    /// A cube-to-Taylor primary-beam reduction received invalid data.
+    #[error(
+        "Taylor primary-beam reduction needs matching finite non-negative planes and weights and a positive finite total"
+    )]
+    InvalidTaylorBeamReduction,
     /// A PB product or PB-masked member was planned without a primary-beam
     /// model in the controls.
     #[error("a primary-beam product or mask needs a primary-beam model")]
     MissingPrimaryBeamModel,
+    /// Restoring beams that do not form the channel × Stokes grid casacore
+    /// requires of an image's beam set (`ImageInfo::checkBeamSet`).
+    #[error("{beams} restoring beams do not form a grid of {channels} channels")]
+    BeamGrid {
+        /// Beams given for the image's planes.
+        beams: usize,
+        /// The image's channels.
+        channels: usize,
+    },
     /// The selected beam law cannot represent an output channel's frequency.
     #[error(
         "primary-beam model {model:?} does not support output channel {output_channel} at {frequency_hz} Hz"
@@ -90,9 +142,11 @@ pub enum ProductsError {
         /// The offending Taylor term.
         term: ProductTerm,
     },
-    /// A Taylor run's principal sum of weights, normal or published, is not
-    /// positive and finite: no weighted sample reached the image.
-    #[error("Taylor products need a positive principal sum of weights, not {sum_weight}")]
+    /// A Taylor run can normalize its products only with finite positive
+    /// principal sums of weights.
+    #[error(
+        "Taylor products require finite positive principal sums of weights. Received {sum_weight}."
+    )]
     PrincipalSumWeight {
         /// The principal sum of weights.
         sum_weight: f64,

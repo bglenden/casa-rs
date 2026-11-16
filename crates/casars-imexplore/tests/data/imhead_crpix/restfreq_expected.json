@@ -1,0 +1,252 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "frequencies": [
+        1419999999.9999998
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1419999999.9999998
+      },
+      "history": [
+        "Modified restfreq from 1420405751.79 to \"1.42GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"restfreq\", hdvalue=\"1.42GHz\", verbose=False)"
+      ],
+      "image": "normal",
+      "return": null,
+      "value": "1.42GHz"
+    },
+    {
+      "frequencies": [
+        1500000000.0
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1500000000.0
+      },
+      "history": [
+        "Modified restfreq from 1420405751.79 to \"1.5e9Hz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"restfreq\", hdvalue=\"1.5e9Hz\", verbose=False)"
+      ],
+      "image": "normal",
+      "return": null,
+      "value": "1.5e9Hz"
+    },
+    {
+      "frequencies": [
+        1420000000.0
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1420000000.0
+      },
+      "history": [
+        "Modified restfreq from 1420405751.79 to \"1420000000\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"restfreq\", hdvalue=\"1420000000\", verbose=False)"
+      ],
+      "image": "normal",
+      "return": null,
+      "value": "1420000000"
+    },
+    {
+      "error": "Exception: Unable to set rest frequency to 0Hz.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "image": "normal",
+      "value": "0Hz"
+    },
+    {
+      "error": "Exception: Unable to set rest frequency to -1Hz.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "image": "normal",
+      "value": "-1Hz"
+    },
+    {
+      "error": "Exception: Unable to set rest frequency to 2m because units do not conform to Hz.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "image": "normal",
+      "value": "2m"
+    },
+    {
+      "error": "Exception: Error converting bad to Quantity.\n... thrown by static casacore::Quantity casa::ImageMetaDataRW<T>::_getQuantity(const casacore::ValueHolder&) [with T = float; casacore::Quantity = casacore::Quantum<double>]",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "image": "normal",
+      "value": "bad"
+    },
+    {
+      "frequencies": [
+        1419999999.9999998
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1419999999.9999998
+      },
+      "history": [
+        "Modified restfreq from 1420405751.79 to   unit: String \"GHz\"\n  value: Double 1.42",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"restfreq\", hdvalue={'unit': 'GHz', 'value': 1.42}, verbose=False)"
+      ],
+      "image": "normal",
+      "return": null,
+      "value": {
+        "unit": "GHz",
+        "value": 1.42
+      }
+    },
+    {
+      "error": "Exception: Error converting to Quantity. Illegal Quantum record in QuantumHolder::fromRecord\n.\n... thrown by static casacore::Quantity casa::ImageMetaDataRW<T>::_getQuantity(const casacore::ValueHolder&) [with T = float; casacore::Quantity = casacore::Quantum<double>]",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "image": "normal",
+      "value": {
+        "value": 1.42
+      }
+    },
+    {
+      "frequencies": [
+        1.42
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1.42
+      },
+      "history": [
+        "Modified restfreq from 1420405751.79 to   unit: String \"\"\n  value: Double 1.42",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"restfreq\", hdvalue={'unit': '', 'value': 1.42}, verbose=False)"
+      ],
+      "image": "normal",
+      "return": null,
+      "value": {
+        "unit": "",
+        "value": 1.42
+      }
+    },
+    {
+      "error": "Input ValueHolder is of type double, but it must be either  a Record or a String",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "image": "normal",
+      "value": 1500000000.0
+    },
+    {
+      "frequencies": [
+        1.0,
+        2e-09,
+        1.6
+      ],
+      "get": {
+        "unit": "GHz",
+        "value": 2e-09
+      },
+      "history": [
+        "Modified restfreq from 1.4 to \"2\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"restfreq\", hdvalue=\"2\", verbose=False)"
+      ],
+      "image": "ghz",
+      "return": null,
+      "value": "2"
+    },
+    {
+      "frequencies": [
+        1.0,
+        2e-09,
+        1.6
+      ],
+      "get": {
+        "unit": "GHz",
+        "value": 2e-09
+      },
+      "history": [
+        "Modified restfreq from 1.4 to   unit: String \"\"\n  value: Double 2",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"restfreq\", hdvalue={'unit': '', 'value': 2.0}, verbose=False)"
+      ],
+      "image": "ghz",
+      "return": null,
+      "value": {
+        "unit": "",
+        "value": 2.0
+      }
+    },
+    {
+      "frequencies": [
+        1.0,
+        1.5,
+        1.6
+      ],
+      "get": {
+        "unit": "GHz",
+        "value": 1.5
+      },
+      "history": [
+        "Modified restfreq from 1.4 to \"1.5GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"restfreq\", hdvalue=\"1.5GHz\", verbose=False)"
+      ],
+      "image": "ghz",
+      "return": null,
+      "value": "1.5GHz"
+    },
+    {
+      "frequencies": [
+        1.0,
+        1.6,
+        1.6
+      ],
+      "get": {
+        "unit": "GHz",
+        "value": 1.6
+      },
+      "history": [
+        "Modified restfreq from 1.4 to   unit: String \"MHz\"\n  value: Double 1600",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"restfreq\", hdvalue={'unit': 'MHz', 'value': 1600.0}, verbose=False)"
+      ],
+      "image": "ghz",
+      "return": null,
+      "value": {
+        "unit": "MHz",
+        "value": 1600.0
+      }
+    }
+  ]
+}

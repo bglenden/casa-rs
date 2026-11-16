@@ -83,6 +83,7 @@ fn describe(value: &CasaValue) -> Value {
         CasaValue::Bool { .. } => json!({"type": "bool"}),
         CasaValue::Int { .. } => json!({"type": "int"}),
         CasaValue::Float { .. } => json!({"type": "float"}),
+        CasaValue::Complex { .. } => json!({"type": "complex"}),
         CasaValue::String { .. } => json!({"type": "str"}),
         CasaValue::List { items } => {
             json!({"type": "list", "items": items.iter().map(describe).collect::<Vec<_>>()})
@@ -113,6 +114,7 @@ fn describe(value: &CasaValue) -> Value {
             shape,
         ),
         CasaValue::ComplexArray { shape, .. } => array("complex", shape),
+        CasaValue::UInt64Array { shape, .. } => array("uint64", shape),
         CasaValue::StrArray { shape, .. } => array("str", shape),
     }
 }

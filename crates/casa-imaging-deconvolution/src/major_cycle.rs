@@ -111,6 +111,13 @@ impl FinalNormalState {
         self.primitives.metadata(ordinal).map(|domain| domain.shape)
     }
 
+    /// Whether this field's previously unfilled scalar sum of weights was
+    /// supplied by a residual gridding pass.
+    #[must_use]
+    pub fn refilled_sum_weight(&self, domain: usize) -> bool {
+        self.primitives.refilled_sum_weight(domain)
+    }
+
     /// Read channel support metadata without loading image payloads.
     #[must_use]
     pub fn domain_channel_validity(
@@ -129,7 +136,8 @@ impl FinalNormalState {
             .copied()
     }
 
-    /// Return the number of samples the pass placed.
+    /// Return the number of samples the pass placed; zero for a state read
+    /// from an earlier run's products ([`MajorCycle::finish_read`]).
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
         self.sample_count
@@ -211,13 +219,15 @@ impl FinalNormalState {
         self.primitives.primary_metadata().validity
     }
 
-    /// Return the principal support state of a Taylor family.
+    /// Return the support state of polarization `polarization`'s Taylor
+    /// family: each polarization plane is a family of its own, as CASA's
+    /// `SDAlgorithmMSMFS` cleans and restores one Stokes plane at a time.
     #[must_use]
-    pub fn support_validity(&self) -> Option<crate::SpectralChannelValidity> {
+    pub fn support_validity(&self, polarization: usize) -> Option<crate::SpectralChannelValidity> {
         if self.basis() != NormalBasis::Taylor {
             return None;
         }
-        self.channel_validity().first().copied()
+        self.channel_validity().get(polarization).copied()
     }
 
     /// Load a channel-local window, or borrow the complete coupled coefficient
@@ -369,18 +379,31 @@ impl FinalNormalStateWindow<'_> {
         self.primitives.sensitivity()
     }
 
-    /// Borrow one reconstruction-coefficient residual term.
+    /// The plane of a Taylor family's `term` (a coefficient term or normal
+    /// moment) for `polarization`: planes are term-major and
+    /// polarization-minor ([`crate::PassImages`]), each `cells` long.
+    fn taylor_plane(&self, term: usize, polarization: usize) -> Option<(usize, usize)> {
+        if self.basis() != NormalBasis::Taylor || polarization >= self.polarization_count() {
+            return None;
+        }
+        let cells = self.shape()[0].checked_mul(self.shape()[1])?;
+        let plane = term
+            .checked_mul(self.polarization_count())?
+            .checked_add(polarization)?;
+        let start = plane.checked_mul(cells)?;
+        Some((plane, start))
+    }
+
+    /// Borrow one reconstruction-coefficient residual term of one
+    /// polarization's Taylor family.
     #[must_use]
     pub fn coefficient_term(
         &self,
         coefficient: usize,
+        polarization: usize,
     ) -> Option<FinalNormalStateCoefficientTerm<'_>> {
-        if self.basis() != NormalBasis::Taylor {
-            return None;
-        }
-        let cells = self.shape()[0].checked_mul(self.shape()[1])?;
-        let start = coefficient.checked_mul(cells)?;
-        let end = start.checked_add(cells)?;
+        let (_, start) = self.taylor_plane(coefficient, polarization)?;
+        let end = start.checked_add(self.shape()[0] * self.shape()[1])?;
         Some(FinalNormalStateCoefficientTerm {
             owner: self.owner,
             coefficient,
@@ -388,21 +411,30 @@ impl FinalNormalStateWindow<'_> {
         })
     }
 
-    /// Borrow one retained normal moment.
+    /// Borrow one retained normal moment of one polarization's Taylor
+    /// family.
     #[must_use]
-    pub fn normal_moment(&self, moment: usize) -> Option<FinalNormalStateNormalMoment<'_>> {
-        if self.basis() != NormalBasis::Taylor {
-            return None;
-        }
-        let cells = self.shape()[0].checked_mul(self.shape()[1])?;
-        let start = moment.checked_mul(cells)?;
-        let end = start.checked_add(cells)?;
+    pub fn normal_moment(
+        &self,
+        moment: usize,
+        polarization: usize,
+    ) -> Option<FinalNormalStateNormalMoment<'_>> {
+        let (plane, start) = self.taylor_plane(moment, polarization)?;
+        let end = start.checked_add(self.shape()[0] * self.shape()[1])?;
         Some(FinalNormalStateNormalMoment {
             owner: self.owner,
             normal_approximation: self.primitives.psf().complex()?.get(start..end)?,
             sensitivity: self.primitives.sensitivity().dense()?.get(start..end)?,
-            sum_weight: *self.primitives.sum_weights().get(moment)?,
+            sum_weight: *self.primitives.sum_weights().get(plane)?,
         })
+    }
+
+    /// The sum of weights CASA publishes for `moment` of `polarization`'s
+    /// Taylor family (`.sumwt.ttN`), which normalises its residual terms.
+    #[must_use]
+    pub fn published_sum_weight(&self, moment: usize, polarization: usize) -> Option<f64> {
+        let (plane, _) = self.taylor_plane(moment, polarization)?;
+        self.published_sum_weights().get(plane).copied()
     }
 }
 
@@ -696,6 +728,13 @@ pub struct PassAppender<'a> {
 }
 
 impl PassAppender<'_> {
+    /// Whether a saved scalar field still needs a sum of weights during
+    /// residual gridding.
+    #[must_use]
+    pub fn needs_scalar_weight(&self) -> bool {
+        self.state.needs_scalar_weight()
+    }
+
     /// Add one pass's images of one domain.
     ///
     /// A non-finite image value or `sumwt` is a generated non-finite value,
@@ -709,7 +748,20 @@ impl PassAppender<'_> {
     /// match the problem and the pass (PSF moments on a residual refresh, a
     /// channel range out of order), and generated non-finite values.
     pub fn append(&mut self, images: PassImages) -> Result<(), NormalStateError> {
-        self.state.append(images)
+        self.state.append(images, None)
+    }
+
+    /// Append a standard single-plane residual pass, supplying its gridded
+    /// sum of weights for a saved field with an unfilled scalar sum.
+    ///
+    /// # Errors
+    /// The images, gridded weight or coupled scalar state are invalid.
+    pub fn append_with_scalar_weight(
+        &mut self,
+        images: PassImages,
+        gridded_sum: f64,
+    ) -> Result<(), NormalStateError> {
+        self.state.append(images, Some(gridded_sum))
     }
 }
 
@@ -776,6 +828,30 @@ impl MajorCycle {
         Ok(MajorCycleCompletion {
             normal_state: FinalNormalState {
                 sample_count: samples,
+                primitives,
+            },
+            final_model,
+        })
+    }
+
+    /// Finish a cycle whose images were read rather than gridded: an
+    /// earlier run's PSF, sums of weights and residual, which tclean leaves
+    /// standing under `calcpsf=False` and `calcres=False`. No pass placed
+    /// samples: an initial state counts none, and a refresh keeps the count
+    /// of the state it refreshed; every image must still be complete.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::finish`], but a cycle that placed no sample is complete.
+    pub fn finish_read(self) -> Result<MajorCycleCompletion, MajorCycleError> {
+        let (primitives, sample_count) = self
+            .state
+            .finish_read()
+            .map_err(MajorCycleError::Residual)?;
+        let final_model = self.model.complete()?;
+        Ok(MajorCycleCompletion {
+            normal_state: FinalNormalState {
+                sample_count,
                 primitives,
             },
             final_model,

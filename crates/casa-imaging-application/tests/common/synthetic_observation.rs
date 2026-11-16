@@ -4,10 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_ms::{
-    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticField,
-    SyntheticObservationRequest, SyntheticSkyModel, SyntheticSpectralSetup,
-    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+use casa_simulation::synthetic::{
+    AnalyticComponent, AnalyticSpectrum, Field, ObservationRequest, SkyModel, SpectralSetup,
+    generate, tutorial_vla_a_antennas,
 };
 
 /// Cell of every image of the observation; the natural beam spans about
@@ -23,7 +22,7 @@ pub fn observation(root: &Path, channels: usize) -> PathBuf {
 /// [`observation`] recorded as `telescope`'s, the ALMA one with 12 m dishes
 /// on the VLA-A pads: the mosaic gridder's beams are ALMA's.
 pub fn observation_as(root: &Path, channels: usize, telescope: &str) -> PathBuf {
-    synthesise(root, channels, telescope, false)
+    synthesise(root, channels, telescope, false, 1)
 }
 
 /// [`observation_as`] with a `POINTING` row per antenna and integration,
@@ -34,10 +33,26 @@ pub fn observation_as(root: &Path, channels: usize, telescope: &str) -> PathBuf 
     reason = "not every law that shares this fixture reads pointing"
 )]
 pub fn pointed_observation_as(root: &Path, channels: usize, telescope: &str) -> PathBuf {
-    synthesise(root, channels, telescope, true)
+    synthesise(root, channels, telescope, true, 1)
 }
 
-fn synthesise(root: &Path, channels: usize, telescope: &str, pointed: bool) -> PathBuf {
+/// [`observation`] with a second window of as many channels, starting where
+/// the first ends.
+#[allow(
+    dead_code,
+    reason = "not every law that shares this fixture reads two windows"
+)]
+pub fn two_window_observation(root: &Path, channels: usize) -> PathBuf {
+    synthesise(root, channels, "VLA", false, 2)
+}
+
+fn synthesise(
+    root: &Path,
+    channels: usize,
+    telescope: &str,
+    pointed: bool,
+    windows: usize,
+) -> PathBuf {
     let measurement_set = root.join(format!("admission-{telescope}.ms"));
     let mut antennas = tutorial_vla_a_antennas();
     if telescope == "ALMA" {
@@ -45,28 +60,27 @@ fn synthesise(root: &Path, channels: usize, telescope: &str, pointed: bool) -> P
             antenna.dish_diameter_m = 12.0;
         }
     }
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
-        root.join("unused.fits"),
-        &measurement_set,
-        antennas,
-    );
+    let mut request =
+        ObservationRequest::vla_ppdisk(root.join("unused.fits"), &measurement_set, antennas);
     request.telescope_name = telescope.to_string();
     if pointed {
-        request.fields = vec![SyntheticField {
+        request.fields = vec![Field {
             name: request.field_name.clone(),
             phase_center_rad: request.phase_center_rad,
         }];
     }
     request.duration_seconds = 600.0;
     request.integration_seconds = 60.0;
-    request.spectral_windows = vec![SyntheticSpectralSetup {
-        name: "admission".to_string(),
-        start_frequency_hz: 44.0e9,
-        channel_width_hz: 128.0e6,
-        channel_count: channels,
-    }];
+    request.spectral_windows = (0..windows)
+        .map(|window| SpectralSetup {
+            name: format!("admission-{window}"),
+            start_frequency_hz: 44.0e9 + (window * channels) as f64 * 128.0e6,
+            channel_width_hz: 128.0e6,
+            channel_count: channels,
+        })
+        .collect();
     let cell_rad = (CELL_ARCSEC / 3_600.0_f64).to_radians();
-    let spectrum = |flux_jy: f64, spectral_index: f64| SyntheticAnalyticSpectrum {
+    let spectrum = |flux_jy: f64, spectral_index: f64| AnalyticSpectrum {
         flux_jy,
         spectral_index,
         reference_frequency_hz: Some(44.2e9),
@@ -77,18 +91,18 @@ fn synthesise(root: &Path, channels: usize, telescope: &str, pointed: bool) -> P
         absorption_center_fraction: 0.5,
         absorption_sigma_fraction: 0.1,
     };
-    request.model = Some(SyntheticSkyModel::AnalyticComponents {
+    request.model = Some(SkyModel::AnalyticComponents {
         path: None,
         schema_version: Some(1),
         name: Some("admission".to_string()),
         components: vec![
-            SyntheticAnalyticComponent::Point {
+            AnalyticComponent::Point {
                 name: Some("point".to_string()),
                 l_rad: -20.0 * cell_rad,
                 m_rad: 12.0 * cell_rad,
                 spectrum: spectrum(1.0, -0.7),
             },
-            SyntheticAnalyticComponent::Gaussian {
+            AnalyticComponent::Gaussian {
                 name: Some("gaussian".to_string()),
                 l_rad: 30.0 * cell_rad,
                 m_rad: -25.0 * cell_rad,
@@ -99,6 +113,6 @@ fn synthesise(root: &Path, channels: usize, telescope: &str, pointed: bool) -> P
             },
         ],
     });
-    generate_synthetic_observation_ms(&request).expect("synthesise the admission MS");
+    generate(&request).expect("synthesise the admission MS");
     measurement_set
 }

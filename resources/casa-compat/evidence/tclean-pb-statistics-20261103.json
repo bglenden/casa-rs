@@ -1,0 +1,6290 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean statistics inside the primary beam for every gridder: the residual's pixel mask, the nsigma noise and the automatic mask",
+ "work_issue": 980,
+ "issues": [
+  1078,
+  1079
+ ],
+ "date": "2026-11-03",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14",
+  "host": "macOS-27.0.1-arm64-arm-64bit (Mac mini)"
+ },
+ "native_revision": "df91785e691b824477a98fdd614e21c5485cdf06",
+ "baseline_revision": "353bede5a77e4fe6e16eeef1c44ff292c3d0fa0b",
+ "baseline_note": "main before this change; the branch's base, 49c810c572, differs from it only in the simulation crates and CASA tool signatures, not in imaging",
+ "builds": "release casars-imager of each revision in a private target directory (runs/pb-statistics/target-branch and target-base on the Mac); the casars Python package of the branch, installed from a wheel, drives both",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_case_matrix.py, each case's CASA calls in a CASA process of their own",
+ "limits": "exact image-product inventory and masks; NRMS <= 1e-3, .sumwt within 5e-5; WCS, units, beams; exact iterdone/nmajordone/stopcode; maxpsfsidelobe and cyclethreshold 1e-4 relative plus 1e-8 absolute",
+ "outcome": {
+  "summary": "Of the seven new cases, five pass on the branch and fail at the baseline; point_automask_nsigma_negative_pblimit passes on both (it guards the negative-pblimit path); alma_standard_nsigma matches CASA's counts, cycles and products and misses one scalar by 2.2e-4 relative (attributed). The 39 regression cases pass but for the two recorded divergences.",
+  "cases": {
+   "alma_standard_nsigma": {
+    "branch": "counts (701, 11, 8), per-cycle iterations, nsigma thresholds and every product as CASA's; cyclethreshold 9.8894e-05 against 9.8916e-05 (2.2e-4 relative, limit 1e-4)",
+    "baseline": "fails: 839 iterations in 9 major cycles against CASA's 701 in 11; residual NRMS 0.27"
+   },
+   "point_standard_nsigma": {
+    "branch": "passes",
+    "baseline": "fails: 797 iterations in 5 major cycles against 511 in 4; residual NRMS 0.18"
+   },
+   "point_standard_nsigma_robust": {
+    "branch": "passes",
+    "baseline": "fails: 826 iterations in 5 major cycles against 613 in 4"
+   },
+   "point_cube_automask": {
+    "branch": "passes, every channel's .mask exact (#1074's channels 6, 17 and 18 included)",
+    "baseline": "fails: .mask NRMS 0.052"
+   },
+   "point_automask_nsigma_negative_pblimit": {
+    "branch": "passes",
+    "baseline": "passes"
+   },
+   "alma_mosaic_automask": {
+    "branch": "passes (branch_mosaic)",
+    "baseline": "fails: .mask NRMS 0.69 (baseline_mosaic)"
+   },
+   "alma_mosaic_automask_nsigma": {
+    "branch": "passes (branch_mosaic)",
+    "baseline": "fails: .mask NRMS 1.48 (baseline_mosaic)"
+   }
+  },
+  "regression": "37/39 pass; test_iterbot_cube_nsigma.1 (residual NRMS 0.044 with exact counts: the recorded cube nsigma f32 floor) and test_multifield_facets_mfs.1 (2471 pixel-mask pixels on .image and .residual: the recorded CASA facet-mask bug) fail as round 5 recorded them",
+  "timing": "single runs, not an A-B-B-A timing: point_cube_automask (1024 x 1024 x 20 channels, the analytic beam formed for every plane at every boundary) took 17.9 s native on the branch and 20.1 s at the baseline; no case ran measurably slower"
+ },
+ "attributions": {
+  "alma_standard_nsigma": "The scalar is CASA's cycle threshold after the last major cycle, the sidelobe level times the final peak residual of a noise-free field cleaned to 1e-4 of its dirty peak over eleven major cycles. Counts, cycle splits and nsigma thresholds agree exactly and every product within 1e-3, so the 2.2e-4 difference is the final residual's own precision (CASA's Float images against casa-rs's f64), not the beam statistics.",
+  "branch_first": "In the first case versions, nsigma 3 never stopped the VLA runs and the default auto-multithresh parameters left the noise-free mosaic's masks to the sidelobe threshold. point_standard_nsigma and point_automask_nsigma_negative_pblimit then matched CASA's counts, cycle splits and nsigma thresholds exactly, and differed only after the last cycle cleaned 387 and 458 components to cycleniter at the noise floor (residual NRMS 0.012 and 0.0057), where near-equal peaks decide the order. The mosaic matched its statistics to the residual's 1e-4 precision, and one iteration moved at a near-tie threshold crossing in its third cycle (67 against 68). Without a mask, point_standard_nsigma_robust met the recorded CASA bug in which nothing is cleaned. The revised cases stop on nsigma, name a mask, and let the noise threshold set the mosaic's mask."
+ },
+ "runs": {
+  "branch_first": {
+   "native_revision": "df91785e691b824477a98fdd614e21c5485cdf06",
+   "binary_sha256": "fec8699f1bc7cc6823a17af6b3380cf6557df5e89f6c65eb141f2d8e5adce06e",
+   "case_file": "resources/casa-compat/tclean-pb-statistics-cases.json",
+   "case_file_sha256": "2eed3c5a94317eff9b5b2cc54523b3d5cf7b55c671f9d71a0698961c067fdec8",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 2,
+    "total": 7
+   },
+   "cases": {
+    "alma_standard_nsigma": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1000,
+         "casa": 1000
+        },
+        "nmajordone": {
+         "native": 6,
+         "casa": 6
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         63,
+         131,
+         199,
+         409,
+         1000
+        ],
+        "casa": [
+         0,
+         63,
+         131,
+         199,
+         409,
+         1000
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1761751025915146,
+         "casa": 0.1761750876903534,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 6.863660382805392e-05,
+         "casa": 6.862521695438772e-05,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.53,
+        "casa": 2.66
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 2.29498823344635e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 8.921241784099664e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 6.645185016093936e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.0001747122405885403,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_nsigma": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1000,
+         "casa": 1000
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         613,
+         1000
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         613,
+         1000
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0001406055671395734,
+         "casa": 0.0001437153696315363,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.38,
+        "casa": 8.31
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 0.00010129451115339428,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 0.0006924989615460395,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.012167784803297948,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_nsigma_robust": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1000,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 7
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         613,
+         1000
+        ],
+        "casa": [
+         0
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0001406055671395734,
+         "casa": 0.12734346091747284,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.34,
+        "casa": 2.28
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 0.44808641425814066,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.mask": {
+         "nrms": Infinity,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.model": {
+         "nrms": Infinity,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 1.00007675086396,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_cube_automask": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1060,
+         "casa": 1060
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         319,
+         691,
+         1060
+        ],
+        "casa": [
+         0,
+         319,
+         691,
+         1060
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12834952771663666,
+         "casa": 0.12834952771663666,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00038294517435133457,
+         "casa": 0.0003829518973361701,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 17.94,
+        "casa": 153.65
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 2.153663014536806e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 7.584408358443113e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 7.843278204976452e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 3.6442154284261854e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_automask_nsigma_negative_pblimit": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1000,
+         "casa": 1000
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         542,
+         1000
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         542,
+         1000
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00013881796621717513,
+         "casa": 0.0001386172662023455,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.56,
+        "casa": 9.63
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 0.00011369972317682022,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 0.000455460396936202,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.0057124292155175714,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_automask": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1000,
+         "casa": 1000
+        },
+        "nmajordone": {
+         "native": 7,
+         "casa": 7
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         46,
+         78,
+         146,
+         213,
+         554,
+         1000
+        ],
+        "casa": [
+         0,
+         46,
+         78,
+         145,
+         213,
+         556,
+         1000
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00014782656216993928,
+         "casa": 0.0001459173217881471,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 5.6,
+        "casa": 19.04
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.2696745974083296e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.035916426326717966,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.model": {
+         "nrms": 0.0004054921038735377,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.0198015068759985,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_automask_nsigma": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1000,
+         "casa": 1000
+        },
+        "nmajordone": {
+         "native": 7,
+         "casa": 7
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         46,
+         78,
+         146,
+         213,
+         554,
+         1000
+        ],
+        "casa": [
+         0,
+         46,
+         78,
+         145,
+         213,
+         556,
+         1000
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00014782656216993928,
+         "casa": 0.0001459173217881471,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 6.93,
+        "casa": 18.03
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.2696745974083296e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.035916426326717966,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.model": {
+         "nrms": 0.0004054921038735377,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.0198015068759985,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "the case file's first version; the cases revised afterwards (the nsigma and mosaic ones) are superseded by branch_revised and branch_mosaic"
+  },
+  "branch_revised": {
+   "native_revision": "df91785e691b824477a98fdd614e21c5485cdf06",
+   "binary_sha256": "fec8699f1bc7cc6823a17af6b3380cf6557df5e89f6c65eb141f2d8e5adce06e",
+   "case_file": "resources/casa-compat/tclean-pb-statistics-cases.json",
+   "case_file_sha256": "38fb7203dbf4fc09907261a7418937db892963382fbe82c35bc520c05d5bae01",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 3,
+    "total": 4
+   },
+   "cases": {
+    "alma_standard_nsigma": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 701,
+         "casa": 701
+        },
+        "nmajordone": {
+         "native": 11,
+         "casa": 11
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         47,
+         97,
+         147,
+         199,
+         301,
+         454,
+         593,
+         663,
+         693,
+         701
+        ],
+        "casa": [
+         0,
+         47,
+         97,
+         147,
+         199,
+         301,
+         454,
+         593,
+         663,
+         693,
+         701
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1761751025915146,
+         "casa": 0.1761750876903534,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 9.889418288366869e-05,
+         "casa": 9.891598165268078e-05,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.53,
+        "casa": 4.74
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 2.3223188380613683e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 1.6276485663595784e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 6.645185016093936e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.00016785616301846052,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_nsigma": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 511,
+         "casa": 511
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         511
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         511
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0002121380384778604,
+         "casa": 0.0002121422439813614,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.47,
+        "casa": 7.38
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.669685945745934e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 3.1017576821341216e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 1.0782023140334478e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_nsigma_robust": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 613,
+         "casa": 613
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         613
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         613
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0001886583777377382,
+         "casa": 0.0001886842946987599,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.47,
+        "casa": 6.61
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.6373904816209367e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 2.494082433234538e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 8.775428967052114e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_automask_nsigma_negative_pblimit": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 820,
+         "casa": 820
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         542,
+         820
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         542,
+         820
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00015865510795265436,
+         "casa": 0.00015865506429690868,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.87,
+        "casa": 9.41
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 2.2219718835863098e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 7.903426350259497e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 2.8652710577770395e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "the revised nsigma cases, which stop on nsigma"
+  },
+  "branch_mosaic": {
+   "native_revision": "df91785e691b824477a98fdd614e21c5485cdf06",
+   "binary_sha256": "fec8699f1bc7cc6823a17af6b3380cf6557df5e89f6c65eb141f2d8e5adce06e",
+   "case_file": "resources/casa-compat/tclean-pb-statistics-cases.json",
+   "case_file_sha256": "ebbc99eb76bfa6c9ce4f1f7fa693fc9a1f868f38da66d4d175bfd4fbb5646e7c",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 2,
+    "total": 2
+   },
+   "cases": {
+    "alma_mosaic_automask": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 300,
+         "casa": 300
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ],
+        "casa": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0005468408926390111,
+         "casa": 0.0005468797171488404,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.27,
+        "casa": 10.06
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 3.8845410042897434e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 3.233815927478568e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 7.539999251056987e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_automask_nsigma": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 300,
+         "casa": 300
+        },
+        "nmajordone": {
+         "native": 6,
+         "casa": 6
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         128,
+         194,
+         287,
+         300
+        ],
+        "casa": [
+         0,
+         61,
+         128,
+         194,
+         287,
+         300
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0004916835459880531,
+         "casa": 0.0004916653851978481,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.78,
+        "casa": 12.11
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 3.9731342169930333e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 3.03900908339691e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 7.643650842274081e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "the revised mosaic cases, whose noise threshold sets the mask"
+  },
+  "baseline": {
+   "native_revision": "353bede5a77e4fe6e16eeef1c44ff292c3d0fa0b",
+   "binary_sha256": "6e9c5aa401723230a506700eb9c7b4b4063d7e66901bfe2f8c4a2965aa7cfbc8",
+   "case_file": "resources/casa-compat/tclean-pb-statistics-cases.json",
+   "case_file_sha256": "38fb7203dbf4fc09907261a7418937db892963382fbe82c35bc520c05d5bae01",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 1,
+    "total": 7
+   },
+   "cases": {
+    "alma_standard_nsigma": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 839,
+         "casa": 701
+        },
+        "nmajordone": {
+         "native": 9,
+         "casa": 11
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         59,
+         119,
+         180,
+         280,
+         518,
+         720,
+         815,
+         839
+        ],
+        "casa": [
+         0,
+         47,
+         97,
+         147,
+         199,
+         301,
+         454,
+         593,
+         663,
+         693,
+         701
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1761751025915146,
+         "casa": 0.1761750876903534,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 8.007210271898657e-05,
+         "casa": 9.891598165268078e-05,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.83,
+        "casa": 3.66
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 8.319606633994577e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 0.0009740445896640373,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 6.645185016093936e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.2734255775533508,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_nsigma": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 797,
+         "casa": 511
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         613,
+         797
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         511
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00015894252283032984,
+         "casa": 0.0002121422439813614,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.96,
+        "casa": 9.62
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 0.0026427346919779284,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 0.007495651495653214,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.1772652845863183,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_standard_nsigma_robust": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 826,
+         "casa": 613
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         613,
+         826
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         613
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00015452606021426618,
+         "casa": 0.0001886842946987599,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.75,
+        "casa": 6.44
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 0.0018532630269235443,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 0.005595960766121724,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.12944227180903747,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_cube_automask": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1060,
+         "casa": 1060
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         319,
+         691,
+         1060
+        ],
+        "casa": [
+         0,
+         319,
+         691,
+         1060
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12834952771663666,
+         "casa": 0.12834952771663666,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00038294517435133457,
+         "casa": 0.0003829518973361701,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 20.09,
+        "casa": 136.23
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 2.153663014536806e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.052381872932159616,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.model": {
+         "nrms": 7.584408358443113e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 7.843278204976452e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 3.6442154284261854e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "point_automask_nsigma_negative_pblimit": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 820,
+         "casa": 820
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         59,
+         542,
+         820
+        ],
+        "casa": [
+         0,
+         21,
+         59,
+         542,
+         820
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12028076499700546,
+         "casa": 0.12028076499700546,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00015865510795265436,
+         "casa": 0.00015865506429690868,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.83,
+        "casa": 9.56
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 2.2219718835863098e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 7.903426350259497e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.74272738146532e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 2.8652710577770395e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_automask": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1000,
+         "casa": 1000
+        },
+        "nmajordone": {
+         "native": 7,
+         "casa": 7
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         46,
+         78,
+         146,
+         213,
+         554,
+         1000
+        ],
+        "casa": [
+         0,
+         46,
+         78,
+         145,
+         213,
+         556,
+         1000
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00014782656216993928,
+         "casa": 0.0001459173217881471,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.93,
+        "casa": 10.24
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.2696745974083296e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.04249688873453659,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.model": {
+         "nrms": 0.0004054921038735377,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.0198015068759985,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_automask_nsigma": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 1000,
+         "casa": 1000
+        },
+        "nmajordone": {
+         "native": 7,
+         "casa": 7
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         46,
+         78,
+         146,
+         213,
+         554,
+         1000
+        ],
+        "casa": [
+         0,
+         46,
+         78,
+         145,
+         213,
+         556,
+         1000
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.00014782656216993928,
+         "casa": 0.0001459173217881471,
+         "passed": false
+        }
+       },
+       "elapsed_seconds": {
+        "native": 4.06,
+        "casa": 9.86
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 1.2696745974083296e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.04249688873453659,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.model": {
+         "nrms": 0.0004054921038735377,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 0.0198015068759985,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "every case at the baseline; its mosaic rows are the first version's parameters"
+  },
+  "baseline_mosaic": {
+   "native_revision": "353bede5a77e4fe6e16eeef1c44ff292c3d0fa0b",
+   "binary_sha256": "6e9c5aa401723230a506700eb9c7b4b4063d7e66901bfe2f8c4a2965aa7cfbc8",
+   "case_file": "resources/casa-compat/tclean-pb-statistics-cases.json",
+   "case_file_sha256": "ebbc99eb76bfa6c9ce4f1f7fa693fc9a1f868f38da66d4d175bfd4fbb5646e7c",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 0,
+    "total": 2
+   },
+   "cases": {
+    "alma_mosaic_automask": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 300,
+         "casa": 300
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ],
+        "casa": [
+         0,
+         61,
+         129,
+         197,
+         300
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0005468408926390111,
+         "casa": 0.0005468797171488404,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.72,
+        "casa": 9.98
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 3.8845410042897434e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.6862561415551681,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.model": {
+         "nrms": 3.233815927478568e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 7.539999251056987e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "alma_mosaic_automask_nsigma": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 300,
+         "casa": 300
+        },
+        "nmajordone": {
+         "native": 6,
+         "casa": 6
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         128,
+         194,
+         287,
+         300
+        ],
+        "casa": [
+         0,
+         61,
+         128,
+         194,
+         287,
+         300
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17252177000045776,
+         "casa": 0.17252179980278015,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0004916835459880531,
+         "casa": 0.0004916653851978481,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 4.57,
+        "casa": 11.83
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 3.9731342169930333e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 1.4820138620898726,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "img.model": {
+         "nrms": 3.03900908339691e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 8.659490212230745e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 9.9711132990832e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 7.643650842274081e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 1.1254725301541571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "the revised mosaic cases at the baseline"
+  },
+  "regression": {
+   "native_revision": "df91785e691b824477a98fdd614e21c5485cdf06",
+   "binary_sha256": "fec8699f1bc7cc6823a17af6b3380cf6557df5e89f6c65eb141f2d8e5adce06e",
+   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
+   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 37,
+    "total": 39
+   },
+   "cases": {
+    "test_onefield.test_onefield_multiscale.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.13044804334640503,
+         "casa": 0.13044807314872742,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.10732544213533401,
+         "casa": 0.1073254644870758,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.15,
+        "casa": 1.81
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.3637358403361146e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.3002035024699978e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.3500790508901383e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 1.6412262274758807e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_iterbot.test_iterbot_cube_deconvolvers.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 114,
+         "casa": 114
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         114
+        ],
+        "casa": [
+         0,
+         114
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12772122025489807,
+         "casa": 0.12772122025489807,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.03727225586771965,
+         "casa": 0.03727224841713905,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.41,
+        "casa": 3.32
+       }
+      }
+     ],
+     "images": {
+      "tst1": {
+       "inventory_passed": true,
+       "products": {
+        "tst1.image": {
+         "nrms": 1.5495372695973858e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst1.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst1.model": {
+         "nrms": 7.145841562571933e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst1.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst1.psf": {
+         "nrms": 9.57988854835057e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst1.residual": {
+         "nrms": 1.1234009526143076e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst1.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_iterbot.test_iterbot_cube_deconvolvers.2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 116,
+         "casa": 116
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         116
+        ],
+        "casa": [
+         0,
+         116
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12772122025489807,
+         "casa": 0.12772122025489807,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.03691045567393303,
+         "casa": 0.03691045567393303,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.85,
+        "casa": 4.34
+       }
+      }
+     ],
+     "images": {
+      "tst2": {
+       "inventory_passed": true,
+       "products": {
+        "tst2.image": {
+         "nrms": 1.7951219320604064e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst2.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst2.model": {
+         "nrms": 1.2119771129926689e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst2.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst2.psf": {
+         "nrms": 9.57988854835057e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst2.residual": {
+         "nrms": 1.8938804879707403e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst2.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_iterbot.test_iterbot_cube_deconvolvers.3": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 100,
+         "casa": 100
+        },
+        "nmajordone": {
+         "native": 3,
+         "casa": 3
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         38,
+         100
+        ],
+        "casa": [
+         0,
+         38,
+         100
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12772122025489807,
+         "casa": 0.12772122025489807,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.03096528723835945,
+         "casa": 0.030965246260166168,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.82,
+        "casa": 4.85
+       }
+      }
+     ],
+     "images": {
+      "tst3": {
+       "inventory_passed": true,
+       "products": {
+        "tst3.image": {
+         "nrms": 2.415627114453825e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst3.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst3.model": {
+         "nrms": 2.1629406660381833e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst3.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst3.psf": {
+         "nrms": 9.57988854835057e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst3.residual": {
+         "nrms": 5.257478983165258e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst3.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_iterbot.test_iterbot_cube_nsigma.1": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 378,
+         "casa": 378
+        },
+        "nmajordone": {
+         "native": 8,
+         "casa": 8
+        },
+        "stopcode": {
+         "native": 8,
+         "casa": 8
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         37,
+         94,
+         151,
+         208,
+         265,
+         321,
+         378
+        ],
+        "casa": [
+         0,
+         37,
+         94,
+         151,
+         208,
+         265,
+         322,
+         378
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12834814190864563,
+         "casa": 0.12834811210632324,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 2.1096965951983293e-07,
+         "casa": 2.0888116125661327e-07,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 5.75,
+        "casa": 19.48
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.2679969071498846e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 9.272797988941691e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.014539925687666e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 0.043746337908596805,
+         "mask_mismatch": 0,
+         "passed": false
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_iterbot.test_iterbot_mfs_restart_updatedmask.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 2,
+         "casa": 2
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         2
+        ],
+        "casa": [
+         0,
+         2
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.13860347867012024,
+         "casa": 0.13860347867012024,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.5667024850845337,
+         "casa": 0.5667024850845337,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.44,
+        "casa": 0.87
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 8.573367714306e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.5323051111578742e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 7.153310912328798e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 9.830183305746257e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_iterbot.test_iterbot_cube_restart_updatedmask.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 8,
+         "casa": 8
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         8
+        ],
+        "casa": [
+         0,
+         8
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14452090859413147,
+         "casa": 0.14452090859413147,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.6377244591712952,
+         "casa": 0.6377245187759399,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.47,
+        "casa": 1.38
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 9.624290878778169e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.760815207046595e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 7.648598646212415e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 8.493766847903849e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_iterbot.test_iterbot_mfs_restart_pbmask.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 2,
+         "casa": 2
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         2
+        ],
+        "casa": [
+         0,
+         2
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.13860347867012024,
+         "casa": 0.13860347867012024,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.5667024850845337,
+         "casa": 0.5667024850845337,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.56,
+        "casa": 1.04
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 8.573367714306e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.5323051111578742e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 7.153310912328798e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 9.830183305746257e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_multifield.test_multifield_facets_mfs.1": {
+     "passed": false,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 3,
+         "casa": 3
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         24,
+         30
+        ],
+        "casa": [
+         0,
+         24,
+         30
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.13862578570842743,
+         "casa": 0.13862580060958862,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.08191251754760742,
+         "casa": 0.08191252499818802,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.6,
+        "casa": 1.92
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 8.153651793300035e-07,
+         "mask_mismatch": 2471,
+         "passed": false
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 4.967784883674779e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 5.965008148440304e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.7138343699168706e-06,
+         "mask_mismatch": 2471,
+         "passed": false
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.5,
+        "casa": 2.36
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_newnoise.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.44,
+        "casa": 2.01
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_with_nsigma.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.41,
+        "casa": 2.05
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_with_nsigma_newnoise.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.39,
+        "casa": 1.84
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_with_prune.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1413663774728775,
+         "casa": 0.1413663625717163,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.04990803077816963,
+         "casa": 0.04990800470113754,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.83,
+        "casa": 3.54
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.1074351339308884e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 8.609001450510291e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.6734099407571883e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_with_stopmask.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 100,
+         "casa": 100
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         21,
+         62,
+         100
+        ],
+        "casa": [
+         0,
+         21,
+         62,
+         100
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0016392107354477048,
+         "casa": 0.0016392087563872337,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.5,
+        "casa": 3.28
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.8815288442323354e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 3.398422698231177e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 6.953383734417796e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_with_absorption.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 100,
+         "casa": 100
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         35,
+         95,
+         100
+        ],
+        "casa": [
+         0,
+         35,
+         95,
+         100
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12308543175458908,
+         "casa": 0.12308542430400848,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0015343630220741034,
+         "casa": 0.001534359878860414,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.0,
+        "casa": 6.74
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.3393628582010324e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 3.4804489998486116e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 7.68762849056249e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 1.4927096251312977e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_mfs_IQUV.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 33,
+         "casa": 33
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         33
+        ],
+        "casa": [
+         0,
+         33
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.18299652636051178,
+         "casa": 0.18299654126167297,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.22970451414585114,
+         "casa": 0.22970442473888397,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.29,
+        "casa": 0.74
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.1451501626183725e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.3361888832284385e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.0723720743362251e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 3.848684291089186e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mask.test_mask_autobox_multithresh_cube_IQUV.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 93,
+         "casa": 93
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         93
+        ],
+        "casa": [
+         0,
+         93
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.20957250893115997,
+         "casa": 0.2095724642276764,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.2630636990070343,
+         "casa": 0.26306357979774475,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.86,
+        "casa": 2.43
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.0455930982436397e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.4613694112275403e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.4127222674279559e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 3.637323564764786e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_12.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.52,
+        "casa": 2.5
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_13.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.41,
+        "casa": 2.34
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_14.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.53,
+        "casa": 2.36
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_15.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14136677980422974,
+         "casa": 0.14136679470539093,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.049908172339200974,
+         "casa": 0.04990816488862038,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.39,
+        "casa": 2.24
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.9796720201104497e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 7.721079403812221e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1453201115615509e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.5786605973710466e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_16.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 170,
+         "casa": 170
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         170
+        ],
+        "casa": [
+         0,
+         170
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12834814190864563,
+         "casa": 0.12834811210632324,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.057541411370038986,
+         "casa": 0.057541389018297195,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.7,
+        "casa": 8.02
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.594270525219356e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.1186994963433369e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.014539925687666e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.746223596278571e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_17.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 170,
+         "casa": 170
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         170
+        ],
+        "casa": [
+         0,
+         170
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12834814190864563,
+         "casa": 0.12834811210632324,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.057541411370038986,
+         "casa": 0.057541389018297195,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.94,
+        "casa": 7.27
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.5942705188805382e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.1186994963433369e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.014539925687666e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 2.7462235977691925e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_18.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 190,
+         "casa": 190
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         190
+        ],
+        "casa": [
+         0,
+         190
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12834814190864563,
+         "casa": 0.12834811210632324,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.057541411370038986,
+         "casa": 0.057541389018297195,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.64,
+        "casa": 6.29
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.6178054015632685e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.1184552418502925e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.014539925687666e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 3.1213642888586004e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_19.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 190,
+         "casa": 190
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         190
+        ],
+        "casa": [
+         0,
+         190
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12834814190864563,
+         "casa": 0.12834811210632324,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.057541411370038986,
+         "casa": 0.057541389018297195,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.9,
+        "casa": 5.66
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.6178053952735758e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.1184552418502925e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.014539925687666e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 3.1213642905078307e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_28.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1552683562040329,
+         "casa": 0.15526831150054932,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.05715441703796387,
+         "casa": 0.05715440586209297,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.39,
+        "casa": 0.45
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 1.4244171916623102e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.3455385011169912e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 1.0317568491582707e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_29.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 166,
+         "casa": 166
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         166
+        ],
+        "casa": [
+         0,
+         166
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.2926100790500641,
+         "casa": 0.2926100790500641,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.19859643280506134,
+         "casa": 0.19859632849693298,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.98,
+        "casa": 1.19
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.6155795659203174e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.1250989170840389e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.1667974373834276e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 3.20816883178335e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_startmodel.test_startmodel_with_mask_mfs.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 100,
+         "casa": 100
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         22,
+         60,
+         98,
+         100
+        ],
+        "casa": [
+         0,
+         22,
+         60,
+         98,
+         100
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14497391879558563,
+         "casa": 0.14497391879558563,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0027221592608839273,
+         "casa": 0.0027220766060054302,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 0.35,
+        "casa": 1.1
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 3.487036507441057e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.2602902662784746e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 6.392193348020733e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 6.739601871407217e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_startmodel.test_startmodel_with_mask_mtmfs.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 100,
+         "casa": 100
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         22,
+         59,
+         97,
+         100
+        ],
+        "casa": [
+         0,
+         22,
+         59,
+         97,
+         100
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.1419483721256256,
+         "casa": 0.1419483721256256,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0023589394986629486,
+         "casa": 0.0023588223848491907,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.37,
+        "casa": 2.02
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.alpha": {
+         "nrms": 2.245125295789745e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.alpha.error": {
+         "nrms": 3.5838151635817175e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.tt0": {
+         "nrms": 3.800628574454979e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.tt1": {
+         "nrms": 6.365788532645923e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model.tt0": {
+         "nrms": 1.7813336278960617e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model.tt1": {
+         "nrms": 1.0444782046327082e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb.tt0": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf.tt0": {
+         "nrms": 8.93809141875451e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf.tt1": {
+         "nrms": 9.375717479442173e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf.tt2": {
+         "nrms": 9.498404387789381e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual.tt0": {
+         "nrms": 6.0187814314485917e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual.tt1": {
+         "nrms": 4.501640333536148e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt.tt0": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt.tt1": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt.tt2": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 114,
+         "casa": 114
+        },
+        "nmajordone": {
+         "native": 4,
+         "casa": 4
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         38,
+         75,
+         114
+        ],
+        "casa": [
+         0,
+         38,
+         75,
+         114
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.27650904655456543,
+         "casa": 0.2765090763568878,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.004304233938455582,
+         "casa": 0.004304221365600824,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 4.45,
+        "casa": 15.01
+       }
+      }
+     ],
+     "images": {
+      "tst.12m.single": {
+       "inventory_passed": true,
+       "products": {
+        "tst.12m.single.image": {
+         "nrms": 1.506369436757141e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.12m.single.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.12m.single.model": {
+         "nrms": 2.4376680920887264e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.12m.single.pb": {
+         "nrms": 9.281118602345779e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.12m.single.psf": {
+         "nrms": 1.1419907889325135e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.12m.single.residual": {
+         "nrms": 2.4259639059724673e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.12m.single.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.12m.single.weight": {
+         "nrms": 4.1437858495134985e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mtmfsviacube.test_mtmfsviacube_compare_with_mfs.1": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 3,
+         "casa": 3
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         5,
+         10
+        ],
+        "casa": [
+         0,
+         5,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.12100669741630554,
+         "casa": 0.12100669741630554,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.044669829308986664,
+         "casa": 0.04466982185840607,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.94,
+        "casa": 9.85
+       }
+      }
+     ],
+     "images": {
+      "tst.mfs": {
+       "inventory_passed": true,
+       "products": {
+        "tst.mfs.alpha": {
+         "nrms": 1.953831938806534e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.alpha.error": {
+         "nrms": 5.240665131206881e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.image.tt0": {
+         "nrms": 2.1296306381860977e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.image.tt1": {
+         "nrms": 3.6844906378794857e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.model.tt0": {
+         "nrms": 4.398908894637774e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.model.tt1": {
+         "nrms": 7.410499079821861e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.pb.tt0": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.psf.tt0": {
+         "nrms": 8.657033956121021e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.psf.tt1": {
+         "nrms": 8.422964709395038e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.psf.tt2": {
+         "nrms": 8.285532764476961e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.residual.tt0": {
+         "nrms": 8.824800318974772e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.residual.tt1": {
+         "nrms": 1.0190813142093966e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.sumwt.tt0": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.sumwt.tt1": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mfs.sumwt.tt2": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mosaic_mtmfs.test_mtmfs_standard_onefield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0
+        ],
+        "casa": [
+         0
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.99,
+        "casa": 1.71
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.13656194508075714,
+         "casa": 0.13656194508075714,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.024311713874340057,
+         "casa": 0.024311693385243416,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.44,
+        "casa": 2.63
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.alpha": {
+         "nrms": 2.6518254763455306e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.alpha.error": {
+         "nrms": 5.26047185803347e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.tt0": {
+         "nrms": 6.343379556905251e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.tt1": {
+         "nrms": 1.09407732757096e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model.tt0": {
+         "nrms": 8.087208139397589e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model.tt1": {
+         "nrms": 6.264680047128293e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb.tt0": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf.tt0": {
+         "nrms": 1.4876744923977807e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf.tt1": {
+         "nrms": 1.5629419146460738e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf.tt2": {
+         "nrms": 1.5041118927165192e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual.tt0": {
+         "nrms": 1.6005677469769732e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual.tt1": {
+         "nrms": 1.4789308344252984e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt.tt0": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt.tt1": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt.tt2": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mosaic_mtmfs.test_mtmfs_standard_twofield.2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 10,
+         "casa": 10
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         10
+        ],
+        "casa": [
+         0,
+         10
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.13443700969219208,
+         "casa": 0.13443700969219208,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.03271591663360596,
+         "casa": 0.03271590173244476,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.26,
+        "casa": 2.93
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.alpha": {
+         "nrms": 2.4637670948455374e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.alpha.error": {
+         "nrms": 2.88630845932231e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.tt0": {
+         "nrms": 2.1914742036110405e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.tt1": {
+         "nrms": 4.537611091605795e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model.tt0": {
+         "nrms": 7.22369735229821e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model.tt1": {
+         "nrms": 4.2815156479763524e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb.tt0": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf.tt0": {
+         "nrms": 1.3436686450971567e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf.tt1": {
+         "nrms": 1.4263256649452292e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf.tt2": {
+         "nrms": 1.4313979734608893e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual.tt0": {
+         "nrms": 4.423892358064727e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual.tt1": {
+         "nrms": 5.176891668790995e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt.tt0": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt.tt1": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt.tt2": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_standard_onefield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0
+        ],
+        "casa": [
+         0
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.96,
+        "casa": 2.44
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         30
+        ],
+        "casa": [
+         0,
+         30
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14796164631843567,
+         "casa": 0.14796164631843567,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.03350982442498207,
+         "casa": 0.033509813249111176,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.65,
+        "casa": 3.8
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.6569344181365946e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.pbcor": {
+         "nrms": 3.968782184133589e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 9.643736048465862e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.5040369518893153e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 4.5450181974012355e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_standard_twofield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0
+        ],
+        "casa": [
+         0
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.95,
+        "casa": 2.45
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         30
+        ],
+        "casa": [
+         0,
+         30
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14814192056655884,
+         "casa": 0.14814192056655884,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.04064222797751427,
+         "casa": 0.04064222052693367,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.76,
+        "casa": 3.93
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.908905709685602e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.pbcor": {
+         "nrms": 5.588060900489823e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.6548785072810104e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 1.3229388489630979e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 5.2791127403405725e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_wproj_onefield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0
+        ],
+        "casa": [
+         0
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.9,
+        "casa": 2.16
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         30
+        ],
+        "casa": [
+         0,
+         30
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14796683192253113,
+         "casa": 0.14796681702136993,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.03336046636104584,
+         "casa": 0.033360470086336136,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.74,
+        "casa": 3.47
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 3.3991740060272623e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.pbcor": {
+         "nrms": 5.269643058591931e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.15191002738874e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 7.556516414565927e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 5.518862882356126e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 7.579466609649956e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_wproj_onefield_autowprojplanes.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0
+        ],
+        "casa": [
+         0
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 1.87,
+        "casa": 1.83
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         30
+        ],
+        "casa": [
+         0,
+         30
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14793288707733154,
+         "casa": 0.14793290197849274,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.03335265815258026,
+         "casa": 0.03335264325141907,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.52,
+        "casa": 2.74
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 0.00011497355382708089,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.pbcor": {
+         "nrms": 0.000256818002633932,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.2650054356768014e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 0.0005033242561398929,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 0.00021029324613419632,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 1.1675954837970004e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    },
+    "test_mosaic_cube.test_cube_wproj_twofield.1+2": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 0,
+         "casa": 0
+        },
+        "nmajordone": {
+         "native": 1,
+         "casa": 1
+        },
+        "stopcode": {
+         "native": 3,
+         "casa": 3
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0
+        ],
+        "casa": [
+         0
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0,
+         "casa": 0,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 2.01,
+        "casa": 2.34
+       }
+      },
+      {
+       "counts": {
+        "iterdone": {
+         "native": 30,
+         "casa": 30
+        },
+        "nmajordone": {
+         "native": 2,
+         "casa": 2
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         30
+        ],
+        "casa": [
+         0,
+         30
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.14815302193164825,
+         "casa": 0.14815299212932587,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.040611181408166885,
+         "casa": 0.040611155331134796,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.83,
+        "casa": 3.67
+       }
+      }
+     ],
+     "images": {
+      "tst": {
+       "inventory_passed": true,
+       "products": {
+        "tst.image": {
+         "nrms": 2.8758521715640122e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.image.pbcor": {
+         "nrms": 5.550090443842992e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.model": {
+         "nrms": 1.1158751602841524e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.pb": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.psf": {
+         "nrms": 7.316388154473525e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.residual": {
+         "nrms": 5.207971004649362e-06,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "tst.sumwt": {
+         "nrms": 6.772475786996309e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "the main matrix's NOW cases this change can reach: every standard or W-projection case cleaning an image whose corner lies past about 1000 arcsec, every NOW auto-multithresh and standard nsigma case, and one heterogeneous mosaic nsigma cube"
+  }
+ },
+ "archive": {
+  "nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-pb-statistics-df91785.tar",
+  "sha256": "8ba23bfec2a19acb347389cb4d0929c3fd59ef2b119cf6c0688977236e9a340a",
+  "bytes": 5234070528,
+  "members": 16013,
+  "contents": "every run directory (receipts, CASA and native products and logs, without the staged input MeasurementSets), the diagnostic verbose automask runs, the run scripts and both binaries"
+ }
+}

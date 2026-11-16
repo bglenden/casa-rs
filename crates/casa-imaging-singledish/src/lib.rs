@@ -41,7 +41,9 @@ mod weights;
 pub use beam::{BeamSetup, primary_beam_fwhm_arcsec, theoretical_beam_arcsec};
 pub use grid::{FlagMerge, GridShape, SpectrumBlock, TotalPowerGrid, TotalPowerImage};
 pub use kernel::{GridFunction, KernelParameters, KernelTable, PowerPattern, SAMPLING, Tap};
-pub use sampling::{Pointing, RasterSampling, beam_sampling, raster_sampling};
+pub use sampling::{
+    Pointing, RasterSampling, beam_sampling, raster_sampling, raster_sampling_working_bytes,
+};
 pub use weights::{weight_mask_threshold, weights_from_rows, weights_from_spectra};
 
 /// Why single-dish gridding refused.

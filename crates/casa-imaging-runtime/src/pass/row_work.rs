@@ -262,7 +262,9 @@ pub fn run_row_work_pass(
                                     other.psf += placement_work(cf.psf_half_support(placement.cf));
                                     if let Some(support) = cf.weight_half_support(placement.cf) {
                                         other.weight += WEIGHT_SUM_WORK;
-                                        if groups.starts(&placement) {
+                                        if groups
+                                            .starts(&placement, (cf, domain.operator.geometry()))
+                                        {
                                             other.weight += placement_work(support);
                                         }
                                     }

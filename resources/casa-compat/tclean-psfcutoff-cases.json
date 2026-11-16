@@ -1,0 +1,186 @@
+{
+  "source": {
+    "purpose": "CASA psfcutoff in fresh and resumed minor cycles (issue 1140 item 3); both restart directions preserve the old PSF beam."
+  },
+  "inputs": {
+    "point": "unittest/tclean/refim_point_linRL.ms",
+    "twochan": "unittest/tclean/refim_twochan.ms"
+  },
+  "common": {
+    "imsize": 100,
+    "cell": "8arcsec",
+    "stokes": "I",
+    "specmode": "cube",
+    "nchan": 1,
+    "start": 1,
+    "width": 1,
+    "deconvolver": "clark",
+    "niter": 20,
+    "gain": 0.17,
+    "restoration": false
+  },
+  "cases": {
+    "cutoff_015": {
+      "vis": "point",
+      "imagename": "im",
+      "params": {
+        "psfcutoff": 0.15
+      }
+    },
+    "cutoff_065": {
+      "vis": "point",
+      "imagename": "im",
+      "params": {
+        "psfcutoff": 0.65
+      }
+    },
+    "auto_015": {
+      "vis": "point",
+      "imagename": "im",
+      "params": {
+        "psfcutoff": 0.15,
+        "usemask": "auto-multithresh"
+      }
+    },
+    "auto_065": {
+      "vis": "point",
+      "imagename": "im",
+      "params": {
+        "psfcutoff": 0.65,
+        "usemask": "auto-multithresh"
+      }
+    },
+    "restart_015_to_065": {
+      "sequence": [
+        {
+          "vis": "point",
+          "imagename": "im",
+          "params": {
+            "psfcutoff": 0.15,
+            "niter": 0
+          }
+        },
+        {
+          "vis": "point",
+          "imagename": "im",
+          "params": {
+            "psfcutoff": 0.65,
+            "niter": 20,
+            "calcpsf": false,
+            "calcres": false
+          }
+        }
+      ]
+    },
+    "restart_065_to_015": {
+      "sequence": [
+        {
+          "vis": "point",
+          "imagename": "im",
+          "params": {
+            "psfcutoff": 0.65,
+            "niter": 0
+          }
+        },
+        {
+          "vis": "point",
+          "imagename": "im",
+          "params": {
+            "psfcutoff": 0.15,
+            "niter": 20,
+            "calcpsf": false,
+            "calcres": false
+          }
+        }
+      ]
+    },
+    "cube_iquv_065": {
+      "vis": "point",
+      "imagename": "im",
+      "params": {
+        "psfcutoff": 0.65,
+        "stokes": "IQUV",
+        "nchan": 3
+      }
+    },
+    "mtmfs_065": {
+      "vis": "point",
+      "imagename": "im",
+      "params": {
+        "psfcutoff": 0.65,
+        "specmode": "mfs",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "nchan": -1,
+        "start": "",
+        "width": ""
+      }
+    },
+    "rectangular_restart_015_to_065": {
+      "sequence": [
+        {
+          "vis": "point",
+          "imagename": "im",
+          "params": {
+            "cell": [
+              "8arcsec",
+              "16arcsec"
+            ],
+            "psfcutoff": 0.15,
+            "niter": 0
+          }
+        },
+        {
+          "vis": "point",
+          "imagename": "im",
+          "params": {
+            "cell": [
+              "8arcsec",
+              "16arcsec"
+            ],
+            "psfcutoff": 0.65,
+            "niter": 20,
+            "calcpsf": false,
+            "calcres": false
+          }
+        }
+      ]
+    },
+    "mtmfs_polarized_065": {
+      "vis": "point",
+      "imagename": "im",
+      "params": {
+        "psfcutoff": 0.65,
+        "specmode": "mfs",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "nchan": -1,
+        "start": "",
+        "width": "",
+        "stokes": "IQUV",
+        "niter": 10,
+        "gain": 0.1,
+        "restoration": true
+      },
+      "note": "Non-default cutoff on the existing polarized MT-MFS compatibility case."
+    },
+    "mtmfs_twochan_065": {
+      "vis": "twochan",
+      "imagename": "im",
+      "params": {
+        "psfcutoff": 0.65,
+        "specmode": "mfs",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "nchan": -1,
+        "start": "",
+        "width": "",
+        "stokes": "I",
+        "niter": 10,
+        "gain": 0.1,
+        "restoration": true
+      },
+      "note": "Non-default cutoff on CASA test_onefield_mtmfs."
+    }
+  }
+}

@@ -1,0 +1,386 @@
+{
+ "schema": "sm-apply-flags-receipt/1",
+ "work_issue": 1053,
+ "date": "2026-11-12",
+ "oracle": "casatools6.7.6-14, casatasks6.7.6.14",
+ "host": "bg-mac-mini, macOS arm64, Apple M2",
+ "native_revision": "47ba41a8fa147246db1a1578836c31bb702fc673",
+ "main_revision": "0cc3d483697a1fda4479328283981efbfba9e8f0",
+ "integration_revision": "803fc4de55b55f4f8d8a2f3eeae53b2ce108d9f7",
+ "python_test_revision": "18e7d6c1198bd3a1f6e0f549d6e535b8cfe7c658",
+ "revision_notes": "Integration803fc4de5 has exactly the same tree as47ba41a8f. Later18e7d6c11 changes only the Python test input helper; Rust runtime, native tests and wheel source are unchanged.",
+ "fixture": "crates/casa-simulation/tests/data/sm_apply_flags_casa.json.gz",
+ "fixture_sha256": "2b514eb2334a15a0ab2aedaff255da6855a7aa4a04361d4f980a201c3b54a304",
+ "upstream_read": {
+  "repository": "https://github.com/radio-astro/casa",
+  "revision": "4ebd5b1508a5d31b74e7b5f6b89313368d30b9ef",
+  "paths": [
+   "code/synthesis/MeasurementEquations/Simulator.cc",
+   "code/synthesis/MeasurementEquations/VisEquation.cc",
+   "code/synthesis/MeasurementComponents/VisCal.cc",
+   "code/synthesis/MeasurementComponents/SolvableVisCal.cc",
+   "code/synthesis/MeasurementComponents/Jones.cc"
+  ],
+  "scope": "Historical public source identifies the mechanism; actual CASA6.7.6.14 controls establish the release behavior."
+ },
+ "source_audit": {
+  "initial_files": 3611,
+  "native_and_python_files": 3615,
+  "all_hashes_match": true,
+  "extra_sources": [],
+  "method": "Full tracked SHA256 values plus extra .rs/.py/.toml audit. Each physical checkout owns its debug/release targets. All source timestamps refreshed after copied build caches before compiling."
+ },
+ "demonstration": {
+  "revision": "361312ecfa07d6cead57b5be41b86b74f1c7e2b2",
+  "test": "flagged_and_missing_solutions_follow_casa_with_neutral_leakage",
+  "before": "First G_nearest_flag_first_x refuses with NotYetImplemented #1053: table with flagged solutions.",
+  "after": "All24 cases pass CPU W1/W3; existing28 argument controls also pass (56 more runs)."
+ },
+ "summary": {
+  "cases": 24,
+  "unmodified_casa_cases": 24,
+  "additional_neutral_d_controls": 12,
+  "workers": [
+   1,
+   3
+  ],
+  "native_runs": 48,
+  "worker_comparison": "identical DATA in these controls",
+  "rows_per_run": 144,
+  "channels": 4,
+  "correlations": 4,
+  "calibration_times": 2,
+  "calibration_rows": "16, or14 with antenna7 missing",
+  "data_nrms_max": 7.52736350416503e-08,
+  "data_nrms_limit": 0.001,
+  "cpp_ms_table_readbacks": 48,
+  "cpp_native_table_consumers": 24,
+  "cpp_ms_nrms_max": 7.527363498332687e-08,
+  "cpp_native_table_consumption_nrms_max": 0
+ },
+ "input_quality": {
+  "groups": "G/D \u00d7nearest/linear \u00d7first-X/all-X/first-Y/last-Y/both-receptor flags/missing antenna.",
+  "coefficients": "Nonidentity complex receptor values varying with antenna and time, matching the stated apply-parameters input formula. Only first/last endpoints, so inner integrations interpolate.",
+  "sentinels": "DATA3+4j; MODEL7-2j; CORRECTED-5+6j; WEIGHT[2,3,5,7]; SIGMA[.5,.75,1.25,2]; data flags false.",
+  "checks": "Finite DATA; exact stored TIME, antennas, field, input FLAG/FLAG_ROW/WEIGHT/SIGMA/MODEL; CORRECTED follows native DATA. C++ verifies table rows, subtype, coefficient values, flags and times, then actually applies each W1 table."
+ },
+ "exception": {
+  "record": "docs/CASA (C++) bugs.md#invalid-leakage-solutions-become-unit-leakage",
+  "casa": "JonesGenLin::setMatByOk sets both leakage coefficients to one when either is invalid. A missing antenna has the same effect. Autocorrelation cross hands3+4j become9+12j, and the simulator does not persist calibration flags.",
+  "native": "Both leakage coefficients are zero for that invalid antenna, the neutral linear leakage operator. Valid antennas and times retain their requested interpolation. G keeps CASA per-receptor unit gains.",
+  "reference": "Preserve all12 defective raw D results. Run12 additional CASA controls with explicit zero D coefficients on the affected antenna. Use those controls only at invalid times, and original valid-table CASA controls elsewhere. Each case independently checks neutral autocorrelation3+4j versus raw9+12j.",
+  "interoperability": "C++ consumption of the native invalid tables is compared with original defective CASA results, separately from native corrected-output acceptance. Maximum table-consumer residual is0.",
+  "authorization": "Standing AGENTS.md CASA-deviation rule: correct data corruption. Recorded for owner review; no new approval inferred."
+ },
+ "validation": {
+  "full": {
+   "crates": [
+    "casa-simulation",
+    "casars-python"
+   ],
+   "passed": 367,
+   "failed": 0,
+   "ignored": 2,
+   "note": "308 simulation,58 binding library,1 provider conformance. Two standalone subprocess helpers are executed by their parents. Includes existing backend and bounded-memory/counting laws."
+  },
+  "clippy": "All targets of both crates pass -D warnings.",
+  "python_wheel": {
+   "native_revision": "47ba41a8fa147246db1a1578836c31bb702fc673",
+   "test_revision": "18e7d6c1198bd3a1f6e0f549d6e535b8cfe7c658",
+   "sha256": "a259872d4e9c01ea132263544f5ae3263843325c7350e671bca9bfe33b1d223a",
+   "passed": 61,
+   "failed": 0,
+   "skipped": 2,
+   "skips": [
+    "live CASA import unavailable in native venv",
+    "empty future-refusal parameterization"
+   ],
+   "scope": "Complete simulator binding file, actual Metal comparison and four analytic neutral G/D application cases.",
+   "input_repair": "Initial new D tests appended a duplicate L window, so observe used the old two-correlation window and rightly refused leakage.18e7d6c11 configures four correlations directly; old helper defaults are unchanged.",
+   "environment_repair": "One rerun omitted /opt/homebrew/bin from PATH, failing four Rust fixture-helper builds at pkg-config discovery. Restoring the original build PATH and branch-owned target passes all61; no code or expected values changed."
+  },
+  "fmt": true,
+  "architecture": true,
+  "docs": true,
+  "review": "Level1 isolated simulator feature; independent pre-fix demonstration,24 CASA cases and C++ input/output consumption. No shared numerical kernel, format or allocation change; no additional review required."
+ },
+ "performance_and_memory": {
+  "change": "Existing admitted lookup and per-integration receptor vector are reused. Neutral coefficients replace values in that same vector; no new retained objects, bitmap, numerical kernel or backend path.",
+  "scope": "Correctness-only feature, no speedup claim. Existing backend and memory gates pass; unchanged numerical-path performance evidence remains attributed to its original revisions."
+ },
+ "commands": [
+  "CASAPY tools/simulation/sm_apply_flags_oracle.py --out OUT --fixture FIXTURE --controls crates/casa-simulation/tests/data/sm_apply_parameters_casa.json.gz",
+  "CASA_RS_APPLY_FLAGS_OUT=EXPORT RUST_TEST_THREADS=1 cargo test -p casa-simulation --test apply_flags --test apply_parameters -- --nocapture",
+  "CASAPY tools/simulation/sm_apply_flags_readback.py --root EXPORT --fixture FIXTURE --out OUT",
+  "cargo clippy -p casa-simulation -p casars-python --all-targets -- -D warnings",
+  "RUST_TEST_THREADS=1 cargo test -p casa-simulation -p casars-python --lib --tests",
+  "maturin build --release --manifest-path crates/casars-python/Cargo.toml --interpreter VENV/bin/python --out WHEELS; install wheel; VENV/bin/python -m pytest -q -rs -p no:cacheprovider SOURCE/crates/casars-python/python/tests/test_tools_simulator.py"
+ ],
+ "cpp_cases": [
+  {
+   "name": "G_nearest_flag_first_y",
+   "workers": 3,
+   "native_ms_cpp_nrms": 7.527363498332687e-08
+  },
+  {
+   "name": "G_linear_flag_all_both",
+   "workers": 1,
+   "native_ms_cpp_nrms": 6.551466956751569e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_linear_flag_all_x",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.552645556720742e-08
+  },
+  {
+   "name": "G_linear_flag_first_y",
+   "workers": 1,
+   "native_ms_cpp_nrms": 6.949940366843364e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "G_linear_flag_last_y",
+   "workers": 1,
+   "native_ms_cpp_nrms": 6.924442465080376e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_linear_flag_first_x",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.6432745179214878e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_nearest_flag_first_x",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.688867028702176e-08
+  },
+  {
+   "name": "D_linear_flag_all_both",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.552645556720742e-08
+  },
+  {
+   "name": "G_linear_flag_all_x",
+   "workers": 1,
+   "native_ms_cpp_nrms": 6.880055281610454e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "G_linear_missing_antenna",
+   "workers": 3,
+   "native_ms_cpp_nrms": 6.508773623453326e-08
+  },
+  {
+   "name": "D_linear_missing_antenna",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.5535821997185092e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "G_nearest_flag_last_y",
+   "workers": 1,
+   "native_ms_cpp_nrms": 7.480773635056522e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_nearest_missing_antenna",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.5397128380895185e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "G_linear_flag_all_both",
+   "workers": 3,
+   "native_ms_cpp_nrms": 6.551466956751569e-08
+  },
+  {
+   "name": "D_nearest_flag_all_both",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.5074300243371783e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_linear_missing_antenna",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.5535821997185092e-08
+  },
+  {
+   "name": "G_nearest_flag_all_x",
+   "workers": 1,
+   "native_ms_cpp_nrms": 7.363582359186825e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_nearest_flag_all_x",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.5074300243371783e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "G_nearest_flag_first_y",
+   "workers": 1,
+   "native_ms_cpp_nrms": 7.527363498332687e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "G_nearest_missing_antenna",
+   "workers": 3,
+   "native_ms_cpp_nrms": 6.870028774574392e-08
+  },
+  {
+   "name": "D_nearest_flag_first_y",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.688867028702176e-08
+  },
+  {
+   "name": "D_nearest_flag_first_y",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.688867028702176e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_linear_flag_first_x",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.6432745179214878e-08
+  },
+  {
+   "name": "D_linear_flag_first_y",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.6432745179214878e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_nearest_flag_last_y",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.6147599793558147e-08
+  },
+  {
+   "name": "G_linear_flag_first_y",
+   "workers": 3,
+   "native_ms_cpp_nrms": 6.949940366843364e-08
+  },
+  {
+   "name": "G_linear_flag_all_x",
+   "workers": 3,
+   "native_ms_cpp_nrms": 6.880055281610454e-08
+  },
+  {
+   "name": "G_linear_missing_antenna",
+   "workers": 1,
+   "native_ms_cpp_nrms": 6.508773623453326e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_linear_flag_last_y",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.6058758237820604e-08
+  },
+  {
+   "name": "D_linear_flag_first_y",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.6432745179214878e-08
+  },
+  {
+   "name": "G_nearest_missing_antenna",
+   "workers": 1,
+   "native_ms_cpp_nrms": 6.870028774574392e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_nearest_flag_all_both",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.5074300243371783e-08
+  },
+  {
+   "name": "G_linear_flag_first_x",
+   "workers": 1,
+   "native_ms_cpp_nrms": 6.959562736147575e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_nearest_missing_antenna",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.5397128380895185e-08
+  },
+  {
+   "name": "G_nearest_flag_all_x",
+   "workers": 3,
+   "native_ms_cpp_nrms": 7.363582359186825e-08
+  },
+  {
+   "name": "G_nearest_flag_first_x",
+   "workers": 1,
+   "native_ms_cpp_nrms": 7.500385073865662e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "G_nearest_flag_last_y",
+   "workers": 3,
+   "native_ms_cpp_nrms": 7.480773635056522e-08
+  },
+  {
+   "name": "D_nearest_flag_last_y",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.6147599793558147e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "G_nearest_flag_first_x",
+   "workers": 3,
+   "native_ms_cpp_nrms": 7.500385073865662e-08
+  },
+  {
+   "name": "G_linear_flag_first_x",
+   "workers": 3,
+   "native_ms_cpp_nrms": 6.959562736147575e-08
+  },
+  {
+   "name": "G_nearest_flag_all_both",
+   "workers": 1,
+   "native_ms_cpp_nrms": 7.082412421036321e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_linear_flag_last_y",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.6058758237820604e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_linear_flag_all_both",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.552645556720742e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_nearest_flag_first_x",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.688867028702176e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "D_nearest_flag_all_x",
+   "workers": 3,
+   "native_ms_cpp_nrms": 2.5074300243371783e-08
+  },
+  {
+   "name": "D_linear_flag_all_x",
+   "workers": 1,
+   "native_ms_cpp_nrms": 2.552645556720742e-08,
+   "casa_consumes_native_table_nrms": 0.0
+  },
+  {
+   "name": "G_nearest_flag_all_both",
+   "workers": 3,
+   "native_ms_cpp_nrms": 7.082412421036321e-08
+  },
+  {
+   "name": "G_linear_flag_last_y",
+   "workers": 3,
+   "native_ms_cpp_nrms": 6.924442465080376e-08
+  }
+ ],
+ "remaining_constraints": "Other table types, per-channel tables, non-two-receptor tables and other interpolation modes remain explicit. Scalar T controls are the next independent calculation item; plotting stays paused."
+}

@@ -3,6 +3,8 @@
 
 use std::mem::size_of;
 
+use casa_types::quanta::unique_prefix_position;
+
 /// A single spectral-line row from casacore `ephemerides/Lines`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralLineEntry {
@@ -20,10 +22,20 @@ pub struct SpectralLineEntry {
     pub comment: String,
 }
 
+/// casacore's `QC::HI()`, 1420.405751786 MHz, in Hz.
+const HI_HZ: f64 = 1_420_405_751.786;
+
 impl SpectralLineEntry {
-    /// Return the rest frequency in Hz.
+    /// The rest frequency in Hz, as casacore's `MeasTable::Line` gives it:
+    /// the `Freq` column, except for the entry named `HI`, which casacore
+    /// takes from its constant `QC::HI()` whatever the table holds (the
+    /// measures data's own `HI` row agrees with it).
     pub fn frequency_hz(&self) -> f64 {
-        self.frequency_ghz * 1.0e9
+        if self.name == "HI" {
+            HI_HZ
+        } else {
+            self.frequency_ghz * 1.0e9
+        }
     }
 }
 
@@ -49,12 +61,12 @@ impl SpectralLineCatalog {
         &self.entries
     }
 
-    /// Look up a spectral line by case-insensitive name.
+    /// The spectral line `name` finds, as casacore's `MeasTable` finds it: the
+    /// entry of that name ignoring case, else the one entry the name agrees
+    /// with over the shorter of their lengths ([`unique_prefix_position`]).
     pub fn get(&self, name: &str) -> Option<&SpectralLineEntry> {
-        let name = name.trim();
-        self.entries
-            .iter()
-            .find(|entry| entry.name.trim().eq_ignore_ascii_case(name))
+        unique_prefix_position(name, &self.entries, |entry| entry.name.as_str())
+            .map(|at| &self.entries[at])
     }
 
     pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {

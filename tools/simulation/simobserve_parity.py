@@ -70,6 +70,19 @@ INPUTS = {
     "flatone.model": "unittest/simobserve/flatone.model",
     "flatone.single.ptg.txt": "unittest/simobserve/flatone.single.ptg.txt",
 }
+LOCAL_INPUTS = {
+    "if-polarized.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_image_layouts/iquv.image"),
+
+    "schedule-sky.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_ft_modes/large.image"),
+    "schedule-components.cl": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_telescope_beams/sky.cl"),
+    "schedule-ot.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-ot.ptg.txt"),
+    "schedule-untimed.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-untimed.ptg.txt"),
+    "schedule-timed.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-timed.ptg.txt"),
+
+    "sd-sky.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_total_power/pb_alma.image"),
+    "sd-components.cl": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_total_power/point.cl"),
+    "multiple.pointings.ptg.txt": os.path.join(HERE, "data", "simobserve-multiple-pointings.ptg.txt"),
+}
 
 PPDISK_VLA = {
     "skymodel": "inputs/input50pc_672GHz.fits",
@@ -96,9 +109,84 @@ CORE = {
     "thermalnoise": "",
 }
 
+SD_CORE = dict(skymodel="inputs/sd-sky.image", setpointings=True, integration="10s",
+    maptype="square", obsmode="sd", sdantlist="aca.tp.cfg", sdant=0,
+    direction="J2000 10h00m00 34d00m00", mapsize=["20arcsec", "20arcsec"],
+    pointingspacing="10arcsec", totaltime="120s", refdate="2024/06/01", thermalnoise="")
+
+IF_CORE = dict(SD_CORE, obsmode="int", antennalist="vla.d.cfg",
+    incenter="8GHz", inwidth="20MHz", totaltime="60s")
+
+SCHEDULE = dict(skymodel="inputs/schedule-sky.image", setpointings=True,
+    integration="6s", maptype="square", obsmode="int", antennalist="aca.i.cfg",
+    direction="J2000 10h00m00 34d00m00", mapsize=["20arcsec", "16arcsec"],
+    pointingspacing="8arcsec", totaltime="2", refdate="2024/06/01", thermalnoise="")
+
+
 # The cases: CASA's parameters (graphics off, overwrite on), with paths
 # relative to OUT. `complist_from` makes a component list in CASA first.
 CASES = [
+    {"name": "if_image_rest", "params": dict(IF_CORE, outframe="REST")},
+    {"name": "if_image_undefined", "prediction_failure": 'Transformations to/from frame "Undefined" are not possible.',
+        "params": dict(IF_CORE, outframe="Undefined")},
+    {"name": "if_components_rest", "prediction_failure": "No MeasFrame specified for conversion of Frequency",
+        "params": dict(IF_CORE, skymodel="",
+        complist="inputs/sd-components.cl", compwidth="20MHz", outframe="REST")},
+    {"name": "if_components_undefined", "prediction_failure": 'Transformations to/from frame "Undefined" are not possible.',
+        "params": dict(IF_CORE, skymodel="",
+        complist="inputs/sd-components.cl", compwidth="20MHz", outframe="Undefined")},
+    {"name": "if_joint_rest", "prediction_failure": "No MeasFrame specified for conversion of Frequency",
+        "params": dict(IF_CORE, complist="inputs/sd-components.cl", outframe="REST")},
+    {"name": "if_joint_manual",
+        "complist_from": {"name": "if-vla-star.cl", "dir": "J2000 10h00m00 34d00m00", "flux": 0.7, "freq": "8GHz"},
+        "params": dict(IF_CORE, mapsize=["1arcsec", "1arcsec"],
+        incell="0.5arcsec", inbright="0.02Jy/pixel",
+        thermalnoise="tsys-manual", tau0=0.065, t_sky=20.0, t_ground=275.0,
+        leakage=0.025, integration="10s", totaltime="600s", hourangle="30min")},
+    {"name": "if_joint_polarized", "joint_control": True,
+        "params": dict(IF_CORE, skymodel="inputs/if-polarized.image",
+        complist="inputs/sd-components.cl", totaltime="60s")},
+    {"name": "if_joint_atmosphere", "casa_only": [".noisier.T.cal"],
+        "complist_from": {"name": "if-star.cl", "dir": "J2000 10h00m00 -23d00m00", "flux": 0.2, "freq": "230GHz"},
+        "params": dict(IF_CORE, antennalist="alma.out01.cfg",
+        incenter="230GHz", inwidth="15.625MHz", indirection="J2000 10h00m00 -23d00m00",
+        direction="J2000 10h00m00 -23d00m00",
+        incell="0.5arcsec", thermalnoise="tsys-atm", user_pwv=0.8, t_ground=269.0,
+        leakage=0.015, integration="10s", totaltime="600s", hourangle="-0.5")},
+
+    {"name": "schedule_ot_file", "shadow_control": True, "params": dict(SCHEDULE, setpointings=False,
+        ptgfile="inputs/schedule-ot.ptg.txt", integration="10s", hourangle="-30min")},
+    {"name": "schedule_untimed_file", "shadow_control": True, "params": dict(SCHEDULE, setpointings=False,
+        ptgfile="inputs/schedule-untimed.ptg.txt", integration="7", totaltime="1.5")},
+    {"name": "schedule_alma_nyquist", "shadow_control": True, "params": dict(SCHEDULE, maptype="ALMA",
+        pointingspacing="nyquist", hourangle="0.25", refdate="2016/06/21/19:30:00")},
+    {"name": "schedule_cycle0_pb", "shadow_control": True, "params": dict(SCHEDULE, maptype="ALMA2012",
+        pointingspacing="0.5PB", mapsize=["24arcsec", "20arcsec"])},
+    {"name": "schedule_list_components", "shadow_control": True, "params": dict(SCHEDULE, skymodel="",
+        complist="inputs/schedule-components.cl", compwidth="20MHz",
+        direction=["J2000 10h00m00 34d00m00", "J2000 10h00m00.3 34d00m00"],
+        hourangle="45min", totaltime="30s")},
+    {"name": "schedule_calibrator_file", "repredict": True, "shadow_control": True,
+        "params": dict(SCHEDULE, setpointings=False, ptgfile="inputs/schedule-timed.ptg.txt",
+        integration="10s", caldirection="J2000 10h01m00 34d30m00", calflux="350mJy",
+        hourangle="-0.5", refdate="2017/01/02/09:30:00")},
+    {"name": "schedule_calibrator_partial", "repredict": True, "shadow_control": True, "complete_partial_pass": True,
+        "params": dict(SCHEDULE, setpointings=False, ptgfile="inputs/schedule-timed.ptg.txt",
+        integration="10s", caldirection="ICRS 10h01m00 34d30m00", calflux="0.75Jy",
+        totaltime="20s", hourangle="15min")},
+    {"name": "schedule_calibrator_components", "repredict": True, "shadow_control": True,
+        "params": dict(SCHEDULE, skymodel="", complist="inputs/schedule-components.cl",
+        compwidth="20MHz", caldirection="J2000 10h01m00 34d30m00", calflux="2Jy")},
+    {"name": "schedule_sd_calibrator_ignored", "params": dict(SCHEDULE,
+        obsmode="sd", sdantlist="aca.tp.cfg", sdant=0, caldirection="J2000 10h01m00 34d30m00",
+        calflux="1Jy", setpointings=False, ptgfile="inputs/schedule-timed.ptg.txt")},
+
+    {"name": "sd_project", "params": dict(SD_CORE)},
+    {"name": "sd_project_manual", "params": dict(SD_CORE, thermalnoise="tsys-manual", totaltime="3600s")},
+    {"name": "sd_project_atmosphere", "params": dict(SD_CORE, thermalnoise="tsys-atm", totaltime="3600s")},
+    {"name": "sd_project_configuration", "params": dict(SD_CORE, sdantlist="alma.out01.cfg", sdant=2)},
+    {"name": "sd_project_frame", "params": dict(SD_CORE, indirection="GALACTIC 0deg 0deg", direction="")},
+    {"name": "sd_project_components_refused", "params": dict(SD_CORE, complist="inputs/sd-components.cl"), "expect_refusal": True},
     # The VLA protoplanetary-disk CASA Guide (CASA 5.7.0), noiseless
     # (`psimvla1`) and with tsys-manual noise (`psimvla3`).
     {"name": "psimvla1", "params": dict(PPDISK_VLA, thermalnoise="")},
@@ -180,10 +268,108 @@ CASES = [
             CORE, setpointings=False, ptgfile="inputs/flatone.single.ptg.txt", integration="2s", totaltime="60s"
         ),
     },
+    # Three supplied pointings with different dwell times, repeated for
+    # two full map passes. This exercises FIELD/POINTING and scheduling.
+    {
+        "name": "pointing_file_multiple",
+        "params": dict(
+            CORE, setpointings=False, ptgfile="inputs/multiple.pointings.ptg.txt",
+            totaltime="120s",
+        ),
+    },
+    {
+        "name": "pointing_explicit_spacing",
+        "params": dict(
+            CORE, maptype="hexagonal", mapsize=["16arcsec", "12arcsec"],
+            pointingspacing="4arcsec", totaltime="120s",
+        ),
+    },
+    # Non-default frequency reference codes, checked in the output MS as
+    # well as through the visibility comparison.
+    {"name": "frame_topo", "params": dict(CORE, outframe="TOPO")},
+    {"name": "frame_bary", "params": dict(CORE, outframe="BARY")},
+    {"name": "frame_lsrd", "params": dict(CORE, outframe="LSRD", totaltime="60s")},
+    {"name": "frame_geo", "params": dict(CORE, outframe="GEO", totaltime="60s")},
+    {"name": "frame_galacto", "params": dict(CORE, outframe="GALACTO", totaltime="60s")},
+    {"name": "frame_lgroup", "params": dict(CORE, outframe="LGROUP", totaltime="60s")},
+    {"name": "frame_cmb", "params": dict(CORE, outframe="CMB", totaltime="60s")},
+    # Non-transit scheduling across dates with different TAI-UTC offsets.
+    # A time suffix in refdate is discarded in favor of hourangle.
+    {
+        "name": "schedule_hour_number",
+        "params": dict(CORE, hourangle="-1.5", refdate="2017/01/02/09:30:00", totaltime="60s"),
+    },
+    {
+        "name": "schedule_hour_quantity",
+        "params": dict(CORE, hourangle="90min", refdate="2016/06/21/12:34:56", totaltime="60s"),
+    },
+    {
+        "name": "schedule_refdate_modern",
+        "params": dict(CORE, hourangle="transit", refdate="2025/01/15", totaltime="60s"),
+    },
+    {
+        "name": "schedule_square",
+        "params": dict(
+            CORE, maptype="square", hourangle="-30min", refdate="2015/06/29", totaltime="60s"
+        ),
+    },
+    # The programme's micrometre geometry goal on the extended arrays.
+    # Keep these strict even when the general comparator keeps its legacy
+    # millimetre default; a caller can request a still tighter threshold.
+    {
+        "name": "uvw_long_vla_2017",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="vla.a.cfg", incenter="1.4GHz", inwidth="1MHz",
+            mapsize=["10arcsec", "10arcsec"], hourangle="-1.5",
+            refdate="2017/01/02", totaltime="30s",
+        ),
+    },
+    {
+        "name": "uvw_long_vla_2025",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="vla.a.cfg", incenter="1.4GHz", inwidth="1MHz",
+            mapsize=["10arcsec", "10arcsec"], hourangle="90min",
+            refdate="2025/01/15", totaltime="30s",
+        ),
+    },
+    {
+        "name": "uvw_long_alma_2017",
+        "uvw_tolerance_m": 1e-6,
+        "params": dict(
+            CORE, antennalist="alma.out28.cfg", incell="0.001arcsec",
+            mapsize=["0.08arcsec", "0.08arcsec"], hourangle="-1.5",
+            refdate="2017/01/02", totaltime="30s",
+        ),
+    },
+    # Model overrides must reach both the prepared image and the observed
+    # geometry, not just the task's accepted parameter list (#1053).
+    {
+        "name": "model_direction",
+        "params": dict(CORE, indirection="J2000 19h30m00 -30d00m00", totaltime="60s"),
+    },
+    {"name": "model_cell", "params": dict(CORE, incell="0.03arcsec", totaltime="60s")},
+    {
+        "name": "model_direction_cell",
+        "params": dict(
+            CORE, indirection="J2000 19h30m00 -30d00m00", incell="0.03arcsec", totaltime="60s"
+        ),
+    },
+    # A component-only model with an even channel count exercises the
+    # half-pixel spectral reference, channel spacing and prediction.
+    {
+        "name": "components_cube",
+        "params": dict(
+            CORE, skymodel="", complist="inputs/core5ps.clist", compwidth="8GHz", comp_nchan=4,
+            totaltime="60s",
+        ),
+    },
     # A model whose 4″ cells the configuration cannot sample: both refuse
     # with CASA's message, and remove the flat model.
     {
         "name": "coarse_cell",
+        "expect_refusal": True,
         "params": dict(CORE, skymodel="inputs/flatone.model"),
     },
 ]
@@ -234,8 +420,18 @@ def casars_params(t, params: dict) -> dict:
     documentation)."""
     shifted = dict(params)
     refdate = params.get("refdate", "2014/01/01")
-    offset = hour_angle_s(t, params.get("hourangle", "transit")) + tai_minus_utc_s(t, refdate)
+    hourangle = params.get("hourangle", "transit")
+    shift = tai_minus_utc_s(t, refdate)
+    offset = hour_angle_s(t, hourangle) + shift
     shifted["hourangle"] = f"{offset!r}s"
+    # Preserve bare numeric hours so those scenarios test the native
+    # task's numeric-hour parser rather than only its seconds parser.
+    try:
+        hours = float(hourangle)
+    except ValueError:
+        pass
+    else:
+        shifted["hourangle"] = repr(hours + shift / 3600.0)
     return shifted
 
 
@@ -267,14 +463,77 @@ def run_casa(t, case: dict, out: str) -> str:
     params = casa_params(case, out)
     if "complist_from" in case:
         make_complist(t, case["complist_from"], work)
+    if params.get("complist"):
+        # A failed CASA prediction can leave its input table locked. Give
+        # the independent native process a pristine copy before CASA runs.
+        native_list = os.path.join(out, "native-inputs", case["name"] + ".cl")
+        os.makedirs(os.path.dirname(native_list), exist_ok=True)
+        shutil.rmtree(native_list, ignore_errors=True)
+        shutil.copytree(params["complist"], native_list, ignore=shutil.ignore_patterns("table.lock"))
     cwd = os.getcwd()
     os.chdir(work)
     try:
         shutil.rmtree(case["name"], ignore_errors=True)
         simobserve(project=case["name"], graphics="none", overwrite=True, **params)
+        if case.get("complete_partial_pass"):
+            complete_final_pass(case["name"], params, out)
+        elif case.get("shadow_control"):
+            raw = os.path.join(out, "casa-raw", case["name"])
+            shutil.rmtree(raw, ignore_errors=True)
+            shutil.copytree(case["name"], raw)
     finally:
         os.chdir(cwd)
     return os.path.join(work, case["name"])
+
+
+def complete_final_pass(project: str, params: dict, out: str) -> None:
+    """CASA control for the documented dropped final calibrator-map pass.
+
+    Preserve the raw task project, then rerun CASA with its final queued
+    ``observemany`` flushed even when a calibrator is enabled. No scheduling
+    calculation or native result is used to construct this reference.
+    """
+    import inspect
+    from casatasks import simobserve
+    from casatasks.private import task_simobserve
+
+    raw = os.path.join(out, "casa-raw", project)
+    shutil.rmtree(raw, ignore_errors=True)
+    shutil.copytree(project, raw)
+    task = task_simobserve.simobserve
+    source = inspect.getsource(task)
+    dropped = "if not docalibrator:\n                sm.observemany(sourcenames=srces,"
+    assert source.count(dropped) == 1, "CASA final-pass control requires source review"
+    namespace = dict(task.__globals__)
+    corrected = source.replace(dropped, "if srces:\n                sm.observemany(sourcenames=srces,")
+    exec(compile(corrected, inspect.getfile(task), "exec"), namespace)
+    original = task.__code__
+    try:
+        task.__code__ = namespace[task.__name__].__code__
+        simobserve(project=project, graphics="none", overwrite=True, **params)
+    finally:
+        task.__code__ = original
+
+
+def correct_shadow_flags(project: str) -> None:
+    """Use CASA's behind-antenna flagger for its documented simulator bug.
+
+    Call the tool directly so reference construction adds no task HISTORY.
+    The caller then predicts again on the corrected unflagged rows.
+    """
+    from casatools import agentflagger
+
+    ms = stem_of(project, ".ms")
+    for mode in ("unflag", "shadow"):
+        agent = agentflagger()
+        try:
+            assert agent.open(ms)
+            assert agent.selectdata()
+            assert agent.parseagentparameters({"mode": mode, "tolerance": 0.0, "apply": True})
+            assert agent.init()
+            agent.run(writeflags=True)
+        finally:
+            agent.done()
 
 
 def run_casars(t, case: dict, out: str, binary: str) -> tuple[str, dict]:
@@ -285,6 +544,9 @@ def run_casars(t, case: dict, out: str, binary: str) -> tuple[str, dict]:
     params = absolute(case["params"], out)
     if "complist_from" in case:
         params["complist"] = os.path.join(out, "casa", case["complist_from"]["name"])
+    native_list = os.path.join(out, "native-inputs", case["name"] + ".cl")
+    if params.get("complist") and os.path.isdir(native_list):
+        params["complist"] = native_list
     params = casars_params(t, params)
     params.update(project=case["name"], graphics="none", overwrite=True)
     shutil.rmtree(os.path.join(work, case["name"]), ignore_errors=True)
@@ -400,7 +662,12 @@ def compare_components(t, casa: str, casars: str) -> list[str]:
     for key in ("count", "refer", "shape", "label"):
         if a[key] != b[key]:
             differences.append(f"{name}: {key} {a[key]!r} against {b[key]!r}")
-    for key in ("flux", "direction", "frequency_hz"):
+    # cl.addcomponent rounds through float32; native lists retain the given
+    # double. Require the same float32 bin under the standing documented
+    # correction, while keeping the direction/frequency checks unchanged.
+    if not np.array_equal(np.asarray(a["flux"], dtype=np.float32), np.asarray(b["flux"], dtype=np.float32)):
+        differences.append(f"{name}: flux {a['flux']} against {b['flux']}")
+    for key in ("direction", "frequency_hz"):
         if not np.allclose(a[key], b[key], rtol=1e-12, atol=1e-15):
             differences.append(f"{name}: {key} {a[key]} against {b[key]}")
     return differences
@@ -431,6 +698,107 @@ def repredict(t, case: dict, project: str, out: str) -> None:
     sm.done()
     if merged:
         shutil.rmtree(merged)
+
+
+def correct_joint_prediction(t, case: dict, project: str, out: str) -> None:
+    """Independent I+C control for the documented component phase/sum bugs."""
+    raw = os.path.join(out, "casa-raw", case["name"])
+    shutil.rmtree(raw, ignore_errors=True)
+    shutil.copytree(project, raw)
+    source = stem_of(project, ".ms")
+    controls = os.path.join(out, "casa-controls")
+    os.makedirs(controls, exist_ok=True)
+    tb, sm, cl = t["tb"], t["sm"], t["cl"]
+    tb.open(source)
+    assert not np.any(tb.getcol("FLAG_ROW")), "this control uses an unflagged array"
+    tb.close()
+    params = casa_params(case, out)
+    cl.open(params["complist"])
+    assert cl.length() == 1
+    component = cl.getcomponent(0)
+    assert component["spectrum"]["type"] == "Constant"
+    i, q, u, v = component["flux"]["value"]
+    cl.close()
+    flux = {5: i+v, 6: complex(q, u), 7: complex(q, -u), 8: i-v,
+            9: i+q, 10: complex(u, v), 11: complex(u, -v), 12: i-q}
+    tb.open(source + "/POLARIZATION")
+    codes = tb.getcell("CORR_TYPE", 0)
+    tb.close()
+    phases = np.asarray([flux[code]/abs(flux[code]) if flux[code] else 1.0 for code in codes])
+    values = []
+    for kind in ("image", "components"):
+        path = os.path.join(controls, case["name"] + "-" + kind + ".ms")
+        shutil.rmtree(path, ignore_errors=True)
+        shutil.copytree(source, path, ignore=shutil.ignore_patterns("table.lock"))
+        assert sm.openfromms(path)
+        assert sm.setdata(fieldid=[])
+        assert sm.setvp(dovp=True, usedefaultvp=False)
+        assert sm.predict(**({"imagename": stem_of(project, ".skymodel")} if kind == "image"
+                             else {"complist": params["complist"]}))
+        sm.done()
+        tb.open(path)
+        values.append(tb.getcol("DATA"))
+        tb.close()
+    corrected = np.asarray(values[0] + values[1]/phases[:, None, None], dtype=np.complex64)
+    tb.open(source, nomodify=False)
+    try:
+        for column in ("DATA", "CORRECTED_DATA"):
+            if column in tb.colnames():
+                tb.putcol(column, corrected)
+    finally:
+        tb.close()
+
+
+def compare_prediction_failure(t, case: dict, casa: str, casars: str, out: str, outcome: dict) -> dict:
+    """Keep CASA's raw zero-MS failure; require native to report its cause."""
+    report = {"name": case["name"], "differences": [], "native_error": outcome.get("error")}
+    failures = report["differences"]
+    source = stem_of(casa, ".ms")
+    if source is None:
+        failures.append("CASA did not reach the expected failed-prediction stage")
+        return report
+    tb, sm = t["tb"], t["sm"]
+    tb.open(source)
+    report["casa_zero_data"] = bool(np.all(tb.getcol("DATA") == 0))
+    report["casa_rows"] = tb.nrows()
+    tb.close()
+    if not report["casa_zero_data"]:
+        failures.append("CASA's failed prediction unexpectedly has nonzero DATA")
+    control = os.path.join(out, "casa-controls", case["name"] + ".ms")
+    os.makedirs(os.path.dirname(control), exist_ok=True)
+    shutil.rmtree(control, ignore_errors=True)
+    shutil.copytree(source, control, ignore=shutil.ignore_patterns("table.lock"))
+    assert sm.openfromms(control)
+    try:
+        assert sm.setdata(fieldid=[])
+        assert sm.setvp(dovp=True, usedefaultvp=False)
+        arguments = {}
+        if case["params"].get("skymodel"):
+            arguments["imagename"] = stem_of(casa, ".skymodel")
+        if casa_params(case, out).get("complist"):
+            arguments["complist"] = casa_params(case, out)["complist"]
+        report["casa_prediction_returned"] = bool(sm.predict(**arguments))
+    finally:
+        sm.done()
+    if report["casa_prediction_returned"]:
+        failures.append("the independent CASA simulator unexpectedly accepted the frame")
+    if outcome.get("error") != case["prediction_failure"]:
+        failures.append(f"native did not report CASA's prediction failure: {outcome}")
+    # The corrected native task stops before publishing the unpredicted MS.
+    expected = [name for name in products(casa) if not name.endswith(".ms")]
+    actual = products(casars) if os.path.isdir(casars) else []
+    if expected != actual:
+        failures.append(f"pre-prediction products differ: CASA {expected}, native {actual}")
+    for suffix in (".skymodel", ".skymodel.flat", ".compskymodel", ".compskymodel.flat"):
+        a, b = stem_of(casa, suffix), stem_of(casars, suffix)
+        if a and b:
+            failures.extend(compare_images(t, a, b))
+    a, b = stem_of(casa, ".ptg.txt"), stem_of(casars, ".ptg.txt")
+    if a and b:
+        with open(a, "rb") as one, open(b, "rb") as two:
+            if one.read() != two.read():
+                failures.append("pointing files differ before prediction refusal")
+    return report
 
 
 def noise_term(t, params: dict, ms: str, uvmode: bool) -> dict:
@@ -503,6 +871,63 @@ def scenarios(t, case: dict, casa: str, casars: str, links: str) -> list[dict]:
     return found
 
 
+def compare_frequency_frames(tb, casa: str, casars: str, details=None) -> list[str]:
+    """Compare the output spectral-window reference codes and channels."""
+    def read(path):
+        tb.open(os.path.join(path, "SPECTRAL_WINDOW"))
+        try:
+            return [(int(tb.getcell("MEAS_FREQ_REF", row)),
+                     np.asarray(tb.getcell("CHAN_FREQ", row))) for row in range(tb.nrows())]
+        finally:
+            tb.close()
+
+    a, b = read(casa), read(casars)
+    if details is not None:
+        for name, windows in (("CASA", a), ("casa-rs", b)):
+            details[name] = [{"reference": reference, "channels_hz": frequencies.tolist()}
+                             for reference, frequencies in windows]
+    if len(a) != len(b):
+        return [f"spectral windows: CASA {len(a)} against casa-rs {len(b)}"]
+    differences = []
+    for row, ((ref_a, freq_a), (ref_b, freq_b)) in enumerate(zip(a, b)):
+        if ref_a != ref_b:
+            differences.append(f"spectral window {row}: frequency frame {ref_a} against {ref_b}")
+        if freq_a.shape != freq_b.shape or not np.allclose(freq_a, freq_b, rtol=0, atol=1e-3):
+            differences.append(f"spectral window {row}: channel frequencies differ")
+    return differences
+
+
+def compare_geometry(tb, casa: str, casars: str, limit_m: float) -> tuple[dict, list[str]]:
+    """A strict absolute UVW bound at exactly equal stored TIME, over all rows."""
+    details = {"uvw_absolute_limit_m": limit_m}
+    if not np.isfinite(limit_m) or limit_m < 0:
+        return details, ["invalid absolute UVW limit"]
+    columns = []
+    for path in (casa, casars):
+        tb.open(path)
+        try:
+            columns.append({name: np.asarray(tb.getcol(name)) for name in ("TIME", "UVW")})
+        finally:
+            tb.close()
+    a, b = columns
+    times_equal = (np.all(np.isfinite(a["TIME"])) and np.all(np.isfinite(b["TIME"]))
+                   and np.array_equal(a["TIME"], b["TIME"]))
+    details["times_equal"] = bool(times_equal)
+    if not times_equal:
+        return details, ["MAIN.TIME: strict UVW comparison requires exactly equal finite stored TIME"]
+    details["rows"] = int(a["TIME"].size)
+    if a["UVW"].shape != b["UVW"].shape:
+        return details, ["MAIN.UVW: shape differs"]
+    difference = np.abs(a["UVW"] - b["UVW"])
+    if not np.all(np.isfinite(difference)):
+        return details, ["MAIN.UVW: non-finite difference"]
+    maximum = float(np.max(difference, initial=0.0))
+    details["max_uvw_difference_m"] = maximum
+    if maximum > limit_m:
+        return details, [f"MAIN.UVW: absolute difference {maximum:.17g} m exceeds {limit_m:.17g} m"]
+    return details, []
+
+
 def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     report = {"name": case["name"], "differences": []}
     differ = report["differences"].append
@@ -522,6 +947,17 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     a, b = stem_of(casa, ".cal.cclist"), stem_of(casars, ".cal.cclist")
     if a and b:
         report["differences"].extend(compare_components(t, a, b))
+    a, b = stem_of(casa, ".ms"), stem_of(casars, ".ms")
+    uvw_limit = min(args.uvw_tolerance_m, case.get("uvw_tolerance_m", args.uvw_tolerance_m))
+    if a and b:
+        report["spectral_windows"] = {}
+        report["differences"].extend(compare_frequency_frames(t["tb"], a, b, report["spectral_windows"]))
+    if "uvw_tolerance_m" in case:
+        if a and b:
+            report["geometry"], failures = compare_geometry(t["tb"], a, b, uvw_limit)
+            report["differences"].extend(failures)
+        else:
+            differ("MAIN: strict UVW comparison requires both MeasurementSets")
     compare = os.path.join(out, "compare", case["name"])
     shutil.rmtree(compare, ignore_errors=True)
     links = os.path.join(compare, "casars")
@@ -529,7 +965,8 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     with open(os.path.join(compare, "manifest.json"), "w", encoding="utf-8") as handle:
         json.dump({"scenarios": scenarios(t, case, casa, casars, links)}, handle, indent=1)
     command = [sys.executable, os.path.join(HERE, "compare_sm_ms.py"), "--casa", compare, "--casars", links,
-               "--json", os.path.join(compare, "report.json")]
+               "--json", os.path.join(compare, "report.json"),
+               "--uvw-tolerance-m", str(uvw_limit)]
     if args.atmosphere_model:
         command += ["--atmosphere-model", args.atmosphere_model]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
@@ -539,14 +976,22 @@ def compare_case(t, case: dict, casa: str, casars: str, out: str, args) -> dict:
     return report
 
 
-def copy_inputs(casatestdata: str, out: str) -> None:
+def copy_inputs(casatestdata: str, out: str, cases=None) -> None:
+    """Copy the inputs used by the selected cases, or all known inputs."""
     inputs = os.path.join(out, "inputs")
     os.makedirs(inputs, exist_ok=True)
-    for name, path in INPUTS.items():
+    needed = set(INPUTS) | set(LOCAL_INPUTS)
+    if cases is not None:
+        needed = {value.removeprefix("inputs/") for case in cases
+                  for value in case["params"].values()
+                  if isinstance(value, str) and value.startswith("inputs/")}
+    for name, path in {**INPUTS, **LOCAL_INPUTS}.items():
+        if name not in needed:
+            continue
         target = os.path.join(inputs, name)
         if os.path.exists(target):
             continue
-        source = os.path.join(casatestdata, path)
+        source = path if name in LOCAL_INPUTS else os.path.join(casatestdata, path)
         if os.path.isdir(source):
             shutil.copytree(source, target)
         else:
@@ -559,16 +1004,17 @@ def main() -> int:
     parser.add_argument("--casars-bin", required=True, help="casa-rs's simobserve task binary")
     parser.add_argument("--casatestdata", required=True, help="a casatestdata clone")
     parser.add_argument("--atmosphere-model", help="casa-atmosphere's at_tool_quantities example, for tsys-atm")
+    parser.add_argument("--uvw-tolerance-m", type=float, default=1e-3,
+                        help="UVW absolute tolerance passed to compare_sm_ms.py; use 1e-6 for the programme goal")
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--skip-casa", action="store_true", help="reuse OUT/casa")
     args = parser.parse_args()
     out = os.path.abspath(args.out)
-    copy_inputs(args.casatestdata, out)
+    selected = [case for case in CASES if not args.only or case["name"] in args.only]
+    copy_inputs(args.casatestdata, out, selected)
     t = tools()
     reports = []
-    for case in CASES:
-        if args.only and case["name"] not in args.only:
-            continue
+    for case in selected:
         casa = os.path.join(out, "casa", case["name"])
         error_file = casa + ".error"
         casa_s = None
@@ -581,19 +1027,42 @@ def main() -> int:
                 casa_s = time.perf_counter() - started
                 if case.get("repredict"):
                     repredict(t, case, casa, out)
+                if case.get("joint_control"):
+                    correct_joint_prediction(t, case, casa, out)
+
+                if case.get("shadow_control"):
+                    # CASA's flagger shadows the antenna behind, correcting
+                    # its simulator's documented front-antenna defect.
+                    correct_shadow_flags(casa)
+                    repredict(t, case, casa, out)
+
             except Exception as error:  # noqa: BLE001 - CASA's task raises what it refuses
                 with open(error_file, "w", encoding="utf-8") as handle:
                     handle.write(str(error))
-        casa_error = open(error_file, encoding="utf-8").read() if os.path.exists(error_file) else None
+        casa_error = None
+        if os.path.exists(error_file):
+            with open(error_file, encoding="utf-8") as handle:
+                casa_error = handle.read()
         casars, outcome = run_casars(t, case, out, os.path.abspath(args.casars_bin))
-        if casa_error is not None or "error" in outcome:
+        if case.get("prediction_failure") and casa_error is None:
+            report = compare_prediction_failure(t, case, casa, casars, out, outcome)
+        elif casa_error is not None or "error" in outcome:
             report = {"name": case["name"], "differences": [], "refused": casa_error}
+            if not case.get("expect_refusal", False):
+                report["differences"].append("expected a successful simulation, not a refusal")
             if casa_error != outcome.get("error"):
                 report["differences"].append(f"CASA raised {casa_error!r}, casa-rs {outcome.get('error')!r}")
-            elif products(casa) != products(casars):
-                report["differences"].append(f"files: CASA {products(casa)} against casa-rs {products(casars)}")
+            else:
+                # An early refusal may precede creation of the project.
+                # Successful runs still require their directories below.
+                casa_files = products(casa) if os.path.isdir(casa) else []
+                casars_files = products(casars) if os.path.isdir(casars) else []
+                if casa_files != casars_files:
+                    report["differences"].append(f"files: CASA {casa_files} against casa-rs {casars_files}")
         else:
             report = compare_case(t, case, casa, casars, out, args)
+            if case.get("expect_refusal", False):
+                report["differences"].append("expected a refusal, but both simulations succeeded")
         # The task's own times: CASA's simobserve call, casa-rs's run report.
         report["seconds"] = {"casa": casa_s, "casa-rs": outcome.get("elapsed_s")}
         reports.append(report)

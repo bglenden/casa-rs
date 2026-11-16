@@ -17,7 +17,7 @@ use casa_task_runtime::{
 };
 
 fn main() -> ExitCode {
-    TaskFrontEnd::new(
+    TaskFrontEnd::new_with_deferred_schema(
         "flagdata",
         flagdata_task_schema_bundle(),
         &["flagdata"],

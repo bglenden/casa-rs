@@ -192,6 +192,7 @@ impl Unit {
                 flags: &row_flags,
                 row_flag: false,
                 context: RowContext {
+                    native_frequency_ratio: 1.0,
                     original_uvw_m: None,
                     time_s: coordinate.time_offset_s,
                     antennas: [

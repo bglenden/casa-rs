@@ -27,7 +27,11 @@
 //! converts every output pixel, as casacore does with `decimate=0`, so its
 //! positions are exact.
 //!
-//! Only the direction axes are regridded, in the same frame. For every other
+//! [`regrid`] regrids the direction axes alone, in the same frame.
+//! [`regrid_along_frequency`] also regrids a spectral axis that differs, in
+//! the same frame, for a tclean start model (the `spectral` module:
+//! casacore's `regrid1D`, linear whatever the method, as
+//! `SIImageStore::regridToModelImage` asks for one). For every other
 //! coordinate:
 //! - where all its axes have one pixel in both images, casacore does not
 //!   regrid it and the output keeps the input's coordinate (CASA 6.7.6 keeps
@@ -44,8 +48,11 @@ use casa_coordinates::{
 };
 use casa_types::ArrayD;
 use ndarray::{IxDyn, ShapeBuilder};
+use num_complex::Complex32;
 
 use crate::{ImageError, ImageInterface, ImagePixel};
+
+mod spectral;
 
 /// casacore's `Interpolate2D` methods that `imregrid` and the image tool's
 /// `regrid` offer, Lanczos aside.
@@ -109,8 +116,9 @@ impl RegridTemplate {
 pub struct Regridded<T> {
     /// The pixels, in the template's shape (Fortran order).
     pub data: ArrayD<T>,
-    /// Whether each pixel was sampled: false where it is 0 because it could
-    /// not be.
+    /// Whether each pixel was sampled: false where it could not be, which
+    /// holds 0, or beyond a spectral regrid's input, which holds the end
+    /// channel's value as `regrid1D` leaves it.
     pub mask: ArrayD<bool>,
     /// The output's coordinate system: the template's, with each one-pixel
     /// coordinate other than the direction taken from the input.
@@ -178,17 +186,21 @@ fn same_axes(a: &CoordinateModel, b: &CoordinateModel, shape: &[usize]) -> bool 
 type DirectionAxes<'a> = (&'a DirectionCoordinate, usize);
 
 /// How an image is regridded onto a template: the two direction coordinates
-/// and their first pixel axes, and the output's coordinate system.
+/// and their first pixel axes, the spectral pass when the spectral axes
+/// differ, and the output's coordinate system.
 struct AxesPlan<'a> {
     input: DirectionAxes<'a>,
     output: DirectionAxes<'a>,
+    spectral: Option<spectral::SpectralPlan>,
     coordinates: CoordinateSystem,
     template_coordinates: bool,
 }
 
 /// The plan, once the two images are checked to differ only on the
-/// direction axes and on coordinates of one pixel.
+/// direction axes, on coordinates of one pixel and, `along_frequency`, on
+/// the spectral axis.
 fn plan_axes<'a>(
+    along_frequency: bool,
     input: &'a CoordinateSystem,
     input_shape: &[usize],
     template: &'a RegridTemplate,
@@ -215,6 +227,7 @@ fn plan_axes<'a>(
     }
     let mut coordinates = template.coordinates.clone();
     let mut template_coordinates = true;
+    let mut spectral = None;
     let mut first = 0;
     for k in 0..input.n_coordinates() {
         let ours = input.coordinate(k);
@@ -225,7 +238,7 @@ fn plan_axes<'a>(
             continue;
         }
         let in_shape = &input_shape[axes.clone()];
-        let out_shape = &template.shape[axes];
+        let out_shape = &template.shape[axes.clone()];
         let degenerate = in_shape.iter().chain(out_shape).all(|n| *n == 1);
         if degenerate && ours.coordinate_type() == theirs.coordinate_type() {
             // Not regridded: the output keeps the input's coordinate.
@@ -234,11 +247,21 @@ fn plan_axes<'a>(
                 template_coordinates = false;
             }
         } else if in_shape != out_shape || !same_axes(ours, theirs, in_shape) {
-            return Err(refuse(format!(
-                "the {} axes differ between the input and the template; casa-rs regrids the \
-                 direction axes only",
-                ours.coordinate_type()
-            )));
+            if !along_frequency {
+                return Err(refuse(format!(
+                    "the {} axes differ between the input and the template; casa-rs regrids the \
+                     direction axes only",
+                    ours.coordinate_type()
+                )));
+            }
+            spectral = Some(
+                spectral::SpectralPlan::new(
+                    (ours, in_shape[0]),
+                    (theirs, out_shape[0]),
+                    axes.start,
+                )
+                .map_err(refuse)?,
+            );
         }
     }
     let input_direction = direction(input, in_index);
@@ -251,9 +274,15 @@ fn plan_axes<'a>(
             output_direction.direction_ref()
         )));
     }
+    if input_direction.conversion_direction_ref() != output_direction.conversion_direction_ref() {
+        return Err(refuse(
+            "input and template direction conversion frames differ".into(),
+        ));
+    }
     Ok(AxesPlan {
         input: (input_direction, in_axis),
         output: (output_direction, out_axis),
+        spectral,
         coordinates,
         template_coordinates,
     })
@@ -273,15 +302,30 @@ fn jy_per_pixel_scale(
     (inc_out[0] * inc_out[1] / inc_in[0] / inc_in[1]).abs()
 }
 
-/// Whether two direction coordinates share their tangent plane: the same
-/// reference direction, projection, PC matrix and native poles, so that
-/// their pixels differ only by reference pixel and increment.
-fn same_tangent_plane(a: &DirectionCoordinate, b: &DirectionCoordinate) -> bool {
-    a.reference_value() == b.reference_value()
+/// Whether the spherical rotations describe one tangent plane. A
+/// direction written through a CASA header can change by one representable
+/// step. The resolved pole is the rotation, regardless of the LATPOLE
+/// selector that chose it.
+fn same_tangent_plane(
+    a: &DirectionCoordinate,
+    b: &DirectionCoordinate,
+    rounding_radians: f64,
+) -> bool {
+    let same_rounded_value = |left: f64, right: f64| {
+        left == right
+            || ((left.next_up() == right || right.next_up() == left)
+                && (left - right).abs() <= rounding_radians)
+    };
+    let same_pair = |left: &[f64], right: &[f64]| {
+        left.iter()
+            .zip(right)
+            .all(|(&left, &right)| same_rounded_value(left, right))
+    };
+    same_pair(&a.reference_value(), &b.reference_value())
         && a.projection() == b.projection()
         && a.pc_matrix() == b.pc_matrix()
-        && a.longpole() == b.longpole()
-        && a.latpole() == b.latpole()
+        && same_rounded_value(a.longpole(), b.longpole())
+        && same_pair(&a.native_pole(), &b.native_pole())
 }
 
 /// Whether every output pixel of an `[nx, ny]` plane has a sky position,
@@ -310,36 +354,71 @@ fn corners_cover_the_plane(output: &DirectionCoordinate, [nx, ny]: [usize; 2]) -
             })
 }
 
-/// For each output pixel of the direction plane (first axis fastest), the
-/// input pixel at its world position, or `None` where the conversion fails.
-///
-/// On a shared tangent plane with the identity PC matrix, the intermediate
-/// world coordinates are the same, so the mapping is exactly affine on each
-/// axis: `crpix_in + (p − crpix_out) × cdelt_out / cdelt_in`. That is the
-/// `simanalyze` and `simalma` total-power regrid, which keeps the reference
-/// direction. It is taken where the projection's domain is known to cover the
-/// output ([`corners_cover_the_plane`]), so no pixel without a sky position
-/// is sampled.
+/// The exact pixel mapping between direction coordinates on one tangent plane.
+#[derive(Clone, Copy, Debug)]
+pub struct DirectionAffine {
+    input_reference: [f64; 2],
+    output_reference: [f64; 2],
+    increment_ratio: [f64; 2],
+}
+
+impl DirectionAffine {
+    /// The source pixel at this output pixel.
+    #[must_use]
+    pub fn source_pixel(self, output: [f64; 2]) -> [f64; 2] {
+        std::array::from_fn(|axis| {
+            self.input_reference[axis]
+                + (output[axis] - self.output_reference[axis]) * self.increment_ratio[axis]
+        })
+    }
+}
+
+/// The exact affine map when both direction coordinates share a tangent
+/// plane, use identity PC matrices and the output is inside the projection.
+/// A single rounding step in the stored rotation also preserves the map.
+#[must_use]
+pub fn direction_affine(
+    input: &DirectionCoordinate,
+    output: &DirectionCoordinate,
+    shape: [usize; 2],
+) -> Option<DirectionAffine> {
+    let (input_increment, output_increment) = (input.increment(), output.increment());
+    // Use the aligned image-mask pixel tolerance to bound the angular
+    // difference on very fine grids as well.
+    let rounding_radians = input_increment
+        .iter()
+        .chain(&output_increment)
+        .map(|step| step.abs())
+        .fold(f64::INFINITY, f64::min)
+        * 1e-7;
+    if input.direction_ref() == output.direction_ref()
+        && same_tangent_plane(input, output, rounding_radians)
+        && *input.pc_matrix() == ndarray::Array2::<f64>::eye(2)
+        && corners_cover_the_plane(output, shape)
+    {
+        Some(DirectionAffine {
+            input_reference: input.reference_pixel().try_into().ok()?,
+            output_reference: output.reference_pixel().try_into().ok()?,
+            increment_ratio: std::array::from_fn(|axis| {
+                output_increment[axis] / input_increment[axis]
+            }),
+        })
+    } else {
+        None
+    }
+}
+
+/// For each output pixel (first axis fastest), the input pixel at its
+/// world position, or `None` where the conversion fails.
 fn positions(
     input: &DirectionCoordinate,
     output: &DirectionCoordinate,
     [nx, ny]: [usize; 2],
 ) -> Vec<Option<[f64; 2]>> {
-    if same_tangent_plane(input, output)
-        && *input.pc_matrix() == ndarray::Array2::<f64>::eye(2)
-        && corners_cover_the_plane(output, [nx, ny])
-    {
-        let (in_pix, out_pix) = (input.reference_pixel(), output.reference_pixel());
-        let (in_inc, out_inc) = (input.increment(), output.increment());
-        let ratio = [out_inc[0] / in_inc[0], out_inc[1] / in_inc[1]];
+    if let Some(affine) = direction_affine(input, output, [nx, ny]) {
         return (0..ny)
-            .flat_map(|j| (0..nx).map(move |i| (i, j)))
-            .map(|(i, j)| {
-                Some([
-                    in_pix[0] + (i as f64 - out_pix[0]) * ratio[0],
-                    in_pix[1] + (j as f64 - out_pix[1]) * ratio[1],
-                ])
-            })
+            .flat_map(|j| (0..nx).map(move |i| [i as f64, j as f64]))
+            .map(|output| Some(affine.source_pixel(output)))
             .collect();
     }
     let mut grid = Vec::with_capacity(nx * ny);
@@ -370,7 +449,22 @@ pub fn check_regrid(
     shape: &[usize],
     template: &RegridTemplate,
 ) -> Result<(), ImageError> {
-    plan_axes(coordinates, shape, template).map(drop)
+    plan_axes(false, coordinates, shape, template).map(drop)
+}
+
+/// Whether [`regrid_along_frequency`] can regrid an image of `coordinates`
+/// and `shape` onto `template`, without reading a pixel: `true` when it
+/// would regrid the spectral axis too, `false` for the direction axes alone.
+///
+/// # Errors
+///
+/// As [`regrid_along_frequency`], for all but reading.
+pub fn check_regrid_along_frequency(
+    coordinates: &CoordinateSystem,
+    shape: &[usize],
+    template: &RegridTemplate,
+) -> Result<bool, ImageError> {
+    plan_axes(true, coordinates, shape, template).map(|plan| plan.spectral.is_some())
 }
 
 /// Regrid `input`'s direction axes onto `template` by `method`.
@@ -389,23 +483,110 @@ where
     T: ImagePixel + Into<f64> + From<f32> + Copy,
     I: ImageInterface<T>,
 {
+    regrid_with(false, input, template, method, false)
+}
+
+/// CASA `LinearMosaic` regrids the weighted pointing inside the output
+/// subimage selected by the input's world-coordinate box.
+pub(crate) fn regrid_mosaic_pointing(
+    input: &impl ImageInterface<f32>,
+    template: &RegridTemplate,
+) -> Result<Regridded<f32>, ImageError> {
+    regrid_with(false, input, template, RegridMethod::Linear, true)
+}
+
+/// Regrid `input`'s direction axes onto `template` by `method`, and its
+/// spectral axis linearly where the template's differs, as
+/// `SIImageStore::regridToModelImage` regrids a tclean start model.
+///
+/// # Errors
+///
+/// A template whose axes other than the direction and spectral ones differ
+/// from the input's, where they have more than one pixel, whose direction
+/// or spectral frame does, whose single channel a cube would be regridded
+/// onto or whose channels a single channel would (casacore refuses the one
+/// and reads past its array on the other), and a failure to read the input.
+pub fn regrid_along_frequency<T, I>(
+    input: &I,
+    template: &RegridTemplate,
+    method: RegridMethod,
+) -> Result<Regridded<T>, ImageError>
+where
+    T: ImagePixel + Into<f64> + From<f32> + Copy,
+    I: ImageInterface<T>,
+{
+    regrid_with(true, input, template, method, false)
+}
+
+fn regrid_with<T, I>(
+    along_frequency: bool,
+    input: &I,
+    template: &RegridTemplate,
+    method: RegridMethod,
+    mosaic_pointing: bool,
+) -> Result<Regridded<T>, ImageError>
+where
+    T: ImagePixel + Into<f64> + From<f32> + Copy,
+    I: ImageInterface<T>,
+{
     let input_shape = input.shape().to_vec();
-    let plan = plan_axes(input.coordinates(), &input_shape, template)?;
+    let plan = plan_axes(along_frequency, input.coordinates(), &input_shape, template)?;
     let ((input_direction, in_axis), (output_direction, out_axis)) = (plan.input, plan.output);
     let scale = jy_per_pixel_scale(input.units(), input_direction, output_direction);
     let in_plane = [input_shape[in_axis], input_shape[in_axis + 1]];
     let out_plane = [template.shape[out_axis], template.shape[out_axis + 1]];
-    let grid = positions(input_direction, output_direction, out_plane);
+    // ImageRegrid::regrid skips interpolation when shape and coordinates
+    // agree. Sampling an identical masked grid erodes valid edge pixels
+    // unnecessarily, which also changes feather's Fourier coefficients.
+    if !along_frequency
+        && input_shape == template.shape
+        && plan.spectral.is_none()
+        && same_axes(
+            &CoordinateModel::Direction(input_direction.clone()),
+            &CoordinateModel::Direction(output_direction.clone()),
+            &in_plane,
+        )
+    {
+        return Ok(Regridded {
+            data: input.get()?,
+            mask: input
+                .default_mask()?
+                .unwrap_or_else(|| ArrayD::from_elem(IxDyn(&input_shape).f(), true)),
+            coordinates: plan.coordinates,
+            template_coordinates: plan.template_coordinates,
+            scale,
+        });
+    }
+    let mut grid = positions(input_direction, output_direction, out_plane);
+    let method = if mosaic_pointing
+        && clip_pointing_grid(
+            &mut grid,
+            input_direction,
+            output_direction,
+            in_plane,
+            out_plane,
+        ) {
+        // When the cropped output has the input's WCS and shape, CASA copies
+        // directly. Sampling the matching pixel also avoids requiring valid
+        // neighbours that contribute nothing to that pixel.
+        RegridMethod::Nearest
+    } else {
+        method
+    };
     let data = input.get()?;
     let mask = input.default_mask()?;
-    let mut out_data = ArrayD::<T>::from_elem(IxDyn(&template.shape).f(), T::from(0.0));
-    let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&template.shape).f(), false);
+    // The direction pass keeps the input's channels; the spectral pass
+    // takes them to the template's.
+    let mut direction_shape = input_shape.clone();
+    direction_shape[out_axis..out_axis + 2].copy_from_slice(&out_plane);
+    let mut out_data = ArrayD::<T>::from_elem(IxDyn(&direction_shape).f(), T::from(0.0));
+    let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&direction_shape).f(), false);
     let mut plane = vec![0.0f64; in_plane[0] * in_plane[1]];
     let mut plane_mask = mask.as_ref().map(|_| vec![true; plane.len()]);
     let mut out_values = vec![0.0f64; out_plane[0] * out_plane[1]];
     let mut out_valid = vec![false; out_values.len()];
     let planes = PlaneIndex::new(&input_shape, in_axis);
-    let out_planes = PlaneIndex::new(&template.shape, out_axis);
+    let out_planes = PlaneIndex::new(&direction_shape, out_axis);
     for plane_number in 0..planes.count {
         planes.read(plane_number, &data, &mut plane, |v| (*v).into());
         if let (Some(values), Some(mask)) = (plane_mask.as_mut(), mask.as_ref()) {
@@ -426,6 +607,9 @@ where
         });
         out_planes.write(plane_number, &out_valid, &mut out_mask, |v| v);
     }
+    if let Some(spectral) = &plan.spectral {
+        (out_data, out_mask) = spectral.apply(&out_data, &out_mask, &template.shape);
+    }
     Ok(Regridded {
         data: out_data,
         mask: out_mask,
@@ -433,6 +617,58 @@ where
         template_coordinates: plan.template_coordinates,
         scale,
     })
+}
+
+fn clip_pointing_grid(
+    grid: &mut [Option<[f64; 2]>],
+    input: &DirectionCoordinate,
+    output: &DirectionCoordinate,
+    input_shape: [usize; 2],
+    output_shape: [usize; 2],
+) -> bool {
+    // LinearMosaic::addOnToImage projects the two LCBox corners through a
+    // WCBox and rounds them back to output pixels. An invalid or disjoint
+    // box leaves ImageRegrid to restrict the full output by interpolation.
+    let project = |point: [f64; 2]| {
+        let world = input.to_world(&point).ok()?;
+        let pixel = output.to_pixel(&world).ok()?;
+        pixel
+            .iter()
+            .all(|p| p.is_finite())
+            .then(|| [(pixel[0] + 0.5) as isize, (pixel[1] + 0.5) as isize])
+    };
+    let Some(start) = project([0.0, 0.0]) else {
+        return false;
+    };
+    let Some(end) = project(input_shape.map(|n| n as f64 - 1.0)) else {
+        return false;
+    };
+    let start = start.map(|p| p.max(0));
+    let end = std::array::from_fn::<_, 2, _>(|i| end[i].min(output_shape[i] as isize - 1));
+    if start[0] > end[0] || start[1] > end[1] {
+        return false;
+    }
+    for (y, row) in grid.chunks_mut(output_shape[0]).enumerate() {
+        if !(start[1]..=end[1]).contains(&(y as isize)) {
+            row.fill(None);
+        } else {
+            row[..start[0] as usize].fill(None);
+            row[end[0] as usize + 1..].fill(None);
+        }
+    }
+    let region_shape = std::array::from_fn(|i| (end[i] - start[i] + 1) as usize);
+    let centre = output.reference_pixel();
+    region_shape == input_shape
+        && same_axes(
+            &CoordinateModel::Direction(input.clone()),
+            &CoordinateModel::Direction(
+                output.clone().with_reference_pixel([
+                    centre[0] - start[0] as f64,
+                    centre[1] - start[1] as f64,
+                ]),
+            ),
+            &input_shape,
+        )
 }
 
 /// The direction planes of an array with its direction axes at
@@ -527,6 +763,52 @@ impl<'s> PlaneIndex<'s> {
     }
 }
 
+/// Regrid a complex AW convolution plane around its integer centre pixel,
+/// using CASA's cubic interpolation separately on the real and imaginary
+/// parts (`SynthesisUtils::rotateComplexArray`). The matrix maps an output
+/// offset from that centre to the corresponding input offset. Pixels with
+/// no input sample are zero. The first axis is contiguous in both arrays.
+///
+/// # Panics
+///
+/// Panics when `input` does not have exactly `shape[0] * shape[1]` pixels.
+#[must_use]
+pub fn regrid_complex_plane(
+    input: &[Complex32],
+    shape: [usize; 2],
+    input_from_output: [[f64; 2]; 2],
+) -> Vec<Complex32> {
+    let [width, height] = shape;
+    assert_eq!(input.len(), width * height);
+    let real: Vec<_> = input.iter().map(|value| f64::from(value.re)).collect();
+    let imaginary: Vec<_> = input.iter().map(|value| f64::from(value.im)).collect();
+    let real = Plane {
+        data: &real,
+        mask: None,
+        shape,
+    };
+    let imaginary = Plane {
+        data: &imaginary,
+        mask: None,
+        shape,
+    };
+    let [cx, cy] = [(width / 2) as f64, (height / 2) as f64];
+    let [[xx, xy], [yx, yy]] = input_from_output;
+    let mut output = Vec::with_capacity(input.len());
+    for y in 0..height {
+        let dy = y as f64 - cy;
+        for x in 0..width {
+            let dx = x as f64 - cx;
+            let at = [cx + xx * dx + xy * dy, cy + yx * dx + yy * dy];
+            output.push(Complex32::new(
+                real.cubic(at).unwrap_or(0.0) as f32,
+                imaginary.cubic(at).unwrap_or(0.0) as f32,
+            ));
+        }
+    }
+    output
+}
+
 /// One direction plane of the input, first axis fastest, with its mask
 /// (true where good) when it has one.
 struct Plane<'a> {
@@ -573,39 +855,10 @@ impl Plane<'_> {
         self.good(i, j).then(|| self.at(i, j))
     }
 
-    /// `Interpolate2D::interpLinear`: the position truncated toward zero,
-    /// moved back by one at the far edge.
-    fn linear(&self, [wi, wj]: [f64; 2]) -> Option<f64> {
-        let start = |w: f64, n: usize| -> Option<usize> {
-            // casacore's `uInt(Int(w))`: a negative start wraps and fails.
-            let truncated = w as i64;
-            if truncated < 0 || n < 2 {
-                return None;
-            }
-            let last = n - 1;
-            let mut i = usize::try_from(truncated).ok()?;
-            if i == last {
-                i -= 1;
-            }
-            (i < last).then_some(i)
-        };
-        let i = start(wi, self.shape[0])?;
-        let j = start(wj, self.shape[1])?;
-        if !(self.good(i, j)
-            && self.good(i + 1, j)
-            && self.good(i, j + 1)
-            && self.good(i + 1, j + 1))
-        {
-            return None;
-        }
-        let tt = wi - i as f64;
-        let uu = wj - j as f64;
-        Some(
-            (1.0 - tt) * (1.0 - uu) * self.at(i, j)
-                + tt * (1.0 - uu) * self.at(i + 1, j)
-                + tt * uu * self.at(i + 1, j + 1)
-                + (1.0 - tt) * uu * self.at(i, j + 1),
-        )
+    fn linear(&self, at: [f64; 2]) -> Option<f64> {
+        linear_sample(self.shape, at, |i, j| {
+            self.good(i, j).then(|| self.at(i, j))
+        })
     }
 
     /// `Interpolate2D::interpCubic`: bicubic on the 4 × 4 pixels from
@@ -657,6 +910,40 @@ impl Plane<'_> {
     }
 }
 
+/// Bilinear sampling with casacore's `Interpolate2D::interpLinear` edge
+/// convention. `sample` returns the input value or `None` for an invalid
+/// cell. The output is valid only when all four neighbours are valid.
+pub fn linear_sample(
+    shape: [usize; 2],
+    [wi, wj]: [f64; 2],
+    sample: impl Fn(usize, usize) -> Option<f64>,
+) -> Option<f64> {
+    let start = |w: f64, n: usize| -> Option<usize> {
+        // casacore truncates toward zero and moves the stencil back at
+        // the far edge. A negative start wraps and fails.
+        let truncated = w as i64;
+        if truncated < 0 || n < 2 {
+            return None;
+        }
+        let last = n - 1;
+        let mut i = usize::try_from(truncated).ok()?;
+        if i == last {
+            i -= 1;
+        }
+        (i < last).then_some(i)
+    };
+    let i = start(wi, shape[0])?;
+    let j = start(wj, shape[1])?;
+    let tt = wi - i as f64;
+    let uu = wj - j as f64;
+    Some(
+        (1.0 - tt) * (1.0 - uu) * sample(i, j)?
+            + tt * (1.0 - uu) * sample(i + 1, j)?
+            + tt * uu * sample(i + 1, j + 1)?
+            + (1.0 - tt) * uu * sample(i, j + 1)?,
+    )
+}
+
 /// Numerical Recipes' `bcucof` (3.6), as casacore's `Interpolate2D::bcucof`
 /// tabulates it.
 fn bicubic_coefficients(
@@ -700,6 +987,81 @@ fn bicubic_coefficients(
 mod tests {
     use super::*;
 
+    #[test]
+    fn affine_regrid_preserves_a_shared_plane_through_one_step_of_header_rounding() {
+        use casa_coordinates::Projection;
+        use casa_types::measures::direction::DirectionRef;
+
+        let declination = 0.710_938_054_184_240_3_f64;
+        let coordinate = |latitude, x, latitude_selector: f64| {
+            DirectionCoordinate::new(
+                DirectionRef::J2000,
+                Projection::new(ProjectionType::SIN),
+                [5.233_697_011_339_746, latitude],
+                [-3.878_509_448_876_288e-5, 3.878_509_448_876_288e-5],
+                [x, 16.0],
+            )
+            .with_longpole(std::f64::consts::PI)
+            .with_latpole(latitude_selector)
+        };
+        let next = declination.next_up();
+        let input = coordinate(next, 16.5, next);
+        let output = coordinate(declination, 16.0, std::f64::consts::FRAC_PI_2);
+        let mapping = direction_affine(&input, &output, [32, 32]).expect("one shared plane");
+        assert_eq!(mapping.source_pixel([9.0, 21.0]), [9.5, 21.0]);
+        let different = coordinate(next.next_up(), 16.5, next.next_up());
+        assert!(direction_affine(&different, &output, [32, 32]).is_none());
+        let fine_input = input.with_increment([-1e-12, 1e-12]);
+        let fine_output = output.with_increment([-1e-12, 1e-12]);
+        assert!(direction_affine(&fine_input, &fine_output, [32, 32]).is_none());
+    }
+
+    #[test]
+    fn complex_regrid_rotates_both_parts_about_the_integer_centre() {
+        let shape = [8, 8];
+        let input: Vec<_> = (0..8)
+            .flat_map(|y| {
+                (0..8).map(move |x| Complex32::new((x * x + 2 * y * y) as f32, (x * y - x) as f32))
+            })
+            .collect();
+        let output = regrid_complex_plane(&input, shape, [[0.8, -0.6], [0.6, 0.8]]);
+        // (5,5) samples (4.2,5.4), where cubic interpolation recovers
+        // these quadratic and bilinear polynomials exactly to Float rounding.
+        let want = Complex32::new(75.96, 18.48);
+        assert!((output[5 + 5 * 8] - want).norm() < 1.0e-5);
+        assert_eq!(output[4 + 4 * 8], input[4 + 4 * 8]);
+        assert_eq!(output[7 + 7 * 8], Complex32::default());
+    }
+
+    #[test]
+    fn regrid_rejects_distinct_direction_conversion_frames() {
+        use casa_coordinates::{Projection, ProjectionType};
+        use casa_types::measures::direction::DirectionRef;
+        let direction = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.3],
+            [-1e-4, 1e-4],
+            [2.0, 2.0],
+        );
+        let mut input = CoordinateSystem::new();
+        input.add_coordinate(direction.clone());
+        let mut output = CoordinateSystem::new();
+        output.add_coordinate(
+            direction
+                .with_reference_pixel([2.5, 2.0])
+                .with_conversion_direction_ref(DirectionRef::GALACTIC),
+        );
+        let template = RegridTemplate {
+            coordinates: output,
+            shape: vec![4, 4],
+        };
+        let error = plan_axes(false, &input, &[4, 4], &template)
+            .err()
+            .expect("frame mismatch");
+        assert!(error.to_string().contains("conversion frames differ"));
+    }
+
     fn plane(data: &[f64], shape: [usize; 2]) -> Plane<'_> {
         Plane {
             data,
@@ -724,7 +1086,7 @@ mod tests {
             .clone()
             .with_reference_pixel([30.0, 32.5])
             .with_increment([-0.5 * arcsec, 0.5 * arcsec]);
-        assert!(same_tangent_plane(&input, &output));
+        assert!(same_tangent_plane(&input, &output, 0.0));
         let affine = positions(&input, &output, [60, 64]);
         for (k, at) in affine.iter().enumerate() {
             let (i, j) = ((k % 60) as f64, (k / 60) as f64);

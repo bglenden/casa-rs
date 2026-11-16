@@ -24,14 +24,14 @@
 //! - codes casa-types does not convert (`B1950_VLA`, `BMEAN`, `BTRUE`, the
 //!   planets, `COMET`, `Undefined`) define and show but do not convert, and
 //!   `R_` (razing) codes are not read;
-//! - observatory names match exactly (case-insensitively), where casacore
-//!   also accepts a unique prefix;
 //! - measure offsets and multi-valued measures are not yet implemented.
 
 mod define;
 mod frame;
 mod inspect;
+mod offset;
 pub(crate) mod surface;
+mod xvalue;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -42,7 +42,7 @@ use pyo3::prelude::*;
 use crate::convert::holder::Measure;
 use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant};
-use crate::tools::{LogLine, emit, not_yet_implemented};
+use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 /// The Python logger CASA's `me` messages go to.
 const LOGGER: &str = "casars.tools.measures";
@@ -91,8 +91,10 @@ impl PyMeasures {
     ) -> PyResult<Py<PyAny>> {
         let mut lines = Vec::new();
         let result = py.detach(|| {
-            let mut state = self.lock();
-            work(&mut state, &mut lines)
+            casa_types::quanta::registry::global_registry().with_locked_units(|| {
+                let mut state = self.lock();
+                work(&mut state, &mut lines)
+            })
         });
         emit(py, LOGGER, &lines)?;
         result?.into_python(py)
@@ -104,9 +106,10 @@ impl PyMeasures {
     }
 }
 
-/// A method a later phase implements.
+/// A method casa-rs does not implement yet, refused naming #1053, which
+/// classifies them.
 fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented("measures", method)
+    not_yet_implemented_in("measures", method, 1053)
 }
 
 /// The measures data failed to load: CASA's tool always has them.
@@ -297,11 +300,11 @@ impl PyMeasures {
         "measures"
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
+    /// Return the Cartesian extra values of a supported scalar measure.
     #[pyo3(signature = (a), text_signature = "($self, a)")]
-    fn addxvalue(&self, a: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("addxvalue")
+    fn addxvalue(&self, py: Python<'_>, a: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let record = xvalue::read_record(a)?;
+        self.call(py, move |_, lines| xvalue::addxvalue(&record, lines))
     }
 
     /// Not yet implemented in casa-rs.
@@ -328,29 +331,42 @@ impl PyMeasures {
         stub("baseline")
     }
 
-    /// Not yet implemented in casa-rs.
-    fn cometangdiam(&self) -> PyResult<Py<PyAny>> {
-        stub("cometangdiam")
+    /// CASA's sentinel angular diameter when no comet table is loaded.
+    fn cometangdiam(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "rad")))
     }
 
-    /// Not yet implemented in casa-rs.
-    fn cometdist(&self) -> PyResult<Py<PyAny>> {
-        stub("cometdist")
+    /// CASA's sentinel distance when no comet table is loaded.
+    fn cometdist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "AU")))
     }
 
-    /// Not yet implemented in casa-rs.
-    fn cometname(&self) -> PyResult<Py<PyAny>> {
-        stub("cometname")
+    /// Return an empty name and warn when no comet table is loaded.
+    fn cometname(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, lines| {
+            lines.push(LogLine::warning(
+                "Method cometname fails! No Comet table present",
+            ));
+            Ok(CasaValue::Text(String::new()))
+        })
     }
 
-    /// Not yet implemented in casa-rs.
-    fn comettopo(&self) -> PyResult<Py<PyAny>> {
-        stub("comettopo")
+    /// Return CASA's sentinel when no topocentric comet table is loaded.
+    fn comettopo(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, lines| {
+            lines.push(LogLine::warning(
+                "Method comettopo fails!  No Topocentric Comet table present",
+            ));
+            Ok(CasaValue::record([
+                ("unit", CasaValue::Text(String::new())),
+                ("value", CasaValue::floats(vec![0.0])),
+            ]))
+        })
     }
 
-    /// Not yet implemented in casa-rs.
-    fn comettype(&self) -> PyResult<Py<PyAny>> {
-        stub("comettype")
+    /// CASA's comet type when no comet table is loaded.
+    fn comettype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, _| Ok(CasaValue::Text("none".to_string())))
     }
 
     /// Not yet implemented in casa-rs.
@@ -399,21 +415,31 @@ impl PyMeasures {
         stub("framecomet")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v), text_signature = "($self, v)")]
-    fn getoffset(&self, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getoffset")
+    /// The rest lines of the measures data, their names joined by spaces
+    /// in the table's order, as CASA gives them. CASA deprecates the method
+    /// and says so; so does casa-rs.
+    fn linelist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, lines| {
+            lines.push(LogLine::warning(
+                "DEPRECATED. The linelist method has been deprecated and will be removed in the \
+                 near future. Please use the spectral line (sl) tool and/or related tasks instead",
+            ));
+            let measures = state.measures().map_err(no_measures)?;
+            let names = measures.spectral_line_names().map_err(no_measures)?;
+            Ok(CasaValue::Text(names.join(" ")))
+        })
     }
 
-    /// Not yet implemented in casa-rs.
-    fn linelist(&self) -> PyResult<Py<PyAny>> {
-        stub("linelist")
-    }
-
-    /// Not yet implemented in casa-rs.
-    fn obslist(&self) -> PyResult<Py<PyAny>> {
-        stub("obslist")
+    /// The observatories of the measures data, by name, in the table's
+    /// order: a list of `str`, as CASA gives them.
+    fn obslist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, _| {
+            let measures = state.measures().map_err(no_measures)?;
+            let names = measures.observatory_names().map_err(no_measures)?;
+            Ok(CasaValue::List(
+                names.into_iter().map(CasaValue::Text).collect(),
+            ))
+        })
     }
 
     /// Not yet implemented in casa-rs.
@@ -473,16 +499,23 @@ impl PyMeasures {
         stub("showframe")
     }
 
-    /// Not yet implemented in casa-rs.
-    fn sourcelist(&self) -> PyResult<Py<PyAny>> {
-        stub("sourcelist")
+    /// The sources of the measures data, their names joined by spaces in
+    /// the table's order, as CASA gives them.
+    fn sourcelist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, _| {
+            let measures = state.measures().map_err(no_measures)?;
+            let names = measures.source_names().map_err(no_measures)?;
+            Ok(CasaValue::Text(names.join(" ")))
+        })
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (name = None), text_signature = "($self, name='HI')")]
-    fn spectralline(&self, name: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("spectralline")
+    /// The rest frequency of a spectral line the measures data names.
+    #[pyo3(signature = (name = "HI"), text_signature = "($self, name='HI')")]
+    fn spectralline(&self, py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, lines| {
+            let measures = state.measures().map_err(no_measures)?;
+            Ok(define::spectralline(name, &*measures, lines))
+        })
     }
 
     /// Not yet implemented in casa-rs.

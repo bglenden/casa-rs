@@ -109,7 +109,7 @@ const CASA_REJECTS: &[&str] = &[
 /// (casacore's unit grammar allows repeated signs and a leading power before a
 /// name, and `h:`): CASA reads `--5s` as 0 `--5s`, `1.4.5GHz` as
 /// 1.4 `5GHz` and `12h:` as 12 `h:`.
-const UNIT_PARSER_GAPS: &[&str] = &["--5s", "-+-5s", "1.4.5GHz", "12h:"];
+const UNIT_PARSER_GAPS: &[&str] = &["--5s", "-+-5s", "12h:"];
 
 fn close(left: f64, right: f64) -> bool {
     (left - right).abs() <= 1e-12 * left.abs().max(right.abs()).max(1.0)
@@ -117,6 +117,9 @@ fn close(left: f64, right: f64) -> bool {
 
 #[test]
 fn strings_read_as_casa_reads_them() {
+    let numeric_unit = Quantity::read("1.4.5GHz").unwrap();
+    assert_eq!(numeric_unit.value(), 1.4);
+    assert_eq!(numeric_unit.unit().name(), "5GHz");
     for &(text, value, unit) in CASA_READS {
         let quantity = Quantity::read_at(text, 60_000.25)
             .unwrap_or_else(|error| panic!("{text:?} should read: {error}"));
@@ -199,6 +202,23 @@ fn unique_prefixes_follow_minimax() {
     assert_eq!(unique_prefix_index("Mayday", &MONTHS), Some(4));
     assert_eq!(unique_prefix_index("Ju", &MONTHS), None);
     assert_eq!(unique_prefix_index("", &["ONLY"]), Some(0));
+}
+
+#[test]
+fn catalog_names_follow_minimax_with_their_spaces() {
+    let names = ["ALMA", "VLA", "VLBA", "IRAM PDB", "IRAM_PDB", "alma"];
+    let find =
+        |input: &str| unique_prefix_position(input, &names, |name| *name).map(|at| names[at]);
+    assert_eq!(find("alma"), Some("ALMA"), "the first exact match");
+    assert_eq!(find("ALM"), None, "ALMA and alma both agree");
+    assert_eq!(find("VLA2"), Some("VLA"));
+    assert_eq!(find("VL"), None);
+    assert_eq!(find("VLB"), Some("VLBA"));
+    assert_eq!(find("IRAM"), None);
+    assert_eq!(find("IRAM "), Some("IRAM PDB"));
+    assert_eq!(find("VLA "), Some("VLA"));
+    assert_eq!(find(" VLA"), None);
+    assert_eq!(find(""), None);
 }
 
 #[test]

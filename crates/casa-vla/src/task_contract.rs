@@ -170,12 +170,4 @@ mod tests {
             Some("--json-run <SOURCE>")
         );
     }
-
-    #[test]
-    fn canonical_surface_projects_presentation_form() {
-        let bundle = importvla_task_schema_bundle();
-        let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
-        assert_eq!(form["command_id"], "importvla");
-        assert!(form.to_string().contains("--archivefiles"));
-    }
 }

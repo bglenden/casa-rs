@@ -4,17 +4,18 @@ Status: accepted
 Date: 2026-08-18
 Truth class: normative
 Supersedes:
-Superseded by: 0016 (the Migration section and the attestation wording only)
+Superseded by: ADR-0016, in part (the migration rules and the attestation
+and identity wording, since removed from this record)
 
 ## Context
 
-Imaging behavior is distributed across application dispatch, mode-specific
+Imaging behavior was distributed across application dispatch, mode-specific
 preparation, imaging modules, solver controllers, and product writers.
 Continuum, spectral-line, mosaic, W/AW-projection, MT-MFS, CPU, and Metal paths
-repeat or reinterpret scientific choices. Geometry, measurement-equation terms,
-weighting, normalization, products, and migration ownership have no enforceable
-dependency boundaries. A new vocabulary alone would permit the same architecture
-to reappear behind new names.
+repeated or reinterpreted scientific choices. Geometry, measurement-equation
+terms, weighting, normalization and products had no enforceable dependency
+boundaries. A new vocabulary alone would permit the same architecture to
+reappear behind new names.
 
 ## Decision
 
@@ -23,7 +24,7 @@ CASA-RS imaging follows one normative mathematical and ownership architecture.
 ### Ownership and dependency direction
 
 Application and frontend layers may version-migrate and validate request syntax,
-select a Resource Policy, invoke compile/plan/run, and present results. They do
+select a Resource Policy, invoke compile and run, and present results. They do
 not query devices, evaluate scientific capability/backend eligibility, select
 gridders or solvers, construct science caches, allocate imaging work buffers, or
 define or write scientific products.
@@ -33,33 +34,32 @@ Observation and MeasurementSet interoperability are isolated behind observation
 interfaces. Reconstruction depends on Measurement Operator and Normal State
 contracts rather than casacore or concrete backends. Product semantics depend on
 scientific state rather than solvers or execution implementations. Backends
-implement declarative work-node and operator interfaces and do not own modes,
+implement declarative work and operator interfaces and do not own modes,
 coordinates, weighting, normalization, or products.
 
 There is one production engine behind the application-owned typed
 installed-implementation availability boundary. `casa-imaging-application`
 checks compiled and task-only requirements against the implementation installed
-in the build before planning. Capabilities whose owners have not landed are
+in the build before any work. Capabilities whose owners have not landed are
 returned typed unavailable rather than delegated to an alternate
-implementation. The repository migration matrix is planning and acceptance
-evidence only; production neither embeds nor interprets it. CI enforces the
-permitted crate/module graph and rejects forbidden edges.
+implementation. CI enforces the permitted crate graph and rejects forbidden
+edges (ADR-0016).
 
 ### Compile, plan, and run boundary
 
 `compile(request)` produces an immutable Compiled Problem containing logical
-science, an Observation Snapshot manifest, reference-data identities, required
-capabilities, coordinate and reconstruction contracts, measurement-equation and
-weighting contracts, a Numerics Contract, and a Product Contract. It contains no
-backend-specific prepared operator or resource allocation.
+science, an Observation Snapshot (a manifest of the selection; bulk samples
+remain bounded streams), required capabilities, coordinate and
+reconstruction contracts, measurement-equation and weighting contracts, a
+Numerics Contract, and a Product Contract. It contains no backend-specific
+prepared operator or resource allocation.
 
-`plan(problem, resource_policy)` produces an immutable Execution Plan bound to
-the exact problem and input identities. ADR-0010 defines its physical work and
-resource contract.
+Planning binds the compiled problem to a backend and a Resource Policy; each
+phase is admitted against the host before it runs (ADR-0016 decision 4).
 
-`run(problem, plan)` validates the bindings and executes only the plan. It does
-not silently recompile, perform capability routing, choose an unlisted backend,
-or fall back to another implementation.
+`run` executes only what was compiled and admitted. It does not silently
+recompile, perform capability routing, choose an unlisted backend, or fall
+back to another implementation.
 
 ### Measurement equation and weighting
 
@@ -118,38 +118,20 @@ behavior:
 A cube uses a channel-local Reconstruction Basis but is not defined by that
 basis and is not an application loop around a continuum imager. Sequential
 continuum fitting/subtraction is an explicit visibility transform with fit
-channels, weights, model, provenance, and output-weight semantics. Joint
-continuum-plus-line reconstruction is a different capability requiring a block
-normal operator with continuum-line cross terms and a separately accepted
+channels, weights, model, provenance, and output-weight semantics (ADR-0011).
+Joint continuum-plus-line reconstruction is a different capability requiring a
+block normal operator with continuum-line cross terms and a separately accepted
 scientific decision.
 
-### Observation snapshot and side effects
+### Side effects
 
-Selected Observation is evaluated against an immutable logical Observation
-Snapshot. The snapshot records the selected columns, exact
-row/channel/correlation selection semantics, reference-data and ephemeris
-identities, and input-model identities. Bulk samples remain bounded streams;
-snapshot does not mean materialization. (Amended 2026-10-09 on owner direction:
-nothing of casa-rs's is stored in the MeasurementSet, so there are no source
-identities, generations or marker files; see ADR-0008. The reference-data,
-ephemeris and input-model identities above, and the model-completion authority
-and normal-state evidence below, are superseded by ADR-0016 rule 5 (no
-identity hashing; compare directly or by ownership), under the owner's
-decision C on #656.)
-
-Read and write sets are explicit. Scientific products use their planned
-per-member publication protocol after final complete-data reconciliation.
-Optional `MODEL_DATA` follows ADR-0008 and is written in place during the
-single terminal replay under casacore's table lock. An explicit final-model preparation node first validates and
-freezes the exact candidate generation without traversing the MeasurementSet.
-The terminal replay then predicts, emits residual-product samples, and writes
-`MODEL_DATA` from that same immutable candidate in one selected-data pass. Its
-I/O completion precedes the post-replay Major-Cycle reconciliation that commits
-model-completion authority and normal-state evidence. Interruption may leave
-partial derived values, as in CASA; the next run recomputes them. Imaging does
-not add a staging column,
-backup generation, content digest, or rollback mechanism beyond CASA-compatible
-table behavior.
+Read and write sets are explicit. Scientific products publish after the
+final complete-data reconciliation. Optional `MODEL_DATA` follows ADR-0008:
+the final pass predicts from the final model and writes the selected cells
+in place under casacore's table lock. Interruption may leave partial derived
+values, as in CASA; the next run recomputes them. Imaging adds no staging
+column, backup generation, content digest, or rollback mechanism beyond
+CASA-compatible table behavior.
 
 ### Major and Minor Cycles
 
@@ -158,58 +140,27 @@ using the logical operator and one frozen weighting generation. Complete-data
 excludes Minor Cycle approximations but does not imply bitwise identity, full
 materialization, one resident grid, or a shift-invariant PSF.
 
-A Normal State Generation identifies the Observation Snapshot, model generation,
-weighting generation, normal right-hand side, normal-operator or PSF
-approximation, sensitivity and sum-weight state, valid support, Numerics
-Contract, and provenance. It may be partitioned, streamed, tiled, sparse,
-manifest-based, or operator-backed.
+A Normal State Generation comprises the model generation, weighting
+generation, normal right-hand side, normal-operator or PSF approximation,
+sensitivity and sum-weight state, valid support, and Numerics Contract. It may
+be partitioned, streamed, tiled, sparse, or operator-backed.
 
-A Minor Cycle consumes an immutable Minor Cycle View recording the approximation
-identifier, valid domain, error or staleness bound, cycle threshold, and maximum
+A Minor Cycle consumes an immutable Minor Cycle View recording the approximation,
+valid domain, error or staleness bound, cycle threshold, and maximum
 admissible update. It returns a Model Delta and Solver Evidence and stops before
 violating that envelope. A final Major Cycle is mandatory before restoration and
 publication.
 
 ### Products
 
-ADR-0014 clarifies this contract: trusted in-process generation transfers
-bounded windows to the CASA-compatible writer without product-content hashing
-or full-array rereads solely to authorize publication. Prior product-attestation
-interpretations are superseded; the scientific contract and atomic replacement
-guarantees below remain normative.
-
 A Product Contract and Product Graph own required/optional products,
 authoritative source generations, WCS and axes, units and normalization,
 per-plane/common-beam policy, residual scaling and restoration, PB/sensitivity
 correction, blanking and validity, cross-product dependencies, output schema,
-and atomic publication. Backends may provide primitive transforms but may not
-define the meaning of image, residual, PSF, alpha, beam, mask, sensitivity, or
-PB-corrected products.
-
-### Migration
-
-The repository migration matrix classifies each request capability as Native or
-TemporarilyUnavailable for planning and acceptance. It is enforced by CI but is
-not runtime policy: production code does not embed or interpret it, and requests
-and execution receipts do not carry its rows or disposition. The application
-checks the compiled problem and task-only requirements once against typed
-installed-implementation availability before planning. An unavailable request
-invokes no engine. A compile, availability, plan, or execution failure is
-terminal, and execution never delegates a stage to an alternate implementation.
-
-Migration Obligations are repository-enforced records. Each records the
-capability key, current owner, reason, authoritative issue/evidence, Acceptance
-Contract, destination ticket, transfer milestone, and deletion condition. A
-capability transfers only when its native Acceptance Contract passes and the
-same merge makes the displaced route unreachable. Useful algorithms move
-directly to their authoritative owner; otherwise the displaced implementation
-is deleted. A test-only differential harness may read frozen evidence but is
-not production routing.
-
-Before transfer, the application boundary returns typed unavailable for the
-capability; implementation work lands only in its accepted destination owner.
-After transfer it lands only in the native owner. Dual production ownership and
-dual patching are prohibited.
+and the atomic replacement of each product. Backends may provide primitive
+transforms but may not define the meaning of image, residual, PSF, alpha, beam,
+mask, sensitivity, or PB-corrected products. Generation needs no content
+hashing or full-array reread to authorize publication (ADR-0014).
 
 ## Consequences
 
@@ -219,20 +170,15 @@ Positive:
   have distinct enforceable owners
 - continuum and line share infrastructure without claiming false semantic
   equivalence
-- products become atomic; MeasurementSet side effects follow CASA (ADR-0008)
-- migrations have a same-merge ownership and deletion ratchet
+- each product is replaced atomically; MeasurementSet side effects follow CASA
+  (ADR-0008)
 
 Negative:
-- capability may contract temporarily during migration
-- broad internal APIs and dependency edges will change
-- observation consistency and output transactions require new infrastructure
 - every solver and backend must satisfy explicit science and product contracts
 
 Neutral / tradeoffs:
-- exact CLEAN component order and bitwise pixels are not preserved when the
-  versioned Acceptance Contract remains satisfied
-- the two proposed architecture ADRs contain several tightly coupled normative
-  sections rather than creating an ADR for each vocabulary term
+- exact CLEAN component order and bitwise pixels are not preserved; agreement
+  is judged by normalized tolerance
 
 ## Alternatives considered
 
@@ -241,19 +187,17 @@ Neutral / tradeoffs:
 3. Build one broad imaging-run object owning science, resources, solvers, and products.
 4. Treat continuum, line, mosaic, and projections as independent top-level modes.
 5. Let a channel-local basis alone define spectral-line semantics.
-6. Allow capability transfer without deleting the displaced route.
 
 ## Enforcement
 
 This decision is enforced by:
-- tests: weighted-adjoint and linearity laws, spectral identity/nonidentity
-  cases, cycle invariants, product-generation
-  consistency, differential evidence, and versioned Acceptance Contracts
-- lint/import/dependency rules: CI rejects forbidden frontend, backend,
-  observation, reconstruction, and product dependencies
-- CI checks: the migration matrix and obligations remain executable; transferred
-  routes are unreachable; product members publish independently and interrupted
-  in-place model-column writes fail closed
+- tests: the T0 laws (weighted adjoint, linearity, spectral identity and
+  nonidentity, cycle invariants) and T1 end-to-end tests of `TESTING.md`
+  "Imaging tiers and evidence"
+- lint/import/dependency rules: `scripts/check-imaging-dependencies.py`
+  rejects forbidden frontend, backend, observation, reconstruction, and
+  product dependencies (ADR-0016)
+- CI checks: `just arch-check`
 - review trigger: stop before adding a second public run interface, an alternate
   stage path, backend-owned science/product semantics, or unpaired sampling
 - none / guidance only:

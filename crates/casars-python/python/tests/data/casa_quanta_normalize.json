@@ -1,0 +1,715 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "input": "370deg",
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": 9.99999999999999
+      }
+    },
+    {
+      "input": "370deg",
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": 9.99999999999999
+      }
+    },
+    {
+      "input": "370deg",
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": 370.0
+      }
+    },
+    {
+      "input": "370deg",
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": 370.0
+      }
+    },
+    {
+      "input": "-190deg",
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": 169.99999999999997
+      }
+    },
+    {
+      "input": "-190deg",
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": 169.99999999999997
+      }
+    },
+    {
+      "input": "-190deg",
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": 169.99999999999997
+      }
+    },
+    {
+      "input": "-190deg",
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": 530.0
+      }
+    },
+    {
+      "input": "180deg",
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": -180.0
+      }
+    },
+    {
+      "input": "180deg",
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": 180.0
+      }
+    },
+    {
+      "input": "180deg",
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": 180.0
+      }
+    },
+    {
+      "input": "180deg",
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": 540.0
+      }
+    },
+    {
+      "input": "-180deg",
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": -180.0
+      }
+    },
+    {
+      "input": "-180deg",
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": 180.0
+      }
+    },
+    {
+      "input": "-180deg",
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": 180.0
+      }
+    },
+    {
+      "input": "-180deg",
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": 540.0
+      }
+    },
+    {
+      "input": "360deg",
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "360deg",
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "360deg",
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": 360.0
+      }
+    },
+    {
+      "input": "360deg",
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": 360.0
+      }
+    },
+    {
+      "input": "0deg",
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "0deg",
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "0deg",
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": 360.0
+      }
+    },
+    {
+      "input": "0deg",
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": 360.0
+      }
+    },
+    {
+      "input": "2rad",
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": 114.59155902616465
+      }
+    },
+    {
+      "input": "2rad",
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": 114.59155902616465
+      }
+    },
+    {
+      "input": "2rad",
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": 114.59155902616465
+      }
+    },
+    {
+      "input": "2rad",
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": 474.59155902616465
+      }
+    },
+    {
+      "input": "12h",
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": -180.0
+      }
+    },
+    {
+      "input": "12h",
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": 180.0
+      }
+    },
+    {
+      "input": "12h",
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": 180.0
+      }
+    },
+    {
+      "input": "12h",
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": 540.0
+      }
+    },
+    {
+      "input": "-6h",
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": -90.0
+      }
+    },
+    {
+      "input": "-6h",
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": 270.0
+      }
+    },
+    {
+      "input": "-6h",
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": 270.0
+      }
+    },
+    {
+      "input": "-6h",
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": 630.0
+      }
+    },
+    {
+      "input": "1m",
+      "origin": -0.5,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'm'"
+      }
+    },
+    {
+      "input": "1m",
+      "origin": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'm'"
+      }
+    },
+    {
+      "input": "1m",
+      "origin": 0.25,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'm'"
+      }
+    },
+    {
+      "input": "1m",
+      "origin": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'm'"
+      }
+    },
+    {
+      "input": "10",
+      "origin": -0.5,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "input": "10",
+      "origin": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "input": "10",
+      "origin": 0.25,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "input": "10",
+      "origin": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "input": "1_",
+      "origin": -0.5,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type '_'"
+      }
+    },
+    {
+      "input": "1_",
+      "origin": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type '_'"
+      }
+    },
+    {
+      "input": "1_",
+      "origin": 0.25,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type '_'"
+      }
+    },
+    {
+      "input": "1_",
+      "origin": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type '_'"
+      }
+    },
+    {
+      "input": "bad",
+      "origin": -0.5,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "bad",
+      "origin": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "bad",
+      "origin": 0.25,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "bad",
+      "origin": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": null,
+      "origin": -0.5,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "input": null,
+      "origin": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "input": null,
+      "origin": 0.25,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "input": null,
+      "origin": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "input": {
+        "value": -0.0,
+        "unit": "deg"
+      },
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": -0.0
+      }
+    },
+    {
+      "input": {
+        "value": -0.0,
+        "unit": "deg"
+      },
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": -0.0
+      }
+    },
+    {
+      "input": {
+        "value": -0.0,
+        "unit": "deg"
+      },
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": 360.0
+      }
+    },
+    {
+      "input": {
+        "value": -0.0,
+        "unit": "deg"
+      },
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": 360.0
+      }
+    },
+    {
+      "input": {
+        "special": "NaN",
+        "unit": "deg"
+      },
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "NaN",
+        "unit": "deg"
+      },
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "NaN",
+        "unit": "deg"
+      },
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "NaN",
+        "unit": "deg"
+      },
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "Infinity",
+        "unit": "deg"
+      },
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "Infinity",
+        "unit": "deg"
+      },
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "Infinity",
+        "unit": "deg"
+      },
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "Infinity",
+        "unit": "deg"
+      },
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "-Infinity",
+        "unit": "deg"
+      },
+      "origin": -0.5,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "-Infinity",
+        "unit": "deg"
+      },
+      "origin": 0.0,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "-Infinity",
+        "unit": "deg"
+      },
+      "origin": 0.25,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": {
+        "special": "-Infinity",
+        "unit": "deg"
+      },
+      "origin": 1.0,
+      "result": {
+        "unit": "deg",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "1deg",
+      "origin": {
+        "special": "NaN"
+      },
+      "result": {
+        "unit": "deg",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "1deg",
+      "origin": {
+        "special": "Infinity"
+      },
+      "result": {
+        "unit": "deg",
+        "value": "Infinity"
+      }
+    },
+    {
+      "input": "1deg",
+      "origin": {
+        "special": "-Infinity"
+      },
+      "result": {
+        "unit": "deg",
+        "value": "-Infinity"
+      }
+    },
+    {
+      "input": "10deg",
+      "origin": null,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_norm> returned a result with an exception set"
+      }
+    },
+    {
+      "input": "10deg",
+      "origin": true,
+      "result": {
+        "unit": "deg",
+        "value": 370.0
+      }
+    },
+    {
+      "input": "10deg",
+      "origin": "0.5",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_norm> returned a result with an exception set"
+      }
+    },
+    {
+      "input": "10deg",
+      "origin": [
+        0.5
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_norm> returned a result with an exception set"
+      }
+    },
+    {
+      "input": "bad",
+      "origin": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "deg"
+      },
+      "origin": -0.5,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    }
+  ]
+}

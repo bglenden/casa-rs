@@ -1,0 +1,369 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    [
+      {
+        "mode": "put",
+        "key": "My Key",
+        "value": "alpha",
+        "return": null,
+        "history": [
+          "Added My Key = \"alpha\"",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"My Key\", hdvalue=\"alpha\", verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "My Key",
+        "value": "",
+        "return": "alpha"
+      },
+      {
+        "mode": "get",
+        "key": "my key",
+        "value": "",
+        "error": "Unknown keyword my key. If you are trying to use a key name from the imhead summary dictionary, note that some keys in mode='put'/'get' are different from mode='summary'. Please see imhead description in the CASA online documentation for complete details."
+      },
+      {
+        "mode": "put",
+        "key": "My Key",
+        "value": "beta",
+        "return": null,
+        "history": [
+          "Added My Key = \"beta\"",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"My Key\", hdvalue=\"beta\", verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "My Key",
+        "value": "",
+        "return": "beta"
+      },
+      {
+        "mode": "del",
+        "key": "My Key",
+        "value": "",
+        "return": null,
+        "history": [
+          "Removed user-defined keyword My Key",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"My Key\", hdvalue=\"\", verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "My Key",
+        "value": "",
+        "error": "Unknown keyword My Key. If you are trying to use a key name from the imhead summary dictionary, note that some keys in mode='put'/'get' are different from mode='summary'. Please see imhead description in the CASA online documentation for complete details."
+      }
+    ],
+    [
+      {
+        "mode": "add",
+        "key": "lower",
+        "value": "one",
+        "return": null,
+        "history": [
+          "Added lower = \"one\"",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"lower\", hdvalue=\"one\", verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "LOWER",
+        "value": "",
+        "return": "one"
+      },
+      {
+        "mode": "add",
+        "key": "LOWER",
+        "value": "two",
+        "error": "Keyword LOWER already exists so cannot be added."
+      },
+      {
+        "mode": "del",
+        "key": "LOWER",
+        "value": "",
+        "return": null,
+        "history": [
+          "Removed user-defined keyword lower",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"LOWER\", hdvalue=\"\", verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "lower",
+        "value": "",
+        "error": "Unknown keyword lower. If you are trying to use a key name from the imhead summary dictionary, note that some keys in mode='put'/'get' are different from mode='summary'. Please see imhead description in the CASA online documentation for complete details."
+      }
+    ],
+    [
+      {
+        "mode": "put",
+        "key": "My Key",
+        "value": "",
+        "return": null,
+        "history": [
+          "Added My Key = \"\"",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"My Key\", hdvalue=\"\", verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "My Key",
+        "value": "",
+        "return": ""
+      },
+      {
+        "mode": "add",
+        "key": "My Key",
+        "value": "again",
+        "error": "Keyword My Key already exists so cannot be added."
+      }
+    ],
+    [
+      {
+        "mode": "put",
+        "key": "",
+        "value": "empty name",
+        "return": null,
+        "history": [
+          "Added  = \"empty name\"",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"\", hdvalue=\"empty name\", verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "",
+        "value": "",
+        "return": "empty name"
+      },
+      {
+        "mode": "del",
+        "key": "",
+        "value": "",
+        "return": null,
+        "history": [
+          "Removed user-defined keyword ",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"\", hdvalue=\"\", verbose=False)"
+        ]
+      }
+    ],
+    [
+      {
+        "mode": "put",
+        "key": "counter",
+        "value": 42,
+        "return": null,
+        "history": [
+          "Added counter = 42",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"counter\", hdvalue=42, verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "counter",
+        "value": "",
+        "return": 42
+      },
+      {
+        "mode": "put",
+        "key": "counter",
+        "value": 13,
+        "return": null,
+        "history": [
+          "Added counter = 13",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"counter\", hdvalue=13, verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "counter",
+        "value": "",
+        "return": 13
+      },
+      {
+        "mode": "put",
+        "key": "counter",
+        "value": 3.5,
+        "error": "TableRecordRep::defineDataField - incorrect data type used for field counter"
+      },
+      {
+        "mode": "get",
+        "key": "counter",
+        "value": "",
+        "return": 13
+      }
+    ],
+    [
+      {
+        "mode": "add",
+        "key": "real",
+        "value": 3.25,
+        "return": null,
+        "history": [
+          "Added real = 3.25",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"real\", hdvalue=3.25, verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "real",
+        "value": "",
+        "return": 3.25
+      },
+      {
+        "mode": "put",
+        "key": "real",
+        "value": -0.75,
+        "return": null,
+        "history": [
+          "Added real = -0.75",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"real\", hdvalue=-0.75, verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "real",
+        "value": "",
+        "return": -0.75
+      }
+    ],
+    [
+      {
+        "mode": "put",
+        "key": "flag",
+        "value": true,
+        "return": null,
+        "history": [
+          "Added flag = 1",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"flag\", hdvalue=True, verbose=False)"
+        ]
+      },
+      {
+        "mode": "get",
+        "key": "flag",
+        "value": "",
+        "error": "Unhandled data type Bool for user defined type. Send us a bug report"
+      },
+      {
+        "mode": "put",
+        "key": "flag",
+        "value": false,
+        "return": null,
+        "history": [
+          "Added flag = 0",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"flag\", hdvalue=False, verbose=False)"
+        ]
+      },
+      {
+        "mode": "del",
+        "key": "flag",
+        "value": 123,
+        "return": null,
+        "history": [
+          "Removed user-defined keyword flag",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"flag\", hdvalue=123, verbose=False)"
+        ]
+      }
+    ],
+    [
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 1.23456789,
+        "return": null,
+        "history": [
+          "Added precise = 1.23456789",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=1.23456789, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 1e-07,
+        "return": null,
+        "history": [
+          "Added precise = 1e-07",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=1e-07, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 1e+20,
+        "return": null,
+        "history": [
+          "Added precise = 1e+20",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=1e+20, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": -0.0,
+        "return": null,
+        "history": [
+          "Added precise = -0",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=-0.0, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 0.0001,
+        "return": null,
+        "history": [
+          "Added precise = 0.0001",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=0.0001, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 1e+16,
+        "return": null,
+        "history": [
+          "Added precise = 1e+16",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=1e+16, verbose=False)"
+        ]
+      },
+      {
+        "mode": "put",
+        "key": "precise",
+        "value": 1e-05,
+        "return": null,
+        "history": [
+          "Added precise = 1e-05",
+          "version: 6.7.6-14 CASAtools:v1.0.0",
+          "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"precise\", hdvalue=1e-05, verbose=False)"
+        ]
+      }
+    ]
+  ],
+  "numeric": {
+    "integer": 42,
+    "real": 3.25
+  }
+}

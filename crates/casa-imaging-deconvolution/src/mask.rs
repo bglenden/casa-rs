@@ -6,13 +6,37 @@
 //! intentionally distinct from product-validity masks. Static user masks and
 //! auto-multithreshold masks are the same closed type, so solvers need no
 //! mask-mode branch.
+//!
+//! A mask covers every plane of its image domain, as CASA's `.mask` image
+//! does: one support shared by every channel or polarization, as CASA
+//! expands a continuum or Stokes I mask, or one per plane, as an automatic
+//! mask or a mask cut to the primary beam makes ([`MaskPlanes`]).
 
-use std::collections::VecDeque;
+mod auto_multithresh;
+mod auto_planes;
+mod plans;
+mod primary_beam;
 
+use std::sync::Arc;
+
+use casa_coordinates::DirectionCoordinate;
 use casa_imaging_model::DirectionCoordinateSpec;
 use thiserror::Error;
 
-use crate::FinalNormalState;
+pub use auto_multithresh::{
+    AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMaskBeam, AutoMaskCycle, AutoMaskThreshold,
+    AutoMultithreshControls, AutoMultithreshEvidence, auto_multithresh, auto_multithresh_bytes,
+};
+pub use auto_planes::{
+    AutoMaskChannel, AutoMaskEvidence, AutoMaskOpenChannel, AutoMaskPlane, AutoMaskPsf,
+    AutoMaskRead, AutoMaskSource, MaskPlaneKey,
+};
+pub use plans::{
+    ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,
+    ImageDomainReconstructionMasks, MaskSources, NoiseMaskExclusion, ReconstructionMaskPlan,
+    ReconstructionMaskSet,
+};
+pub use primary_beam::MaskBeamRead;
 
 /// Reproject decoded source support onto the target direction grid.
 ///
@@ -25,300 +49,129 @@ pub fn reproject_mask_support(
     target_coordinate: DirectionCoordinateSpec,
     target_shape: [usize; 2],
 ) -> Result<Box<[bool]>, MaskError> {
-    validate_shape(source_shape)?;
-    validate_shape(target_shape)?;
-    if source_support.len() != source_shape[0] * source_shape[1] {
-        return Err(MaskError::ShapeMismatch);
-    }
-    let mut target_support = vec![false; target_shape[0] * target_shape[1]];
-    for x in 0..target_shape[0] {
-        for y in 0..target_shape[1] {
-            if reprojected_pixel(source_coordinate, source_shape, target_coordinate, [x, y])?
-                .is_some_and(|[sx, sy]| source_support[sx * source_shape[1] + sy])
-            {
-                target_support[x * target_shape[1] + y] = true;
-            }
-        }
-    }
-    Ok(target_support.into_boxed_slice())
+    MaskReprojection::new(
+        source_coordinate,
+        source_shape,
+        target_coordinate,
+        target_shape,
+    )?
+    .apply(source_support)
 }
 
-pub(crate) fn reprojected_pixel(
-    source_coordinate: DirectionCoordinateSpec,
+/// The nearest-pixel map from a target direction grid to a source grid,
+/// which every plane of a mask image shares: built once, it reprojects
+/// each plane's support without converting a direction again.
+#[derive(Debug, Clone)]
+pub struct MaskReprojection {
     source_shape: [usize; 2],
-    target_coordinate: DirectionCoordinateSpec,
+    target_shape: [usize; 2],
+    /// Per target cell, x-major: the source cell's x-major index plus one,
+    /// or 0 off the source grid.
+    map: Box<[u32]>,
+}
+
+impl MaskReprojection {
+    /// The map of `target_coordinate`'s `target_shape` grid onto
+    /// `source_coordinate`'s `source_shape` grid, each coordinate in its
+    /// own projection.
+    ///
+    /// # Errors
+    ///
+    /// An empty or oversized shape, a source grid of more cells than the map
+    /// indexes, or a direction one coordinate cannot convert.
+    pub fn new(
+        source_coordinate: DirectionCoordinateSpec,
+        source_shape: [usize; 2],
+        target_coordinate: DirectionCoordinateSpec,
+        target_shape: [usize; 2],
+    ) -> Result<Self, MaskError> {
+        validate_shape(source_shape)?;
+        validate_shape(target_shape)?;
+        if source_shape[0] * source_shape[1] >= u32::MAX as usize {
+            return Err(MaskError::InvalidShape);
+        }
+        let (source, target) = (
+            source_coordinate.coordinate(),
+            target_coordinate.coordinate(),
+        );
+        let mut map = vec![0_u32; target_shape[0] * target_shape[1]];
+        for x in 0..target_shape[0] {
+            for y in 0..target_shape[1] {
+                if let Some([sx, sy]) = reprojected_pixel(&source, source_shape, &target, [x, y])? {
+                    map[x * target_shape[1] + y] = (sx * source_shape[1] + sy) as u32 + 1;
+                }
+            }
+        }
+        Ok(Self {
+            source_shape,
+            target_shape,
+            map: map.into_boxed_slice(),
+        })
+    }
+
+    /// Heap bytes the map of a `target_shape` grid holds.
+    #[must_use]
+    pub fn bytes(target_shape: [usize; 2]) -> u64 {
+        (target_shape[0] as u64)
+            .saturating_mul(target_shape[1] as u64)
+            .saturating_mul(size_of::<u32>() as u64)
+    }
+
+    /// `source_support`, x-major on the source grid, on the target grid:
+    /// true where the nearest source pixel is.
+    ///
+    /// # Errors
+    ///
+    /// A support that is not the source grid's size.
+    pub fn apply(&self, source_support: &[bool]) -> Result<Box<[bool]>, MaskError> {
+        if source_support.len() != self.source_shape[0] * self.source_shape[1] {
+            return Err(MaskError::ShapeMismatch);
+        }
+        debug_assert_eq!(self.map.len(), self.target_shape[0] * self.target_shape[1]);
+        Ok(self
+            .map
+            .iter()
+            .map(|&source| source != 0 && source_support[source as usize - 1])
+            .collect())
+    }
+}
+
+/// The pixel of `source`, a grid of `source_shape`, nearest the direction
+/// at `target_pixel` of `target`; `None` off the source grid. Each
+/// coordinate converts in its own projection.
+pub(crate) fn reprojected_pixel(
+    source: &DirectionCoordinate,
+    source_shape: [usize; 2],
+    target: &DirectionCoordinate,
     target_pixel: [usize; 2],
 ) -> Result<Option<[usize; 2]>, MaskError> {
-    let world = direction_pixel_to_world(
-        target_coordinate,
-        [target_pixel[0] as f64, target_pixel[1] as f64],
-    )?;
-    let source = direction_world_to_pixel(source_coordinate, world)?;
-    let x = source[0].round();
-    let y = source[1].round();
+    let world = target
+        .pixel_to_world([target_pixel[0] as f64, target_pixel[1] as f64])
+        .map_err(|_| MaskError::UnsupportedReprojection)?;
+    let pixel = source
+        .world_to_pixel(world)
+        .ok()
+        .filter(|pixel| pixel.iter().all(|value| value.is_finite()))
+        .ok_or(MaskError::UnsupportedReprojection)?;
+    let x = pixel[0].round();
+    let y = pixel[1].round();
     Ok(
         (x >= 0.0 && y >= 0.0 && x < source_shape[0] as f64 && y < source_shape[1] as f64)
             .then_some([x as usize, y as usize]),
     )
 }
 
-pub(crate) fn direction_pixel_to_world(
-    coordinate: DirectionCoordinateSpec,
-    pixel: [f64; 2],
-) -> Result<[f64; 2], MaskError> {
-    if coordinate.projection() != casa_imaging_model::Projection::Sin {
-        return Err(MaskError::UnsupportedReprojection);
-    }
-    let offset = [
-        pixel[0] - coordinate.reference_pixel()[0],
-        pixel[1] - coordinate.reference_pixel()[1],
-    ];
-    let pc = coordinate.pc();
-    let increment = coordinate.increment_rad();
-    let x = increment[0] * (pc[0][0] * offset[0] + pc[0][1] * offset[1]);
-    let y = increment[1] * (pc[1][0] * offset[0] + pc[1][1] * offset[1]);
-    let radius_squared = x * x + y * y;
-    if radius_squared > 1.0 + 1.0e-12 {
-        return Err(MaskError::UnsupportedReprojection);
-    }
-    let phi = if radius_squared == 0.0 {
-        0.0
-    } else {
-        x.atan2(-y)
-    };
-    let theta = (1.0 - radius_squared.min(1.0)).max(0.0).sqrt().asin();
-    let reference = coordinate.reference_direction();
-    let alpha_p = reference.longitude_rad();
-    let delta_p = reference.latitude_rad();
-    let phi_p = coordinate.pole_deg()[0].to_radians();
-    let dphi = phi - phi_p;
-    let sin_lat = theta.sin() * delta_p.sin() + theta.cos() * delta_p.cos() * dphi.cos();
-    let latitude = sin_lat.clamp(-1.0, 1.0).asin();
-    let longitude = alpha_p
-        + (-theta.cos() * dphi.sin())
-            .atan2(theta.sin() * delta_p.cos() - theta.cos() * delta_p.sin() * dphi.cos());
-    Ok([longitude, latitude])
-}
-
-/// The pixel of `world` (longitude and latitude in radians, in the
-/// coordinate's frame) under `coordinate`'s SIN projection: CASA
-/// `DirectionCoordinate::toPixel` for the projections the imaging route
-/// compiles.
-///
-/// # Errors
-///
-/// The projection is not SIN, the PC matrix is singular, or the pixel is
-/// not finite.
-pub fn direction_world_to_pixel(
-    coordinate: DirectionCoordinateSpec,
-    world: [f64; 2],
-) -> Result<[f64; 2], MaskError> {
-    if coordinate.projection() != casa_imaging_model::Projection::Sin {
-        return Err(MaskError::UnsupportedReprojection);
-    }
-    let reference = coordinate.reference_direction();
-    let alpha_p = reference.longitude_rad();
-    let delta_p = reference.latitude_rad();
-    let phi_p = coordinate.pole_deg()[0].to_radians();
-    let delta_alpha = world[0] - alpha_p;
-    let sin_theta =
-        world[1].sin() * delta_p.sin() + world[1].cos() * delta_p.cos() * delta_alpha.cos();
-    let theta = sin_theta.clamp(-1.0, 1.0).asin();
-    let phi = phi_p
-        + (-world[1].cos() * delta_alpha.sin()).atan2(
-            world[1].sin() * delta_p.cos() - world[1].cos() * delta_p.sin() * delta_alpha.cos(),
-        );
-    let x = theta.cos() * phi.sin();
-    let y = -theta.cos() * phi.cos();
-    let increment = coordinate.increment_rad();
-    let intermediate = [x / increment[0], y / increment[1]];
-    let pc = coordinate.pc();
-    let determinant = pc[0][0] * pc[1][1] - pc[0][1] * pc[1][0];
-    if !determinant.is_finite() || determinant.abs() < 1.0e-15 {
-        return Err(MaskError::UnsupportedReprojection);
-    }
-    let offset = [
-        (pc[1][1] * intermediate[0] - pc[0][1] * intermediate[1]) / determinant,
-        (-pc[1][0] * intermediate[0] + pc[0][0] * intermediate[1]) / determinant,
-    ];
-    let reference_pixel = coordinate.reference_pixel();
-    let pixel = [
-        reference_pixel[0] + offset[0],
-        reference_pixel[1] + offset[1],
-    ];
-    if pixel.iter().all(|value| value.is_finite()) {
-        Ok(pixel)
-    } else {
-        Err(MaskError::UnsupportedReprojection)
-    }
-}
-
-/// Inclusive pixel box in the named mask coordinate grid.
+/// Inclusive signed pixel box in the named mask coordinate grid.
+/// Materialization intersects these bounds with the target image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MaskBox {
-    blc: [usize; 2],
-    trc: [usize; 2],
-}
-
-/// Deferred static mask construction evaluated at an exact major-cycle boundary.
-#[derive(Debug, Clone)]
-pub enum ReconstructionMaskPlan {
-    /// Admit every model-support pixel.
-    FullPlane {
-        /// Target model direction coordinate.
-        coordinate: DirectionCoordinateSpec,
-    },
-    /// Admit the union of explicit target-grid boxes.
-    Boxes {
-        /// Target model direction coordinate.
-        coordinate: DirectionCoordinateSpec,
-        /// Inclusive target-grid regions.
-        boxes: Vec<MaskBox>,
-    },
-    /// Admit exact target-grid support reprojected from a source mask's WCS.
-    Reprojected {
-        /// Target model direction coordinate.
-        coordinate: DirectionCoordinateSpec,
-        /// Canonical target-grid support produced by exact WCS reprojection.
-        support: Box<[bool]>,
-    },
-    /// Generate CASA auto-multithreshold support from the current Normal State.
-    AutoMultithresh {
-        /// Target model direction coordinate.
-        coordinate: DirectionCoordinateSpec,
-        /// Thresholding, pruning, smoothing, and growth controls.
-        controls: AutoMultithreshControls,
-        /// Number of completed major cycles before this boundary.
-        completed_major_cycles: usize,
-        /// Whether the previous cycle reached its stopping threshold.
-        cycle_threshold_reached: bool,
-        /// Prior immutable mask generation, when another cycle already ran.
-        previous: Option<Box<ReconstructionMask>>,
-        /// Whether CASA's channel-stop rule froze further mask evolution.
-        evolution_stopped: bool,
-    },
-}
-
-impl ReconstructionMaskPlan {
-    /// Advance live automasking to the next major-cycle boundary.
-    #[must_use]
-    pub fn next_cycle(
-        &self,
-        current: &ReconstructionMask,
-        completed_major_cycles: usize,
-        cycle_threshold_reached: bool,
-        evolution_stopped: bool,
-    ) -> Self {
-        match self {
-            Self::AutoMultithresh {
-                coordinate,
-                controls,
-                ..
-            } => Self::AutoMultithresh {
-                coordinate: *coordinate,
-                controls: *controls,
-                completed_major_cycles,
-                cycle_threshold_reached,
-                previous: Some(Box::new(current.clone())),
-                evolution_stopped,
-            },
-            other => other.clone(),
-        }
-    }
-
-    /// Materialize one immutable generation for the exact current model;
-    /// `beam` is the primary PSF's, which an automatic mask smooths by and
-    /// requires.
-    pub fn materialize(
-        &self,
-        base: &crate::ModelGeneration,
-        normal: &FinalNormalState,
-        beam: Option<AutoMaskBeam>,
-    ) -> Result<(ReconstructionMask, Option<AutoMultithreshEvidence>), MaskError> {
-        let shape = normal.shape();
-        match self {
-            Self::FullPlane { coordinate } => {
-                Ok((ReconstructionMask::full_plane(*coordinate, shape)?, None))
-            }
-            Self::Boxes { coordinate, boxes } => Ok((
-                ReconstructionMask::from_boxes(*coordinate, shape, boxes.iter().copied())?,
-                None,
-            )),
-            Self::Reprojected {
-                coordinate,
-                support,
-            } => Ok((
-                ReconstructionMask::from_reprojected_support(*coordinate, shape, support)?,
-                None,
-            )),
-            Self::AutoMultithresh {
-                coordinate,
-                controls,
-                completed_major_cycles,
-                cycle_threshold_reached,
-                previous,
-                evolution_stopped,
-            } => {
-                if base.sample_count() != shape[0] * shape[1] {
-                    return Err(MaskError::ShapeMismatch);
-                }
-                let valid_support = base
-                    .read_plane(0, 0, 0)?
-                    .iter()
-                    .map(|sample| sample.support() == casa_imaging_model::ModelSupport::Valid)
-                    .collect::<Vec<_>>();
-                let (mask, evidence) = auto_multithresh(
-                    *coordinate,
-                    normal,
-                    previous.as_deref(),
-                    &valid_support,
-                    *completed_major_cycles,
-                    *cycle_threshold_reached,
-                    *evolution_stopped,
-                    *controls,
-                    beam.ok_or(MaskError::InvalidBeamArea)?,
-                )?;
-                Ok((mask, Some(evidence)))
-            }
-        }
-    }
-}
-
-/// The primary PSF's fitted main lobe (pixels) and sidelobe level, measured
-/// once per PSF by the minor cycle, as the automatic mask needs them.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AutoMaskBeam {
-    major_fwhm_pixels: f64,
-    minor_fwhm_pixels: f64,
-    position_angle_rad: f64,
-    area_pixels: f64,
-    sidelobe_fraction: f64,
-}
-
-impl AutoMaskBeam {
-    /// A beam of the given full widths at half maximum (pixels), position
-    /// angle and fitted sidelobe level.
-    #[must_use]
-    pub const fn new(
-        major_fwhm_pixels: f64,
-        minor_fwhm_pixels: f64,
-        position_angle_rad: f64,
-        sidelobe_fraction: f64,
-    ) -> Self {
-        Self {
-            major_fwhm_pixels,
-            minor_fwhm_pixels,
-            position_angle_rad,
-            area_pixels: std::f64::consts::PI * major_fwhm_pixels * minor_fwhm_pixels
-                / (4.0 * std::f64::consts::LN_2),
-            sidelobe_fraction,
-        }
-    }
+    blc: [i64; 2],
+    trc: [i64; 2],
 }
 
 impl MaskBox {
     /// Construct an inclusive non-inverted box.
-    pub fn new(blc: [usize; 2], trc: [usize; 2]) -> Result<Self, MaskError> {
+    pub fn new(blc: [i64; 2], trc: [i64; 2]) -> Result<Self, MaskError> {
         if blc[0] > trc[0] || blc[1] > trc[1] {
             return Err(MaskError::InvertedBox);
         }
@@ -327,285 +180,108 @@ impl MaskBox {
 
     /// Return the inclusive lower corner.
     #[must_use]
-    pub const fn blc(self) -> [usize; 2] {
+    pub const fn blc(self) -> [i64; 2] {
         self.blc
     }
 
     /// Return the inclusive upper corner.
     #[must_use]
-    pub const fn trc(self) -> [usize; 2] {
+    pub const fn trc(self) -> [i64; 2] {
         self.trc
     }
 }
 
-/// Immutable reconstruction-mask support on one direction grid.
+/// The planes a reconstruction mask holds for its image domain's channels
+/// and polarizations. An axis of one plane is shared by every channel or
+/// polarization of the image, as CASA expands a continuum mask to every
+/// channel and a Stokes I mask to every Stokes plane
+/// (`SDMaskHandler::expandMask`); otherwise there is a plane for each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaskPlanes {
+    channels: usize,
+    polarizations: usize,
+}
+
+impl MaskPlanes {
+    /// One plane shared by every channel and polarization.
+    pub const SHARED: Self = Self {
+        channels: 1,
+        polarizations: 1,
+    };
+
+    /// `channels` by `polarizations` planes; an axis of one is shared.
+    ///
+    /// # Errors
+    ///
+    /// Either count is zero.
+    pub const fn new(channels: usize, polarizations: usize) -> Result<Self, MaskError> {
+        if channels == 0 || polarizations == 0 {
+            Err(MaskError::InvalidShape)
+        } else {
+            Ok(Self {
+                channels,
+                polarizations,
+            })
+        }
+    }
+
+    /// The channel planes; one is shared by every channel.
+    #[must_use]
+    pub const fn channels(self) -> usize {
+        self.channels
+    }
+
+    /// The polarization planes; one is shared by every polarization.
+    #[must_use]
+    pub const fn polarizations(self) -> usize {
+        self.polarizations
+    }
+
+    /// The planes held.
+    #[must_use]
+    pub const fn count(self) -> usize {
+        self.channels * self.polarizations
+    }
+
+    /// Whether these planes cover an image of `channels` channels and
+    /// `polarizations` polarizations: each axis is shared or matches.
+    #[must_use]
+    pub const fn covers(self, channels: usize, polarizations: usize) -> bool {
+        (self.channels == 1 || self.channels == channels)
+            && (self.polarizations == 1 || self.polarizations == polarizations)
+    }
+
+    /// The held plane of image plane `channel` and `polarization`, or
+    /// `None` outside an axis with a plane per element.
+    const fn ordinal(self, channel: usize, polarization: usize) -> Option<usize> {
+        let channel = if self.channels == 1 { 0 } else { channel };
+        let polarization = if self.polarizations == 1 {
+            0
+        } else {
+            polarization
+        };
+        if channel < self.channels && polarization < self.polarizations {
+            Some(channel * self.polarizations + polarization)
+        } else {
+            None
+        }
+    }
+}
+
+/// Immutable reconstruction-mask support on one direction grid, for every
+/// plane of its image domain: one support per held plane ([`MaskPlanes`]),
+/// each x-major.
+///
+/// The support is shared, not copied, by every clone: the plan an
+/// automatic mask evolves from, the minor cycle that cleans within it and
+/// the run's outcome hold one generation's support between them, so a run
+/// holds at most the generation in use and the one being made.
 #[derive(Debug, Clone)]
 pub struct ReconstructionMask {
     coordinate: DirectionCoordinateSpec,
     shape: [usize; 2],
-    support: Box<[bool]>,
-}
-
-/// Canonical per-image-domain mask plans for one shared reconstruction cycle.
-///
-/// Plan ordinal is the compiled image-domain ordinal. Construction rejects an
-/// empty collection; materialization checks the domain count and shapes
-/// against the Normal State.
-#[derive(Debug, Clone)]
-pub struct ImageDomainReconstructionMaskPlans {
-    plans: Box<[ReconstructionMaskPlan]>,
-}
-
-/// Immutable per-image-domain masks of one shared cycle.
-#[derive(Debug, Clone)]
-pub struct ImageDomainReconstructionMasks {
-    masks: Box<[ReconstructionMask]>,
-}
-
-/// Materialized domain masks and their optional auto-mask evidence.
-#[derive(Debug, Clone)]
-pub struct ImageDomainMaskMaterialization {
-    masks: ImageDomainReconstructionMasks,
-    auto_mask_evidence: Box<[Option<AutoMultithreshEvidence>]>,
-}
-
-/// Exact spatial-support generation consumed by one reconstruction cycle.
-#[derive(Debug, Clone)]
-pub enum ReconstructionMaskSet {
-    /// One support used by a scalar, cube, or Taylor solve.
-    Shared(Box<ReconstructionMask>),
-    /// One canonical spatial support for every compiled image domain.
-    Domains(ImageDomainReconstructionMasks),
-}
-
-impl ReconstructionMaskSet {
-    /// Return the primary support.
-    #[must_use]
-    pub const fn primary(&self) -> &ReconstructionMask {
-        match self {
-            Self::Shared(mask) => mask,
-            Self::Domains(masks) => masks.primary(),
-        }
-    }
-
-    /// Return canonical image-domain supports when this is a multi-chart cycle.
-    #[must_use]
-    pub const fn domains(&self) -> Option<&ImageDomainReconstructionMasks> {
-        match self {
-            Self::Domains(masks) => Some(masks),
-            Self::Shared(_) => None,
-        }
-    }
-}
-
-impl ImageDomainReconstructionMaskPlans {
-    /// Adopt one non-empty plan for each image domain in compiled order.
-    pub fn new(plans: impl IntoIterator<Item = ReconstructionMaskPlan>) -> Result<Self, MaskError> {
-        let plans = plans.into_iter().collect::<Vec<_>>().into_boxed_slice();
-        if plans.is_empty() {
-            return Err(MaskError::DomainCardinalityMismatch);
-        }
-        Ok(Self { plans })
-    }
-
-    /// Return the number of canonical domain plans.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.plans.len()
-    }
-
-    /// Return whether no domain plans are present (always false for valid values).
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.plans.is_empty()
-    }
-
-    /// Borrow the primary-domain plan.
-    #[must_use]
-    pub const fn primary(&self) -> &ReconstructionMaskPlan {
-        &self.plans[0]
-    }
-
-    /// Advance every domain plan to the next shared major-cycle boundary.
-    ///
-    /// Live auto-masking is admitted only for a one-domain collection. Multi-domain auto-mask evolution fails typed instead of
-    /// silently sharing or independently inventing support.
-    pub fn next_cycle(
-        &self,
-        current: &ImageDomainReconstructionMasks,
-        completed_major_cycles: usize,
-        cycle_threshold_reached: bool,
-        evolution_stopped: &[bool],
-    ) -> Result<Self, MaskError> {
-        if self.plans.len() != current.len() || self.plans.len() != evolution_stopped.len() {
-            return Err(MaskError::DomainCardinalityMismatch);
-        }
-        if self.plans.len() > 1
-            && self
-                .plans
-                .iter()
-                .any(|plan| matches!(plan, ReconstructionMaskPlan::AutoMultithresh { .. }))
-        {
-            return Err(MaskError::UnsupportedMultiDomainPlan);
-        }
-        let plans = self
-            .plans
-            .iter()
-            .zip(current.iter())
-            .zip(evolution_stopped)
-            .map(|((plan, mask), stopped)| {
-                plan.next_cycle(
-                    mask,
-                    completed_major_cycles,
-                    cycle_threshold_reached,
-                    *stopped,
-                )
-            });
-        Self::new(plans)
-    }
-
-    /// Heap bytes [`Self::materialize`] holds at most against `normal`: each
-    /// domain's support, and for an automatic mask its working planes
-    /// (`AUTO_MULTITHRESH_BYTES_PER_CELL`) with the model support it reads.
-    #[must_use]
-    pub fn materialize_bytes(&self, normal: &FinalNormalState) -> u64 {
-        self.materialize_bytes_for(|ordinal| normal.domain_shape(ordinal))
-    }
-
-    /// [`Self::materialize_bytes`] against image domains of the shapes
-    /// `domain_shape` gives by ordinal: what a run plans before its first
-    /// major cycle forms the Normal State (#737).
-    #[must_use]
-    pub fn materialize_bytes_for(&self, domain_shape: impl Fn(usize) -> Option<[usize; 2]>) -> u64 {
-        self.plans
-            .iter()
-            .enumerate()
-            .map(|(ordinal, plan)| {
-                let cells =
-                    domain_shape(ordinal).map_or(0, |[width, height]| (width * height) as u64);
-                let working = match plan {
-                    ReconstructionMaskPlan::AutoMultithresh { .. } => {
-                        AUTO_MULTITHRESH_BYTES_PER_CELL
-                            + size_of::<casa_imaging_model::ModelSample>() as u64
-                            + 1
-                    }
-                    _ => 0,
-                };
-                cells * (size_of::<bool>() as u64 + working)
-            })
-            .sum()
-    }
-
-    /// Materialize every domain support against one shared Normal State;
-    /// `beam` is the primary PSF's, required by an automatic mask.
-    pub fn materialize(
-        &self,
-        base: &crate::ModelGeneration,
-        normal: &FinalNormalState,
-        beam: Option<AutoMaskBeam>,
-    ) -> Result<ImageDomainMaskMaterialization, MaskError> {
-        if self.plans.len() != normal.domain_count()
-            || self.plans.len() != base.shape().domains().len()
-        {
-            return Err(MaskError::DomainCardinalityMismatch);
-        }
-        if self.plans.len() == 1 {
-            let (mask, evidence) = self.plans[0].materialize(base, normal, beam)?;
-            return Ok(ImageDomainMaskMaterialization::new(
-                ImageDomainReconstructionMasks::new([mask])?,
-                vec![evidence].into_boxed_slice(),
-            ));
-        }
-        let mut masks = Vec::with_capacity(self.plans.len());
-        for (ordinal, plan) in self.plans.iter().enumerate() {
-            let shape = normal
-                .domain_shape(ordinal)
-                .ok_or(MaskError::DomainCardinalityMismatch)?;
-            let mask = match plan {
-                ReconstructionMaskPlan::FullPlane { coordinate } => {
-                    ReconstructionMask::full_plane(*coordinate, shape)?
-                }
-                ReconstructionMaskPlan::Boxes { coordinate, boxes } => {
-                    ReconstructionMask::from_boxes(*coordinate, shape, boxes.iter().copied())?
-                }
-                ReconstructionMaskPlan::Reprojected {
-                    coordinate,
-                    support,
-                } => ReconstructionMask::from_reprojected_support(*coordinate, shape, support)?,
-                ReconstructionMaskPlan::AutoMultithresh { .. } => {
-                    return Err(MaskError::UnsupportedMultiDomainPlan);
-                }
-            };
-            masks.push(mask);
-        }
-        let evidence = vec![None; masks.len()].into_boxed_slice();
-        Ok(ImageDomainMaskMaterialization::new(
-            ImageDomainReconstructionMasks::new(masks)?,
-            evidence,
-        ))
-    }
-}
-
-impl ImageDomainMaskMaterialization {
-    fn new(
-        masks: ImageDomainReconstructionMasks,
-        auto_mask_evidence: Box<[Option<AutoMultithreshEvidence>]>,
-    ) -> Self {
-        Self {
-            masks,
-            auto_mask_evidence,
-        }
-    }
-
-    /// Release the canonical masks and matching evidence in domain order.
-    #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        ImageDomainReconstructionMasks,
-        Box<[Option<AutoMultithreshEvidence>]>,
-    ) {
-        (self.masks, self.auto_mask_evidence)
-    }
-}
-
-impl ImageDomainReconstructionMasks {
-    fn new(masks: impl IntoIterator<Item = ReconstructionMask>) -> Result<Self, MaskError> {
-        let masks = masks.into_iter().collect::<Vec<_>>().into_boxed_slice();
-        if masks.is_empty() {
-            return Err(MaskError::DomainCardinalityMismatch);
-        }
-        Ok(Self { masks })
-    }
-
-    /// Return the canonical domain count.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.masks.len()
-    }
-
-    /// Return whether no domain supports are present (always false for valid values).
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.masks.is_empty()
-    }
-
-    /// Borrow the primary-domain support.
-    #[must_use]
-    pub const fn primary(&self) -> &ReconstructionMask {
-        &self.masks[0]
-    }
-
-    /// Borrow one support by canonical domain ordinal.
-    #[must_use]
-    pub fn get(&self, domain_ordinal: usize) -> Option<&ReconstructionMask> {
-        self.masks.get(domain_ordinal)
-    }
-
-    /// Iterate supports in canonical domain order.
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = &ReconstructionMask> {
-        self.masks.iter()
-    }
+    planes: MaskPlanes,
+    support: Arc<[bool]>,
 }
 
 impl ReconstructionMask {
@@ -615,14 +291,15 @@ impl ReconstructionMask {
         shape: [usize; 2],
     ) -> Result<Self, MaskError> {
         validate_shape(shape)?;
-        Ok(Self::new(
+        Ok(Self::shared(
             coordinate,
             shape,
             vec![true; shape[0] * shape[1]],
         ))
     }
 
-    /// Compile target-grid pixel boxes into one static mask.
+    /// Compile target-grid pixel boxes into one static mask, clipping each box
+    /// to the target. An empty union is valid zero support (CASA stop code 7).
     pub fn from_boxes(
         coordinate: DirectionCoordinateSpec,
         shape: [usize; 2],
@@ -630,36 +307,67 @@ impl ReconstructionMask {
     ) -> Result<Self, MaskError> {
         validate_shape(shape)?;
         let mut support = vec![false; shape[0] * shape[1]];
+        let upper = shape.map(|length| i64::try_from(length - 1).unwrap_or(i64::MAX));
         for region in boxes {
-            if region.trc[0] >= shape[0] || region.trc[1] >= shape[1] {
-                return Err(MaskError::OutsideTarget);
+            // LCBox clips each bound; SDMaskHandler skips an empty intersection
+            // into its initially zero mask. This never expands to FullPlane.
+            let blc = region.blc.map(|value| value.max(0));
+            let trc = [region.trc[0].min(upper[0]), region.trc[1].min(upper[1])];
+            if blc[0] > trc[0] || blc[1] > trc[1] {
+                continue;
             }
-            for x in region.blc[0]..=region.trc[0] {
-                for y in region.blc[1]..=region.trc[1] {
+            let [x0, y0] = blc.map(|value| usize::try_from(value).expect("clipped pixel index"));
+            let [x1, y1] = trc.map(|value| usize::try_from(value).expect("clipped pixel index"));
+            for x in x0..=x1 {
+                for y in y0..=y1 {
                     support[x * shape[1] + y] = true;
                 }
             }
         }
-        if !support.iter().any(|value| *value) {
-            return Err(MaskError::EmptyMask);
-        }
-        Ok(Self::new(coordinate, shape, support))
+        Ok(Self::shared(coordinate, shape, support))
     }
 
-    /// Exact target-grid support already reprojected by the geometry owner.
+    /// Exact target-grid support already reprojected by the geometry owner,
+    /// one plane shared by every channel and polarization. Empty support is
+    /// valid: CASA stops with zero-mask code7, preserving the residual and
+    /// publishing the empty mask without applying components.
     pub fn from_reprojected_support(
         target_coordinate: DirectionCoordinateSpec,
         target_shape: [usize; 2],
         support: &[bool],
     ) -> Result<Self, MaskError> {
-        validate_shape(target_shape)?;
-        if support.len() != target_shape[0] * target_shape[1] {
+        Self::from_plane_support(
+            target_coordinate,
+            target_shape,
+            MaskPlanes::SHARED,
+            support.to_vec(),
+        )
+    }
+
+    /// Exact target-grid support of `planes` planes, plane after plane
+    /// (channel-major), each x-major. A `Vec` or boxed support is copied
+    /// once into shared storage; an `Arc` is shared as it is.
+    ///
+    /// # Errors
+    ///
+    /// The shape is empty or the support is not one plane's per plane.
+    pub fn from_plane_support(
+        coordinate: DirectionCoordinateSpec,
+        shape: [usize; 2],
+        planes: MaskPlanes,
+        support: impl Into<Arc<[bool]>>,
+    ) -> Result<Self, MaskError> {
+        validate_shape(shape)?;
+        let support = support.into();
+        if Some(support.len()) != (shape[0] * shape[1]).checked_mul(planes.count()) {
             return Err(MaskError::ShapeMismatch);
         }
-        if !support.iter().any(|value| *value) {
-            return Err(MaskError::EmptyMask);
-        }
-        Ok(Self::new(target_coordinate, target_shape, support.to_vec()))
+        Ok(Self {
+            coordinate,
+            shape,
+            planes,
+            support,
+        })
     }
 
     /// Return the exact target direction coordinate.
@@ -674,212 +382,38 @@ impl ReconstructionMask {
         self.shape
     }
 
-    /// Return canonical x-major support bits.
+    /// Return the planes held.
+    #[must_use]
+    pub const fn planes(&self) -> MaskPlanes {
+        self.planes
+    }
+
+    /// Every held plane's support, plane after plane (channel-major), each
+    /// x-major.
     #[must_use]
     pub fn support(&self) -> &[bool] {
         &self.support
     }
 
-    /// Test one target-grid pixel.
+    /// The x-major support of image plane `channel` and `polarization`: a
+    /// shared axis serves every channel or polarization; `None` beyond an
+    /// axis with a plane per element.
     #[must_use]
-    pub fn contains(&self, pixel: [usize; 2]) -> bool {
-        pixel[0] < self.shape[0]
-            && pixel[1] < self.shape[1]
-            && self.support[pixel[0] * self.shape[1] + pixel[1]]
+    pub fn plane(&self, channel: usize, polarization: usize) -> Option<&[bool]> {
+        let cells = self.shape[0] * self.shape[1];
+        self.planes
+            .ordinal(channel, polarization)
+            .map(|ordinal| &self.support[ordinal * cells..(ordinal + 1) * cells])
     }
 
-    fn new(coordinate: DirectionCoordinateSpec, shape: [usize; 2], support: Vec<bool>) -> Self {
+    fn shared(coordinate: DirectionCoordinateSpec, shape: [usize; 2], support: Vec<bool>) -> Self {
         Self {
             coordinate,
             shape,
-            support: support.into_boxed_slice(),
+            planes: MaskPlanes::SHARED,
+            support: support.into(),
         }
     }
-}
-
-/// CASA auto-multithreshold controls.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AutoMultithreshControls {
-    /// Sidelobe threshold multiplier.
-    pub sidelobe_factor: f64,
-    /// Robust-noise threshold multiplier.
-    pub noise_factor: f64,
-    /// Low-noise growth multiplier.
-    pub low_noise_factor: f64,
-    /// Negative-feature threshold multiplier; zero disables negative masks.
-    pub negative_factor: f64,
-    /// Minimum connected-region area as a fraction of the beam area.
-    pub minimum_beam_fraction: f64,
-    /// Gaussian smoothing FWHM as a fraction of the restoring beam.
-    pub smooth_factor: f64,
-    /// Fraction of the smoothed-mask peak retained.
-    pub cut_threshold: f64,
-    /// Four-connected growth iteration bound.
-    pub grow_iterations: usize,
-    /// Percent-change channel-stop threshold.
-    pub minimum_percent_change: f64,
-}
-
-/// Inspectable evidence for one auto-multithreshold generation.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AutoMultithreshEvidence {
-    /// Robust residual median.
-    pub median: f64,
-    /// MAD-derived robust RMS.
-    pub robust_rms: f64,
-    /// Positive detection threshold.
-    pub positive_threshold: f64,
-    /// Low-noise growth threshold.
-    pub low_noise_threshold: f64,
-    /// Optional negative detection threshold.
-    pub negative_threshold: Option<f64>,
-    /// Number of support pixels that changed.
-    pub changed_pixels: usize,
-    /// Whether later cycles should stop evolving this plane.
-    pub channel_stopped: bool,
-}
-
-/// Heap bytes per pixel [`auto_multithresh`] holds at most: the normalised
-/// residual, its deviations and one sorted copy for a median (`f64` each);
-/// region pruning's component list and queue, grown by pushes (`usize`
-/// each, twice for growth); the smoothed plane (`f64`); and its five
-/// `bool` planes.
-pub const AUTO_MULTITHRESH_BYTES_PER_CELL: u64 =
-    3 * size_of::<f64>() as u64 + 4 * size_of::<usize>() as u64 + size_of::<f64>() as u64 + 5;
-
-/// Generate a new auto-multithreshold mask from immutable Normal State, with
-/// `beam` the PSF's fitted main lobe and sidelobe level.
-#[allow(clippy::too_many_arguments)]
-pub fn auto_multithresh(
-    coordinate: DirectionCoordinateSpec,
-    normal: &FinalNormalState,
-    previous: Option<&ReconstructionMask>,
-    valid_support: &[bool],
-    completed_major_cycles: usize,
-    cycle_threshold_reached: bool,
-    evolution_stopped: bool,
-    controls: AutoMultithreshControls,
-    beam: AutoMaskBeam,
-) -> Result<(ReconstructionMask, AutoMultithreshEvidence), MaskError> {
-    if normal.channel_count() != 1 {
-        return Err(MaskError::ShapeMismatch);
-    }
-    let normal = &normal.read_window(normal.slab().core_range())?;
-    validate_auto_controls(controls, beam.area_pixels)?;
-    let shape = normal.shape();
-    if valid_support.len() != shape[0] * shape[1]
-        || previous.is_some_and(|mask| mask.shape != shape || mask.coordinate != coordinate)
-    {
-        return Err(MaskError::ShapeMismatch);
-    }
-    // `FinalNormalState` retains the unnormalised normal-equation planes. CASA
-    // derives automask thresholds from the displayed residual in model units,
-    // so remove the accumulated normalisation exactly as the minor-cycle
-    // solver does before applying Jy-valued controls.
-    let psf_peak = normal
-        .normal_approximation()
-        .iter()
-        .map(|value| value.re)
-        .fold(f64::NEG_INFINITY, f64::max);
-    if !psf_peak.is_finite() || psf_peak <= 0.0 {
-        return Err(MaskError::InvalidBeamArea);
-    }
-    let residual = normal
-        .residual()
-        .iter()
-        .map(|value| value.re / psf_peak)
-        .collect::<Vec<_>>();
-    if residual.iter().any(|value| !value.is_finite()) {
-        return Err(MaskError::NonfiniteResidual);
-    }
-    let residual_median = median(&residual);
-    let deviations = residual
-        .iter()
-        .map(|value| (value - residual_median).abs())
-        .collect::<Vec<_>>();
-    let robust_rms = 1.482_602_218_505_602 * median(&deviations);
-    let absolute_peak = casa_residual_absolute_peak(&residual);
-    let sidelobe_level = beam.sidelobe_fraction;
-    let positive_offset = (controls.sidelobe_factor * sidelobe_level * absolute_peak)
-        .max(controls.noise_factor * robust_rms);
-    let low_offset = (controls.sidelobe_factor * sidelobe_level * absolute_peak)
-        .max(controls.low_noise_factor * robust_rms);
-    let positive_threshold = residual_median + positive_offset;
-    let low_noise_threshold = residual_median + low_offset;
-    let negative_threshold = (controls.negative_factor > 0.0).then(|| {
-        residual_median
-            - (controls.sidelobe_factor * sidelobe_level * absolute_peak)
-                .max(controls.negative_factor * robust_rms)
-    });
-    let mut detected = residual
-        .iter()
-        .zip(valid_support)
-        .map(|(value, valid)| {
-            *valid
-                && (*value > positive_threshold
-                    || negative_threshold.is_some_and(|threshold| *value < threshold))
-        })
-        .collect::<Vec<_>>();
-    if evolution_stopped {
-        detected.fill(false);
-    }
-    if !evolution_stopped {
-        prune_regions(
-            &mut detected,
-            shape,
-            (controls.minimum_beam_fraction * beam.area_pixels).ceil() as usize,
-        );
-        detected = smooth_and_cut(
-            &detected,
-            shape,
-            controls.smooth_factor,
-            beam,
-            controls.cut_threshold,
-        );
-        if completed_major_cycles > 0 {
-            grow_cross(
-                &mut detected,
-                shape,
-                &residual,
-                low_noise_threshold,
-                controls.grow_iterations,
-            );
-        }
-    }
-    let mut support =
-        previous.map_or_else(|| vec![false; detected.len()], |mask| mask.support.to_vec());
-    let before = support.clone();
-    for index in 0..support.len() {
-        support[index] = valid_support[index] && (support[index] || detected[index]);
-    }
-    let changed_pixels = support
-        .iter()
-        .zip(&before)
-        .filter(|(left, right)| left != right)
-        .count();
-    let previous_pixels = before.iter().filter(|value| **value).count();
-    let percent_change = if previous_pixels == 0 {
-        if changed_pixels == 0 { 0.0 } else { 100.0 }
-    } else {
-        100.0 * changed_pixels as f64 / previous_pixels as f64
-    };
-    let channel_stopped = evolution_stopped
-        || support.iter().all(|value| !*value)
-        || (controls.minimum_percent_change >= 0.0
-            && cycle_threshold_reached
-            && percent_change <= controls.minimum_percent_change);
-    Ok((
-        ReconstructionMask::new(coordinate, shape, support),
-        AutoMultithreshEvidence {
-            median: residual_median,
-            robust_rms,
-            positive_threshold,
-            low_noise_threshold,
-            negative_threshold,
-            changed_pixels,
-            channel_stopped,
-        },
-    ))
 }
 
 /// Why a reconstruction mask could not be built.
@@ -894,9 +428,6 @@ pub enum MaskError {
     /// Mask-plan cardinality does not equal the compiled image-domain count.
     #[error("reconstruction mask plans must name every compiled image domain exactly once")]
     DomainCardinalityMismatch,
-    /// This multi-domain slice supports only static full-plane, box, or reprojected masks.
-    #[error("multi-domain reconstruction does not support this mask plan")]
-    UnsupportedMultiDomainPlan,
     /// Source and target direction grids cannot be mapped by the accepted law.
     #[error("mask direction grids require a supported exact reprojection")]
     UnsupportedReprojection,
@@ -906,9 +437,6 @@ pub enum MaskError {
     /// A pixel box is inverted.
     #[error("mask box requires blc <= trc")]
     InvertedBox,
-    /// A static box lies outside its named grid.
-    #[error("mask box lies outside the target grid")]
-    OutsideTarget,
     /// The support's shape or direction coordinate does not match the
     /// target grid.
     #[error("mask shape or direction coordinate differs from the target grid")]
@@ -916,15 +444,19 @@ pub enum MaskError {
     /// Shape is empty or overflows addressable storage.
     #[error("mask shape must be finite and non-empty")]
     InvalidShape,
-    /// Empty reconstruction masks fail visibly; no full-image fallback exists.
-    #[error("reconstruction mask is empty")]
-    EmptyMask,
     /// Auto-mask residual state contained a non-finite sample.
     #[error("auto-mask residual contains a non-finite sample")]
     NonfiniteResidual,
     /// Auto-mask controls or beam area are invalid.
     #[error("auto-multithreshold controls are invalid")]
     InvalidAutoControls,
+    /// A primary-beam mask cuts a static mask at a `.pb` level in `[0, 1)`.
+    #[error("a primary-beam mask cuts a static mask at a .pb level in [0, 1)")]
+    InvalidPrimaryBeamMask,
+    /// A mask cut to the primary beam needs the run's `.pb`, as tclean's
+    /// `SDMaskHandler::makePBMask` does.
+    #[error("Need PB/Sensitivity/Weight image before a PB-based mask can be made")]
+    NoPrimaryBeam,
 }
 
 fn validate_shape(shape: [usize; 2]) -> Result<(), MaskError> {
@@ -932,152 +464,6 @@ fn validate_shape(shape: [usize; 2]) -> Result<(), MaskError> {
         Err(MaskError::InvalidShape)
     } else {
         Ok(())
-    }
-}
-
-fn validate_auto_controls(
-    controls: AutoMultithreshControls,
-    beam_area_pixels: f64,
-) -> Result<(), MaskError> {
-    let values = [
-        controls.sidelobe_factor,
-        controls.noise_factor,
-        controls.low_noise_factor,
-        controls.negative_factor,
-        controls.minimum_beam_fraction,
-        controls.smooth_factor,
-        controls.cut_threshold,
-        controls.minimum_percent_change,
-        beam_area_pixels,
-    ];
-    if values.iter().enumerate().any(|(index, value)| {
-        !value.is_finite() || (*value < 0.0 && index != 7) || (index == 7 && *value < -1.0)
-    }) || controls.cut_threshold > 1.0
-        || beam_area_pixels == 0.0
-    {
-        Err(MaskError::InvalidAutoControls)
-    } else {
-        Ok(())
-    }
-}
-
-fn median(values: &[f64]) -> f64 {
-    let mut sorted = values.to_vec();
-    sorted.sort_by(f64::total_cmp);
-    let middle = sorted.len() / 2;
-    if sorted.len().is_multiple_of(2) {
-        (sorted[middle - 1] + sorted[middle]) * 0.5
-    } else {
-        sorted[middle]
-    }
-}
-
-fn casa_residual_absolute_peak(residual: &[f64]) -> f64 {
-    residual.iter().map(|value| value.abs()).fold(0.0, f64::max)
-}
-
-fn prune_regions(mask: &mut [bool], shape: [usize; 2], minimum: usize) {
-    if minimum <= 1 {
-        return;
-    }
-    let mut seen = vec![false; mask.len()];
-    for seed in 0..mask.len() {
-        if !mask[seed] || seen[seed] {
-            continue;
-        }
-        let mut queue = VecDeque::from([seed]);
-        let mut component = Vec::new();
-        seen[seed] = true;
-        while let Some(index) = queue.pop_front() {
-            component.push(index);
-            let pixel = [index / shape[1], index % shape[1]];
-            for offset in [[-1, 0], [1, 0], [0, -1], [0, 1]] {
-                if let Some(neighbor) = offset_mask_pixel(pixel, offset, shape) {
-                    let flat = neighbor[0] * shape[1] + neighbor[1];
-                    if mask[flat] && !seen[flat] {
-                        seen[flat] = true;
-                        queue.push_back(flat);
-                    }
-                }
-            }
-        }
-        if component.len() < minimum {
-            for index in component {
-                mask[index] = false;
-            }
-        }
-    }
-}
-
-fn smooth_and_cut(
-    mask: &[bool],
-    shape: [usize; 2],
-    smooth_factor: f64,
-    beam: AutoMaskBeam,
-    cut: f64,
-) -> Vec<bool> {
-    if smooth_factor == 0.0 || mask.iter().all(|value| !*value) {
-        return mask.to_vec();
-    }
-    let sigma_major = smooth_factor * beam.major_fwhm_pixels / 2.354_820_045_030_949_3;
-    let sigma_minor = smooth_factor * beam.minor_fwhm_pixels / 2.354_820_045_030_949_3;
-    // Image2DConvolver::_shapeOfKernel uses a square +/-5-sigma Gaussian
-    // kernel (`_sizeOfGaussian(width, 5.0)`) and then forces an odd shape.
-    let radius = (5.0 * sigma_major + 0.5) as isize + 1;
-    let cos_pa = beam.position_angle_rad.cos();
-    let sin_pa = beam.position_angle_rad.sin();
-    let mut smoothed = vec![0.0; mask.len()];
-    for x in 0..shape[0] {
-        for y in 0..shape[1] {
-            let mut value = 0.0;
-            for dx in -radius..=radius {
-                for dy in -radius..=radius {
-                    if let Some(pixel) = offset_mask_pixel([x, y], [dx, dy], shape)
-                        && mask[pixel[0] * shape[1] + pixel[1]]
-                    {
-                        let dx = dx as f64;
-                        let dy = dy as f64;
-                        let u = dx * cos_pa + dy * sin_pa;
-                        let v = -dx * sin_pa + dy * cos_pa;
-                        value +=
-                            (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp();
-                    }
-                }
-            }
-            smoothed[x * shape[1] + y] = value;
-        }
-    }
-    let peak = smoothed.iter().copied().fold(0.0_f64, f64::max);
-    smoothed
-        .into_iter()
-        .map(|value| value > cut * peak)
-        .collect()
-}
-
-fn grow_cross(
-    mask: &mut [bool],
-    shape: [usize; 2],
-    residual: &[f64],
-    low_threshold: f64,
-    iterations: usize,
-) {
-    for _ in 0..iterations {
-        let previous = mask.to_owned();
-        for index in 0..previous.len() {
-            if previous[index] {
-                continue;
-            }
-            let pixel = [index / shape[1], index % shape[1]];
-            if residual[index] < low_threshold {
-                continue;
-            }
-            mask[index] = [[-1, 0], [1, 0], [0, -1], [0, 1]]
-                .into_iter()
-                .any(|offset| {
-                    offset_mask_pixel(pixel, offset, shape)
-                        .is_some_and(|neighbor| previous[neighbor[0] * shape[1] + neighbor[1]])
-                });
-        }
     }
 }
 
@@ -1138,20 +524,69 @@ mod tests {
     }
 
     #[test]
-    fn automask_sidelobe_peak_is_not_recentred_by_the_residual_median() {
-        let residual = [-41.103_744_5, -1.269_142_15, 128.983_596_8];
-        assert_eq!(casa_residual_absolute_peak(&residual), 128.983_596_8);
+    fn reprojected_zero_support_is_a_valid_empty_clean_mask() {
+        let grid = coordinate([0.0, 0.0]);
+        let mask = ReconstructionMask::from_reprojected_support(grid, [2, 3], &[false; 6])
+            .expect("an explicit zero mask stops cleaning, rather than failing");
+        assert_eq!(mask.shape(), [2, 3]);
+        assert!(mask.support().iter().all(|cleanable| !cleanable));
+        assert!(matches!(
+            ReconstructionMask::from_reprojected_support(grid, [2, 3], &[false; 5]),
+            Err(MaskError::ShapeMismatch)
+        ));
+    }
+    #[test]
+    fn boxes_clip_to_target_and_empty_intersections_remain_zero() {
+        let grid = coordinate([0.0, 0.0]);
+        let upper =
+            ReconstructionMask::from_boxes(grid, [3, 2], [MaskBox::new([1, 0], [10, 10]).unwrap()])
+                .unwrap();
+        assert_eq!(upper.support(), &[false, false, true, true, true, true]);
+        let outside =
+            ReconstructionMask::from_boxes(grid, [3, 2], [MaskBox::new([3, 0], [10, 10]).unwrap()])
+                .unwrap();
+        assert_eq!(outside.support(), &[false; 6]);
+        let empty = ReconstructionMask::from_boxes(grid, [3, 2], []).unwrap();
+        assert_eq!(empty.support(), &[false; 6]);
     }
 
+    /// A shared axis serves every channel or polarization, as CASA expands
+    /// a continuum or Stokes I mask (`SDMaskHandler::expandMask`); an axis
+    /// with a plane per element serves only its own.
     #[test]
-    fn automask_cut_threshold_is_strict_like_casa() {
-        let beam = AutoMaskBeam {
-            major_fwhm_pixels: 1.0,
-            minor_fwhm_pixels: 1.0,
-            position_angle_rad: 0.0,
-            area_pixels: 1.0,
-            sidelobe_fraction: 0.0,
-        };
-        assert_eq!(smooth_and_cut(&[true], [1, 1], 1.0, beam, 1.0), [false]);
+    fn a_shared_axis_serves_every_plane_along_it() {
+        let grid = coordinate([0.0, 0.0]);
+        // Two polarizations shared by every channel: each plane's first
+        // pixel is its polarization's.
+        let planes = MaskPlanes::new(1, 2).unwrap();
+        let mask = ReconstructionMask::from_plane_support(
+            grid,
+            [1, 2],
+            planes,
+            vec![true, false, false, true],
+        )
+        .unwrap();
+        for channel in [0, 7] {
+            assert_eq!(mask.plane(channel, 0), Some(&[true, false][..]));
+            assert_eq!(mask.plane(channel, 1), Some(&[false, true][..]));
+        }
+        assert_eq!(mask.plane(0, 2), None);
+        assert!(planes.covers(5, 2) && !planes.covers(5, 4));
+        assert!(MaskPlanes::SHARED.covers(5, 4));
+        // Three channels of one polarization.
+        let cube = ReconstructionMask::from_plane_support(
+            grid,
+            [1, 1],
+            MaskPlanes::new(3, 1).unwrap(),
+            vec![false, true, false],
+        )
+        .unwrap();
+        assert_eq!(cube.plane(1, 3), Some(&[true][..]));
+        assert_eq!(cube.plane(3, 0), None);
+        assert!(matches!(
+            ReconstructionMask::from_plane_support(grid, [1, 1], planes, vec![true]),
+            Err(MaskError::ShapeMismatch)
+        ));
+        assert!(MaskPlanes::new(0, 1).is_err());
     }
 }

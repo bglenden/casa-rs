@@ -39,7 +39,8 @@
 //! blocks on the worker team; [`ModelPredictor`] predicts one row at a time
 //! and is the reference the session is tested against.
 //!
-//! The model must be Stokes I, J2000 and in the axis order `simobserve`
+//! The model must contain Stokes I/Q/U/V, use a supported celestial reference
+//! and use the axis order `simobserve`
 //! writes.
 //!
 //! `setoptions(ftmachine='sd')` predicts total power instead, by sampling
@@ -48,13 +49,34 @@
 
 mod beam;
 mod components;
+pub(crate) mod image_beam;
+pub(crate) mod jones;
+mod jones_mosaic;
 mod model;
+pub(crate) use model::PointingGeometry;
 mod single_dish;
+
+pub(crate) fn fixed_direction_frame(
+    reference: casa_types::measures::direction::DirectionRef,
+) -> bool {
+    use casa_types::measures::direction::DirectionRef;
+    matches!(
+        reference,
+        DirectionRef::J2000
+            | DirectionRef::B1950
+            | DirectionRef::B1950Vla
+            | DirectionRef::GALACTIC
+            | DirectionRef::ICRS
+            | DirectionRef::SUPERGAL
+            | DirectionRef::ECLIPTIC
+    )
+}
 
 pub(crate) use beam::BeamPattern;
 pub use beam::PrimaryBeam;
 pub(crate) use components::{
-    ComponentPrediction, ComponentRefusal, ComponentTargets, ComponentWindow,
+    BeamContext, ComponentBeamConfig, ComponentPrediction, ComponentRefusal, ComponentTargets,
+    ComponentWindow,
 };
 pub use model::SkyModel;
 pub use single_dish::SingleDishKernel;
@@ -62,9 +84,8 @@ pub(crate) use single_dish::{SingleDishPointings, SingleDishPrediction, SingleDi
 
 use casa_coordinates::CoordinateError;
 use casa_images::ImageError;
-use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
-    AiryDish, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
+    Boxcar, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
     ImageExtent, MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules,
     MosaicWindow, NativeRow, OperatorError, PaddingFactor, PlaneRange, PolarizationRouting,
     PredictionScratch, PreparedModelGrids, RowContext, SpectralAxis, SpectralKernel,
@@ -94,6 +115,9 @@ pub enum PredictError {
     /// not support yet.
     #[error("unsupported model image: {0}")]
     UnsupportedModel(String),
+    /// A model layout CASA's simulator refuses before prediction.
+    #[error("invalid simulator model image: {0}")]
+    InvalidModel(String),
     /// The measurement operator refused the model or a row.
     #[error(transparent)]
     Operator(#[from] OperatorError),
@@ -107,6 +131,10 @@ pub enum FtMachine {
     /// grid padded by `setoptions(padding=…)`, predicting autocorrelations
     /// as the model's zero spacing.
     Grid(PaddingFactor),
+    /// GridFT with CASA's nearest-pixel BOX kernel and sinc correction.
+    GridBox(PaddingFactor),
+    /// GridBoth's interferometric term: SF GridFT with autocorrelations disabled.
+    Both(PaddingFactor),
     /// `WProjectFT` (`ftmachine='wproject'`) with `wprojplanes` planes, at
     /// least two, reaching `|w| = 0.25/|Δx|`. CASA's simulator builds it
     /// with its constructor's padding of 1, whatever `setoptions(padding=…)`
@@ -121,24 +149,57 @@ pub enum FtMachine {
     Mosaic,
 }
 
-impl FtMachine {
-    /// Whether the Metal backend predicts through this machine: `GridFT`'s
-    /// spheroidal set and `MosaicFTNew`'s beams, not the W planes.
-    #[must_use]
-    pub const fn runs_on_metal(self) -> bool {
-        matches!(self, Self::Grid(_) | Self::Mosaic)
-    }
-}
-
 /// What the simulator's mosaic machine builds its kernels from: an Airy
 /// dish per class of dish diameter (`HetArrayConvFunc::findAntennaSizes`)
 /// and the spectral windows predicted.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct MosaicBeams {
-    /// One dish per class, in class order.
-    pub(crate) dishes: Vec<AiryDish>,
+    /// SimplePBConvFunc uses one common telescope beam for all antennas.
+    pub(crate) common: bool,
+    pub(crate) custom_pattern: Option<crate::session::voltage_patterns::BeamSource>,
+    pub(crate) image_angles_rad: Vec<(u32, f64)>,
+    /// One dish's Airy pattern per class, in class order.
+    pub(crate) dishes: Vec<PrimaryBeam>,
     /// The windows of the scans predicted, every channel selected.
     pub(crate) windows: Vec<MosaicWindow>,
+}
+
+impl MosaicBeams {
+    pub(crate) fn simple_screens(
+        &self,
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+    ) -> Result<casa_imaging_operator::SimpleMosaicScreens, PredictError> {
+        if let Some(image) = self.custom_pattern.as_ref().and_then(|beam| beam.image()) {
+            return Ok(MosaicPb::simple_sampled_screens(
+                geometry,
+                polarization,
+                &self.windows,
+                |plane, side, increments, frequency, window, weight| {
+                    let angle = self
+                        .image_angles_rad
+                        .iter()
+                        .find(|v| v.0 == window)
+                        .map_or(0., |v| v.1);
+                    image.fill_mosaic_screen(plane, side, increments, frequency, angle, weight);
+                    Ok(())
+                },
+            )?);
+        }
+        let pattern = self
+            .custom_pattern
+            .as_ref()
+            .map(|beam| beam.pattern())
+            .transpose()
+            .map_err(|e| PredictError::UnsupportedModel(e.to_string()))?
+            .unwrap_or_else(|| self.dishes[0].pattern());
+        Ok(MosaicPb::simple_pattern_screens(
+            geometry,
+            polarization,
+            &pattern,
+            &self.windows,
+        )?)
+    }
 }
 
 /// The grid, polarization routing and spectral resampler of a model's
@@ -158,12 +219,21 @@ pub(crate) struct ModelLayout {
 }
 
 impl ModelLayout {
+    pub(crate) fn with_full_stokes(
+        mut self,
+        correlations: &[Correlation],
+    ) -> Result<Self, PredictError> {
+        use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+        self.polarization =
+            PolarizationRouting::compile(correlations, &[StokesI, StokesQ, StokesU, StokesV])?;
+        Ok(self)
+    }
     /// The layout for `model` on rows with `correlations` through `machine`,
     /// with `beams` for [`FtMachine::Mosaic`] (the others ignore them).
     ///
     /// # Errors
     ///
-    /// A geometry the grid cannot hold, correlations the Stokes I model
+    /// A geometry the grid cannot hold, correlations the model’s Stokes planes
     /// cannot feed, or the mosaic machine without beams.
     pub(crate) fn new(
         model: &SkyModel,
@@ -173,7 +243,9 @@ impl ModelLayout {
     ) -> Result<Self, PredictError> {
         let [nx, ny] = model.shape();
         let padding = match machine {
-            FtMachine::Grid(padding) => GridPadding::CasaComposite(padding),
+            FtMachine::Grid(padding) | FtMachine::GridBox(padding) | FtMachine::Both(padding) => {
+                GridPadding::CasaComposite(padding)
+            }
             FtMachine::WProject(_) => GridPadding::CasaComposite(PaddingFactor::SIMULATOR_WPROJECT),
             FtMachine::Mosaic => GridPadding::None,
         };
@@ -183,7 +255,10 @@ impl ModelLayout {
                     "the mosaic machine needs the array's dish classes and windows".into(),
                 )
             })?),
-            FtMachine::Grid(_) | FtMachine::WProject(_) => None,
+            FtMachine::Grid(_)
+            | FtMachine::GridBox(_)
+            | FtMachine::Both(_)
+            | FtMachine::WProject(_) => None,
         };
         // The pointing ramp (`pixFieldDir`) is measured from pixel
         // `(nx/2, ny/2)`, the reference pixel here.
@@ -195,8 +270,7 @@ impl ModelLayout {
             },
             padding,
         )?;
-        let polarization =
-            PolarizationRouting::compile(correlations, &[PolarizationCoordinate::StokesI])?;
+        let polarization = PolarizationRouting::compile(correlations, model.polarizations())?;
         let planes = u32::try_from(model.planes())
             .map_err(|_| PredictError::UnsupportedModel("too many model planes".into()))?;
         let axis = SpectralAxis::new(
@@ -206,8 +280,10 @@ impl ModelLayout {
         )?;
         let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Nearest);
         let resampler = match machine {
-            FtMachine::Grid(_) | FtMachine::Mosaic => resampler.predicting_autocorrelations(),
-            FtMachine::WProject(_) => resampler,
+            FtMachine::Grid(_) | FtMachine::GridBox(_) | FtMachine::Mosaic => {
+                resampler.predicting_autocorrelations()
+            }
+            FtMachine::Both(_) | FtMachine::WProject(_) => resampler,
         };
         Ok(Self {
             machine,
@@ -251,14 +327,20 @@ impl ModelLayout {
     /// The W-projection planes or the mosaic beams cannot be built.
     pub(crate) fn kernels(&self) -> Result<Box<dyn ConvolutionFunctionSet>, PredictError> {
         Ok(match (self.machine, &self.beams) {
-            (FtMachine::Grid(_), _) => {
+            (FtMachine::Grid(_) | FtMachine::Both(_), _) => {
                 Box::new(Spheroidal::new(&self.geometry, &self.polarization))
             }
+            (FtMachine::GridBox(_), _) => Box::new(Boxcar::new(&self.geometry, &self.polarization)),
             (FtMachine::WProject(planes), _) => Box::new(WPlanes::new(
                 &self.geometry,
                 &self.polarization,
                 WPlaneCount::Fixed(planes),
             )?),
+            (FtMachine::Mosaic, Some(beams)) if beams.common => Box::new(
+                beams
+                    .simple_screens(&self.geometry, &self.polarization)?
+                    .finish()?,
+            ),
             (FtMachine::Mosaic, Some(beams)) => Box::new(MosaicPb::new(
                 MosaicRules::Simulator,
                 &self.geometry,
@@ -283,6 +365,43 @@ pub(crate) struct ModelOperator {
 }
 
 impl ModelOperator {
+    pub(crate) fn image_beam_scratch_bytes(&self, model: &SkyModel) -> u64 {
+        let [nx, ny] = model.shape();
+        self.plane_scratch_bytes(model) + (4 * nx * ny * size_of::<f32>() + 1024) as u64
+    }
+
+    pub(crate) fn prepare_image_beam(
+        &self,
+        model: &SkyModel,
+        image: &image_beam::ImageBeam,
+        pointing: [f64; 2],
+        angle: f64,
+        frame: Option<&casa_types::measures::MeasFrame>,
+        team: &WorkerTeam,
+    ) -> Result<PreparedModelGrids, PredictError> {
+        let mut grids = self.operator.empty_model_grids(self.planes())?;
+        let mut jobs: Vec<Option<ModelPlaneGrids<'_>>> =
+            grids.planes_mut().into_iter().map(Some).collect();
+        team.for_each_mut(&mut jobs, |plane, target| {
+            let Some(target) = target.take() else {
+                return Ok(());
+            };
+            let images = image.apply_plane(
+                model,
+                plane,
+                model.read_polarizations(plane)?,
+                pointing,
+                angle,
+                frame,
+            )?;
+            self.operator
+                .fill_model_plane(&ModelPlane { images }, None, target)?;
+            Ok::<_, PredictError>(())
+        })?;
+        drop(jobs);
+        Ok(grids)
+    }
+
     /// The operator of `layout` with `kernels` (its machine's set), in
     /// `precision`.
     pub(crate) fn new(
@@ -364,7 +483,7 @@ impl ModelOperator {
             let Some(target) = target.take() else {
                 return Ok(());
             };
-            let images = vec![model.read_plane(plane)?];
+            let images = model.read_polarizations(plane)?;
             let factor =
                 beam.map(|(pattern, centre)| beam::power_plane(pattern, model, plane, centre));
             self.operator
@@ -449,7 +568,7 @@ impl ModelPredictor {
     ///
     /// # Errors
     ///
-    /// A geometry the grid cannot hold, correlations the Stokes I model
+    /// A geometry the grid cannot hold, correlations the model’s Stokes planes
     /// cannot feed, a pointing outside the model's coordinate system, or a
     /// plane that cannot be read.
     pub fn new(
@@ -507,6 +626,7 @@ impl ModelPredictor {
             flags: row.flags,
             row_flag: row.row_flag,
             context: RowContext {
+                native_frequency_ratio: 1.0,
                 original_uvw_m: None,
                 time_s: 0.0,
                 antennas: row.antennas,

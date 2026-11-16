@@ -1,0 +1,1355 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "eq",
+      "left": "1m",
+      "right": "100cm",
+      "result": true
+    },
+    {
+      "method": "eq",
+      "left": "0.1m",
+      "right": "10cm",
+      "result": true
+    },
+    {
+      "method": "eq",
+      "left": "2m",
+      "right": "1m",
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": "1m",
+      "right": "2m",
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": "1km",
+      "right": "1001m",
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": "1%",
+      "right": "0.01",
+      "result": true
+    },
+    {
+      "method": "eq",
+      "left": "12h",
+      "right": "180deg",
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": "1_",
+      "right": "1",
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": "1m",
+      "right": "1s",
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": "1s",
+      "right": "1m",
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": "0",
+      "right": "0m",
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": null,
+      "right": null,
+      "result": true
+    },
+    {
+      "method": "eq",
+      "left": [],
+      "right": [],
+      "result": true
+    },
+    {
+      "method": "eq",
+      "left": 1,
+      "right": 1,
+      "result": true
+    },
+    {
+      "method": "eq",
+      "left": 0.0,
+      "right": -0.0,
+      "result": true
+    },
+    {
+      "method": "eq",
+      "left": [
+        1,
+        2
+      ],
+      "right": 1,
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": "bad",
+      "right": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "eq",
+      "left": "1",
+      "right": "bad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "eq",
+      "left": "badleft",
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"badleft\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "eq",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "eq",
+      "left": {
+        "value": 1.0,
+        "unit": "m"
+      },
+      "right": "100cm",
+      "result": true
+    },
+    {
+      "method": "eq",
+      "left": {
+        "value": [
+          1.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "result": true
+    },
+    {
+      "method": "eq",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "eq",
+      "left": "1m",
+      "right": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "eq",
+      "left": "NaN",
+      "right": 1.0,
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": 1.0,
+      "right": "NaN",
+      "result": false
+    },
+    {
+      "method": "eq",
+      "left": "Infinity",
+      "right": "Infinity",
+      "result": true
+    },
+    {
+      "method": "eq",
+      "left": "-Infinity",
+      "right": "Infinity",
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": "1m",
+      "right": "100cm",
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": "0.1m",
+      "right": "10cm",
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": "2m",
+      "right": "1m",
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": "1m",
+      "right": "2m",
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": "1km",
+      "right": "1001m",
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": "1%",
+      "right": "0.01",
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": "12h",
+      "right": "180deg",
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": "1_",
+      "right": "1",
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": "1m",
+      "right": "1s",
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": "1s",
+      "right": "1m",
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": "0",
+      "right": "0m",
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": null,
+      "right": null,
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": [],
+      "right": [],
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": 1,
+      "right": 1,
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": 0.0,
+      "right": -0.0,
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": [
+        1,
+        2
+      ],
+      "right": 1,
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": "bad",
+      "right": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "ne",
+      "left": "1",
+      "right": "bad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "ne",
+      "left": "badleft",
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"badleft\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "ne",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "ne",
+      "left": {
+        "value": 1.0,
+        "unit": "m"
+      },
+      "right": "100cm",
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": {
+        "value": [
+          1.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "ne",
+      "left": "1m",
+      "right": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "ne",
+      "left": "NaN",
+      "right": 1.0,
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": 1.0,
+      "right": "NaN",
+      "result": true
+    },
+    {
+      "method": "ne",
+      "left": "Infinity",
+      "right": "Infinity",
+      "result": false
+    },
+    {
+      "method": "ne",
+      "left": "-Infinity",
+      "right": "Infinity",
+      "result": true
+    },
+    {
+      "method": "lt",
+      "left": "1m",
+      "right": "100cm",
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": "0.1m",
+      "right": "10cm",
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": "2m",
+      "right": "1m",
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": "1m",
+      "right": "2m",
+      "result": true
+    },
+    {
+      "method": "lt",
+      "left": "1km",
+      "right": "1001m",
+      "result": true
+    },
+    {
+      "method": "lt",
+      "left": "1%",
+      "right": "0.01",
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": "12h",
+      "right": "180deg",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 'h, 'deg'"
+      }
+    },
+    {
+      "method": "lt",
+      "left": "1_",
+      "right": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units '_, ''"
+      }
+    },
+    {
+      "method": "lt",
+      "left": "1m",
+      "right": "1s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 'm, 's'"
+      }
+    },
+    {
+      "method": "lt",
+      "left": "1s",
+      "right": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 's, 'm'"
+      }
+    },
+    {
+      "method": "lt",
+      "left": "0",
+      "right": "0m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units ', 'm'"
+      }
+    },
+    {
+      "method": "lt",
+      "left": null,
+      "right": null,
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": [],
+      "right": [],
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": 1,
+      "right": 1,
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": 0.0,
+      "right": -0.0,
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": [
+        1,
+        2
+      ],
+      "right": 1,
+      "result": true
+    },
+    {
+      "method": "lt",
+      "left": "bad",
+      "right": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "lt",
+      "left": "1",
+      "right": "bad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "lt",
+      "left": "badleft",
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"badleft\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "lt",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "lt",
+      "left": {
+        "value": 1.0,
+        "unit": "m"
+      },
+      "right": "100cm",
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": {
+        "value": [
+          1.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "lt",
+      "left": "1m",
+      "right": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "lt",
+      "left": "NaN",
+      "right": 1.0,
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": 1.0,
+      "right": "NaN",
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": "Infinity",
+      "right": "Infinity",
+      "result": false
+    },
+    {
+      "method": "lt",
+      "left": "-Infinity",
+      "right": "Infinity",
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": "1m",
+      "right": "100cm",
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": "0.1m",
+      "right": "10cm",
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": "2m",
+      "right": "1m",
+      "result": false
+    },
+    {
+      "method": "le",
+      "left": "1m",
+      "right": "2m",
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": "1km",
+      "right": "1001m",
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": "1%",
+      "right": "0.01",
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": "12h",
+      "right": "180deg",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 'h, 'deg'"
+      }
+    },
+    {
+      "method": "le",
+      "left": "1_",
+      "right": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units '_, ''"
+      }
+    },
+    {
+      "method": "le",
+      "left": "1m",
+      "right": "1s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 'm, 's'"
+      }
+    },
+    {
+      "method": "le",
+      "left": "1s",
+      "right": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 's, 'm'"
+      }
+    },
+    {
+      "method": "le",
+      "left": "0",
+      "right": "0m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units ', 'm'"
+      }
+    },
+    {
+      "method": "le",
+      "left": null,
+      "right": null,
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": [],
+      "right": [],
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": 1,
+      "right": 1,
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": 0.0,
+      "right": -0.0,
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": [
+        1,
+        2
+      ],
+      "right": 1,
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": "bad",
+      "right": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "le",
+      "left": "1",
+      "right": "bad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "le",
+      "left": "badleft",
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"badleft\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "le",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "le",
+      "left": {
+        "value": 1.0,
+        "unit": "m"
+      },
+      "right": "100cm",
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": {
+        "value": [
+          1.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "le",
+      "left": "1m",
+      "right": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "le",
+      "left": "NaN",
+      "right": 1.0,
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": 1.0,
+      "right": "NaN",
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": "Infinity",
+      "right": "Infinity",
+      "result": true
+    },
+    {
+      "method": "le",
+      "left": "-Infinity",
+      "right": "Infinity",
+      "result": true
+    },
+    {
+      "method": "gt",
+      "left": "1m",
+      "right": "100cm",
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": "0.1m",
+      "right": "10cm",
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": "2m",
+      "right": "1m",
+      "result": true
+    },
+    {
+      "method": "gt",
+      "left": "1m",
+      "right": "2m",
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": "1km",
+      "right": "1001m",
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": "1%",
+      "right": "0.01",
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": "12h",
+      "right": "180deg",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 'h, 'deg'"
+      }
+    },
+    {
+      "method": "gt",
+      "left": "1_",
+      "right": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units '_, ''"
+      }
+    },
+    {
+      "method": "gt",
+      "left": "1m",
+      "right": "1s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 'm, 's'"
+      }
+    },
+    {
+      "method": "gt",
+      "left": "1s",
+      "right": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 's, 'm'"
+      }
+    },
+    {
+      "method": "gt",
+      "left": "0",
+      "right": "0m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units ', 'm'"
+      }
+    },
+    {
+      "method": "gt",
+      "left": null,
+      "right": null,
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": [],
+      "right": [],
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": 1,
+      "right": 1,
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": 0.0,
+      "right": -0.0,
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": [
+        1,
+        2
+      ],
+      "right": 1,
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": "bad",
+      "right": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "gt",
+      "left": "1",
+      "right": "bad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "gt",
+      "left": "badleft",
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"badleft\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "gt",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "gt",
+      "left": {
+        "value": 1.0,
+        "unit": "m"
+      },
+      "right": "100cm",
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": {
+        "value": [
+          1.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "gt",
+      "left": "1m",
+      "right": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "gt",
+      "left": "NaN",
+      "right": 1.0,
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": 1.0,
+      "right": "NaN",
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": "Infinity",
+      "right": "Infinity",
+      "result": false
+    },
+    {
+      "method": "gt",
+      "left": "-Infinity",
+      "right": "Infinity",
+      "result": false
+    },
+    {
+      "method": "ge",
+      "left": "1m",
+      "right": "100cm",
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": "0.1m",
+      "right": "10cm",
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": "2m",
+      "right": "1m",
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": "1m",
+      "right": "2m",
+      "result": false
+    },
+    {
+      "method": "ge",
+      "left": "1km",
+      "right": "1001m",
+      "result": false
+    },
+    {
+      "method": "ge",
+      "left": "1%",
+      "right": "0.01",
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": "12h",
+      "right": "180deg",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 'h, 'deg'"
+      }
+    },
+    {
+      "method": "ge",
+      "left": "1_",
+      "right": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units '_, ''"
+      }
+    },
+    {
+      "method": "ge",
+      "left": "1m",
+      "right": "1s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 'm, 's'"
+      }
+    },
+    {
+      "method": "ge",
+      "left": "1s",
+      "right": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units 's, 'm'"
+      }
+    },
+    {
+      "method": "ge",
+      "left": "0",
+      "right": "0m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator< unequal units ', 'm'"
+      }
+    },
+    {
+      "method": "ge",
+      "left": null,
+      "right": null,
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": [],
+      "right": [],
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": 1,
+      "right": 1,
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": 0.0,
+      "right": -0.0,
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": [
+        1,
+        2
+      ],
+      "right": 1,
+      "result": false
+    },
+    {
+      "method": "ge",
+      "left": "bad",
+      "right": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "ge",
+      "left": "1",
+      "right": "bad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "ge",
+      "left": "badleft",
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"badleft\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "ge",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "badright",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "ge",
+      "left": {
+        "value": 1.0,
+        "unit": "m"
+      },
+      "right": "100cm",
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": {
+        "value": [
+          1.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "right": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "ge",
+      "left": "1m",
+      "right": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "ge",
+      "left": "NaN",
+      "right": 1.0,
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": 1.0,
+      "right": "NaN",
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": "Infinity",
+      "right": "Infinity",
+      "result": true
+    },
+    {
+      "method": "ge",
+      "left": "-Infinity",
+      "right": "Infinity",
+      "result": false
+    }
+  ]
+}

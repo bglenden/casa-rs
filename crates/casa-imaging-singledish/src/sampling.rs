@@ -44,6 +44,15 @@ pub struct RasterSampling {
     pub position_angle_rad: f64,
 }
 
+/// Upper bound on live heap scratch while estimating a raster of `count`
+/// pointings, excluding the borrowed input. This includes the longitude copy,
+/// growing index/end vectors (at most twice their lengths), time and direction
+/// copies, two-axis steps, row medians and median-selection work vectors.
+#[must_use]
+pub const fn raster_sampling_working_bytes(count: usize) -> u64 {
+    (count as u64).saturating_mul(112).saturating_add(64)
+}
+
 /// `getPointingSamplingRaster` over `pointings`, each antenna's in time
 /// order; `None` for no pointings.
 #[must_use]

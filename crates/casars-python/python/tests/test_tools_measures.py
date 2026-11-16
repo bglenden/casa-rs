@@ -1,4 +1,4 @@
-"""`casars.tools.measures`: CASA's `me` tool (ADR-0019, #841).
+"""`casars.tools.measures`: CASA's `me` tool (ADR-0017, #841).
 
 Signatures are compared with CASA 6.7.6's installed binding
 (`data/casa_measures_signatures.json`, and a live CASA when importable) and
@@ -13,13 +13,17 @@ and are checked loosely.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
 import casars
+from casars.data import Table
 from casars.tools import measures
 
 from _casa_tools import (
@@ -34,9 +38,9 @@ LOGGER = "casars.tools.measures"
 CASA = casa_signatures("measures")
 
 IMPLEMENTED = {
-    "direction", "dirshow", "doframe", "done", "epoch", "framenow", "frequency", "getref",
-    "gettype", "getvalue", "ismeasure", "listcodes", "measure", "observatory", "posangle",
-    "position", "separation", "show", "source", "type",
+    "addxvalue", "cometangdiam", "cometdist", "cometname", "comettopo", "comettype", "direction", "dirshow", "doframe", "done", "epoch", "framenow", "frequency", "getoffset", "getref",
+    "gettype", "getvalue", "ismeasure", "linelist", "listcodes", "measure", "observatory", "obslist",
+    "posangle", "position", "separation", "show", "source", "sourcelist", "spectralline", "type",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
@@ -281,13 +285,63 @@ def test_observatories_are_the_measures_datas() -> None:
                                            6372960.257723439), rel=1e-14)
 
 
+#: CASA 6.7.6.14's me.observatory for every observatory, with its table row
+#: (tools/casa-compat/observatories_oracle.py).
+OBSERVATORIES = json.loads(
+    (Path(__file__).resolve().parent / "data" / "casa_observatories.json").read_text(encoding="utf-8")
+)["observatories"]
+
+
+@needs_measures_data
+@pytest.mark.parametrize("name", sorted(OBSERVATORIES))
+def test_every_observatory_is_where_casa_places_it(name: str) -> None:
+    # casacore reads Long, Lat and Height for an ITRF entry too, Height its
+    # radius, and never X, Y and Z, which disagree for ten entries (#1106).
+    expected = OBSERVATORIES[name]["position"]
+    close(measures().observatory(name),
+          position(expected["refer"], *(expected[key]["value"] for key in ("m0", "m1", "m2"))),
+          rel=1e-14, abs_=1e-15)
+
+
 @needs_measures_data
 def test_unknown_names_log_and_return_an_empty_record(caplog: pytest.LogCaptureFixture) -> None:
     me = measures()
     with caplog.at_level(logging.ERROR, logger=LOGGER):
         assert me.observatory("BOGUS") == {}
         assert me.source("BOGUS") == {}
-    assert caplog.messages == ["Unknown observatory asked for", "Unknown source asked for"]
+        assert me.spectralline("BOGUS") == {}
+    assert caplog.messages == [
+        "Unknown observatory asked for", "Unknown source asked for", "Unknown spectral line asked for",
+    ]
+
+
+#: CASA 6.7.6.14's me.observatory, me.spectralline and me.source for every
+#: prefix of every observatory and line name, upper and lower case, and for
+#: names longer than an entry or with spaces around them
+#: (tools/casa-compat/measures_names_oracle.py).
+NAMES = json.loads((Path(__file__).resolve().parent / "data" / "casa_measures_names.json").read_text(encoding="utf-8"))
+
+
+@needs_measures_data
+@pytest.mark.parametrize("method", ["observatory", "spectralline", "source"])
+def test_names_find_what_casa_finds(method: str) -> None:
+    # casacore's MUString::minimaxNC: the entry of that name ignoring case,
+    # else the one entry the name agrees with over the shorter of their
+    # lengths. `ALM` and `ALMAX` find ALMA; `VL` finds nothing (VLA, VLBA).
+    # The two data versions' Observatories and Lines tables are the same;
+    # the sources asked for are found alike in both Sources tables.
+    me = measures()
+    lookup = getattr(me, method)
+    for name, casa in NAMES[method].items():
+        close(lookup(name), casa, rel=1e-14, abs_=1e-15, path=repr(name))
+
+
+@needs_measures_data
+def test_spectral_lines_are_casacores_rest_frequencies() -> None:
+    me = measures()
+    # casacore takes HI from its constant QC::HI; the table agrees.
+    assert me.spectralline() == frequency("REST", 1420405751.786) == me.spectralline("hi")
+    close(me.spectralline("OH1667"), NAMES["spectralline"]["OH1667"], rel=1e-15)
 
 
 @needs_measures_data
@@ -367,5 +421,41 @@ def test_framenow_sets_an_epoch() -> None:
 @pytest.mark.parametrize("method", sorted(NOT_YET_IMPLEMENTED))
 def test_unimplemented_methods_raise_not_implemented(method: str) -> None:
     required = [entry for entry in CASA["methods"][method] if entry["default"] is None]
-    with pytest.raises(NotImplementedError, match=f"measures.{method} is not yet implemented in casa-rs"):
+    with pytest.raises(NotImplementedError, match=rf"^measures\.{method} is not yet implemented in casa-rs \(#1053\)$"):
         getattr(measures(), method)(*[{} for _ in required])
+
+
+#: CASA 6.7.6.14's me.obslist, me.sourcelist and me.linelist on its own
+#: measures data (tools/casa-compat/measures_lists_oracle.py).
+LISTS = json.loads((Path(__file__).resolve().parent / "data" / "casa_measures_lists.json").read_text(encoding="utf-8"))
+
+
+@needs_measures_data
+def test_observatories_and_lines_are_listed_as_casa_lists_them(caplog: pytest.LogCaptureFixture) -> None:
+    me = measures()
+    # Their tables are the same in casa-rs's and CASA's data: the lists are
+    # CASA's to the character.
+    found = me.obslist()
+    assert isinstance(found, list) and all(type(name) is str for name in found)
+    assert found == LISTS["obslist"]
+    with caplog.at_level(logging.WARNING, logger="casars.tools.measures"):
+        assert me.linelist() == LISTS["linelist"]
+    assert caplog.messages == [
+        "DEPRECATED. The linelist method has been deprecated and will be removed in the near future. "
+        "Please use the spectral line (sl) tool and/or related tasks instead"
+    ]
+
+
+@needs_measures_data
+def test_sources_are_listed_as_casa_lists_them() -> None:
+    # CASA lists its Sources table's names in order, joined by spaces. The
+    # table differs between data versions (1139 rows in CASA's, more in
+    # casa-rs's snapshot), so casa-rs's list is checked against its own.
+    assert LISTS["sourcelist_is_the_table_joined"] and LISTS["obslist_is_the_table"]
+    found = measures().sourcelist()
+    assert type(found) is str and "  " not in found
+    root = os.environ.get("CASA_RS_MEASURESPATH")
+    if root:
+        table = Table.open(Path(root) / "ephemerides" / "Sources")
+        assert found == " ".join(table.get_column("Name"))
+    assert len(found.split(" ")) >= 1000

@@ -69,7 +69,7 @@ fn streaming_cube_complete_application_handoff() {
     }
     drop(outcome);
     imaging.imagename = root.path().join("cube-model-column");
-    imaging.savemodel = true;
+    imaging.savemodel = casa_imaging_application::SaveModel::ModelColumn;
     let outcome = casa_imaging_application::execute(
         &imaging,
         context_with(ResourcePolicy::Explicit {
@@ -144,9 +144,60 @@ fn t55_shifted_cube_density_retains_native_endpoint_weights() {
     let weighting = outcome.problem.weighting();
     assert_eq!(weighting.casa_cube_density_padding(), Some(1));
     assert_eq!(
-        weighting.density_scope(),
+        *weighting.density_scope(),
         WeightDensityScope::PerOutputChannel
     );
+}
+
+/// `mosweight` on a cube mosaic (#818): `BriggsCubeWeightor`'s `multiField`
+/// keeps its swing pad of four planes, two a side, and estimates none, so
+/// the executed problem's padding is 2 where one density over every field
+/// takes the frames' estimate (no swing in the data's own frame, plus
+/// `max(min(4, nchan/10), 1)`: 1).
+#[test]
+fn t55_a_mosweight_cube_mosaic_pads_its_density_by_two_planes() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = synthetic_observation::observation_as(root.path(), 4, "ALMA");
+    for mosweight in [true, false] {
+        let imaging = request(
+            &measurement_set,
+            &root.path().join(format!("mosweight-{mosweight}")),
+            json!({
+                "niter": 0,
+                "imsize": 64,
+                "cell": format!("{}arcsec", synthetic_observation::CELL_ARCSEC),
+                "gridder": "mosaic",
+                "mosweight": mosweight,
+                "weighting": "briggs",
+                "robust": 0.5,
+                "channel_count": 4,
+                "specmode": "cube",
+                "outframe": "TOPO",
+                "perchanweightdensity": true,
+            }),
+        );
+        let outcome = execute(&imaging).expect("mosaic cube density execution");
+        let weighting = outcome.problem.weighting();
+        let (padding, scope) = if mosweight {
+            (
+                2,
+                WeightDensityScope::PerFieldAndOutputChannel {
+                    fields: casa_imaging_model::DensityFieldKeys::new([0]).expect("one field"),
+                },
+            )
+        } else {
+            (1, WeightDensityScope::PerOutputChannel)
+        };
+        assert_eq!(
+            (
+                weighting.casa_cube_density_padding(),
+                weighting.density_scope().clone()
+            ),
+            (Some(padding), scope),
+            "mosweight={mosweight}"
+        );
+    }
 }
 
 #[test]
@@ -182,7 +233,7 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
                     WeightDensityScope::GlobalSelection
                 };
                 assert_eq!(
-                    outcome.problem.weighting().density_scope(),
+                    *outcome.problem.weighting().density_scope(),
                     expected,
                     "cube={cube} per_channel={per_channel} weighting={weighting}",
                 );
@@ -396,9 +447,16 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                 )
                 .expect("signed PB cube");
                 assert!(outcome.major_cycle_count > 1);
-                for role in [
-                    ProductRole::Residual(ProductTerm::Single),
-                    ProductRole::RestoredImage(ProductTerm::Single),
+                // The restored image restores every plane, as CASA's does.
+                for (role, rule) in [
+                    (
+                        ProductRole::Residual(ProductTerm::Single),
+                        ProductValidityRule::FinalNormalState,
+                    ),
+                    (
+                        ProductRole::RestoredImage(ProductTerm::Single),
+                        ProductValidityRule::All,
+                    ),
                 ] {
                     assert_eq!(
                         outcome
@@ -408,7 +466,7 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                             .find(|member| member.role() == role)
                             .expect("uncorrected image product")
                             .validity(),
-                        ProductValidityRule::FinalNormalState,
+                        rule,
                         "PB cutoff must not zero uncorrected image pixels"
                     );
                 }

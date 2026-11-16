@@ -11,11 +11,11 @@
 
 use std::collections::BTreeMap;
 
-use casa_provider_contracts::ParameterValue;
+use casa_provider_contracts::{EmptyArrayType, NumpyScalarType, ParameterValue};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
+use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 
@@ -50,6 +50,37 @@ pub(crate) fn parameter_value(value: &Bound<'_, PyAny>) -> PyResult<ParameterVal
     if let Ok(text) = value.cast::<PyString>() {
         return Ok(ParameterValue::String(text.to_str()?.to_owned()));
     }
+    if value.hasattr("dtype")? && value.is_instance(&py.import("numpy")?.getattr("generic")?)? {
+        let dtype = value.getattr("dtype")?;
+        let kind: String = dtype.getattr("kind")?.extract()?;
+        let size: usize = dtype.getattr("itemsize")?.extract()?;
+        let dtype = match (kind.as_str(), size) {
+            ("b", _) => NumpyScalarType::Bool,
+            ("i", 1) => NumpyScalarType::Int8,
+            ("i", 2) => NumpyScalarType::Int16,
+            ("i", 4) => NumpyScalarType::Int32,
+            ("i", 8) => NumpyScalarType::Int64,
+            ("u", 1) => NumpyScalarType::UInt8,
+            ("u", 2) => NumpyScalarType::UInt16,
+            ("u", 4) => NumpyScalarType::UInt32,
+            ("u", 8) => NumpyScalarType::UInt64,
+            ("f", 4) => NumpyScalarType::Float32,
+            ("c", 8) => NumpyScalarType::Complex64,
+            ("c", 16) => NumpyScalarType::Complex128,
+            _ => return Err(PyTypeError::new_err("unsupported NumPy parameter dtype")),
+        };
+        let scalar = parameter_value(&value.call_method0("item")?)?;
+        return Ok(ParameterValue::NumpyScalar {
+            dtype,
+            value: Box::new(scalar),
+        });
+    }
+    if let Ok(value) = value.cast::<PyComplex>() {
+        return Ok(ParameterValue::Complex([
+            casa_provider_contracts::CasaFloat(value.real()),
+            casa_provider_contracts::CasaFloat(value.imag()),
+        ]));
+    }
     if value.is_instance(PATH_LIKE.import(py, "os", "PathLike")?)? {
         let path = py.import("os")?.call_method1("fspath", (value,))?;
         let Ok(path) = path.cast::<PyString>() else {
@@ -58,6 +89,36 @@ pub(crate) fn parameter_value(value: &Bound<'_, PyAny>) -> PyResult<ParameterVal
             ));
         };
         return Ok(ParameterValue::String(path.to_str()?.to_owned()));
+    }
+    if value.hasattr("dtype")? && value.hasattr("shape")? && value.hasattr("tolist")? {
+        let dtype = value.getattr("dtype")?;
+        let kind: String = dtype.getattr("kind")?.extract()?;
+        let size: usize = dtype.getattr("itemsize")?.extract()?;
+        let dtype = match (kind.as_str(), size) {
+            ("b", _) => EmptyArrayType::Bool,
+            ("i" | "u", 1 | 2 | 4 | 8) => EmptyArrayType::Integer,
+            ("f", 4 | 8) => EmptyArrayType::Float,
+            ("c", 8 | 16) => EmptyArrayType::Complex,
+            ("U", _) => EmptyArrayType::String,
+            _ => return Err(PyTypeError::new_err("unsupported NumPy parameter dtype")),
+        };
+        if value.hasattr("size")? && value.getattr("size")?.extract::<usize>()? == 0 {
+            return Ok(ParameterValue::EmptyArray {
+                dtype,
+                shape: value.getattr("shape")?.extract()?,
+            });
+        }
+        let converted = value.call_method0("tolist")?;
+        if converted.is(value) || converted.get_type().is(value.get_type()) {
+            return Err(PyTypeError::new_err("unsupported NumPy parameter dtype"));
+        }
+        let converted = parameter_value(&converted)?;
+        if value.is_instance(&py.import("numpy")?.getattr("ndarray")?)?
+            && value.getattr("ndim")?.extract::<usize>()? == 0
+        {
+            return Ok(ParameterValue::ScalarArray(Box::new(converted)));
+        }
+        return Ok(converted);
     }
     if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
         return value
@@ -103,6 +164,10 @@ impl Serialize for NativeValue<'_> {
             ParameterValue::Bool(value) => serializer.serialize_bool(*value),
             ParameterValue::Integer(value) => serializer.serialize_i64(*value),
             ParameterValue::Float(value) => serializer.serialize_f64(*value),
+            ParameterValue::Complex(value) => value.serialize(serializer),
+            ParameterValue::EmptyArray { .. } => serializer.serialize_seq(Some(0))?.end(),
+            ParameterValue::ScalarArray(value) => NativeValue(value).serialize(serializer),
+            ParameterValue::NumpyScalar { value, .. } => NativeValue(value).serialize(serializer),
             ParameterValue::String(value) => serializer.serialize_str(value),
             ParameterValue::Array(values) => {
                 let mut sequence = serializer.serialize_seq(Some(values.len()))?;
@@ -120,6 +185,55 @@ impl Serialize for NativeValue<'_> {
             }
         }
     }
+}
+
+/// Convert typed parameter values into their natural Python representations.
+pub(crate) fn value_to_python<'py>(
+    py: Python<'py>,
+    value: &ParameterValue,
+) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match value {
+        ParameterValue::Complex([real, imag]) => {
+            PyComplex::from_doubles(py, real.0, imag.0).into_any()
+        }
+        ParameterValue::EmptyArray { dtype, shape } => {
+            let dtype = match dtype {
+                EmptyArrayType::Bool => "bool",
+                EmptyArrayType::Integer => "int64",
+                EmptyArrayType::Float => "float64",
+                EmptyArrayType::Complex => "complex128",
+                EmptyArrayType::String => "U5",
+            };
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("dtype", dtype)?;
+            py.import("numpy")?
+                .call_method("empty", (shape.clone(),), Some(&kwargs))?
+        }
+        ParameterValue::ScalarArray(value) => py
+            .import("numpy")?
+            .call_method1("array", (value_to_python(py, value)?,))?,
+        ParameterValue::NumpyScalar { dtype, value } => {
+            let name = format!("{dtype:?}").to_ascii_lowercase();
+            py.import("numpy")?
+                .getattr(name.as_str())?
+                .call1((value_to_python(py, value)?,))?
+        }
+        ParameterValue::Array(values) => {
+            let list = PyList::empty(py);
+            for value in values {
+                list.append(value_to_python(py, value)?)?;
+            }
+            list.into_any()
+        }
+        ParameterValue::Table(values) => {
+            let dict = PyDict::new(py);
+            for (key, value) in values {
+                dict.set_item(key, value_to_python(py, value)?)?;
+            }
+            dict.into_any()
+        }
+        other => pythonize::pythonize(py, &NativeValue(other)).map_err(PyErr::from)?,
+    })
 }
 
 /// Serialize an optional [`ParameterValue`] as its plain value.

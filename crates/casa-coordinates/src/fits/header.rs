@@ -213,7 +213,8 @@ impl FitsHeader {
 /// after the `=` sign.
 fn parse_value_comment(rest: &str) -> (FitsValue, Option<String>) {
     // String values are enclosed in single quotes
-    if let Some(q1) = rest.find('\'') {
+    if rest.starts_with('\'') {
+        let q1 = 0;
         // Find closing quote (doubled quotes '' are literal)
         let after_q1 = &rest[q1 + 1..];
         let mut end = 0;

@@ -159,9 +159,10 @@ impl MPosition {
     }
 
     /// The position CASA gives the observatory `name`: casacore's own
-    /// `MeasTable::Observatory` position for `EVLA`, which some geodetic
-    /// tables predate, else the provider's observatory table's; `None`
-    /// when neither knows the name.
+    /// `MeasTable::Observatory` position for `EVLA`, else the provider's
+    /// observatory table's; `None` when neither knows the name. The EVLA
+    /// position is the one current measures data give it (its `Long`,
+    /// `Lat` and `Height`), kept for tables that predate the EVLA row.
     pub fn casa_observatory(name: &str, provider: &dyn MeasuresProvider) -> Option<Self> {
         if name.trim().eq_ignore_ascii_case("EVLA") {
             return Some(Self::new_itrf(

@@ -1,0 +1,164 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean minor cycles on planes with off-centre PSFs",
+ "work_issue": 1130,
+ "date": "2026-11-04",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "4359654c25a918333ddf1f7fe9c9710af388594a",
+ "imager_binary_sha256": "8f186450da841e2283ec0fa562b7800e9bb1aa2a83a3249f1a8fca71cbe8814a",
+ "backend": "cpu",
+ "precision": "f64",
+ "host": "macOS-27.2-arm64-arm-64bit",
+ "driver": "tools/casa-compat/tclean_case_matrix.py with resources/casa-compat/tclean-psf-off-centre-cases.json on the staged casatestdata root",
+ "case_file_sha256": "156859e8fcc69800b8d671a27f82027e7d760433235fe72ef91a0b794e7c4e5c",
+ "limits": "Exact image-product inventory and masks; NRMS <= 1e-3; scalars and counts as the driver states them.",
+ "outcome": "10 of 12 cases pass. off_centre_clean differs on a near-tie at gain 0.2, as attributed in psf-off-centre-20261104; off_centre_multiscale differs due to a CASA bug not followed, documented in docs/CASA (C++) bugs.md. Clark image NRMS is 5.24e-7, down from 0.36.",
+ "own_cases": {
+  "off_centre_dirty": {
+   "passed": true,
+   "nrms": {
+    "image": 1.2575186103711018e-07,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.4349250836617024e-07,
+    "residual": 1.2575186103711018e-07,
+    "sumwt": 0.0
+   }
+  },
+  "off_centre_clean": {
+   "passed": false,
+   "nrms": {
+    "image": 0.2189989681453659,
+    "mask": 0.0,
+    "model": 0.059715712496439366,
+    "pb": 0.0,
+    "psf": 1.4349250836617024e-07,
+    "residual": 0.5851430686842748,
+    "sumwt": 0.0
+   }
+  },
+  "off_centre_clean_no_tie": {
+   "passed": true,
+   "nrms": {
+    "image": 4.4478828827623273e-07,
+    "mask": 0.0,
+    "model": 1.244007780005502e-07,
+    "pb": 0.0,
+    "psf": 1.4349250836617024e-07,
+    "residual": 7.308458603248875e-07,
+    "sumwt": 0.0
+   }
+  },
+  "off_centre_only_plane": {
+   "passed": true,
+   "nrms": {
+    "image": 2.485886034341147e-07,
+    "mask": 0.0,
+    "model": 6.793733302936949e-08,
+    "pb": 0.0,
+    "psf": 1.3152409039320788e-07,
+    "residual": 1.0919658651005242e-06,
+    "sumwt": 0.0
+   }
+  },
+  "off_centre_fixed_beam": {
+   "passed": true,
+   "nrms": {
+    "image": 4.9290873848983715e-06,
+    "mask": 0.0,
+    "model": 1.244007780005502e-07,
+    "pb": 0.0,
+    "psf": 1.4349250836617024e-07,
+    "residual": 7.308458603248875e-07,
+    "sumwt": 0.0
+   }
+  },
+  "off_centre_common_beam": {
+   "passed": true,
+   "nrms": {
+    "image": 4.4478828827623273e-07,
+    "mask": 0.0,
+    "model": 1.244007780005502e-07,
+    "pb": 0.0,
+    "psf": 1.4349250836617024e-07,
+    "residual": 7.308458603248875e-07,
+    "sumwt": 0.0
+   }
+  },
+  "off_centre_clark": {
+   "passed": true,
+   "nrms": {
+    "image": 5.241749237214569e-07,
+    "mask": 0.0,
+    "model": 3.869313900895622e-08,
+    "pb": 0.0,
+    "psf": 1.4349250836617024e-07,
+    "residual": 1.2616935212916102e-06,
+    "sumwt": 0.0
+   }
+  },
+  "off_centre_multiscale": {
+   "passed": false,
+   "nrms": {
+    "image": 0.7667752479210573,
+    "mask": 0.0,
+    "model": 1.208837193835069,
+    "pb": 0.0,
+    "psf": 1.4349250836617024e-07,
+    "residual": 0.8333316040270645,
+    "sumwt": 0.0
+   }
+  },
+  "off_centre_mtmfs_one_channel": {
+   "passed": true,
+   "nrms": {
+    "image.tt0": 2.4046733335780196e-07,
+    "mask": 0.0,
+    "model.tt0": 1.2215007088979364e-07,
+    "pb.tt0": 0.0,
+    "psf.tt0": 1.7962557846549162e-07,
+    "residual.tt0": 2.6096872869399106e-06,
+    "sumwt.tt0": 0.0
+   }
+  },
+  "off_centre_automask": {
+   "passed": true,
+   "nrms": {
+    "image": 1.2484701659583427e-07,
+    "mask": 0.0,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.4349250836617024e-07,
+    "residual": 1.2484701659583427e-07,
+    "sumwt": 0.0
+   }
+  },
+  "off_centre_automask_low": {
+   "passed": true,
+   "nrms": {
+    "image": 7.47090291980905e-07,
+    "mask": 0.0,
+    "model": 3.457694017763923e-08,
+    "pb": 0.0,
+    "psf": 1.4349250836617024e-07,
+    "residual": 4.3150603615030374e-05,
+    "sumwt": 0.0
+   }
+  },
+  "off_centre_clark_three": {
+   "passed": true,
+   "nrms": {
+    "image": 3.425314210052249e-07,
+    "mask": 0.0,
+    "model": 1.0576058997172137e-07,
+    "pb": 0.0,
+    "psf": 1.438616092366445e-07,
+    "residual": 6.424708121955151e-07,
+    "sumwt": 0.0
+   }
+  }
+ }
+}

@@ -568,8 +568,7 @@ fn outcome(result: SimulatorResult<()>) -> (CasaOutcome, String) {
     (error.outcome(), error.message().to_string())
 }
 
-/// What CASA refuses, or casa-rs does not yet do, adds no term: a `table`
-/// (CASA writes the `T` term's), `OTF=False`, a water vapour above 100 mm
+/// Refused noise configurations add no term: water vapour above 100 mm in either generation mode
 /// and an undefined zenith Tsys, which CASA refuses after adding a unit-σ
 /// term (`docs/CASA (C++) bugs.md`).
 #[test]
@@ -582,15 +581,11 @@ fn refusals_add_no_term() {
         change(&mut spec);
         spec
     };
-    let table = spec(&|spec| spec.table = "noisy.cal".to_string());
-    let (refused, message) = outcome(sm.set_noise(&table));
-    assert_eq!(refused, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("noisy.T.cal"), "{message}");
-    let otf = spec(&|spec| spec.on_the_fly = false);
-    assert_eq!(
-        outcome(sm.set_noise(&otf)).0,
-        CasaOutcome::NotYetImplemented
-    );
+    let otf = spec(&|spec| {
+        spec.on_the_fly = false;
+        spec.water_vapour_mm = 200.;
+    });
+    assert_eq!(outcome(sm.set_noise(&otf)).0, CasaOutcome::ReturnsFalse);
     let wet = spec(&|spec| spec.water_vapour_mm = 200.0);
     assert_eq!(
         outcome(sm.set_noise(&wet)),
@@ -856,6 +851,28 @@ fn tsys_atm_draws_are_the_same_for_any_worker_count_and_add_to_other_terms() {
 /// both, as they are keyed by what they depend on, not by the batch.
 #[test]
 fn tsys_atm_draws_are_the_same_for_any_memory_budget() {
+    // The budget is intentionally just above the writer's demand. Other
+    // tests can leave a process-wide cache reservation behind, so run this
+    // law in a fresh process under both libtest and nextest (#1144).
+    const ALONE: &str = "CASA_RS_TSYS_BUDGET_LAW_ALONE";
+    const NAME: &str = "tsys_atm_draws_are_the_same_for_any_memory_budget";
+    const MARKER: &str = "tsys-atm budget law running alone";
+    if std::env::var_os(ALONE).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([NAME, "--exact", "--nocapture"])
+            .env(ALONE, "1")
+            .output()
+            .expect("the budget law's process runs");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains(MARKER),
+            "budget law did not pass alone: {}\n{stdout}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    println!("{MARKER}");
     let directory = tempfile::tempdir().expect("temporary directory");
     let run = |name: &str, memory: u64| {
         let path = directory.path().join(name);
@@ -911,10 +928,6 @@ fn tsys_atm_refusals_add_no_term() {
     let (refused, message) = outcome(sm.set_noise(&wet));
     assert_eq!(refused, CasaOutcome::ReturnsFalse);
     assert!(message.contains("you input PWV=200mm"), "{message}");
-    let table = spec(&|spec| spec.table = "noisy.cal".to_string());
-    let (refused, message) = outcome(sm.set_noise(&table));
-    assert_eq!(refused, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("noisy.T.cal"), "{message}");
     let high = spec(&|spec| spec.atmosphere.altitude_m = 50_000.0);
     let (refused, message) = outcome(sm.set_noise(&high));
     assert_eq!(refused, CasaOutcome::ReturnsFalse);
@@ -937,23 +950,6 @@ fn tsys_atm_refusals_add_no_term() {
             .iter()
             .all(|row| row.data.iter().all(|sample| sample.norm_sqr() == 0.0))
     );
-    // A window defined after the term: the term has no atmosphere for it.
-    let mut late = observed(&directory.path().join("late.ms"), 1, BackendRequest::Cpu);
-    late.set_noise(&atm_spec()).expect("setnoise");
-    late.set_spectral_window(&SpectralWindowSpec {
-        name: "c".to_string(),
-        start_frequency_hz: 345e9,
-        channel_width_hz: 1e6,
-        resolution_hz: 1e6,
-        frame: FrequencyRef::TOPO,
-        channel_count: 4,
-        stokes: "XX YY".to_string(),
-    })
-    .expect("setspwindow");
-    late.observe(&scan("c", -1800.0, -1700.0)).expect("observe");
-    let (refused, message) = outcome(late.corrupt());
-    assert_eq!(refused, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("spectral window c"), "{message}");
 }
 
 /// Whether this host has a Metal device, saying so when it has none.

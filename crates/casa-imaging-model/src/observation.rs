@@ -4,6 +4,7 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
+use casa_observation::PartitionId;
 use casa_types::Correlation;
 use thiserror::Error;
 
@@ -12,33 +13,57 @@ mod uv;
 use uv::canonicalize_uv_selection;
 pub use uv::{SelectionBound, UvDistanceRange, UvDistanceUnit, UvSelection};
 
-/// A resolved non-negative MeasurementSet identifier selection.
+/// A resolved MeasurementSet identifier selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IdSelection {
     /// Select every identifier present in the source generation.
     All,
-    /// Select exactly these identifiers.
+    /// Select exactly these nonnegative identifiers.
     Only(Vec<u32>),
+    /// Inclusive identifier intervals, stored in space proportional to their count.
+    /// Signed endpoints preserve comparisons on physical MAIN scan numbers.
+    /// Compilation normalizes endpoints and merges overlapping or adjacent intervals.
+    Ranges(Vec<(i64, i64)>),
 }
 
 impl IdSelection {
-    /// Return selected identifiers, or `None` when every identifier is selected.
+    /// Return an explicit identifier list, or `None` for all IDs or interval storage.
     #[must_use]
-    pub fn ids(&self) -> Option<&[u32]> {
+    pub fn explicit_ids(&self) -> Option<&[u32]> {
         match self {
-            Self::All => None,
+            Self::All | Self::Ranges(_) => None,
             Self::Only(ids) => Some(ids),
         }
     }
 
-    /// Whether the selection holds identifier `value`; a negative one is
-    /// never selected by a list. A canonical list is sorted.
+    /// Whether every identifier is selected without a predicate.
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    /// Bytes in owned vector allocations; the enclosing owner charges the enum itself.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> Option<usize> {
+        match self {
+            Self::All => Some(0),
+            Self::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
+            Self::Ranges(ranges) => ranges.capacity().checked_mul(size_of::<(i64, i64)>()),
+        }
+    }
+
+    /// Whether the selection holds identifier `value`. Lists must be sorted and intervals
+    /// canonical (sorted and disjoint), as guaranteed after compilation.
     #[must_use]
     pub fn holds(&self, value: i64) -> bool {
         match self {
             Self::All => true,
             Self::Only(ids) => {
                 u32::try_from(value).is_ok_and(|value| ids.binary_search(&value).is_ok())
+            }
+            Self::Ranges(ranges) => {
+                let index = ranges.partition_point(|&(start, _)| start <= value);
+                index > 0 && value <= ranges[index - 1].1
             }
         }
     }
@@ -51,58 +76,231 @@ impl IdSelection {
                 return Err(CompileObservationError::EmptyIdSelection { selector });
             }
         }
+        if let Self::Ranges(ranges) = self {
+            if ranges.is_empty() {
+                return Err(CompileObservationError::EmptyIdSelection { selector });
+            }
+            for (start, end) in ranges.iter_mut() {
+                if *start > *end {
+                    std::mem::swap(start, end);
+                }
+            }
+            ranges.sort_unstable();
+            let mut count = 0;
+            for index in 0..ranges.len() {
+                let (start, end) = ranges[index];
+                if count > 0 && start <= ranges[count - 1].1.saturating_add(1) {
+                    ranges[count - 1].1 = ranges[count - 1].1.max(end);
+                } else {
+                    ranges[count] = (start, end);
+                    count += 1;
+                }
+            }
+            ranges.truncate(count);
+        }
         Ok(())
     }
 }
 
-/// One intent pattern resolved to an exact `STATE_ID` and `OBS_MODE` value.
+/// Exact resolved scan-intent selection: the observing modes of the
+/// selected partitions.
+///
+/// An observing mode is a whole MSv2 `STATE::OBS_MODE`, a comma-separated
+/// list of intents, or an MSv4 partition's intents joined by commas, which
+/// is how XRADIO splits the `OBS_MODE` it converts. A partition's samples
+/// share one mode, so the partitions the selection reads are those of the
+/// selected modes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedIntent {
-    state_id: u32,
-    observation_mode: String,
+pub enum IntentSelection {
+    /// Select every observing mode.
+    All,
+    /// Select exactly these observing modes, in canonical (sorted) order.
+    Only(Vec<String>),
 }
 
-impl ResolvedIntent {
-    /// Construct one resolved intent.
+/// Exact resolved baseline selection: CASA's `antenna` expression evaluated
+/// over the observation's antennas.
+///
+/// The table answers, for each ordered `(antenna1, antenna2)` pair of
+/// antenna identifiers, whether a sample on that baseline is selected. CASA's
+/// expressions are not symmetric in general (`/A&B/` matches only that
+/// order), and whether autocorrelations are selected depends on the form, so
+/// the table holds every ordered pair, autocorrelations included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaselineSelection {
+    /// Select every baseline.
+    All,
+    /// Select the ordered pairs marked in a row-major `antennas × antennas`
+    /// table indexed by `antenna1 * antennas + antenna2`.
+    Pairs {
+        /// Antennas along each side of the table.
+        antennas: usize,
+        /// Whether each ordered pair is selected.
+        selected: Vec<bool>,
+    },
+}
+
+impl BaselineSelection {
+    /// The selection `holds` states for every ordered pair of `antennas`
+    /// antennas.
     #[must_use]
-    pub const fn new(state_id: u32, observation_mode: String) -> Self {
-        Self {
-            state_id,
-            observation_mode,
+    pub fn from_pairs(antennas: usize, holds: impl Fn(usize, usize) -> bool) -> Self {
+        let mut selected = Vec::with_capacity(antennas * antennas);
+        for antenna1 in 0..antennas {
+            selected.extend((0..antennas).map(|antenna2| holds(antenna1, antenna2)));
+        }
+        Self::Pairs { antennas, selected }
+    }
+
+    /// Whether the selection is unconstrained.
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    /// Whether a sample on the ordered baseline `(antenna1, antenna2)` is
+    /// selected. An antenna outside the table selects nothing.
+    #[must_use]
+    pub fn holds(&self, antenna1: u32, antenna2: u32) -> bool {
+        match self {
+            Self::All => true,
+            Self::Pairs { antennas, selected } => {
+                let (antenna1, antenna2) = (antenna1 as usize, antenna2 as usize);
+                antenna1 < *antennas
+                    && antenna2 < *antennas
+                    && selected[antenna1 * antennas + antenna2]
+            }
         }
     }
 
-    /// Return the selected `STATE_ID`.
+    /// Heap bytes the selection owns.
     #[must_use]
-    pub const fn state_id(&self) -> u32 {
-        self.state_id
-    }
-
-    /// Return the exact selected `OBS_MODE` metadata value.
-    #[must_use]
-    pub fn observation_mode(&self) -> &str {
-        &self.observation_mode
+    pub fn allocated_bytes(&self) -> usize {
+        match self {
+            Self::All => 0,
+            Self::Pairs { selected, .. } => selected.capacity() * size_of::<bool>(),
+        }
     }
 }
 
-/// Exact resolved scan-intent selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IntentSelection {
-    /// Select every state/intent.
+/// One condition CASA's `timerange` puts on a sample's `TIME`, in seconds
+/// in the `TIME` column's scale, evaluated with the same double-precision
+/// operations as CASA's TaQL (`MSTimeParse`, casacore `aaf72eb7`). The
+/// MeasurementSet owner's port of CASA's time grammar
+/// (`casa_ms::TimeCondition`) resolves them; this is its data, so imaging
+/// tests each time as CASA does.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TimeCondition {
+    /// `abs(TIME - time_s) <= tolerance_s`: a single time.
+    Near {
+        /// The time.
+        time_s: f64,
+        /// Half the default row's `EXPOSURE`.
+        tolerance_s: f64,
+    },
+    /// `TIME >= time_s`, from `>T`.
+    AtOrAfter {
+        /// The bound.
+        time_s: f64,
+    },
+    /// `TIME <= time_s`, from `<T`.
+    AtOrBefore {
+        /// The bound.
+        time_s: f64,
+    },
+    /// `TIME >= lower_s && TIME <= upper_s`, from `T0~T1` or `T0+dT`.
+    Within {
+        /// The lower bound.
+        lower_s: f64,
+        /// The upper bound.
+        upper_s: f64,
+    },
+    /// `(TIME > lower_s || abs(TIME - lower_s) < edge_s) && (TIME < upper_s
+    /// || abs(TIME - upper_s) < edge_s)`, from a bracketed range.
+    EdgeInclusive {
+        /// The lower bound.
+        lower_s: f64,
+        /// The upper bound.
+        upper_s: f64,
+        /// The edge width, a C `Float` in CASA.
+        edge_s: f32,
+    },
+}
+
+impl TimeCondition {
+    /// Whether a sample whose `TIME` is `time_s` meets the condition.
+    #[must_use]
+    pub fn holds(&self, time_s: f64) -> bool {
+        match *self {
+            Self::Near {
+                time_s: centre,
+                tolerance_s,
+            } => (time_s - centre).abs() <= tolerance_s,
+            Self::AtOrAfter { time_s: bound } => time_s >= bound,
+            Self::AtOrBefore { time_s: bound } => time_s <= bound,
+            Self::Within { lower_s, upper_s } => time_s >= lower_s && time_s <= upper_s,
+            Self::EdgeInclusive {
+                lower_s,
+                upper_s,
+                edge_s,
+            } => {
+                let edge = f64::from(edge_s);
+                (time_s > lower_s || (time_s - lower_s).abs() < edge)
+                    && (time_s < upper_s || (time_s - upper_s).abs() < edge)
+            }
+        }
+    }
+}
+
+/// Exact resolved time selection: CASA's `timerange`, the OR of its terms.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TimeSelection {
+    /// Select every time.
     All,
-    /// Select exactly these resolved state rows.
-    Only(Vec<ResolvedIntent>),
+    /// Select a time that meets any of these conditions.
+    AnyOf(Vec<TimeCondition>),
+}
+
+impl TimeSelection {
+    /// Whether the selection is unconstrained.
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    /// Whether a sample whose `TIME` is `time_s` is selected.
+    #[must_use]
+    pub fn holds(&self, time_s: f64) -> bool {
+        match self {
+            Self::All => true,
+            Self::AnyOf(conditions) => conditions.iter().any(|condition| condition.holds(time_s)),
+        }
+    }
+
+    /// Heap bytes the selection owns.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> usize {
+        match self {
+            Self::All => 0,
+            Self::AnyOf(conditions) => conditions.capacity() * size_of::<TimeCondition>(),
+        }
+    }
 }
 
 /// Exact row-level predicates applied conjunctively to one MeasurementSet.
 ///
 /// These are the MeasurementSet selections the imager exposes: field, UV
-/// distance and scan intent.
+/// distance, scan intent, scan number, observation identifier, baseline and
+/// time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowSelection {
     fields: IdSelection,
+    scans: IdSelection,
+    observations: IdSelection,
     uv_distances: UvSelection,
     intents: IntentSelection,
+    baselines: BaselineSelection,
+    times: TimeSelection,
 }
 
 impl RowSelection {
@@ -115,9 +313,60 @@ impl RowSelection {
     ) -> Self {
         Self {
             fields,
+            scans: IdSelection::All,
+            observations: IdSelection::All,
             uv_distances,
             intents,
+            baselines: BaselineSelection::All,
+            times: TimeSelection::All,
         }
+    }
+
+    /// Constrain times, conjunctively with the other row predicates.
+    #[must_use]
+    pub fn with_times(mut self, times: TimeSelection) -> Self {
+        self.times = times;
+        self
+    }
+
+    /// Return the resolved time selection.
+    #[must_use]
+    pub const fn times(&self) -> &TimeSelection {
+        &self.times
+    }
+
+    /// Constrain baselines, conjunctively with the other row predicates.
+    #[must_use]
+    pub fn with_baselines(mut self, baselines: BaselineSelection) -> Self {
+        self.baselines = baselines;
+        self
+    }
+
+    /// Return the resolved baseline selection.
+    #[must_use]
+    pub const fn baselines(&self) -> &BaselineSelection {
+        &self.baselines
+    }
+
+    /// Constrain scan numbers and observation identifiers, conjunctively with
+    /// the other row predicates. Compilation canonicalizes both ID sets.
+    #[must_use]
+    pub fn with_scan_observation(mut self, scans: IdSelection, observations: IdSelection) -> Self {
+        self.scans = scans;
+        self.observations = observations;
+        self
+    }
+
+    /// Return resolved scan numbers.
+    #[must_use]
+    pub const fn scans(&self) -> &IdSelection {
+        &self.scans
+    }
+
+    /// Return resolved observation identifiers.
+    #[must_use]
+    pub const fn observations(&self) -> &IdSelection {
+        &self.observations
     }
 
     /// Return resolved field identifiers.
@@ -140,258 +389,69 @@ impl RowSelection {
 
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
         self.fields.canonicalize("field")?;
+        self.scans.canonicalize("scan")?;
+        self.observations.canonicalize("observation")?;
         canonicalize_uv_selection(&mut self.uv_distances)?;
         match &mut self.intents {
             IntentSelection::All => {}
-            IntentSelection::Only(intents) => {
-                for intent in intents.iter() {
-                    if intent.observation_mode.trim().is_empty() {
-                        return Err(CompileObservationError::InvalidIntent);
-                    }
-                }
-                intents.sort_unstable_by_key(|intent| intent.state_id);
-                if intents.is_empty() {
+            IntentSelection::Only(modes) => {
+                if modes.is_empty() || modes.iter().any(|mode| mode.trim().is_empty()) {
                     return Err(CompileObservationError::InvalidIntent);
                 }
-                if intents
-                    .windows(2)
-                    .any(|pair| pair[0].state_id == pair[1].state_id)
-                {
-                    return Err(CompileObservationError::DuplicateIntentState);
-                }
+                modes.sort_unstable();
+                modes.dedup();
             }
         }
         Ok(())
     }
 }
 
-/// One selected physical MAIN row and its resolved `DATA_DESC_ID`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SelectedMainRow {
-    physical_row: u64,
-    data_description_id: u32,
-}
-
-impl SelectedMainRow {
-    /// Construct one resolved MAIN row coordinate.
-    #[must_use]
-    pub const fn new(physical_row: u64, data_description_id: u32) -> Self {
-        Self {
-            physical_row,
-            data_description_id,
-        }
-    }
-
-    /// Return the physical MAIN row index.
-    #[must_use]
-    pub const fn physical_row(self) -> u64 {
-        self.physical_row
-    }
-
-    /// Return the resolved `DATA_DESC_ID` read from the MAIN row.
-    #[must_use]
-    pub const fn data_description_id(self) -> u32 {
-        self.data_description_id
-    }
-}
-
-/// Failure to record a canonical selected-row manifest.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum SelectedRowSequenceError {
-    /// The observed row count cannot be represented canonically.
-    #[error("selected physical MAIN row count exceeds the canonical u64 domain")]
-    RowCountOverflow,
-    /// A physical row lies outside the captured MAIN row population.
-    #[error("physical MAIN row {row} lies outside source row count {source_row_count}")]
-    PhysicalRowOutOfRange {
-        /// Invalid physical row index.
-        row: u64,
-        /// Captured MAIN row population.
-        source_row_count: u64,
-    },
-    /// A physical row appeared more than once.
-    #[error("physical MAIN row {row} appears more than once")]
-    DuplicatePhysicalRow {
-        /// Duplicate physical row index.
-        row: u64,
-    },
-    /// Physical rows were not supplied in ascending MAIN order.
-    #[error("physical MAIN row {row} follows later row {previous_row}")]
-    DescendingPhysicalRow {
-        /// Prior physical row index.
-        previous_row: u64,
-        /// Descending physical row index.
-        row: u64,
-    },
-}
-
-/// Count and DATA_DESCRIPTION identifiers of the selected MAIN rows.
+/// One selected partition of the observation
+/// ([`casa_observation::PartitionId`]): the spectral window its samples are
+/// in and the correlation products it holds, at their stored positions. A
+/// partition's samples share one window, one correlation axis and one
+/// intent; [`RowSelection`] and the read select its fields, times and
+/// samples.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SelectedRows {
-    source_row_count: u64,
-    selected_row_count: u64,
-    used_data_description_ids: Arc<[u32]>,
-}
-
-impl SelectedRows {
-    /// Record canonical MAIN row/DDID coordinates without retaining them.
-    ///
-    /// Each row is checked for range, then adjacent duplication, then descending
-    /// order. A non-adjacent repetition necessarily encounters descending order
-    /// first, so validation needs no separate selection-sized duplicate set.
-    pub fn from_ordered_main_rows(
-        source_row_count: u64,
-        rows: impl IntoIterator<Item = SelectedMainRow>,
-    ) -> Result<Self, SelectedRowSequenceError> {
-        let mut builder = SelectedRowsBuilder::new(source_row_count);
-        for row in rows {
-            builder.push(row)?;
-        }
-        Ok(builder.finish())
-    }
-
-    /// Return the source MAIN row count at capture.
-    #[must_use]
-    pub const fn source_row_count(&self) -> u64 {
-        self.source_row_count
-    }
-
-    /// Return the number of selected MAIN rows.
-    #[must_use]
-    pub const fn selected_row_count(&self) -> u64 {
-        self.selected_row_count
-    }
-
-    /// Return heap bytes owned by the shared DATA_DESCRIPTION identifiers.
-    ///
-    /// Cloning [`SelectedRows`] shares this immutable allocation, so a retained
-    /// storage owner charges it once.
-    #[must_use]
-    pub fn retained_manifest_bytes(&self) -> Option<usize> {
-        (2 * size_of::<usize>()).checked_add(
-            self.used_data_description_ids
-                .len()
-                .checked_mul(size_of::<u32>())?,
-        )
-    }
-
-    fn used_data_description_ids(&self) -> &[u32] {
-        &self.used_data_description_ids
-    }
-}
-
-/// Streaming builder for one compact selected-row manifest.
-pub struct SelectedRowsBuilder {
-    source_row_count: u64,
-    selected_row_count: u64,
-    previous_row: Option<u64>,
-    used_data_description_ids: Vec<u32>,
-}
-
-impl SelectedRowsBuilder {
-    /// Begin one physical-order selected-row capture for a fixed MAIN cardinality.
-    #[must_use]
-    pub fn new(source_row_count: u64) -> Self {
-        Self::with_data_description_capacity(source_row_count, 0)
-    }
-
-    /// Begin one capture with bounded storage for the selected DATA_DESCRIPTION identifiers.
-    #[must_use]
-    pub fn with_data_description_capacity(
-        source_row_count: u64,
-        data_description_capacity: usize,
-    ) -> Self {
-        Self {
-            source_row_count,
-            selected_row_count: 0,
-            previous_row: None,
-            used_data_description_ids: Vec::with_capacity(data_description_capacity),
-        }
-    }
-
-    /// Add one selected MAIN row in canonical physical order.
-    pub fn push(&mut self, selected: SelectedMainRow) -> Result<(), SelectedRowSequenceError> {
-        let row = selected.physical_row;
-        self.selected_row_count = self
-            .selected_row_count
-            .checked_add(1)
-            .ok_or(SelectedRowSequenceError::RowCountOverflow)?;
-        if row >= self.source_row_count {
-            return Err(SelectedRowSequenceError::PhysicalRowOutOfRange {
-                row,
-                source_row_count: self.source_row_count,
-            });
-        }
-        if self.previous_row == Some(row) {
-            return Err(SelectedRowSequenceError::DuplicatePhysicalRow { row });
-        }
-        if let Some(previous_row) = self.previous_row
-            && row < previous_row
-        {
-            return Err(SelectedRowSequenceError::DescendingPhysicalRow { previous_row, row });
-        }
-        if !self
-            .used_data_description_ids
-            .contains(&selected.data_description_id)
-        {
-            self.used_data_description_ids
-                .push(selected.data_description_id);
-        }
-        self.previous_row = Some(row);
-        Ok(())
-    }
-
-    /// Finish the compact manifest without retaining the captured row corpus.
-    #[must_use]
-    pub fn finish(mut self) -> SelectedRows {
-        self.used_data_description_ids.sort_unstable();
-        SelectedRows {
-            source_row_count: self.source_row_count,
-            selected_row_count: self.selected_row_count,
-            used_data_description_ids: self.used_data_description_ids.into(),
-        }
-    }
-}
-
-/// One selected `DATA_DESCRIPTION` row and its exact coordinate pairing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DataDescriptionSelection {
-    data_description_id: u32,
+pub struct PartitionSelection {
+    partition: PartitionId,
     spectral_window_id: u32,
-    polarization_id: u32,
+    products: Vec<CorrelationProduct>,
 }
 
-impl DataDescriptionSelection {
-    /// Construct one resolved `DATA_DESCRIPTION` member.
+impl PartitionSelection {
+    /// Select `partition`, whose samples are in spectral window
+    /// `spectral_window_id`, reading `products`.
     #[must_use]
     pub const fn new(
-        data_description_id: u32,
+        partition: PartitionId,
         spectral_window_id: u32,
-        polarization_id: u32,
+        products: Vec<CorrelationProduct>,
     ) -> Self {
         Self {
-            data_description_id,
+            partition,
             spectral_window_id,
-            polarization_id,
+            products,
         }
     }
 
-    /// Return the MAIN `DATA_DESC_ID` and `DATA_DESCRIPTION` row index.
+    /// The partition.
     #[must_use]
-    pub const fn data_description_id(self) -> u32 {
-        self.data_description_id
+    pub const fn partition(&self) -> PartitionId {
+        self.partition
     }
 
-    /// Return the referenced `SPECTRAL_WINDOW_ID`.
+    /// The spectral window number its samples are in, which tasks select
+    /// by and kernel sets and continuum rules are keyed on.
     #[must_use]
-    pub const fn spectral_window_id(self) -> u32 {
+    pub const fn spectral_window_id(&self) -> u32 {
         self.spectral_window_id
     }
 
-    /// Return the referenced `POLARIZATION_ID`.
+    /// The correlation products read, in canonical (stored-position) order.
     #[must_use]
-    pub const fn polarization_id(self) -> u32 {
-        self.polarization_id
+    pub fn products(&self) -> &[CorrelationProduct] {
+        &self.products
     }
 }
 
@@ -455,22 +515,97 @@ impl SpectralWindowCoordinateCatalog {
     pub const fn first_channel_width_hz(&self) -> f64 {
         self.first_channel_width_hz
     }
+}
 
-    fn retained_manifest_bytes(&self) -> Option<usize> {
-        self.channel_frequencies_hz
-            .len()
-            .checked_mul(size_of::<f64>())?
-            .checked_add(2 * size_of::<usize>())
+/// CASA's frame-based frequency selection of one spectral window
+/// (`vi::FrequencySelectionUsingFrame`): frequency bands in one frame that
+/// each visibility time selects channels by.
+///
+/// At each time the bands are converted from their frame to the window's
+/// at that time, towards the time's field, and the time reads the channels
+/// whose extent, centre less and plus half its width, meets a band at
+/// either end (`SpectralWindowChannels::getIntersection`). So a Doppler
+/// shift across an observation selects different channels at different
+/// times, and a channel never selected at some time is read as if it were
+/// not in the window. The bands are `SynthesisImagerVi2::selectData`'s,
+/// narrowed to the image's band where `SynthesisImager::tuneSelectData`
+/// tunes it. A band may reach zero hertz or below, as the image's band of
+/// a few wide channels padded below a low first channel does: it selects
+/// every channel up to its upper end.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrequencyBands {
+    frame: crate::FrequencyFrame,
+    bands_hz: Vec<[f64; 2]>,
+}
+
+impl FrequencyBands {
+    /// Bands `bands_hz`, each `[lower, upper]` in hertz in `frame`.
+    ///
+    /// # Errors
+    ///
+    /// [`CompileObservationError::InvalidFrequencyBands`] when there is no
+    /// band, or a band's ends are not finite or its lower end lies above
+    /// its upper.
+    pub fn new(
+        frame: crate::FrequencyFrame,
+        bands_hz: Vec<[f64; 2]>,
+    ) -> Result<Self, CompileObservationError> {
+        if bands_hz.is_empty()
+            || !bands_hz
+                .iter()
+                .all(|[lower, upper]| lower.is_finite() && upper.is_finite() && lower <= upper)
+        {
+            return Err(CompileObservationError::InvalidFrequencyBands);
+        }
+        Ok(Self { frame, bands_hz })
+    }
+
+    /// The frame the bands are stated in.
+    #[must_use]
+    pub const fn frame(&self) -> crate::FrequencyFrame {
+        self.frame
+    }
+
+    /// The bands, each `[lower, upper]` in hertz.
+    #[must_use]
+    pub fn bands_hz(&self) -> &[[f64; 2]] {
+        &self.bands_hz
+    }
+
+    /// Heap bytes held by the frequency intervals.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> usize {
+        self.bands_hz.capacity() * size_of::<[f64; 2]>()
+    }
+
+    /// Whether a channel whose extent is `[lower_hz, upper_hz]`, in the
+    /// bands' frame scaled by `factor`, meets a band at either end.
+    #[must_use]
+    pub fn meets(&self, factor: f64, [lower_hz, upper_hz]: [f64; 2]) -> bool {
+        self.bands_hz
+            .iter()
+            .any(|[lower, upper]| upper_hz >= lower * factor && lower_hz <= upper * factor)
     }
 }
 
 /// Exact channels selected from one spectral window.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpectralWindowSelection {
     spectral_window_id: u32,
     channel_indices: Vec<u32>,
     coordinate_catalog: Option<SpectralWindowCoordinateCatalog>,
+    first_buffer_beam_factors: Option<[f64; 2]>,
+    frequency_bands: Option<FrequencyBands>,
+    density_only: bool,
+    density_channels: Option<Vec<u32>>,
+    density_bands: Option<FrequencyBands>,
+    prediction_channels: Option<Vec<u32>>,
+    prediction_bands: Option<FrequencyBands>,
 }
+
+// Construction rejects every non-finite factor, so IEEE equality is
+// reflexive for all values this type can contain.
+impl Eq for SpectralWindowSelection {}
 
 impl SpectralWindowSelection {
     /// Construct a resolved spectral-window/channel selection.
@@ -480,7 +615,117 @@ impl SpectralWindowSelection {
             spectral_window_id,
             channel_indices,
             coordinate_catalog: None,
+            first_buffer_beam_factors: None,
+            frequency_bands: None,
+            density_only: false,
+            density_channels: None,
+            density_bands: None,
+            prediction_channels: None,
+            prediction_bands: None,
         }
+    }
+
+    /// Bind CASA's per-time frequency selection of the window
+    /// ([`FrequencyBands`]): each time reads only those of the selected
+    /// channels the bands select then.
+    #[must_use]
+    pub fn with_frequency_bands(mut self, bands: FrequencyBands) -> Self {
+        self.frequency_bands = Some(bands);
+        self
+    }
+
+    /// The per-time frequency selection [`Self::with_frequency_bands`]
+    /// bound, if any; without one every time reads every selected channel.
+    #[must_use]
+    pub const fn frequency_bands(&self) -> Option<&FrequencyBands> {
+        self.frequency_bands.as_ref()
+    }
+
+    /// Mark a window compile finds no channel of reaching the image's axis:
+    /// its samples count in the imaging weights' density and should fall on
+    /// no plane. A pass that images skips it once its selected channels
+    /// under each row's conversion confirm that.
+    #[must_use]
+    pub const fn with_density_only(mut self) -> Self {
+        self.density_only = true;
+        self
+    }
+
+    /// Whether [`Self::with_density_only`] marked the window.
+    #[must_use]
+    pub const fn density_only(&self) -> bool {
+        self.density_only
+    }
+
+    /// Bind what a density over the whole selection counts, where that isn't
+    /// every selected channel at every time: `channels`, ascending, are those
+    /// some time reads, whatever the image's axis reaches, and `bands` select
+    /// them at each time, unless every time reads them all.
+    #[must_use]
+    pub fn with_density_read(mut self, channels: Vec<u32>, bands: Option<FrequencyBands>) -> Self {
+        self.density_channels = Some(channels);
+        self.density_bands = bands;
+        self
+    }
+
+    /// The channels [`Self::with_density_read`] bound, if any.
+    #[must_use]
+    pub fn density_channels(&self) -> Option<&[u32]> {
+        self.density_channels.as_deref()
+    }
+
+    /// The bands [`Self::with_density_read`] bound, if any.
+    #[must_use]
+    pub const fn density_bands(&self) -> Option<&FrequencyBands> {
+        self.density_bands.as_ref()
+    }
+
+    /// Bind the parent imager's untuned selection for the final model write.
+    /// `channels` are the ascending native channels selected at some time;
+    /// `bands`, when present, select them per time.
+    #[must_use]
+    pub fn with_prediction_read(
+        mut self,
+        channels: Vec<u32>,
+        bands: Option<FrequencyBands>,
+    ) -> Self {
+        self.prediction_channels = Some(channels);
+        self.prediction_bands = bands;
+        self
+    }
+
+    /// The native channels selected for final prediction, if it differs from gridding.
+    #[must_use]
+    pub fn prediction_channels(&self) -> Option<&[u32]> {
+        self.prediction_channels.as_deref()
+    }
+
+    /// The per-time frequency bands for final prediction, if needed.
+    #[must_use]
+    pub const fn prediction_bands(&self) -> Option<&FrequencyBands> {
+        self.prediction_bands.as_ref()
+    }
+
+    /// Bind the frequency conversion factors for a mosaic's first buffer
+    /// as `[beam_frame, topocentric]`. CASA's `FTMachine::matchChannel` converts to LSRK
+    /// for ordinary imaging or the tracked source's REST frame for
+    /// `cubesource`. Its native-channel clamp uses the topocentric band for
+    /// interpolated cubes. Both factors must be finite and positive.
+    #[must_use]
+    pub fn with_first_buffer_beam_factors(mut self, factors: [f64; 2]) -> Option<Self> {
+        factors
+            .into_iter()
+            .all(|factor| factor.is_finite() && factor > 0.0)
+            .then(|| {
+                self.first_buffer_beam_factors = Some(factors);
+                self
+            })
+    }
+
+    /// The factors [`Self::with_first_buffer_beam_factors`] bound, if any.
+    #[must_use]
+    pub const fn first_buffer_beam_factors(&self) -> Option<[f64; 2]> {
+        self.first_buffer_beam_factors
     }
 
     /// Bind the storage owner's complete physical spectral coordinate catalog.
@@ -542,81 +787,53 @@ impl CorrelationProduct {
     }
 }
 
-/// Exact selected products for one `POLARIZATION_ID`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CorrelationSelection {
-    polarization_id: u32,
-    products: Vec<CorrelationProduct>,
-}
-
-impl CorrelationSelection {
-    /// Construct one resolved polarization/correlation selection.
-    #[must_use]
-    pub const fn new(polarization_id: u32, products: Vec<CorrelationProduct>) -> Self {
-        Self {
-            polarization_id,
-            products,
-        }
-    }
-
-    /// Return the selected `POLARIZATION_ID`.
-    #[must_use]
-    pub const fn polarization_id(&self) -> u32 {
-        self.polarization_id
-    }
-
-    /// Return exact selected correlation coordinates in canonical array order.
-    #[must_use]
-    pub fn products(&self) -> &[CorrelationProduct] {
-        &self.products
-    }
-}
-
-/// Complete resolved logical selection for one MeasurementSet.
+/// Complete resolved logical selection of one observation: the partitions
+/// read, the channels of their spectral windows, the per-sample predicates,
+/// and how many samples they select.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservationSelection {
-    rows: SelectedRows,
+    samples: u64,
     rows_filter: RowSelection,
-    data_descriptions: Vec<DataDescriptionSelection>,
+    partitions: Vec<PartitionSelection>,
     spectral_windows: Vec<SpectralWindowSelection>,
-    correlations: Vec<CorrelationSelection>,
 }
 
 impl ObservationSelection {
-    /// Construct exact row, channel, and correlation semantics.
+    /// Select `partitions`, the `spectral_windows`' channels and the samples
+    /// `rows_filter` holds: `samples` of them, each a (time, baseline) of a
+    /// selected partition that the read delivers.
     #[must_use]
     pub const fn new(
-        rows: SelectedRows,
+        samples: u64,
         rows_filter: RowSelection,
-        data_descriptions: Vec<DataDescriptionSelection>,
+        partitions: Vec<PartitionSelection>,
         spectral_windows: Vec<SpectralWindowSelection>,
-        correlations: Vec<CorrelationSelection>,
     ) -> Self {
         Self {
-            rows,
+            samples,
             rows_filter,
-            data_descriptions,
+            partitions,
             spectral_windows,
-            correlations,
         }
     }
 
-    /// Return the compact selected-row manifest.
+    /// The selected samples: the (time, baseline)s of the selected
+    /// partitions that the per-sample predicates hold, padding excluded.
     #[must_use]
-    pub const fn rows(&self) -> &SelectedRows {
-        &self.rows
+    pub const fn samples(&self) -> u64 {
+        self.samples
     }
 
-    /// Return exact row-level selection predicates.
+    /// Return exact per-sample selection predicates.
     #[must_use]
     pub const fn rows_filter(&self) -> &RowSelection {
         &self.rows_filter
     }
 
-    /// Return the exact selected `DATA_DESCRIPTION` coordinate catalog.
+    /// The selected partitions, in canonical (identifier) order.
     #[must_use]
-    pub fn data_descriptions(&self) -> &[DataDescriptionSelection] {
-        &self.data_descriptions
+    pub fn partitions(&self) -> &[PartitionSelection] {
+        &self.partitions
     }
 
     /// Return exact channel selections in canonical spectral-window order.
@@ -625,132 +842,30 @@ impl ObservationSelection {
         &self.spectral_windows
     }
 
-    /// Return exact selected correlation coordinates by polarization setup.
-    #[must_use]
-    pub fn correlations(&self) -> &[CorrelationSelection] {
-        &self.correlations
-    }
-
-    /// Return bytes owned by this shared immutable selection manifest.
-    ///
-    /// The projection includes the Arc allocation, exact row/DDID manifest,
-    /// resolved predicate vectors and strings, and selected coordinate catalogs.
-    #[must_use]
-    pub fn retained_manifest_bytes(&self) -> Option<usize> {
-        let mut bytes = size_of::<Self>().checked_add(2 * size_of::<usize>())?;
-        bytes = bytes.checked_add(self.rows.retained_manifest_bytes()?)?;
-        let id_selection_bytes = |selection: &IdSelection| match selection {
-            IdSelection::All => Some(0),
-            IdSelection::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
-        };
-        bytes = bytes.checked_add(id_selection_bytes(&self.rows_filter.fields)?)?;
-        if let UvSelection::Ranges(ranges) = &self.rows_filter.uv_distances {
-            bytes = bytes.checked_add(
-                ranges
-                    .capacity()
-                    .checked_mul(size_of::<UvDistanceRange>())?,
-            )?;
-        }
-        if let IntentSelection::Only(intents) = &self.rows_filter.intents {
-            bytes = bytes.checked_add(
-                intents
-                    .capacity()
-                    .checked_mul(size_of::<ResolvedIntent>())?,
-            )?;
-            for intent in intents {
-                bytes = bytes.checked_add(intent.observation_mode.capacity())?;
-            }
-        }
-        bytes = bytes.checked_add(
-            self.data_descriptions
-                .capacity()
-                .checked_mul(size_of::<DataDescriptionSelection>())?,
-        )?;
-        bytes = bytes.checked_add(
-            self.spectral_windows
-                .capacity()
-                .checked_mul(size_of::<SpectralWindowSelection>())?,
-        )?;
-        for selection in &self.spectral_windows {
-            bytes = bytes.checked_add(
-                selection
-                    .channel_indices
-                    .capacity()
-                    .checked_mul(size_of::<u32>())?,
-            )?;
-            if let Some(catalog) = &selection.coordinate_catalog {
-                bytes = bytes.checked_add(catalog.retained_manifest_bytes()?)?;
-            }
-        }
-        bytes = bytes.checked_add(
-            self.correlations
-                .capacity()
-                .checked_mul(size_of::<CorrelationSelection>())?,
-        )?;
-        for selection in &self.correlations {
-            bytes = bytes.checked_add(
-                selection
-                    .products
-                    .capacity()
-                    .checked_mul(size_of::<CorrelationProduct>())?,
-            )?;
-        }
-        Some(bytes)
-    }
-
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
         self.rows_filter.canonicalize()?;
-        self.data_descriptions
-            .sort_unstable_by_key(|selection| selection.data_description_id);
-        if let Some(data_description_id) = self.data_descriptions.windows(2).find_map(|pair| {
-            (pair[0].data_description_id == pair[1].data_description_id)
-                .then_some(pair[0].data_description_id)
-        }) {
-            return Err(CompileObservationError::DuplicateDataDescription {
-                data_description_id,
-            });
-        }
-        if let Some(data_description_id) = self
-            .data_descriptions
-            .iter()
-            .map(|selection| selection.data_description_id)
-            .find(|&data_description_id| i32::try_from(data_description_id).is_err())
-        {
-            return Err(
-                CompileObservationError::DataDescriptionIdOutsideMainDomain {
-                    data_description_id,
-                },
-            );
-        }
-        if self.rows.selected_row_count() > 0 && self.data_descriptions.is_empty() {
-            return Err(CompileObservationError::NoDataDescriptionSelection);
-        }
-        if let Some(&data_description_id) =
-            self.rows.used_data_description_ids().iter().find(|&&used| {
-                !self
-                    .data_descriptions
-                    .iter()
-                    .any(|selection| selection.data_description_id == used)
-            })
-        {
-            return Err(CompileObservationError::SelectedRowDataDescriptionMissing {
-                data_description_id,
-            });
-        }
         for selection in &mut self.spectral_windows {
             selection.channel_indices.sort_unstable();
             selection.channel_indices.dedup();
+            if let Some(channels) = &mut selection.prediction_channels {
+                channels.sort_unstable();
+                channels.dedup();
+            }
             if selection.channel_indices.is_empty() {
                 return Err(CompileObservationError::EmptySpectralWindowSelection {
                     spectral_window_id: selection.spectral_window_id,
                 });
             }
             if let Some(catalog) = &selection.coordinate_catalog
-                && selection.channel_indices.iter().any(|channel| {
-                    usize::try_from(*channel)
-                        .ok()
-                        .is_none_or(|channel| channel >= catalog.channel_count())
-                })
+                && selection
+                    .channel_indices
+                    .iter()
+                    .chain(selection.prediction_channels.iter().flatten())
+                    .any(|channel| {
+                        usize::try_from(*channel)
+                            .ok()
+                            .is_none_or(|channel| channel >= catalog.channel_count())
+                    })
             {
                 return Err(
                     CompileObservationError::SpectralWindowCoordinateCatalogMismatch {
@@ -761,7 +876,7 @@ impl ObservationSelection {
         }
         self.spectral_windows
             .sort_unstable_by_key(|selection| selection.spectral_window_id);
-        if self.rows.selected_row_count() > 0 && self.spectral_windows.is_empty() {
+        if self.samples > 0 && self.spectral_windows.is_empty() {
             return Err(CompileObservationError::NoSpectralWindowSelection);
         }
         if let Some(spectral_window_id) = self.spectral_windows.windows(2).find_map(|pair| {
@@ -770,22 +885,32 @@ impl ObservationSelection {
         }) {
             return Err(CompileObservationError::DuplicateSpectralWindow { spectral_window_id });
         }
-
-        for selection in &mut self.correlations {
+        self.partitions
+            .sort_unstable_by_key(|selection| selection.partition);
+        if self.samples > 0 && self.partitions.is_empty() {
+            return Err(CompileObservationError::NoPartitionSelection);
+        }
+        if let Some(partition) = self
+            .partitions
+            .windows(2)
+            .find_map(|pair| (pair[0].partition == pair[1].partition).then_some(pair[0].partition))
+        {
+            return Err(CompileObservationError::DuplicatePartition {
+                partition: partition.0,
+            });
+        }
+        for selection in &mut self.partitions {
+            let partition = selection.partition.0;
             selection.products.sort_unstable();
             if selection.products.is_empty() {
-                return Err(CompileObservationError::EmptyCorrelationSelection {
-                    polarization_id: selection.polarization_id,
-                });
+                return Err(CompileObservationError::EmptyCorrelationSelection { partition });
             }
             if selection
                 .products
                 .windows(2)
                 .any(|pair| pair[0].correlation_index == pair[1].correlation_index)
             {
-                return Err(CompileObservationError::DuplicateCorrelationIndex {
-                    polarization_id: selection.polarization_id,
-                });
+                return Err(CompileObservationError::DuplicateCorrelationIndex { partition });
             }
             let types = selection
                 .products
@@ -793,68 +918,31 @@ impl ObservationSelection {
                 .map(|product| product.correlation_type)
                 .collect::<BTreeSet<_>>();
             if types.len() != selection.products.len() {
-                return Err(CompileObservationError::DuplicateCorrelationType {
-                    polarization_id: selection.polarization_id,
+                return Err(CompileObservationError::DuplicateCorrelationType { partition });
+            }
+            if self
+                .spectral_windows
+                .binary_search_by_key(&selection.spectral_window_id, |window| {
+                    window.spectral_window_id
+                })
+                .is_err()
+            {
+                return Err(CompileObservationError::UnknownPartitionSpectralWindow {
+                    partition,
+                    spectral_window_id: selection.spectral_window_id,
                 });
             }
         }
-        self.correlations
-            .sort_unstable_by_key(|selection| selection.polarization_id);
-        if self.rows.selected_row_count() > 0 && self.correlations.is_empty() {
-            return Err(CompileObservationError::NoCorrelationSelection);
-        }
-        if let Some(polarization_id) = self.correlations.windows(2).find_map(|pair| {
-            (pair[0].polarization_id == pair[1].polarization_id).then_some(pair[0].polarization_id)
-        }) {
-            return Err(CompileObservationError::DuplicatePolarization { polarization_id });
-        }
-        for data_description in &self.data_descriptions {
-            if self
-                .spectral_windows
-                .binary_search_by_key(&data_description.spectral_window_id, |selection| {
-                    selection.spectral_window_id
-                })
-                .is_err()
-            {
-                return Err(
-                    CompileObservationError::UnknownDataDescriptionSpectralWindow {
-                        data_description_id: data_description.data_description_id,
-                        spectral_window_id: data_description.spectral_window_id,
-                    },
-                );
-            }
-            if self
-                .correlations
-                .binary_search_by_key(&data_description.polarization_id, |selection| {
-                    selection.polarization_id
-                })
-                .is_err()
-            {
-                return Err(
-                    CompileObservationError::UnknownDataDescriptionPolarization {
-                        data_description_id: data_description.data_description_id,
-                        polarization_id: data_description.polarization_id,
-                    },
-                );
-            }
-        }
-        if let Some(spectral_window_id) = self.spectral_windows.iter().find_map(|selection| {
-            (!self.data_descriptions.iter().any(|data_description| {
-                data_description.spectral_window_id == selection.spectral_window_id
-            }))
-            .then_some(selection.spectral_window_id)
+        if let Some(spectral_window_id) = self.spectral_windows.iter().find_map(|window| {
+            (!self
+                .partitions
+                .iter()
+                .any(|partition| partition.spectral_window_id == window.spectral_window_id))
+            .then_some(window.spectral_window_id)
         }) {
             return Err(CompileObservationError::OrphanSpectralWindowSelection {
                 spectral_window_id,
             });
-        }
-        if let Some(polarization_id) = self.correlations.iter().find_map(|selection| {
-            (!self.data_descriptions.iter().any(|data_description| {
-                data_description.polarization_id == selection.polarization_id
-            }))
-            .then_some(selection.polarization_id)
-        }) {
-            return Err(CompileObservationError::OrphanCorrelationSelection { polarization_id });
         }
         Ok(())
     }
@@ -1105,7 +1193,9 @@ impl ObservationSnapshotInput {
 /// The selected observation data of one imaging problem.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservationSnapshot {
-    sources: Vec<ObservationSource>,
+    // The immutable manifest is shared by compiled views and owns each
+    // source and its provenance once; selections are already shared inside.
+    sources: Arc<Vec<ObservationSource>>,
 }
 
 // Compilation rejects non-finite ranges, so snapshot equality is reflexive.
@@ -1125,8 +1215,8 @@ pub enum CompileObservationError {
     /// No MeasurementSet source was supplied.
     #[error("an observation snapshot requires at least one MeasurementSet source")]
     NoSources,
-    /// No source contributed any selected row.
-    #[error("observation selection contains no rows")]
+    /// No source contributed any selected sample.
+    #[error("observation selection contains no samples")]
     EmptySelection,
     /// Source provenance did not name an origin.
     #[error("observation source locator is empty")]
@@ -1140,61 +1230,38 @@ pub enum CompileObservationError {
     /// A UV range was unbounded, non-finite, or inverted.
     #[error("selection range is unbounded, non-finite, or inverted")]
     InvalidScalarRange,
+    /// A window's frequency selection held no band, or one whose ends are
+    /// not finite or inverted ([`FrequencyBands::new`]).
+    #[error("a frequency selection needs a band, each with finite ends in ascending order")]
+    InvalidFrequencyBands,
     /// A UV-distance range used a negative bound.
     #[error("UV-distance selection bounds must be non-negative")]
     NegativeUvDistance,
-    /// Resolved intent metadata was empty.
-    #[error("resolved intent must contain a non-empty OBS_MODE value")]
+    /// An intent selection named no observing mode, or an empty one.
+    #[error("an intent selection names a non-empty observing mode, at least one")]
     InvalidIntent,
-    /// More than one intent mapping was supplied for one state.
-    #[error("more than one resolved intent was supplied for one STATE_ID")]
-    DuplicateIntentState,
-    /// One `DATA_DESC_ID` appeared more than once.
-    #[error("duplicate DATA_DESCRIPTION selection for {data_description_id}")]
-    DuplicateDataDescription {
-        /// Duplicate `DATA_DESC_ID`.
-        data_description_id: u32,
+    /// One partition appeared more than once.
+    #[error("duplicate selection of partition {partition}")]
+    DuplicatePartition {
+        /// The partition's identifier.
+        partition: u32,
     },
-    /// A selected `DATA_DESC_ID` cannot be represented by the MeasurementSet MAIN `Int` column.
-    #[error("DATA_DESCRIPTION selection {data_description_id} exceeds the MAIN Int domain")]
-    DataDescriptionIdOutsideMainDomain {
-        /// Unrepresentable `DATA_DESC_ID`.
-        data_description_id: u32,
-    },
-    /// A selected MAIN row named a `DATA_DESC_ID` absent from the compiled catalog.
-    #[error("selected MAIN row references uncatalogued DATA_DESCRIPTION {data_description_id}")]
-    SelectedRowDataDescriptionMissing {
-        /// Uncatalogued `DATA_DESC_ID`.
-        data_description_id: u32,
-    },
-    /// Selected rows had no exact `DATA_DESCRIPTION` coordinate catalog.
-    #[error("selected rows require at least one DATA_DESCRIPTION selection")]
-    NoDataDescriptionSelection,
-    /// A selected `DATA_DESCRIPTION` row referenced an unselected spectral window.
-    #[error(
-        "DATA_DESCRIPTION {data_description_id} references unselected spectral window {spectral_window_id}"
-    )]
-    UnknownDataDescriptionSpectralWindow {
-        /// Selected `DATA_DESC_ID`.
-        data_description_id: u32,
-        /// Unselected `SPECTRAL_WINDOW_ID`.
+    /// Selected samples had no partition to be read from.
+    #[error("selected samples require at least one partition selection")]
+    NoPartitionSelection,
+    /// A selected partition's spectral window was not selected.
+    #[error("partition {partition} is in unselected spectral window {spectral_window_id}")]
+    UnknownPartitionSpectralWindow {
+        /// The partition's identifier.
+        partition: u32,
+        /// Unselected spectral-window identifier.
         spectral_window_id: u32,
     },
-    /// A selected `DATA_DESCRIPTION` row referenced an unselected polarization setup.
-    #[error(
-        "DATA_DESCRIPTION {data_description_id} references unselected polarization {polarization_id}"
-    )]
-    UnknownDataDescriptionPolarization {
-        /// Selected `DATA_DESC_ID`.
-        data_description_id: u32,
-        /// Unselected `POLARIZATION_ID`.
-        polarization_id: u32,
-    },
     /// No spectral-window/channel semantics were supplied.
-    #[error("selected rows require at least one spectral-window/channel selection")]
+    #[error("selected samples require at least one spectral-window/channel selection")]
     NoSpectralWindowSelection,
-    /// One selected spectral window had no DDID or channel coordinate.
-    #[error("spectral window {spectral_window_id} has an empty DDID or channel selection")]
+    /// One selected spectral window had no channel.
+    #[error("spectral window {spectral_window_id} has an empty channel selection")]
     EmptySpectralWindowSelection {
         /// Spectral-window identifier.
         spectral_window_id: u32,
@@ -1213,44 +1280,29 @@ pub enum CompileObservationError {
         /// Spectral-window identifier.
         spectral_window_id: u32,
     },
-    /// A selected spectral-window projection had no selected `DATA_DESCRIPTION` member.
-    #[error("spectral window {spectral_window_id} is not referenced by DATA_DESCRIPTION")]
+    /// A selected spectral window held no selected partition.
+    #[error("spectral window {spectral_window_id} holds no selected partition")]
     OrphanSpectralWindowSelection {
-        /// Orphan `SPECTRAL_WINDOW_ID`.
+        /// Orphan spectral-window identifier.
         spectral_window_id: u32,
     },
-    /// No correlation-coordinate semantics were supplied.
-    #[error("selected rows require at least one polarization/correlation selection")]
-    NoCorrelationSelection,
-    /// One polarization setup selected no correlations.
-    #[error("polarization {polarization_id} has an empty correlation selection")]
+    /// One partition selected no correlations.
+    #[error("partition {partition} has an empty correlation selection")]
     EmptyCorrelationSelection {
-        /// Polarization identifier.
-        polarization_id: u32,
+        /// The partition's identifier.
+        partition: u32,
     },
-    /// One array coordinate had conflicting correlation meanings.
-    #[error("polarization {polarization_id} repeats a correlation array index")]
+    /// One stored correlation position appeared more than once.
+    #[error("partition {partition} repeats a correlation position")]
     DuplicateCorrelationIndex {
-        /// Polarization identifier.
-        polarization_id: u32,
+        /// The partition's identifier.
+        partition: u32,
     },
-    /// One correlation meaning appeared at multiple coordinates.
-    #[error("polarization {polarization_id} repeats a correlation type")]
+    /// One correlation meaning appeared at several positions.
+    #[error("partition {partition} repeats a correlation type")]
     DuplicateCorrelationType {
-        /// Polarization identifier.
-        polarization_id: u32,
-    },
-    /// One polarization setup appeared more than once.
-    #[error("duplicate correlation selection for polarization {polarization_id}")]
-    DuplicatePolarization {
-        /// Polarization identifier.
-        polarization_id: u32,
-    },
-    /// A selected correlation projection had no selected `DATA_DESCRIPTION` member.
-    #[error("polarization {polarization_id} is not referenced by DATA_DESCRIPTION")]
-    OrphanCorrelationSelection {
-        /// Orphan `POLARIZATION_ID`.
-        polarization_id: u32,
+        /// The partition's identifier.
+        partition: u32,
     },
 }
 
@@ -1265,13 +1317,13 @@ pub fn compile_observation(
         return Err(CompileObservationError::NoSources);
     }
     let mut sources = Vec::with_capacity(input.sources.len());
-    let mut has_selected_rows = false;
+    let mut has_selected_samples = false;
     for (input_ordinal, source) in input.sources.into_iter().enumerate() {
         let provenance = source.provenance;
         provenance.validate()?;
         let mut selection = source.selection;
         selection.canonicalize()?;
-        has_selected_rows |= selection.rows.selected_row_count() > 0;
+        has_selected_samples |= selection.samples > 0;
         sources.push(ObservationSource {
             provenance,
             input_ordinal,
@@ -1280,8 +1332,10 @@ pub fn compile_observation(
             corrected_data_present: source.corrected_data_present,
         });
     }
-    if !has_selected_rows {
+    if !has_selected_samples {
         return Err(CompileObservationError::EmptySelection);
     }
-    Ok(ObservationSnapshot { sources })
+    Ok(ObservationSnapshot {
+        sources: Arc::new(sources),
+    })
 }

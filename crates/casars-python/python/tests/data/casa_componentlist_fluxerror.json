@@ -1,0 +1,101 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "which": 0,
+      "result": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ]
+    },
+    {
+      "which": 1,
+      "result": [
+        1.0,
+        3.0,
+        5.0,
+        7.0
+      ]
+    },
+    {
+      "which": -1,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: Index out of range. The component number must be between 0 and 1."
+      }
+    },
+    {
+      "which": 2,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: Index out of range. The component number must be between 0 and 1."
+      }
+    },
+    {
+      "which": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: Index out of range. The component number must be between 0 and 1."
+      }
+    },
+    {
+      "which": true,
+      "result": [
+        1.0,
+        3.0,
+        5.0,
+        7.0
+      ]
+    },
+    {
+      "which": 1.5,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "which": "0",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "which": 4294967296,
+      "result": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ]
+    },
+    {
+      "which": 4294967297,
+      "result": [
+        1.0,
+        3.0,
+        5.0,
+        7.0
+      ]
+    },
+    {
+      "which": 1099511627776,
+      "result": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ]
+    },
+    {
+      "which": 1267650600228229401496703205376,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: Index out of range. The component number must be between 0 and 1."
+      }
+    }
+  ]
+}

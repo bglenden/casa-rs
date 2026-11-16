@@ -32,6 +32,7 @@ const ACCEPT: [LossKind; 3] = [LossKind::Sigma, LossKind::Tables, LossKind::Colu
 
 fn options() -> CreationOptions {
     CreationOptions {
+        copy_pointing: true,
         data_groups: None,
         accept: ACCEPT.to_vec(),
         batch_bytes: 1 << 20,
@@ -97,6 +98,9 @@ fn a_plan_over_one_input_writes_what_converting_writes() {
     assert_eq!(catalogue(&planned), catalogue(&converted));
 }
 
+#[path = "creation_undefined_frequency.rs"]
+mod undefined_frequency;
+
 /// An input's weight scale multiplies every `WEIGHT`, and `SIGMA` is derived
 /// from the scaled weight: `1/√(W·w)`.
 #[test]
@@ -135,55 +139,64 @@ fn weights_are_scaled_and_sigmas_follow_them() {
     }
 }
 
-/// Deriving SIGMA from the weights is a loss only where an input's stored
-/// SIGMA is not already `1/√WEIGHT` to within one unit in the last place.
+/// An MSv2's uncertainty may differ from the value inferred from its
+/// weights. Preserve and scale it, as CASA concat does, rather than replace it.
 #[test]
-fn sigma_is_lost_only_where_it_does_not_follow_the_weight() {
+fn stored_sigma_is_preserved_when_it_does_not_follow_the_weight() {
     let root = tempfile::tempdir().expect("root");
     let v2 = fixture(root.path(), "ms_trial.ms");
     let mut ms = MeasurementSet::open(&v2).expect("ms");
-    let main = ms.main_table();
-    let cell = |name: &str, row: usize| match main
-        .column_accessor(name)
-        .and_then(|column| column.array_cells_owned(&[row]))
-        .expect(name)
+    let mut sigma = match ms
+        .main_table()
+        .column_accessor("SIGMA")
+        .and_then(|column| column.array_cells_owned(&[0]))
+        .expect("SIGMA")
         .pop()
         .flatten()
     {
         Some(ArrayValue::Float32(values)) => values,
-        other => panic!("{name}: {other:?}"),
+        other => panic!("SIGMA: {other:?}"),
     };
-    let row = (0..main.row_count())
-        .find(|row| cell("WEIGHT", *row)[0] > 0.0)
-        .expect("a row of positive weight");
-    let weight = cell("WEIGHT", row)[0];
-    let mut sigma = cell("SIGMA", row);
-    let derived = 1.0 / weight.sqrt();
-    let mut losses = |ms: &mut MeasurementSet, value: f32| {
-        sigma[0] = value;
-        let table = ms.main_table_mut();
-        set(
-            table,
-            row,
-            &[("SIGMA", Value::Array(ArrayValue::Float32(sigma.clone())))],
-        );
-        ms.save().expect("save");
-        CreationPlan::new(
-            &[CreationInput::new(&v2)],
-            &options(),
-            Destination::New(root.path().join("unwritten.ms")),
-        )
-        .expect("plan")
-        .losses()
-        .iter()
-        .filter(|loss| loss.kind() == LossKind::Sigma)
-        .cloned()
-        .collect::<Vec<_>>()
-    };
-    assert!(losses(&mut ms, f32::from_bits(derived.to_bits() + 1)).is_empty());
+    sigma[0] *= 1.7;
+    set(
+        ms.main_table_mut(),
+        0,
+        &[("SIGMA", Value::Array(ArrayValue::Float32(sigma)))],
+    );
+    ms.save().expect("save");
+    drop(ms);
+    let original = rows_and_sigmas(&v2);
+    let output = root.path().join("preserved.ms");
+    let plan = CreationPlan::new(
+        &[CreationInput {
+            path: v2,
+            weight_scale: 4.,
+        }],
+        &options(),
+        Destination::New(output.clone()),
+    )
+    .expect("plan");
+    assert!(
+        !plan
+            .losses()
+            .iter()
+            .any(|loss| loss.kind() == LossKind::Sigma)
+    );
+    plan.write().expect("write");
+    let expected: Vec<_> = original
+        .1
+        .into_iter()
+        .map(|(weight, sigma)| ((weight * 4.).to_bits(), (sigma / 2.).to_bits()))
+        .collect();
+    let actual = rows_and_sigmas(&output);
+    assert_eq!(actual.0, original.0);
     assert_eq!(
-        losses(&mut ms, 2.0 * derived),
-        [Loss::Sigma, Loss::SigmaDerived]
+        actual
+            .1
+            .into_iter()
+            .map(|(weight, sigma)| (weight.to_bits(), sigma.to_bits()))
+            .collect::<Vec<_>>(),
+        expected
     );
 }
 
@@ -1386,10 +1399,20 @@ fn a_failed_replacement_leaves_the_measurement_set_as_it_was() {
     for path in &payload {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).expect("hide");
     }
-    let failed = plan.write();
-    for path in &payload {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).expect("show");
+    let show = || {
+        for path in &payload {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).expect("show");
+        }
+    };
+    // Root, as in a cloud container, reads a file whatever its mode, so
+    // hiding the payload cannot make the write fail there.
+    if payload.iter().any(|path| std::fs::File::open(path).is_ok()) {
+        show();
+        eprintln!("skipping: this user reads files of mode 000 (root?), so no write fails");
+        return;
     }
+    let failed = plan.write();
+    show();
     assert!(failed.is_err(), "{:?}", failed.ok());
     assert_eq!(main_ints(&early, "ANTENNA1").len(), 60, "as it was");
     assert_eq!(

@@ -141,6 +141,13 @@ pub(super) struct SetupDemand<'r> {
     /// The imaging weights the passes keep across passes, when the run
     /// keeps them (`Run::keep_weights`).
     pub(super) kept_weights: u64,
+    /// What the products hold on one lane
+    /// (`PlannedContinuumGeneration::planned_demand`): they run after the
+    /// passes, beside the completion they publish.
+    pub(super) products: u64,
+    /// The source's admitted charge, which the run releases before its
+    /// products.
+    pub(super) source: u64,
     /// The memory the policy leaves free before the setup's charges.
     pub(super) free: u64,
 }
@@ -170,8 +177,25 @@ impl SetupDemand<'_> {
     /// work and imaging weights it keeps, the first major-cycle pass beside
     /// the model, and after it a minor cycle or a refresh pass beside the
     /// normal state and model and [`RefreshDemand`]
-    /// ([`StageCharges::largest`]).
+    /// ([`StageCharges::largest`]); or, if more, the products
+    /// ([`Self::products_bytes`]).
     pub(super) fn bytes(&self, cores: CoreAllocation) -> Result<u64, ImagingError> {
+        let (passes, products) = self.stages(cores)?;
+        Ok(passes.max(products))
+    }
+
+    /// What the products hold beside the run on `cores`, net of the
+    /// source's charge, which the run releases before them: the products on
+    /// one lane, the completion they publish (the normal state and model,
+    /// and a cube's paged state with its cache), and the masks and
+    /// minor-cycle records the run keeps. The kernel sets are released with
+    /// the passes.
+    pub(super) fn products_bytes(&self, cores: CoreAllocation) -> Result<u64, ImagingError> {
+        Ok(self.stages(cores)?.1)
+    }
+
+    /// [`Self::bytes`]' two parts: the setup and cycles, and the products.
+    fn stages(&self, cores: CoreAllocation) -> Result<(u64, u64), ImagingError> {
         let streaming = cores.streaming_workers;
         let kernels = self
             .domains
@@ -228,6 +252,7 @@ impl SetupDemand<'_> {
             block: self.block,
             chunk_placements: CHUNK_PLACEMENTS,
             chunk_sets: 1,
+            stitched_bytes_per_channel: self.stitch.pass_bytes_per_channel(modes.psf),
         };
         let refreshing = wave(ModeSet::DATA, true);
         // The pass that seeds holds the seeding beside its wave: the initial
@@ -238,18 +263,16 @@ impl SetupDemand<'_> {
         } else {
             (seeding, 0)
         };
-        let mut first = wave(self.modes, self.start_model.is_some() && !self.reseeds).bytes(1)
-            + self.stitch.pass_bytes(true)
-            + first_seeding;
-        let mut refresh = refreshing.bytes(1) + self.stitch.pass_bytes(false) + refresh_seeding;
+        let mut first =
+            wave(self.modes, self.start_model.is_some() && !self.reseeds).bytes(1) + first_seeding;
+        let mut refresh = refreshing.bytes(1) + refresh_seeding;
         // A run that cleans writes on its last refresh, or on a prediction
         // after it; one that does not, on its first major cycle
         // (`write_pass`), beside the seeding (#970 review). The pass that
         // writes holds every plane (#778 review).
         if let Some((modes, with_model, written)) = self.write {
             let demand = wave(modes, with_model);
-            let writing =
-                demand.bytes(demand.planes()) + self.stitch.pass_bytes(modes.psf) + written;
+            let writing = demand.bytes(demand.planes()) + written;
             let cleans = self
                 .problem
                 .reconstruction()
@@ -279,7 +302,14 @@ impl SetupDemand<'_> {
                 refresh_pass: demand.masks + refresh,
             }),
         };
-        Ok(kernels + cube + stages.largest())
+        let kept = self
+            .refresh
+            .as_ref()
+            .map_or(0, |demand| demand.masks + demand.records);
+        let products = (cube + refreshing.resident_normal_bytes() + self.model_bytes + kept)
+            .saturating_add(self.products)
+            .saturating_sub(self.source);
+        Ok((kernels + cube + stages.largest(), products))
     }
 }
 
@@ -352,14 +382,15 @@ impl StageCharges {
 }
 
 /// The imaging weights' density pass on `workers` and the density grid it
-/// keeps, in bytes; none for natural weighting.
+/// keeps, in bytes; none for natural and radial weighting, which grid no
+/// density.
 fn weights_bytes(
     problem: &CompiledProblem,
     main: &DomainOperator,
     block: BlockShape,
     workers: usize,
 ) -> Result<(u64, u64), ImagingError> {
-    if matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
+    if !problem.weighting().scheme().uses_density() {
         return Ok((0, 0));
     }
     let shape = density_shape(problem, &problem.geometry().domains()[0])?;
@@ -384,28 +415,19 @@ pub(super) fn weighting(
 ) -> Result<(WeightingGeneration, Reservation), ImagingError> {
     let contract = problem.weighting();
     let taper = contract.uv_taper();
-    let (robust, bandwidth) = match contract.scheme() {
+    let scheme = contract.scheme();
+    match scheme {
         WeightingScheme::Natural => {
             return Ok((WeightingGeneration::Natural { taper }, Reservation::none()));
         }
-        WeightingScheme::Uniform => (None, None),
-        WeightingScheme::Briggs { robust } => (Some(robust), None),
-        WeightingScheme::BriggsBandwidthTaper { robust } => {
-            let spectral = problem.geometry().spectral();
-            let last = spectral.output_channels().saturating_sub(1);
-            let (Some(first_hz), Some(last_hz)) = (
-                spectral.channel_centre_hz(0),
-                spectral.channel_centre_hz(last),
-            ) else {
-                return Err(ImagingError::Unsupported {
-                    reason: "the image spectral axis has no channels",
-                });
-            };
-            (
-                Some(robust),
-                Some(BandwidthTaper::from_frequency_range(first_hz, last_hz)?),
-            )
+        WeightingScheme::Radial => {
+            return Ok((WeightingGeneration::Radial { taper }, Reservation::none()));
         }
+        _ => {}
+    }
+    let bandwidth = match scheme {
+        WeightingScheme::BriggsBandwidthTaper { .. } => Some(bandwidth_taper(problem)?),
+        _ => None,
     };
     let shape = density_shape(problem, &problem.geometry().domains()[0])?;
     let (pass, grid) = weights_bytes(problem, main, source.maximum_block(), team.workers())?;
@@ -420,8 +442,35 @@ pub(super) fn weighting(
     let grid_values =
         run_density_pass(&main.operator, &main.resampler, shape, source, team, cancel)?;
     weights.retain(grid);
-    let weighting = WeightingGeneration::density(grid_values, robust, bandwidth, taper)?;
+    let weighting = match scheme {
+        WeightingScheme::BriggsAbsolute { robust, noise_jy } => {
+            WeightingGeneration::absolute_density(grid_values, robust, noise_jy, taper)?
+        }
+        WeightingScheme::Briggs { robust } | WeightingScheme::BriggsBandwidthTaper { robust } => {
+            WeightingGeneration::density(grid_values, Some(robust), bandwidth, taper)?
+        }
+        // Natural and radial weighting returned above, with no density.
+        WeightingScheme::Uniform | WeightingScheme::Natural | WeightingScheme::Radial => {
+            WeightingGeneration::density(grid_values, None, None, taper)?
+        }
+    };
     Ok((weighting, weights))
+}
+
+/// CASA `briggsbwtaper`'s fractional bandwidth, from the first and last
+/// channels of the image's spectral axis (`SynthesisImagerVi2::weight`).
+fn bandwidth_taper(problem: &CompiledProblem) -> Result<BandwidthTaper, ImagingError> {
+    let spectral = problem.geometry().spectral();
+    let last = spectral.output_channels().saturating_sub(1);
+    let (Some(first_hz), Some(last_hz)) = (
+        spectral.channel_centre_hz(0),
+        spectral.channel_centre_hz(last),
+    ) else {
+        return Err(ImagingError::Unsupported {
+            reason: "the image spectral axis has no channels",
+        });
+    };
+    Ok(BandwidthTaper::from_frequency_range(first_hz, last_hz)?)
 }
 
 /// The cache of the paged cube state on `workers`: as large as the whole
@@ -448,12 +497,16 @@ fn cube_cache_bytes(
 }
 
 /// The paged cube state of a channel-local run, its cache admitted as
-/// [`cube_cache_bytes`] sizes it from what the policy leaves free; the state
-/// holds the cache's reservation for as long as its storage lives.
+/// [`cube_cache_bytes`] sizes it from what the policy leaves free, plus the
+/// `raised` bytes an automatic AW cell cache took out of the spare the run
+/// planned beside this cache: the cells do not shrink the cube's quarter
+/// (#719). The state holds the cache's reservation for as long as its
+/// storage lives.
 pub(super) fn cube_state(
     problem: &CompiledProblem,
     directory: &Path,
     (workers, weight_image): (usize, bool),
+    raised: u64,
     host: &HostResources,
     policy: &ResourcePolicy,
 ) -> Result<CubeState, ImagingError> {
@@ -461,7 +514,7 @@ pub(super) fn cube_state(
         problem,
         directory,
         (workers, weight_image),
-        free_memory(host, policy),
+        free_memory(host, policy).saturating_add(raised),
     )?;
     let reservation = admit(
         host,

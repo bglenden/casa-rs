@@ -1,0 +1,160 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "input": "1Hz",
+      "result": true
+    },
+    {
+      "input": "0Hz",
+      "result": true
+    },
+    {
+      "input": "1kHz",
+      "result": true
+    },
+    {
+      "input": "1/s",
+      "result": true
+    },
+    {
+      "input": "1rad/s",
+      "result": true
+    },
+    {
+      "input": "1deg/s",
+      "result": true
+    },
+    {
+      "input": "1s",
+      "result": true
+    },
+    {
+      "input": "1h",
+      "result": true
+    },
+    {
+      "input": "1m",
+      "result": true
+    },
+    {
+      "input": "1km",
+      "result": true
+    },
+    {
+      "input": "1/m",
+      "result": true
+    },
+    {
+      "input": "1J",
+      "result": true
+    },
+    {
+      "input": "1eV",
+      "result": true
+    },
+    {
+      "input": "1kg.m",
+      "result": true
+    },
+    {
+      "input": "1deg",
+      "result": false
+    },
+    {
+      "input": "1d",
+      "result": false
+    },
+    {
+      "input": "1m/s",
+      "result": false
+    },
+    {
+      "input": "1kg.m/s",
+      "result": false
+    },
+    {
+      "input": "1W",
+      "result": false
+    },
+    {
+      "input": "1K",
+      "result": false
+    },
+    {
+      "input": "1",
+      "result": false
+    },
+    {
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": 2,
+      "result": false
+    },
+    {
+      "input": true,
+      "result": false
+    },
+    {
+      "input": null,
+      "result": false
+    },
+    {
+      "input": [],
+      "result": false
+    },
+    {
+      "input": [
+        1,
+        2
+      ],
+      "result": false
+    },
+    {
+      "input": {},
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "input": {
+        "value": 1.0,
+        "unit": "Hz"
+      },
+      "result": true
+    },
+    {
+      "input": {
+        "value": 2.0,
+        "unit": "s"
+      },
+      "result": true
+    },
+    {
+      "input": {
+        "value": 1.0,
+        "unit": "rad"
+      },
+      "result": false
+    },
+    {
+      "input": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "Hz"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    }
+  ]
+}

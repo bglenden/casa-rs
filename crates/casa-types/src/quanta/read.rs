@@ -155,18 +155,34 @@ impl Quantity {
 /// (`MEpoch::getType` and the others) and month names this way, so `j20`
 /// is `J2000` and `U` is ambiguous among `UT1`, `UT2`, `UTC` and `UT`.
 pub fn unique_prefix_index(input: &str, names: &[&str]) -> Option<usize> {
-    let wanted = input.to_ascii_uppercase().into_bytes();
-    let upper = |name: &str| name.to_ascii_uppercase().into_bytes();
-    if let Some(exact) = names.iter().position(|name| upper(name) == wanted) {
+    unique_prefix_position(input, names, |name| *name)
+}
+
+/// [`unique_prefix_index`] over any items, each named by `name`: the
+/// position of the item `input` names, as `MUString::minimaxNC` finds it.
+/// casacore's `MeasTable` finds observatories, sources and spectral lines
+/// by name this way, so `ALM` and `ALMAX` are `ALMA`, and `VL` is neither
+/// `VLA` nor `VLBA`. Spaces are part of a name: `ALMA ` agrees with `ALMA`
+/// over its four characters, ` ALMA` does not.
+pub fn unique_prefix_position<T>(
+    input: &str,
+    items: &[T],
+    name: impl Fn(&T) -> &str,
+) -> Option<usize> {
+    let wanted = input.as_bytes();
+    if let Some(exact) = items
+        .iter()
+        .position(|item| name(item).as_bytes().eq_ignore_ascii_case(wanted))
+    {
         return Some(exact);
     }
-    let shares_prefix = |name: &str| {
-        let name = upper(name);
-        let length = wanted.len().min(name.len());
-        wanted[..length] == name[..length]
+    let shares_prefix = |item: &T| {
+        let known = name(item).as_bytes();
+        let length = wanted.len().min(known.len());
+        known[..length].eq_ignore_ascii_case(&wanted[..length])
     };
-    let first = names.iter().position(|name| shares_prefix(name))?;
-    if names[first + 1..].iter().any(|name| shares_prefix(name)) {
+    let first = items.iter().position(&shares_prefix)?;
+    if items[first + 1..].iter().any(shares_prefix) {
         None
     } else {
         Some(first)

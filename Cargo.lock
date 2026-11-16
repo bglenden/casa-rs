@@ -124,6 +124,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
+name = "bit-set"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
+dependencies = [
+ "bit-vec",
+]
+
+[[package]]
+name = "bit-vec"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
+
+[[package]]
 name = "bitflags"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -229,6 +244,7 @@ dependencies = [
  "casa-numerics",
  "casa-observation",
  "casa-provider-contracts",
+ "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
@@ -252,6 +268,7 @@ dependencies = [
  "casa-tables",
  "casa-test-support",
  "casa-types",
+ "complex-bessel",
  "libm",
  "ndarray",
  "num-complex",
@@ -304,6 +321,7 @@ dependencies = [
 name = "casa-imaging-application"
 version = "0.27.0"
 dependencies = [
+ "base64",
  "casa-coordinates",
  "casa-images",
  "casa-imaging-deconvolution",
@@ -312,9 +330,12 @@ dependencies = [
  "casa-imaging-operator",
  "casa-imaging-products",
  "casa-imaging-runtime",
+ "casa-imaging-singledish",
  "casa-ms",
+ "casa-numerics",
  "casa-observation",
  "casa-provider-contracts",
+ "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
@@ -338,10 +359,12 @@ name = "casa-imaging-deconvolution"
 version = "0.27.0"
 dependencies = [
  "bytemuck",
+ "casa-coordinates",
  "casa-fft",
  "casa-imaging-model",
  "casa-numerics",
  "casa-types",
+ "libm",
  "ndarray",
  "num-complex",
  "rayon",
@@ -516,22 +539,23 @@ version = "0.27.0"
 dependencies = [
  "bytemuck",
  "casa-coordinates",
- "casa-imaging-model",
  "casa-logging",
  "casa-measures-data",
  "casa-numerics",
  "casa-observation",
  "casa-provider-contracts",
- "casa-simulation-synthesis",
+ "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
  "casa-types",
+ "fancy-regex",
  "flate2",
  "libc",
  "libm",
  "ndarray",
  "num-complex",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
@@ -585,36 +609,33 @@ dependencies = [
  "casa-coordinates",
  "casa-fft",
  "casa-images",
+ "casa-imaging-application",
  "casa-imaging-model",
  "casa-imaging-operator",
+ "casa-imaging-products",
  "casa-imaging-runtime",
  "casa-imaging-singledish",
  "casa-lattices",
+ "casa-logging",
  "casa-ms",
  "casa-numerics",
+ "casa-provider-contracts",
  "casa-tables",
+ "casa-task-runtime",
  "casa-test-support",
  "casa-types",
  "flate2",
  "ndarray",
  "num-complex",
+ "schemars",
+ "serde",
  "serde_json",
+ "sha2",
  "tar",
  "tempfile",
  "thiserror",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "casa-simulation-synthesis"
-version = "0.27.0"
-dependencies = [
- "casa-fft",
- "casa-numerics",
- "ndarray",
- "num-complex",
- "thiserror",
 ]
 
 [[package]]
@@ -683,6 +704,7 @@ dependencies = [
  "casa-values",
  "criterion",
  "ndarray",
+ "serde_json",
  "sofars",
  "time",
  "tracing",
@@ -722,18 +744,21 @@ dependencies = [
 name = "casars-imager"
 version = "0.27.0"
 dependencies = [
+ "base64",
  "casa-coordinates",
  "casa-images",
  "casa-imaging-application",
+ "casa-imaging-deconvolution",
  "casa-logging",
  "casa-ms",
  "casa-numerics",
  "casa-provider-contracts",
- "casa-simulation-synthesis",
+ "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
  "casa-types",
+ "flate2",
  "libc",
  "ndarray",
  "schemars",
@@ -757,6 +782,25 @@ dependencies = [
  "ndarray",
  "serde_json",
  "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "casars-msconvert"
+version = "0.27.0"
+dependencies = [
+ "casa-ms",
+ "casa-observation",
+ "casa-provider-contracts",
+ "casa-task-runtime",
+ "casa-types",
+ "flate2",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -775,6 +819,7 @@ dependencies = [
  "casa-types",
  "casa-vla",
  "casars-imager",
+ "casars-msconvert",
  "casars-simulation",
  "ndarray",
  "num-complex",
@@ -885,6 +930,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "complex-bessel"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d51315f2274a302bf17e8f57b83ac25caedfbacd1e8c1ad51d2938c059cea80b"
+dependencies = [
+ "num-complex",
+ "num-traits",
 ]
 
 [[package]]
@@ -1097,6 +1152,17 @@ checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
  "pin-project-lite",
+]
+
+[[package]]
+name = "fancy-regex"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a2e16b9a584b602f1e0e5e22c30ca0906786088c27500653e432d086def8b53"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -1826,6 +1892,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+ "libm",
 ]
 
 [[package]]
@@ -2247,9 +2314,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.14"
+version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e1dd4122fc1595e8162618945476892eefca7b88c52820e74af6262213cae8f"
+checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
 dependencies = [
  "aho-corasick",
  "memchr",

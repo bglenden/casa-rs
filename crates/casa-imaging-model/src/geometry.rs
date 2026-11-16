@@ -4,7 +4,10 @@
 
 use std::{cmp::Ordering, collections::BTreeSet, f64::consts::TAU};
 
+use casa_types::measures::PreparedFrequencyConversion;
 use thiserror::Error;
+
+use crate::sky_projection::Projection;
 
 /// Celestial reference frame attached to a sky direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -68,13 +71,6 @@ impl SkyDirection {
         self.latitude_rad = canonical_zero(self.latitude_rad);
         Ok(self)
     }
-}
-
-/// Celestial map projection represented by the direction-coordinate law.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Projection {
-    /// Orthographic sine projection used by the current imaging surface.
-    Sin,
 }
 
 /// Exact two-dimensional direction WCS requested for an image domain.
@@ -400,8 +396,15 @@ impl ImageDomainSpec {
 pub enum MissingPointingPolicy {
     /// Reject missing pointing metadata.
     Reject,
-    /// Explicitly substitute the phase-tracking centre.
-    UsePhaseTrackingCentre,
+    /// Substitute the visibility field's phase direction when an antenna
+    /// has no pointing sample, as CASA AW projection does.
+    UseFieldPhaseCentre,
+    /// Point every row at its field's direction when the store holds no
+    /// pointing sample at all (no POINTING table, or an empty one), as
+    /// CASA's mosaic does (`SimplePBConvFunc::pointingDirAnt1` takes the
+    /// phase centre unless the table is readable and has rows); reject an
+    /// antenna without samples in a store that has some.
+    FieldCentreWithoutPointingTable,
 }
 
 /// MeasurementSet POINTING column selected as the direction source.
@@ -689,6 +692,19 @@ pub enum FrequencyFrame {
     Lsrk,
 }
 
+impl FrequencyFrame {
+    /// Whether a cube in this output frame is gridded through LSRK, as
+    /// CASA grids it: `SIImageStore` gives the grid of an image in any
+    /// frame but LSRK and REST an LSRK conversion layer at the image's
+    /// epoch, and `FTMachine::matchChannel` converts each row to LSRK at
+    /// its own time. Such a cube's channels are fixed in LSRK, so even one
+    /// in its rows' own frame needs a [`SpectralFrameAnchor::Conversion`].
+    #[must_use]
+    pub const fn gridded_through_lsrk(self) -> bool {
+        matches!(self, Self::Topocentric | Self::Barycentric)
+    }
+}
+
 /// Time scale attached to a spectral-frame epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeScale {
@@ -735,12 +751,17 @@ pub struct ItrfPosition {
     metres: [f64; 3],
 }
 
-/// Context required to convert between distinct spectral frequency frames.
+/// Context required to convert between distinct spectral frequency frames,
+/// or to grid a cube through LSRK
+/// ([`FrequencyFrame::gridded_through_lsrk`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SpectralFrameAnchor {
-    /// Source and output frames are identical, so conversion is not applicable.
+    /// Source and output frames are identical and the rows grid at their
+    /// own frequencies, so conversion is not applicable.
     NotApplicable,
-    /// Exact Measures-frame context for a requested conversion.
+    /// Exact Measures-frame context for a requested conversion: the image's
+    /// epoch, reference direction and observatory, at which an output frame
+    /// gridded through LSRK is fixed to LSRK.
     Conversion {
         /// Conversion epoch and time scale.
         epoch: Epoch,
@@ -815,6 +836,21 @@ pub enum DopplerConvention {
     Relativistic,
 }
 
+/// An LSRK interpolation grid retained alongside the reported TOPO axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourceLsrkGrid {
+    /// Exact centre of plane zero in the source coordinate.
+    pub first_hz: f64,
+    /// Signed measured channel width in the source coordinate.
+    pub increment_hz: f64,
+    /// Prepared conversions from the reported coordinate to LSRK and back.
+    /// They evaluate each output centre and map density lookups to pixels.
+    pub reporting_conversions: Option<[PreparedFrequencyConversion; 2]>,
+    /// The requested last centre lies beyond the range of native channel
+    /// centres, even though its evaluated centre equals the stored edge.
+    pub terminal_plane_outside: bool,
+}
+
 /// Uncompiled deterministic spectral coordinate and transform specification.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralCoordinateSpec {
@@ -822,6 +858,7 @@ pub struct SpectralCoordinateSpec {
     output_frame: FrequencyFrame,
     anchor: SpectralFrameAnchor,
     wcs: SpectralWcs,
+    source_lsrk_grid: Option<SourceLsrkGrid>,
     rest_frequency: RestFrequency,
     doppler_convention: DopplerConvention,
 }
@@ -842,8 +879,56 @@ impl SpectralCoordinateSpec {
             output_frame,
             anchor,
             wcs,
+            source_lsrk_grid: None,
             rest_frequency,
             doppler_convention,
+        }
+    }
+
+    /// Retain the LSRK sampling coordinate alongside the reported TOPO WCS.
+    /// Channel-index grids can also record their terminal source coverage.
+    #[must_use]
+    pub const fn with_source_lsrk_grid(mut self, grid: Option<SourceLsrkGrid>) -> Self {
+        self.source_lsrk_grid = grid;
+        self
+    }
+
+    /// Whether rows and the interpolation grid are both evaluated in LSRK.
+    #[must_use]
+    pub const fn has_source_lsrk_grid(&self) -> bool {
+        self.source_lsrk_grid.is_some()
+    }
+
+    /// Prepared conversions to and from the retained LSRK grid.
+    #[must_use]
+    pub const fn reporting_conversions(&self) -> Option<[PreparedFrequencyConversion; 2]> {
+        match self.source_lsrk_grid {
+            Some(grid) => grid.reporting_conversions,
+            None => None,
+        }
+    }
+
+    /// Whether the source span excludes the final plane from gridding.
+    #[must_use]
+    pub const fn terminal_plane_outside(&self) -> bool {
+        matches!(self.source_lsrk_grid, Some(grid) if grid.terminal_plane_outside)
+    }
+
+    /// Linear interpolation coordinates in the frame the row frequencies
+    /// use. Returns the reference pixel, its centre and the increment.
+    #[must_use]
+    pub fn linear_grid(&self) -> Option<[f64; 3]> {
+        if let Some(grid) = self.source_lsrk_grid {
+            return Some([0.0, grid.first_hz, grid.increment_hz]);
+        }
+        match self.wcs {
+            SpectralWcs::Linear {
+                reference_pixel,
+                reference_frequency_hz,
+                increment_hz,
+                ..
+            } => Some([reference_pixel, reference_frequency_hz, increment_hz]),
+            SpectralWcs::Tabular { .. } => None,
         }
     }
 
@@ -941,6 +1026,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub const fn with_output_frame(mut self, output_frame: FrequencyFrame) -> Self {
         self.output_frame = output_frame;
+        self.source_lsrk_grid = None;
         self
     }
 
@@ -948,6 +1034,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub const fn with_anchor(mut self, anchor: SpectralFrameAnchor) -> Self {
         self.anchor = anchor;
+        self.source_lsrk_grid = None;
         self
     }
 
@@ -962,6 +1049,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub const fn with_doppler_convention(mut self, doppler_convention: DopplerConvention) -> Self {
         self.doppler_convention = doppler_convention;
+        self.source_lsrk_grid = None;
         self
     }
 
@@ -969,6 +1057,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub fn with_wcs(mut self, wcs: SpectralWcs) -> Self {
         self.wcs = wcs;
+        self.source_lsrk_grid = None;
         self
     }
 }
@@ -1366,29 +1455,11 @@ fn direction_at_pixel(
     direction: DirectionCoordinateSpec,
     pixel: [f64; 2],
 ) -> Result<SkyDirection, CompileGeometryError> {
-    let delta = [
-        pixel[0] - direction.reference_pixel()[0],
-        pixel[1] - direction.reference_pixel()[1],
-    ];
-    let pc = direction.pc();
-    let increment = direction.increment_rad();
-    let projected = [
-        increment[0] * (pc[0][0] * delta[0] + pc[0][1] * delta[1]),
-        increment[1] * (pc[1][0] * delta[0] + pc[1][1] * delta[1]),
-    ];
-    let radius_squared = projected[0] * projected[0] + projected[1] * projected[1];
-    if !radius_squared.is_finite() || radius_squared > 1.0 {
-        return Err(CompileGeometryError::FacetCentreOutsideProjection);
-    }
-    let reference = direction.reference_direction();
-    let (sin_latitude, cos_latitude) = reference.latitude_rad().sin_cos();
-    let normal = (1.0 - radius_squared).sqrt();
-    let latitude = (projected[1] * cos_latitude + normal * sin_latitude)
-        .clamp(-1.0, 1.0)
-        .asin();
-    let longitude = reference.longitude_rad()
-        + projected[0].atan2(normal * cos_latitude - projected[1] * sin_latitude);
-    SkyDirection::new(reference.frame(), longitude, latitude).canonicalize()
+    let [longitude, latitude] = direction
+        .coordinate()
+        .pixel_to_world(pixel)
+        .map_err(|_| CompileGeometryError::FacetCentreOutsideProjection)?;
+    SkyDirection::new(direction.reference_direction().frame(), longitude, latitude).canonicalize()
 }
 
 fn canonicalize_centres(centres: &mut CentreLaws) -> Result<(), CompileGeometryError> {
@@ -1425,13 +1496,53 @@ fn canonicalize_centres(centres: &mut CentreLaws) -> Result<(), CompileGeometryE
 fn canonicalize_spectral(
     spectral: &mut SpectralCoordinateSpec,
 ) -> Result<(), CompileGeometryError> {
-    match (
-        &mut spectral.anchor,
-        spectral.source_frame == spectral.output_frame,
-    ) {
-        (SpectralFrameAnchor::NotApplicable, true) => {}
-        (SpectralFrameAnchor::Conversion { .. }, true)
-        | (SpectralFrameAnchor::NotApplicable, false) => {
+    // Distinct frames need a conversion; one frame allows one only to be
+    // gridded through LSRK.
+    if let Some(grid) = spectral.source_lsrk_grid {
+        let (first, step) = (grid.first_hz, grid.increment_hz);
+        let SpectralWcs::Linear {
+            channels,
+            increment_hz,
+            reference_pixel: 0.0,
+            ..
+        } = spectral.wcs
+        else {
+            return Err(CompileGeometryError::InvalidSpectralWcs);
+        };
+        let last = first + channels.saturating_sub(1) as f64 * step;
+        let valid_source = match spectral.source_frame {
+            FrequencyFrame::Lsrk if grid.reporting_conversions.is_none() => matches!(
+                spectral.doppler_convention,
+                DopplerConvention::Radio | DopplerConvention::NotApplicable
+            ),
+            FrequencyFrame::Topocentric | FrequencyFrame::Lsrk => {
+                grid.reporting_conversions.is_some()
+                    && matches!(spectral.anchor, SpectralFrameAnchor::Conversion { .. })
+                    && !grid.terminal_plane_outside
+            }
+            _ => false,
+        };
+        if !valid_source
+            || spectral.output_frame != FrequencyFrame::Topocentric
+            || channels < 2
+            || !step.is_normal()
+            || step.is_sign_positive() != increment_hz.is_sign_positive()
+            || !first.is_finite()
+            || first <= 0.0
+            || !last.is_finite()
+            || last <= 0.0
+            || !advances(first, first + step, step)
+            || !advances(last - step, last, step)
+        {
+            return Err(CompileGeometryError::InvalidSpectralWcs);
+        }
+    }
+    let converts = spectral.source_frame != spectral.output_frame;
+    let allowed = converts || spectral.output_frame.gridded_through_lsrk();
+    match (&mut spectral.anchor, allowed) {
+        (SpectralFrameAnchor::NotApplicable, _) if !converts => {}
+        (SpectralFrameAnchor::Conversion { .. }, false)
+        | (SpectralFrameAnchor::NotApplicable, _) => {
             return Err(CompileGeometryError::InconsistentSpectralAnchor);
         }
         (
@@ -1440,7 +1551,7 @@ fn canonicalize_spectral(
                 direction,
                 observatory_position,
             },
-            false,
+            true,
         ) => {
             if !epoch.mjd_days.is_finite()
                 || observatory_position

@@ -1,0 +1,439 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "select",
+      "input": [],
+      "result": true,
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        0,
+        2
+      ],
+      "result": true,
+      "selected": [
+        0,
+        1,
+        2
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        2,
+        0,
+        2
+      ],
+      "result": true,
+      "selected": [
+        0,
+        1,
+        2
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "deselect",
+      "input": [
+        1
+      ],
+      "result": true,
+      "selected": [],
+      "dtype": "int64"
+    },
+    {
+      "method": "deselect",
+      "input": [
+        0
+      ],
+      "result": true,
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        -1
+      ],
+      "result": true,
+      "selected": [
+        0,
+        1,
+        2
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "deselect",
+      "input": [
+        -1
+      ],
+      "result": true,
+      "selected": [],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        -2
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Index out of range."
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        0,
+        3
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Index out of range."
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "deselect",
+      "input": [
+        0,
+        3
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Index out of range."
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        -1,
+        1
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Index out of range."
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        1.9
+      ],
+      "result": true,
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        "1.9"
+      ],
+      "result": true,
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        "bad"
+      ],
+      "result": true,
+      "selected": [
+        0,
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        "3xyz"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Index out of range."
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        "-1abc"
+      ],
+      "result": true,
+      "selected": [
+        0,
+        1,
+        2
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        "1e-3x"
+      ],
+      "result": true,
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        null
+      ],
+      "result": true,
+      "selected": [
+        0,
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        [
+          0,
+          2
+        ]
+      ],
+      "result": true,
+      "selected": [
+        0,
+        1,
+        2
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": 0,
+      "result": true,
+      "selected": [
+        0,
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": true,
+      "result": true,
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": "1",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must not be a string"
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": null,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_select> returned a result with an exception set"
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": 4294967296,
+      "result": true,
+      "selected": [
+        0,
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        9223372036854775808
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_select> returned a result with an exception set"
+      },
+      "selected": [
+        0,
+        1,
+        2
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "numpy": [
+          9223372036854775808
+        ],
+        "dtype": "uint64"
+      },
+      "result": true,
+      "selected": [
+        0,
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "numpy": [
+          [
+            0,
+            2
+          ]
+        ],
+        "dtype": "int64"
+      },
+      "result": true,
+      "selected": [
+        0,
+        1,
+        2
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "numpy": 2,
+        "dtype": "int64"
+      },
+      "result": true,
+      "selected": [
+        1,
+        2
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "scalar_numpy": 2,
+        "dtype": "int64"
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_select> returned a result with an exception set"
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "scalar_numpy": 1.9,
+        "dtype": "float64"
+      },
+      "result": true,
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "scalar_numpy": true,
+        "dtype": "bool"
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_select> returned a result with an exception set"
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "numpy": true,
+        "dtype": "bool"
+      },
+      "result": true,
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "numpy": [
+          true,
+          false
+        ],
+        "dtype": "bool"
+      },
+      "result": true,
+      "selected": [
+        0,
+        1
+      ],
+      "dtype": "int64"
+    }
+  ],
+  "lifecycle": {
+    "after_add": [
+      0
+    ],
+    "after_rename": [
+      0
+    ],
+    "after_reopen": []
+  }
+}

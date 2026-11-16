@@ -1,0 +1,785 @@
+{
+ "schema_version": 1,
+ "tool": "quanta",
+ "casa_version": "6.7.6.14",
+ "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "methods": {
+  "abs": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "acos": {
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
+   "evidence": [
+    "signature",
+    "trigonometry-casa"
+   ]
+  },
+  "add": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values",
+    "record-complex-scalar-casa",
+    "record-complex-array-casa",
+    "bare-complex-scalar-casa",
+    "record-empty-float-vector-casa",
+    "record-zero-dimensional-casa"
+   ]
+  },
+  "angle": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "asin": {
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
+   "evidence": [
+    "signature",
+    "trigonometry-casa"
+   ]
+  },
+  "atan": {
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
+   "evidence": [
+    "signature",
+    "trigonometry-casa"
+   ]
+  },
+  "atan2": {
+   "status": "Implemented",
+   "scope": "Scalar two-argument arctangent in radians, with CASA dimensionless-unit conversion and errors.",
+   "evidence": [
+    "signature",
+    "atan2-casa"
+   ]
+  },
+  "canon": {
+   "status": "Implemented",
+   "scope": "Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance).",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "canonical": {
+   "status": "Implemented",
+   "scope": "Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance).",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "ceil": {
+   "status": "Implemented",
+   "scope": "Rounds a scalar quantity in its own unit, preserving CASA conversion errors.",
+   "evidence": [
+    "signature",
+    "rounding-casa"
+   ]
+  },
+  "check": {
+   "status": "Implemented",
+   "scope": "Answers as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "checkfreq": {
+   "status": "Implemented",
+   "scope": "Tests whether a scalar quantity has a frequency-compatible dimension, with CASA conversion errors.",
+   "evidence": [
+    "signature",
+    "checkfreq-casa"
+   ]
+  },
+  "compare": {
+   "status": "Implemented",
+   "scope": "Answers as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "constants": {
+   "status": "Implemented",
+   "scope": "CASA's named physical constants and case-insensitive minimax lookup, including ambiguous names.",
+   "evidence": [
+    "signature",
+    "constants-casa"
+   ]
+  },
+  "convert": {
+   "status": "Implemented",
+   "scope": "Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance).",
+   "evidence": [
+    "signature",
+    "casa-values",
+    "record-empty-float-vector-casa",
+    "record-zero-dimensional-casa"
+   ]
+  },
+  "convertdop": {
+   "status": "Implemented",
+   "scope": "Converts scalar quantities between dimensionless Doppler values and speeds using CASA unit equivalencies.",
+   "evidence": [
+    "signature",
+    "spectral-conversion-casa"
+   ]
+  },
+  "convertfreq": {
+   "status": "Implemented",
+   "scope": "Converts scalar quantities between frequency, period, wavelength, angular frequency, wavenumber, energy, and momentum using CASA unit equivalencies.",
+   "evidence": [
+    "signature",
+    "spectral-conversion-casa"
+   ]
+  },
+  "cos": {
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
+   "evidence": [
+    "signature",
+    "trigonometry-casa"
+   ]
+  },
+  "define": {
+   "status": "Implemented",
+   "issue": 1053,
+   "scope": "Defines and redefines process-wide user units, including built-in overrides; coordinated unit state keeps conversions and other tool operations consistent during concurrent changes.",
+   "evidence": [
+    "signature",
+    "define-casa"
+   ]
+  },
+  "div": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "done": {
+   "status": "Implemented",
+   "scope": "As CASA's.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "eq": {
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
+   "evidence": [
+    "signature",
+    "relational-casa"
+   ]
+  },
+  "exp": {
+   "status": "Implemented",
+   "scope": "Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.",
+   "evidence": [
+    "signature",
+    "logarithms-casa"
+   ]
+  },
+  "fits": {
+   "status": "Implemented",
+   "scope": "Registers CASA FITS unit aliases process-wide, including the change of S from siemens to seconds.",
+   "evidence": [
+    "signature",
+    "fits-units-casa"
+   ]
+  },
+  "floor": {
+   "status": "Implemented",
+   "scope": "Rounds a scalar quantity in its own unit, preserving CASA conversion errors.",
+   "evidence": [
+    "signature",
+    "rounding-casa"
+   ]
+  },
+  "formxxx": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "ge": {
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
+   "evidence": [
+    "signature",
+    "relational-casa"
+   ]
+  },
+  "getformat": {
+   "status": "Implemented",
+   "scope": "CASA's placeholder warns and returns 'F'; it does not change formatting.",
+   "evidence": [
+    "signature",
+    "format-placeholders-casa"
+   ]
+  },
+  "getunit": {
+   "status": "Implemented",
+   "scope": "Reads a quantity's value and unit back.",
+   "evidence": [
+    "signature",
+    "casa-values",
+    "record-complex-scalar-casa",
+    "record-complex-array-casa",
+    "bare-complex-scalar-casa",
+    "record-empty-float-vector-casa",
+    "record-zero-dimensional-casa"
+   ]
+  },
+  "getvalue": {
+   "status": "Implemented",
+   "scope": "Reads a quantity's value and unit back.",
+   "evidence": [
+    "signature",
+    "casa-values",
+    "record-empty-float-vector-casa",
+    "record-zero-dimensional-casa"
+   ]
+  },
+  "gt": {
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
+   "evidence": [
+    "signature",
+    "relational-casa"
+   ]
+  },
+  "isangle": {
+   "status": "Implemented",
+   "scope": "Tests whether a scalar quantity has angle or time dimensions, with CASA conversion errors.",
+   "evidence": [
+    "signature",
+    "isangle-casa"
+   ]
+  },
+  "isquantity": {
+   "status": "Implemented",
+   "scope": "Answers as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "le": {
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
+   "evidence": [
+    "signature",
+    "relational-casa"
+   ]
+  },
+  "log": {
+   "status": "Implemented",
+   "scope": "Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.",
+   "evidence": [
+    "signature",
+    "logarithms-casa"
+   ]
+  },
+  "log10": {
+   "status": "Implemented",
+   "scope": "Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.",
+   "evidence": [
+    "signature",
+    "logarithms-casa"
+   ]
+  },
+  "lt": {
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
+   "evidence": [
+    "signature",
+    "relational-casa"
+   ]
+  },
+  "map": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "maprec": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "mul": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "ne": {
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
+   "evidence": [
+    "signature",
+    "relational-casa"
+   ]
+  },
+  "neg": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "norm": {
+   "status": "Implemented",
+   "scope": "CASA scalar angle normalization in a one-turn range, returned in degrees.",
+   "evidence": [
+    "signature",
+    "normalize-casa"
+   ]
+  },
+  "pow": {
+   "status": "Implemented",
+   "scope": "CASA scalar integer powers, with original unit spelling, C-int narrowing, non-finite values and exponent limits.",
+   "evidence": [
+    "signature",
+    "power-casa"
+   ]
+  },
+  "quantity": {
+   "status": "Implemented",
+   "scope": "Builds quantities and quantity arrays from strings, numbers and records, as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values",
+    "record-complex-scalar-casa",
+    "record-complex-array-casa",
+    "bare-complex-scalar-casa",
+    "record-empty-float-vector-casa",
+    "record-zero-dimensional-casa"
+   ]
+  },
+  "setformat": {
+   "status": "Implemented",
+   "scope": "CASA's placeholder warns and returns False; it does not change formatting.",
+   "evidence": [
+    "signature",
+    "format-placeholders-casa"
+   ]
+  },
+  "sin": {
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
+   "evidence": [
+    "signature",
+    "trigonometry-casa"
+   ]
+  },
+  "splitdate": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "sqrt": {
+   "status": "Implemented",
+   "scope": "Scalar square root in CASA's canonical units, with dimension and quantity conversion errors.",
+   "evidence": [
+    "signature",
+    "sqrt-casa"
+   ]
+  },
+  "sub": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "tan": {
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
+   "evidence": [
+    "signature",
+    "trigonometry-casa"
+   ]
+  },
+  "time": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "toangle": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "tos": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "totime": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "type": {
+   "status": "Implemented",
+   "scope": "As CASA's.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "unit": {
+   "status": "Implemented",
+   "scope": "Builds quantities and quantity arrays from strings, numbers and records, as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  }
+ },
+ "behaviors": [],
+ "decisions": [
+  {
+   "id": "quantities-non-conforming-units",
+   "record": "The tools convert quantities whose units do not conform",
+   "inputs": "integrationtime='10Jy', integrationtime='10m' or freq='1s' passed to a simulator method; a direction string such as 'J2000 12h00m00 garbage'.",
+   "casa": "CASA 6.7.6 converts without checking conformance: '10Jy' becomes 1e-25 s, '10m' 10 s, '1s' 1 Hz, and an unreadable direction token keeps the previous value (declination 180 deg).",
+   "ours": "Refuses both with casacore's 'From/to units not consistent' or a parse error, while keeping CASA's cross-dimension conversions (number is SI, angle is time, length is frequency via c).",
+   "rationale": "Non-conforming units are almost certainly user errors and should not become silent wrong values.",
+   "impact": "Scripts with a wrong unit now stop with an error instead of running with a nonsense value.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  }
+ ],
+ "evidence": {
+  "signature": {
+   "kind": "Signature inventory",
+   "state": "recorded",
+   "scope": "CASA 6.7.6.14's methods, names and defaults, and the object-surface bundle's; not behavior.",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_quanta_signatures.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py",
+    "crates/casars-python/src/tools/quanta/surface.rs"
+   ]
+  },
+  "refusals": {
+   "kind": "Refusal test",
+   "state": "recorded",
+   "scope": "Each method casa-rs does not implement raises NotImplementedError naming #1053.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_quanta.py",
+    "crates/casars-python/src/tools/mod.rs"
+   ]
+  },
+  "casa-values": {
+   "kind": "CASA-probed values",
+   "state": "passed",
+   "result": "96 of the 131 tests pass against CASA 6.7.6.14's own qa tool: every test of a value or a raised message. The 35 others test what only casa-rs has (its refusals, bundle and import) or one message CASA writes to its own log; the receipt classifies each. casa-rs passes the same tests in CI.",
+   "scope": "Every implemented method, with CASA's messages.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool quanta (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/qa-on-casa-20261103.json"
+  },
+  "bugs-record": {
+   "kind": "Deviation record",
+   "state": "recorded",
+   "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
+   "links": [
+    "docs/CASA (C++) bugs.md"
+   ]
+  },
+  "checkfreq-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Thirty-two CASA 6.7.6-14 cases cover frequency, period, wavelength, energy, other dimensions and scalar conversion errors.",
+   "scope": "quanta.checkfreq.",
+   "links": [
+    "tools/simulation/quanta_checkfreq_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_checkfreq.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "119771e30d19558740b3b799e5bd519b1a060ba7"
+  },
+  "isangle-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Twenty-two scalar, array, record, malformed and unit cases recorded with CASA 6.7.6-14.",
+   "scope": "quanta.isangle, including angle and time dimensions and scalar conversion errors.",
+   "links": [
+    "tools/simulation/quanta_isangle_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_isangle.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "88e8c2fd7b7742de78eeb75e16164b5b40367c90"
+  },
+  "rounding-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Forty cases recorded with CASA 6.7.6-14 cover both rounding directions, scalar units, signed zero, records and errors.",
+   "scope": "quanta.ceil and quanta.floor.",
+   "links": [
+    "tools/simulation/quanta_rounding_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_rounding.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "a05f4c2dbdfdff1a6a46575c02d4c714875281c6"
+  },
+  "trigonometry-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "108 CASA 6.7.6-14 cases cover angle and dimensionless inputs, scaled units, out-of-domain results and errors for all six functions.",
+   "scope": "quanta.sin, cos, tan, asin, acos and atan.",
+   "links": [
+    "tools/simulation/quanta_trigonometry_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_trigonometry.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad"
+  },
+  "logarithms-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "57 CASA 6.7.6-14 cases cover dimensionless and scaled inputs, units, non-finite results and errors for all three functions.",
+   "scope": "quanta.exp, log and log10.",
+   "links": [
+    "tools/simulation/quanta_logarithms_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_logarithms.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "83c3308ca779c3ca84f29d47fa4203e2f7ae5a50"
+  },
+  "relational-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "168 CASA 6.7.6-14 comparisons cover units, incompatible dimensions, numeric edge cases, arrays and errors.",
+   "scope": "quanta.eq, ne, lt, le, gt and ge.",
+   "links": [
+    "tools/simulation/quanta_relational_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_relational.json",
+    "crates/casars-python/python/tests/test_quanta_relational.py"
+   ],
+   "source_revision": "1bc8a2fca31e5ac5361cf95fc12705fea6954a94"
+  },
+  "atan2-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "144 CASA 6.7.6-14 cases cover signed zero, scaled dimensionless inputs, invalid units, arrays and conversion errors.",
+   "scope": "quanta.atan2.",
+   "links": [
+    "tools/simulation/quanta_atan2_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_atan2.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "4d86ba7a97255eaafab86a745b660adc694aa3c7"
+  },
+  "sqrt-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Twenty-eight CASA 6.7.6-14 cases cover scaled, compound and illegal units, signed zero, NaN results and conversion errors.",
+   "scope": "quanta.sqrt.",
+   "links": [
+    "tools/simulation/quanta_sqrt_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_sqrt.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "8c90f0f745b09bf5a7ec439598eb4502c8ff5b3d"
+  },
+  "constants-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Fifty-one CASA 6.7.6-14 cases cover its constants, case-insensitive and ambiguous prefixes, unknown names and argument errors.",
+   "scope": "quanta.constants.",
+   "links": [
+    "tools/simulation/quanta_constants_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_constants.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "04e5d05779e6ebde034ac1b1b64ff71dea223084"
+  },
+  "power-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "113 CASA 6.7.6-14 cases cover powers, compound units, signed zero, non-finite values, exponent limits and argument errors.",
+   "scope": "quanta.pow.",
+   "links": [
+    "tools/simulation/quanta_power_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_power.json",
+    "crates/casars-python/python/tests/test_quanta_power.py"
+   ],
+   "source_revision": "e8d45e80390ed698567a28e6d13cf97578b3d92b"
+  },
+  "normalize-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "81 CASA 6.7.6-14 cases cover angular and time units, range origins, boundaries, non-finite values and argument errors.",
+   "scope": "quanta.norm.",
+   "links": [
+    "tools/simulation/quanta_normalize_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_normalize.json",
+    "crates/casars-python/python/tests/test_quanta_normalize.py"
+   ],
+   "source_revision": "53e13129e2058d0e97f8e7be3a943b9bf29d7d8c"
+  },
+  "spectral-conversion-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "215 CASA 6.7.6-14 conversions and argument cases cover supported dimensions, zero and non-finite values, incompatible units and argument errors.",
+   "scope": "quanta.convertfreq and convertdop.",
+   "links": [
+    "tools/simulation/quanta_spectral_conversion_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json",
+    "crates/casars-python/python/tests/test_quanta_spectral_conversion.py"
+   ],
+   "source_revision": "63be6c526c6fdaff7308f747d002372157a2b1bd"
+  },
+  "format-placeholders-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "28 CASA 6.7.6-14 calls cover the placeholders, text and bytes arguments, invalid types and defaults.",
+   "scope": "quanta.getformat and quanta.setformat.",
+   "links": [
+    "tools/simulation/quanta_format_placeholders_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_format_placeholders.json",
+    "crates/casars-python/python/tests/test_quanta_format_placeholders.py"
+   ],
+   "source_revision": "cc9c724bc6a5179cbfe50d8a78b88a138cede63c"
+  },
+  "record-complex-scalar-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "36 CASA 6.7.6-14 cases distinguish NumPy complex64 from complex128 and Python complex scalars with valid and invalid units.",
+   "scope": "Quantity-record scalar conversion in quanta.quantity, getunit and add.",
+   "links": [
+    "tools/casa-compat/quantity_record_complex_scalar_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_record_complex_scalar.json",
+    "crates/casars-python/python/tests/test_quanta_record_complex_scalar.py"
+   ],
+   "source_revision": "5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e"
+  },
+  "record-complex-array-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "60 CASA 6.7.6-14 quantity-record comparisons cover complex64 and complex128 arrays of different shapes and units. Ten bare-array comparisons expose CASA discarding values; casa-rs rejects those inputs instead.",
+   "scope": "Complex NumPy arrays in quanta.quantity, getunit and add.",
+   "links": [
+    "tools/casa-compat/quantity_record_complex_array_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_record_complex_array.json",
+    "crates/casars-python/python/tests/test_quanta_record_complex_array.py"
+   ],
+   "source_revision": "20e34293b366be9608b59fd036011a1ac2d1c001"
+  },
+  "bare-complex-scalar-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Nine CASA 6.7.6-14 calls compare bare Python complex, NumPy complex64, and complex128 scalars. CASA discards complex64 values, which casa-rs refuses instead.",
+   "scope": "Bare complex scalars in quanta.quantity, getunit and add.",
+   "links": [
+    "tools/casa-compat/quantity_bare_complex_scalar_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_bare_complex_scalar.json",
+    "crates/casars-python/python/tests/test_quanta_bare_complex_scalar.py"
+   ],
+   "source_revision": "0b16178dcfbe9020cf7cdd45e8deb048d0781e65"
+  },
+  "fits-units-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "CASA 6.7.6-14 comparisons cover 19 FITS aliases, prefixes and compounds before and after registration, converted values, repeat calls and a second instance.",
+   "scope": "quanta.fits and its process-wide unit registry.",
+   "links": [
+    "tools/casa-compat/quanta_fits_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_fits.json",
+    "crates/casars-python/python/tests/test_quanta_fits.py"
+   ],
+   "source_revision": "f0c42837f0d70b1404fd726397431b5a01ebdd47"
+  },
+  "record-empty-float-vector-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "56 CASA 6.7.6-14 calls compare empty NumPy vectors, element types, valid and invalid units, and scalar and array operations.",
+   "scope": "Empty quantity-record vectors in quanta.quantity, getunit, getvalue, add and convert.",
+   "links": [
+    "tools/casa-compat/quantity_record_empty_array_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quantity_record_empty_array.json",
+    "crates/casars-python/python/tests/test_quanta_record_empty_array.py"
+   ],
+   "source_revision": "a9bed31f4033c1c34490c96cef9b87889aad0f28"
+  },
+  "record-zero-dimensional-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "60 CASA 6.7.6-14 calls cover zero-dimensional floating quantity records; CASA silently replaces values with zero in quantity and convert, while casa-rs preserves them. Four bare-array observations provide a control.",
+   "scope": "Zero-dimensional float32 and float64 quantity records in quanta.quantity, getunit, getvalue, add and convert.",
+   "links": [
+    "tools/casa-compat/quantity_record_zero_dim_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quantity_record_zero_dim.json",
+    "crates/casars-python/python/tests/test_quanta_record_zero_dim.py"
+   ],
+   "source_revision": "56667e6a4ae6d0daca4ea89e2e68cac3a9d096d3"
+  },
+  "define-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "26 CASA 6.7.6-14 calls cover user definitions and redefinitions, shared instances, cached compounds, error handling, built-in overrides and FITS aliases.",
+   "scope": "quanta.define and the process-wide unit registry.",
+   "links": [
+    "tools/casa-compat/quanta_define_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_define.json",
+    "crates/casars-python/python/tests/test_quanta_define.py"
+   ],
+   "source_revision": "19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee"
+  }
+ }
+}

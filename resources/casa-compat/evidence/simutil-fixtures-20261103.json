@@ -1,0 +1,50 @@
+{
+ "schema": "casa-fixture-receipt/1",
+ "title": "simutil's helpers against CASA 6.7.6.14's simutil: pointings, directions, receivers, beams, readantenna and the sky model",
+ "work_issue": 1053,
+ "date": "2026-11-03",
+ "native_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "host": "Linux-6.18.44-fc-v230-x86_64-with-glibc2.39",
+ "fixtures": [
+  {
+   "path": "crates/casa-simulation/tests/data/simutil_casa.json",
+   "sha256": "323f452ea88b6ae9c253f7eb397ed3031d460b4528144b92ae7ae51f0a74281d",
+   "casa_version": "6.7.6-14",
+   "generator": "tools/simulation/simutil_oracle.py (CASA casatasks.private.simutil)"
+  },
+  {
+   "path": "crates/casa-simulation/tests/data/readantenna_casa.json",
+   "sha256": "64be3dc29bc58b47b41bfa109a4b4f3f67c5716e2d42f243ac5ea84aa9c58182",
+   "casa_version": "6.7.6.14",
+   "generator": "readantenna_oracle.py (CASA simutil.readantenna)"
+  },
+  {
+   "path": "crates/casa-simulation/tests/data/skymodel_casa.json.gz",
+   "sha256": "5b154f7e1edb6d00c22c6670116816853ea59bb7af6ac8c2147b4408902e6acf",
+   "casa_version": "6.7.6-14"
+  }
+ ],
+ "commands": [
+  "cargo nextest run --no-fail-fast -p casa-simulation --test simutil_casa",
+  "cargo nextest run --no-fail-fast -p casa-simulation --test readantenna_casa",
+  "cargo nextest run --no-fail-fast -p casa-simulation --test skymodel_casa"
+ ],
+ "summary": {
+  "passed": 12
+ },
+ "all_passed": true,
+ "tests": {
+  "casa-simulation::readantenna_casa casa_rs_observatory_table_agrees_with_casas": "passed",
+  "casa-simulation::readantenna_casa readantenna_agrees_with_casa": "passed",
+  "casa-simulation::simutil_casa approximate_beams_are_casas": "passed",
+  "casa-simulation::simutil_casa directions_split_average_and_wrap_as_casas": "passed",
+  "casa-simulation::simutil_casa pointing_files_read_and_write_as_casas": "passed",
+  "casa-simulation::simutil_casa pointing_lists_are_casas": "passed",
+  "casa-simulation::simutil_casa receivers_bands_and_feeds_are_casas": "passed",
+  "casa-simulation::skymodel_casa components_are_added_to_images_as_casa_adds_them": "passed",
+  "casa-simulation::skymodel_casa flatimage_collapses_as_casa_does": "passed",
+  "casa-simulation::skymodel_casa modifymodel_writes_and_returns_what_casa_does": "passed",
+  "casa-simulation::skymodel_casa the_comparator_fails_what_differs": "passed",
+  "casa-simulation::skymodel_casa the_component_only_model_is_casas": "passed"
+ }
+}

@@ -365,6 +365,7 @@ fn set_options(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
             .get("wprojplanes")
             .and_then(Value::as_i64)
             .unwrap_or(defaults.w_planes),
+        ..defaults
     })
 }
 
@@ -456,6 +457,7 @@ fn run_scenario(
     };
     // Until `settimes`, CASA's reference is the session's opening.
     let mut shift_s = time_shift_s(scenario, &options.now, &options.measures);
+    let session_started = std::time::Instant::now();
     let path = out.join(format!("{name}.ms"));
     let mut session = Some(Simulator::open(&path, options.clone()));
     let calls = scenario["calls"].as_array().expect("calls");
@@ -564,6 +566,10 @@ fn run_scenario(
     println!(
         "{name}: written in {:.2} s",
         started.elapsed().as_secs_f64()
+    );
+    println!(
+        "{name}: session completed in {:.9} s",
+        session_started.elapsed().as_secs_f64()
     );
 }
 

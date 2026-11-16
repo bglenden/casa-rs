@@ -1,0 +1,1372 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "which": 0,
+      "frame": "REST",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "REST",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "LSRK",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "LSRD",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRD",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "BARY",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "BARY",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "GEO",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "GEO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "TOPO",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "TOPO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "GALACTO",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "GALACTO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "LGROUP",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LGROUP",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "CMB",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "CMB",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "BARYCENTRIC",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "BARY",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "GEOCENTRIC",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "GEO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "TOPOCENTRIC",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "TOPO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "GALACTOCENTRIC",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "GALACTO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "lsrk",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "r",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "REST",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "baryc",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "BARY",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "ge",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "GEO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "gal",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "GALACTO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "t",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "TOPO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "lg",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LGROUP",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "c",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "CMB",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "LSRKsuffix",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "TOPO-FRAME",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "TOPO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "topo ",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "TOPO",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "l",
+      "result": false,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "lsr",
+      "result": false,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "g",
+      "result": false,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "GALAXY",
+      "result": false,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "",
+      "result": false,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": " LSRK ",
+      "result": false,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "SOURCE",
+      "result": false,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "Undefined",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "Undefined",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "u",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "Undefined",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "omit_frame": true,
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 1,
+      "frame": "TOPO",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "TOPO",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 4294967296,
+      "frame": "BARY",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "BARY",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "frame": "LSRK",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 2,
+      "frame": "LSRK",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": null,
+      "frame": "LSRK",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 9223372036854775808,
+      "frame": "LSRK",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0.0,
+      "frame": "LSRK",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": "0",
+      "frame": "LSRK",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "frame": "INVALID",
+      "result": false,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 2,
+      "frame": "INVALID",
+      "result": false,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": null,
+      "frame": "INVALID",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_setfreqframe> returned a result with an exception set"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 9223372036854775808,
+      "frame": "INVALID",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_setfreqframe> returned a result with an exception set"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "frame": "u",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 2,
+      "frame": "u",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "undefxxx",
+      "result": false,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": null,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _frame must be a string"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": 2,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _frame must be a string"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": {
+        "bytes": "BARY"
+      },
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "BARY",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "LSRK\u0000TOPO",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "BARY",
+      "log": false,
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "BARY",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "BARY",
+      "log": null,
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setfreqframe', argument 4 of type 'bool'"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "frame": "BARY",
+      "log": 1,
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setfreqframe', argument 4 of type 'bool'"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    }
+  ],
+  "table": {
+    "spectrum": {
+      "m0": {
+        "unit": "MHz",
+        "value": 1400.0
+      },
+      "refer": "BARY",
+      "type": "frequency"
+    },
+    "saved": {
+      "hz": 1400000000.0,
+      "frame": "BARY",
+      "error": 1.5,
+      "error_unit": "MHz",
+      "raw": {
+        "m0": {
+          "unit": "MHz",
+          "value": 1400.0
+        },
+        "refer": "BARY",
+        "type": "frequency"
+      }
+    },
+    "reopened": {
+      "m0": {
+        "unit": "GHz",
+        "value": 1.4000000000000001
+      },
+      "refer": "BARY",
+      "type": "frequency"
+    }
+  }
+}

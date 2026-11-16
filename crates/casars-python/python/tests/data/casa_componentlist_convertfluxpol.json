@@ -1,0 +1,1971 @@
+{
+  "casatools": "6.7.6-14",
+  "before": [
+    {
+      "pol": "Stokes",
+      "values": [
+        [
+          5.0,
+          0.0
+        ],
+        [
+          2.0,
+          0.0
+        ],
+        [
+          3.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0
+        ]
+      ],
+      "errors": [
+        [
+          0.1,
+          0.02
+        ],
+        [
+          0.2,
+          0.03
+        ],
+        [
+          0.3,
+          0.04
+        ],
+        [
+          0.4,
+          0.05
+        ]
+      ],
+      "label": "stokes",
+      "direction_error": [
+        0.001,
+        0.002
+      ],
+      "keyword": 17
+    },
+    {
+      "pol": "Linear",
+      "values": [
+        [
+          4.0,
+          2.0
+        ],
+        [
+          3.0,
+          4.0
+        ],
+        [
+          1.0,
+          -2.0
+        ],
+        [
+          2.0,
+          -1.0
+        ]
+      ],
+      "errors": [
+        [
+          0.1,
+          0.02
+        ],
+        [
+          0.2,
+          0.03
+        ],
+        [
+          0.3,
+          0.04
+        ],
+        [
+          0.4,
+          0.05
+        ]
+      ],
+      "label": "linear",
+      "direction_error": [
+        0.0,
+        0.0
+      ],
+      "keyword": 17
+    },
+    {
+      "pol": "Circular",
+      "values": [
+        [
+          7.0,
+          1.0
+        ],
+        [
+          2.0,
+          3.0
+        ],
+        [
+          -1.0,
+          4.0
+        ],
+        [
+          1.0,
+          -2.0
+        ]
+      ],
+      "errors": [
+        [
+          0.1,
+          0.02
+        ],
+        [
+          0.2,
+          0.03
+        ],
+        [
+          0.3,
+          0.04
+        ],
+        [
+          0.4,
+          0.05
+        ]
+      ],
+      "label": "circular",
+      "direction_error": [
+        0.0,
+        0.0
+      ],
+      "keyword": 17
+    }
+  ],
+  "cases": [
+    {
+      "which": 0,
+      "target": "Stokes",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              5.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0
+            ],
+            [
+              3.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              4.0,
+              2.0
+            ],
+            [
+              3.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              2.0,
+              -1.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              7.0,
+              1.0
+            ],
+            [
+              2.0,
+              3.0
+            ],
+            [
+              -1.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "target": "Linear",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              7.0,
+              0.0
+            ],
+            [
+              3.0,
+              1.0
+            ],
+            [
+              3.0,
+              -1.0
+            ],
+            [
+              3.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              4.0,
+              2.0
+            ],
+            [
+              3.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              2.0,
+              -1.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              7.0,
+              1.0
+            ],
+            [
+              2.0,
+              3.0
+            ],
+            [
+              -1.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "target": "Circular",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              6.0,
+              0.0
+            ],
+            [
+              2.0,
+              3.0
+            ],
+            [
+              2.0,
+              -3.0
+            ],
+            [
+              4.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              4.0,
+              2.0
+            ],
+            [
+              3.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              2.0,
+              -1.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              7.0,
+              1.0
+            ],
+            [
+              2.0,
+              3.0
+            ],
+            [
+              -1.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": 1,
+      "target": "Stokes",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              5.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0
+            ],
+            [
+              3.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              3.0,
+              0.5
+            ],
+            [
+              1.0,
+              1.5
+            ],
+            [
+              2.0,
+              1.0
+            ],
+            [
+              3.0,
+              -1.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              7.0,
+              1.0
+            ],
+            [
+              2.0,
+              3.0
+            ],
+            [
+              -1.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": 1,
+      "target": "Linear",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              5.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0
+            ],
+            [
+              3.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              4.0,
+              2.0
+            ],
+            [
+              3.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              2.0,
+              -1.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              7.0,
+              1.0
+            ],
+            [
+              2.0,
+              3.0
+            ],
+            [
+              -1.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": 1,
+      "target": "Circular",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              5.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0
+            ],
+            [
+              3.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              6.0,
+              -0.5
+            ],
+            [
+              0.0,
+              3.5
+            ],
+            [
+              2.0,
+              -0.5
+            ],
+            [
+              0.0,
+              1.5
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              7.0,
+              1.0
+            ],
+            [
+              2.0,
+              3.0
+            ],
+            [
+              -1.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": 2,
+      "target": "Stokes",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              5.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0
+            ],
+            [
+              3.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              4.0,
+              2.0
+            ],
+            [
+              3.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              2.0,
+              -1.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              4.0,
+              -0.5
+            ],
+            [
+              0.5,
+              3.5
+            ],
+            [
+              -0.5,
+              -1.5
+            ],
+            [
+              3.0,
+              1.5
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": 2,
+      "target": "Linear",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              5.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0
+            ],
+            [
+              3.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              4.0,
+              2.0
+            ],
+            [
+              3.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              2.0,
+              -1.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              4.5,
+              3.0
+            ],
+            [
+              -2.0,
+              1.5
+            ],
+            [
+              1.0,
+              -4.5
+            ],
+            [
+              3.5,
+              -4.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": 2,
+      "target": "Circular",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              5.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0
+            ],
+            [
+              3.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              4.0,
+              2.0
+            ],
+            [
+              3.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              2.0,
+              -1.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              7.0,
+              1.0
+            ],
+            [
+              2.0,
+              3.0
+            ],
+            [
+              -1.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "target": "Stokes",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              5.0,
+              0.0
+            ],
+            [
+              2.0,
+              0.0
+            ],
+            [
+              3.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              3.0,
+              0.5
+            ],
+            [
+              1.0,
+              1.5
+            ],
+            [
+              2.0,
+              1.0
+            ],
+            [
+              3.0,
+              -1.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Stokes",
+          "values": [
+            [
+              4.0,
+              -0.5
+            ],
+            [
+              0.5,
+              3.5
+            ],
+            [
+              -0.5,
+              -1.5
+            ],
+            [
+              3.0,
+              1.5
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "target": "Linear",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              7.0,
+              0.0
+            ],
+            [
+              3.0,
+              1.0
+            ],
+            [
+              3.0,
+              -1.0
+            ],
+            [
+              3.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              4.0,
+              2.0
+            ],
+            [
+              3.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ],
+            [
+              2.0,
+              -1.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Linear",
+          "values": [
+            [
+              4.5,
+              3.0
+            ],
+            [
+              -2.0,
+              1.5
+            ],
+            [
+              1.0,
+              -4.5
+            ],
+            [
+              3.5,
+              -4.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "target": "Circular",
+      "result": true,
+      "cells": [
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              6.0,
+              0.0
+            ],
+            [
+              2.0,
+              3.0
+            ],
+            [
+              2.0,
+              -3.0
+            ],
+            [
+              4.0,
+              0.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "stokes",
+          "direction_error": [
+            0.001,
+            0.002
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              6.0,
+              -0.5
+            ],
+            [
+              0.0,
+              3.5
+            ],
+            [
+              2.0,
+              -0.5
+            ],
+            [
+              0.0,
+              1.5
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "linear",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        },
+        {
+          "pol": "Circular",
+          "values": [
+            [
+              7.0,
+              1.0
+            ],
+            [
+              2.0,
+              3.0
+            ],
+            [
+              -1.0,
+              4.0
+            ],
+            [
+              1.0,
+              -2.0
+            ]
+          ],
+          "errors": [
+            [
+              0.1,
+              0.02
+            ],
+            [
+              0.2,
+              0.03
+            ],
+            [
+              0.3,
+              0.04
+            ],
+            [
+              0.4,
+              0.05
+            ]
+          ],
+          "label": "circular",
+          "direction_error": [
+            0.0,
+            0.0
+          ],
+          "keyword": 17
+        }
+      ]
+    }
+  ],
+  "arguments": [
+    {
+      "args": [
+        0
+      ],
+      "result": true,
+      "polarisation": "Stokes"
+    },
+    {
+      "args": [
+        0,
+        "linear"
+      ],
+      "result": true,
+      "polarisation": "Linear"
+    },
+    {
+      "args": [
+        0,
+        "LIN"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unknown polarization."
+      },
+      "polarisation": "Stokes"
+    },
+    {
+      "args": [
+        0,
+        ""
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unknown polarization."
+      },
+      "polarisation": "Stokes"
+    },
+    {
+      "args": [
+        0,
+        null
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _polarization must be a string"
+      },
+      "polarisation": "Stokes"
+    },
+    {
+      "args": [
+        0,
+        3
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _polarization must be a string"
+      },
+      "polarisation": "Stokes"
+    },
+    {
+      "args": [
+        3,
+        "bad"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Index out of range."
+      },
+      "polarisation": "Stokes"
+    },
+    {
+      "args": [
+        -2,
+        "bad"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Index out of range."
+      },
+      "polarisation": "Stokes"
+    },
+    {
+      "args": [
+        0,
+        "bad"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unknown polarization."
+      },
+      "polarisation": "Stokes"
+    },
+    {
+      "args": [
+        null,
+        "linear"
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertfluxpol> returned a result with an exception set"
+      },
+      "polarisation": "Linear"
+    },
+    {
+      "args": [
+        1267650600228229401496703205376,
+        "linear"
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertfluxpol> returned a result with an exception set"
+      },
+      "polarisation": "Linear"
+    },
+    {
+      "args": [
+        4294967296,
+        "circular"
+      ],
+      "result": true,
+      "polarisation": "Circular"
+    }
+  ],
+  "empty_all_returncode": -11
+}

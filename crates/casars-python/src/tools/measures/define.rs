@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The measures a script defines: `me.epoch`, `me.direction`,
-//! `me.position`, `me.frequency`, `me.observatory` and `me.source`, as
-//! casatools' `measures_cmpt.cc` builds them.
+//! `me.position`, `me.frequency`, `me.observatory`, `me.source` and
+//! `me.spectralline`, as casatools' `measures_cmpt.cc` builds them.
 //!
 //! The values are read by the tool's own `casaQuantityFromVar`, not the
 //! `casaQuantity` other tools use: it reads strings and quantity records,
@@ -283,23 +283,44 @@ pub(super) fn frequency(
 }
 
 /// `me.observatory(name)`: the observatory table's position, in its
-/// tabulated frame.
-///
-/// Divergence: the name must match a table entry, ignoring case; casacore
-/// also accepts a unique prefix (`me.observatory('ATC')` is ATCA), which
-/// the measures data provider cannot answer.
+/// tabulated frame. The name finds its entry as casacore's `MeasTable`
+/// finds it: ignoring case, or by a unique prefix (`me.observatory('ATC')`
+/// is ATCA).
 pub(super) fn observatory(
     name: &str,
     measures: &dyn MeasuresProvider,
     lines: &mut Vec<LogLine>,
 ) -> CasaValue {
-    match MPosition::from_observatory_name(name.trim(), measures) {
+    match MPosition::from_observatory_name(name, measures) {
         Ok(Some(position)) => {
             let position = crate::convert::holder::CasaMeasure::Position(position);
             Measure::from_casa(&position).to_value()
         }
         Ok(None) => {
             lines.push(LogLine::error("Unknown observatory asked for"));
+            failed()
+        }
+        Err(error) => exception(lines, error),
+    }
+}
+
+/// `me.spectralline(name)`: the line's rest frequency, as casacore's
+/// `MeasTable::Line` finds it by name and gives it.
+pub(super) fn spectralline(
+    name: &str,
+    measures: &dyn MeasuresProvider,
+    lines: &mut Vec<LogLine>,
+) -> CasaValue {
+    match measures.spectral_line_hz(name) {
+        Ok(Some(hz)) => Measure {
+            refer: FREQUENCY_CODES
+                .resolve("REST")
+                .expect("REST is a frequency code"),
+            value: MeasureValue::Frequency(hz),
+        }
+        .to_value(),
+        Ok(None) => {
+            lines.push(LogLine::error("Unknown spectral line asked for"));
             failed()
         }
         Err(error) => exception(lines, error),

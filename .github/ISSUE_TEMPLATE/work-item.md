@@ -29,22 +29,17 @@ Relevant behavior, constraints, evidence, and context.
 - [ ] Integration or contract:
 - [ ] Performance / UX expectation, if relevant:
 
-## Stop conditions
+## Unfinished work
 
-- Stop and ask before:
-- Stop and split the work if:
-
-## Scope-change rule
-
-Once approved, the outcome, included issues, and acceptance checks must not be
-reduced, deferred, or moved out of scope without explicit user signoff recorded
-here and in the pull request. Follow-up issues remain appropriate for newly
-discovered adjacent work.
+Acceptance checks are not weakened. Work that cannot be finished stays open
+here, stated in a comment, or moves to a linked follow-up issue; no pull
+request claims it. Agents stop only for the items `AGENTS.md` lists; every
+other choice is recorded on the pull request for the owner to read later.
 
 ## Closeout
 
 Implemented:
 Changed from plan:
-Approved-scope deferrals and user signoff:
+Left open or moved:
 Verification and acceptance evidence:
 Pull request:

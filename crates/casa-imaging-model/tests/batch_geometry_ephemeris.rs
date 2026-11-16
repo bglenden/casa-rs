@@ -2,14 +2,16 @@
 //! Batch geometry of fields that follow an ephemeris (#942), on a small
 //! hand-made observation: each time's field direction is the body's seen
 //! from the observatory, offset by the field's phase centre; `TRACKFIELD`
-//! and an ephemeris table move the phase centre with a body; and the
-//! body's radial velocity takes frequencies into the rest frame.
+//! and an ephemeris table move the phase centre with a body, and a
+//! mosaic's pointings with it; and the body's radial velocity takes
+//! frequencies into the rest frame.
 
 use std::sync::Arc;
 
 use casa_imaging_model::{
-    BatchGeometry, BatchGeometryError, CompiledProblem, FacetLayout, FrequencyFrame, GeometryPlan,
-    GeometryTraversal, GridFtProjection, PhaseCentreLaw, PsfPhaseCentreLaw,
+    BatchGeometry, BatchGeometryError, CompiledProblem, DirectionFrame, FacetLayout,
+    FrequencyFrame, GeometryPlan, GeometryTraversal, GridFtProjection, PhaseCentreLaw,
+    PsfPhaseCentreLaw,
 };
 use casa_observation::{BatchBuffers, Catalogue, FieldEphemeris};
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -27,7 +29,7 @@ mod model_lifecycle_fixture;
 
 use batch_observation::{
     MJD_DAYS, REFERENCE, UVW_M, catalogue, catalogue_in, fill, j2000, measures, problem,
-    problem_framed,
+    problem_framed, problem_mosaic,
 };
 
 /// The field's phase centre: its offset from the body.
@@ -260,6 +262,78 @@ fn rest_frequencies_take_the_bodys_radial_velocity() {
         (expected / 1.4e9 - 1.0).abs() > 1.0e-5,
         "the velocity shifts the frequency: {expected}"
     );
+}
+
+/// Under the mosaic law, `TRACKFIELD` places each row's pointing (its
+/// field's direction, the body offset by the field's phase centre) on an
+/// ICRS image less the body's motion since the image's epoch, as `MosaicFT`
+/// hands it to CASA's `SimplePBConvFunc::toPix`: a field keeps its place
+/// beside the body however far the body moves. A fixed J2000 mosaic takes
+/// the pointing as it is.
+#[test]
+fn a_tracked_mosaic_places_each_pointing_beside_the_body_on_the_image() {
+    // About 4.6 arcsec of motion between the fixture's times, 10 s apart.
+    let comet = body("comet", 0.1);
+    let catalogue = following(&catalogue(j2000(0.9, -0.45), 1), &comet);
+    let tracking = problem_mosaic(
+        PhaseCentreLaw::Ephemeris("TRACKFIELD".to_string()),
+        DirectionFrame::Icrs,
+    );
+    let geometry = apply(&tracking, &catalogue, None, 2).expect("batch geometry");
+    let frame = frame_at(&catalogue, 0);
+    let in_frame = |angles: [f64; 2], from: DirectionRef, to: DirectionRef| {
+        let (longitude, latitude) = MDirection::from_angles(angles[0], angles[1], from)
+            .convert_to(to, &frame)
+            .expect("a frame conversion")
+            .as_angles();
+        [longitude, latitude]
+    };
+    let anchor = in_frame(REFERENCE, DirectionRef::ICRS, DirectionRef::J2000);
+    let mut placed = Vec::new();
+    for time in 0..2 {
+        let body = body_direction(&catalogue, &comet, time);
+        let field = offset_true_angle(&body, OFFSET_RAD).expect("the offset direction");
+        let (body, field) = (body.as_angles(), field.as_angles());
+        let beside = [
+            field.0 - (body.0 - anchor[0]),
+            field.1 - (body.1 - anchor[1]),
+        ];
+        let expected = in_frame(beside, DirectionRef::J2000, DirectionRef::ICRS);
+        for sample in 3 * time..3 * (time + 1) {
+            let pointing = geometry
+                .chart_pointing(sample, 0)
+                .expect("a placed pointing");
+            assert_eq!(pointing.frame(), DirectionFrame::Icrs);
+            let error = (pointing.longitude_rad() - expected[0])
+                .abs()
+                .max((pointing.latitude_rad() - expected[1]).abs());
+            assert!(
+                error <= 1.0e-12,
+                "time {time}: {pointing:?} against {expected:?}"
+            );
+        }
+        placed.push((geometry.chart_pointing(3 * time, 0).expect("placed"), body));
+    }
+    let [(first, body0), (second, body1)] = [placed[0], placed[1]];
+    let moved = (body1.0 - body0.0).hypot(body1.1 - body0.1);
+    let wandered = (second.longitude_rad() - first.longitude_rad())
+        .hypot(second.latitude_rad() - first.latitude_rad());
+    assert!(moved > 1.0e-5, "the body moves {moved} rad");
+    assert!(
+        wandered < 1.0e-4 * moved,
+        "the pointing wanders {wandered} rad"
+    );
+
+    let fixed = problem_mosaic(
+        PhaseCentreLaw::Fixed(casa_imaging_model::SkyDirection::new(
+            DirectionFrame::J2000,
+            REFERENCE[0],
+            REFERENCE[1],
+        )),
+        DirectionFrame::J2000,
+    );
+    let geometry = apply(&fixed, &catalogue, None, 1).expect("batch geometry");
+    assert_eq!(geometry.chart_pointing(0, 0), None);
 }
 
 /// What a moving field or centre cannot be evaluated with is refused:

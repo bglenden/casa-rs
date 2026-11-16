@@ -1,40 +1,13 @@
 # Performance Tooling
 
-This directory holds reusable performance-analysis tooling for the repository.
+Performance-analysis tools, one directory per feature:
 
-## Layout
+- `imager/`: CASA `tclean` versus `casars-imager` benchmarks, workload
+  manifests, evidence and the performance ledger (`imager/README.md`).
+- `calibrate/`: `calibrate` apply-path tracing and its report script
+  (`calibrate/README.md`).
 
-- `calibrate/`
-  - `README.md`: apply-path tracing and analysis notes
-  - `report.py`: JSONL-to-summary report script
-- `imager/`
-  - `README.md`: MeasurementSet-backed imaging benchmark notes
-  - `run_workload.py`: manifest-driven CASA C++ versus `casa-rs` benchmark
-    wrapper
-  - `workloads/`: checked-in workload manifests
-- `imexplore/`
-  - `README.md`: feature-specific tracing and analysis notes
-  - `report.py`: JSONL-to-summary report script
-
-## Conventions
-
-- Runtime code emits structured traces into `/tmp` by default, or into the path
-  selected by feature-specific environment variables.
-- JSONL is the source of truth for post-run analysis.
-- Human-readable `.log` files are convenience summaries.
-- New performance features should live under `tools/perf/<feature>/`.
-- Shared parsing helpers can be added later under `tools/perf/common/` when more
-  than one feature needs them.
-
-## Why This Exists
-
-System profilers can tell us where CPU time is spent, but they do not know
-feature-specific semantics such as:
-
-- which movie frame was requested
-- whether a frame was dropped or skipped
-- whether the plane came from a cache hit or a miss
-- how browser, backend, render, and present latency split for one frame
-
-That semantic layer belongs in app-owned traces. Once it exists, system tools
-such as Instruments or `sample` can still be used alongside it.
+Runtime code writes structured JSONL traces, which are the source of truth for
+analysis; `.log` files are convenience summaries. Profilers such as
+Instruments or `sample` complement these traces but cannot say what a run
+was doing.

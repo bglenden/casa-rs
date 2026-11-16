@@ -20,28 +20,82 @@ use casa_types::measures::{
 /// action can cause is a bug and panics with the invariant it broke.
 #[derive(Debug, thiserror::Error)]
 pub enum PrepareError {
+    /// The initial MVC execution cannot honour this run's controls yet.
+    #[error(
+        "MVC supports fresh imaging, or standard-gridder CLEAN continuation with a recalculated residual or both saved PSF and residual, from one selected MeasurementSet with LSRK coordinates, up to two fields for squinted AWP2 or one field for the other modes, no model-column or virtual-model writes, and a user box or full mask; cleaning requires nsigma=0 and spatial-only user boxes (#1069)"
+    )]
+    MvcExecutionUnsupported,
+    /// The additional MVC view is not yet bounded for this configuration.
+    #[error(
+        "MVC supports one fixed-centre Stokes I domain and two Taylor terms, with natural weighting for a single standard or W-projection facet, a flat-noise mosaic or AW projection, or unsquinted zero-W AWP2, or uniform weighting for squinted AWP2 (#1069, #1071)"
+    )]
+    MvcViewUnsupported,
+    /// CASA MVC could not choose enough output channels for its Taylor terms.
+    #[error("invalid MVC cube depth: {reason} (#1069)")]
+    MvcCubeDepth {
+        /// The invalid band or channel count.
+        reason: &'static str,
+    },
+    /// The selected observation falls outside the initial AWP2 branch.
+    #[error(
+        "AWP2 currently requires fixed VLA or EVLA fields and L-band TOPO data from one MeasurementSet, with one continuum window, single-channel windows for multi-window MT-MFS, or nearest interpolation for a cube that includes multichannel windows (#1071)"
+    )]
+    Awp2Selection,
+    /// AWPLPG would evaluate a buffer with no valid cross-row at MJD zero.
+    #[error(
+        "AWP2 squint with an integration that has no unflagged cross-correlation uses an MJD-zero PA in CASA and is unsupported (#1071)"
+    )]
+    Awp2FlaggedPaEpoch,
+    /// The required physical dish surface could not be located.
+    #[error(
+        "AWP2 needs the VLA dish surface: supply evla_surface or install VLA.surface under ~/.casa/data/nrao/VLA/"
+    )]
+    Awp2SurfacePath,
+    /// Existing products require CASA restart, which is not implemented yet.
+    #[error(
+        "existing image product {path:?}: this CASA restart configuration is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel"
+    )]
+    ExistingImageProduct {
+        /// The occupied scientific product path.
+        path: PathBuf,
+    },
+    /// The existing image cannot be reused under the requested continuation.
+    #[error("cannot restart from {path:?}: {reason}; previous products were preserved (#944)")]
+    Restart {
+        /// Existing product.
+        path: PathBuf,
+        /// Incompatible request or image header.
+        reason: String,
+    },
+    /// The output namespace could not be inspected before a run.
+    #[error("cannot inspect output directory {path:?}: {source}")]
+    InspectOutputDirectory {
+        /// The directory containing the output prefix.
+        path: PathBuf,
+        /// The filesystem failure.
+        source: std::io::Error,
+    },
     /// The MeasurementSet, or one of its subtables or columns, could not be
     /// read.
     #[error(transparent)]
     MeasurementSet(#[from] casa_ms::MsError),
-    /// The resource policy leaves too little memory for compile's walks of
-    /// the MeasurementSet's rows.
+    /// The resource policy leaves too little memory for opening the
+    /// observation or compile's survey of it.
     #[error(transparent)]
     Admission(#[from] casa_imaging_runtime::Admission),
-    /// The selected rows are not in ascending MAIN order or name a data
-    /// description twice out of sequence.
+    /// The selection cannot be read through the observation's partitions.
     #[error(transparent)]
-    SelectedRows(#[from] casa_imaging_model::SelectedRowSequenceError),
-    /// The selected observation could not be resolved against its
-    /// MeasurementSet.
+    Partitions(#[from] super::PartitionSelectionError),
+    /// The MeasurementSet could not be opened as an observation: a store
+    /// the observation boundary refuses, or rows its grids cannot hold.
     #[error(transparent)]
-    Resolution(#[from] casa_ms::ObservationOwnerError),
+    Opening(#[from] casa_observation::ObservationError),
     /// The resolved observation could not be compiled.
     #[error(transparent)]
     Observation(#[from] casa_imaging_model::CompileObservationError),
     /// A named, external or attached ephemeris could not be bound.
     #[error(transparent)]
-    Ephemeris(#[from] casa_ms::SelectedObservationEphemerisError),
+    Ephemeris(#[from] casa_ms::PhaseCentreEphemerisError),
     /// A direction could not be converted between frames.
     #[error(transparent)]
     Measures(#[from] casa_types::measures::MeasureError),
@@ -56,6 +110,20 @@ pub enum PrepareError {
     /// direction-dependent image response, or controls they cannot apply.
     #[error(transparent)]
     ImageResponse(#[from] casa_imaging_products::ProductsError),
+    /// The supplied CASA VPManager table did not provide a supported beam.
+    #[error("tclean vptable: {0}")]
+    VoltagePattern(#[from] casa_ms::voltage_pattern::VoltagePatternError),
+    /// A saved COMMONPB entry follows a different beam law from an absent table.
+    #[error("tclean vptable: saved built-in beam for {telescope} is unsupported (#1307)")]
+    SavedCommonBeam {
+        /// Telescope whose saved default selects COMMONPB.
+        telescope: String,
+    },
+    /// A supplied joint-mosaic beam is admitted for one EVLA store.
+    #[error(
+        "tclean vptable: joint mosaic accepts a supplied circular beam for one EVLA MeasurementSet (#1307)"
+    )]
+    SavedMosaicBeamScope,
     /// `pblimit` is outside the primary-beam validity contract.
     #[error(transparent)]
     PrimaryBeamValidity(#[from] casa_imaging_model::ProductValidityPolicyError),
@@ -81,26 +149,73 @@ pub enum PrepareError {
         /// The output both domains name.
         path: PathBuf,
     },
-    /// The selection names no MAIN row.
-    #[error("selection resolved to no rows")]
-    NoSelectedRows,
-    /// The `spw` or `ddid` selection names no data description.
-    #[error("selection resolved to no data descriptions")]
-    NoSelectedDataDescriptions,
-    /// A requested `DATA_DESC_ID` is negative or binds a negative
-    /// spectral-window or polarization id.
+    /// The selection holds no sample.
+    #[error("selection resolved to no samples")]
+    NoSelectedSamples,
+    /// A stage that images one MeasurementSet was given several.
+    #[error(
+        "{stage} images one MeasurementSet; several ({count}) are not implemented by casa-rs \
+         yet (#980)"
+    )]
+    SeveralMeasurementSets {
+        /// The stage.
+        stage: &'static str,
+        /// The MeasurementSets imaged.
+        count: usize,
+    },
+    /// A continuum `reffreq` with an `outframe` other than LSRK: CASA
+    /// converts the header's reference to LSRK for gridding and Taylor
+    /// expansion through the image's frame conversion, which casa-rs does
+    /// not yet do for a given reference.
+    #[error(
+        "reffreq with outframe={outframe:?} is not implemented by casa-rs yet (#980): give \
+         outframe='LSRK' or no reffreq"
+    )]
+    ReferenceFrequencyOutsideLsrk {
+        /// The requested output frame.
+        outframe: casa_types::measures::frequency::FrequencyRef,
+    },
+    /// A `timerange` selects an MSv4 processing set's times: CASA's time
+    /// grammar takes a partial time's defaults from the first MAIN row the
+    /// other selections select, which an MSv4 has no counterpart of.
+    #[error(
+        "timerange is not implemented for an MSv4 processing set (#980): CASA's time \
+         selection takes its defaults from MeasurementSet MAIN rows"
+    )]
+    TimeRangeWithoutMainRows,
+    /// A `ddid` selection names a data description of an observation that
+    /// has none: an MSv4 processing set.
+    #[error("DATA_DESC_ID {ddid} is selected, but the observation has no data descriptions")]
+    NoDataDescriptions {
+        /// The data description.
+        ddid: i32,
+    },
+    /// An `intent` selector selects no observing mode: a pattern no mode
+    /// matches, or a state number the observation has no state for.
+    #[error("the intent selection {selector:?} matches no observing mode")]
+    UnmatchedIntent {
+        /// The selector, or the whole selection when it selects nothing.
+        selector: String,
+    },
+    /// An acquired sample has unusable coordinates; padding is excluded
+    /// using the store's acquisition index, not coordinate finiteness.
+    #[error(
+        "non-finite UVW in partition {partition} at time {time_mjd_seconds} on baseline {antennas:?}"
+    )]
+    NonFiniteUvw {
+        /// The observation partition.
+        partition: u32,
+        /// Seconds from MJD zero in the partition's time scale.
+        time_mjd_seconds: f64,
+        /// Catalogue antenna identifiers.
+        antennas: [u32; 2],
+    },
+    /// A requested `DATA_DESC_ID` is not a `DATA_DESCRIPTION` row, or binds
+    /// a negative spectral-window or polarization id.
     #[error("DATA_DESC_ID {ddid} does not bind a spectral window and polarization")]
     InvalidDataDescription {
         /// The data description.
         ddid: i32,
-    },
-    /// A selected MAIN row holds a negative id.
-    #[error("selected MAIN rows hold a negative {column} ({value})")]
-    NegativeMainId {
-        /// The MAIN column.
-        column: &'static str,
-        /// The stored value.
-        value: i32,
     },
     /// `channel_start` and `channel_count` select no channel, or run past
     /// the window's last channel.
@@ -126,25 +241,72 @@ pub enum PrepareError {
         /// The requested channel.
         channel: usize,
     },
+    /// A source-frame cube with a per-channel density: CASA pads its
+    /// density axis by the swing it estimates in the source's frame
+    /// (`BriggsCubeWeightor::estimateSwingChanPad` with the ephemeris),
+    /// which casa-rs does not yet.
+    #[error(
+        "a per-channel density weighting (perchanweightdensity=True with uniform or Briggs \
+         weighting) of a source-frame cube (specmode cubesource) is not implemented by casa-rs \
+         yet (#980)"
+    )]
+    SourceFrameCubeDensity,
+    /// The verified moving-source AW density scope.
+    #[error(
+        "Briggs and uniform AW density on a source-frame cube require one TOPO field, \
+         cubic interpolation, perchanweightdensity=True and no uv taper (#1121)"
+    )]
+    RestAwCubeDensity,
+    /// A sky polygon vertex could not be projected onto the output image.
+    #[error("mask: cannot project a sky polygon vertex onto the image: {source}")]
+    MaskPolygonProjection {
+        /// The coordinate error.
+        #[source]
+        source: casa_coordinates::CoordinateError,
+    },
+    /// The mask polygon has an invalid shape or unpaired scanline crossings.
+    #[error("mask: the sky polygon does not form a finite closed region")]
+    MaskPolygon,
+    /// A CRTF region's spectral range has an end that is not a finite pixel
+    /// on the image's spectral axis.
+    #[error("mask: the spectral range {range:?} has no finite pixel on the image's axis")]
+    MaskRange {
+        /// The range.
+        range: crate::SpectralMaskRange,
+    },
     /// The cube's output frequency increment is zero or not finite.
     #[error("cube output frequency increment must be finite and non-zero (got {increment_hz} Hz)")]
     CubeIncrement {
         /// The derived increment.
         increment_hz: f64,
     },
+    /// An optical-velocity request outside the supported gridding combinations.
+    #[error("optical velocity requires an LSRK cube with standard gridding (#1096)")]
+    OpticalVelocityGrid,
+    /// A constant spectral coordinate cannot pair with these cube controls.
+    #[error("a one-entry optical frequency table requires a single image plane (#1096)")]
+    DegenerateOpticalCube,
     /// The cube asks for a Doppler convention native imaging has no law for.
     #[error("cube Doppler convention {convention} is not supported")]
     UnsupportedDoppler {
         /// The convention.
         convention: DopplerRef,
     },
-    /// A selected spectral window's `MEAS_FREQ_REF` is not a frequency frame.
-    #[error("SPW {spw_id} has an unknown frequency frame code {code}")]
-    UnknownSourceFrame {
+    /// A selected spectral window's axis does not describe channels.
+    #[error(
+        "SPW {spw_id}'s channel frequencies are not all finite and positive, or its first \
+         channel width is zero or not finite"
+    )]
+    SpectralWindowCoordinates {
         /// The spectral window.
         spw_id: usize,
-        /// The stored `MEAS_FREQ_REF`.
-        code: i32,
+    },
+    /// A continuum run's selected channels convert to no finite LSRK
+    /// interval.
+    #[error("the selected channels span no finite LSRK interval ({edges_hz:?} Hz)")]
+    SpectralEnvelope {
+        /// The edges they convert to.
+        edges_hz: [f64; 2],
     },
     /// The selected spectral windows are stored in different frames.
     #[error("selected spectral windows use different source frequency frames")]
@@ -169,6 +331,16 @@ pub enum PrepareError {
         /// The number selected.
         selected: usize,
     },
+    /// A source-frame cube (`specmode='cubesource'`) over several spectral
+    /// windows, which casa-rs has not ported from CASA yet.
+    #[error(
+        "a source-frame cube (specmode cubesource) over several spectral windows ({selected} \
+         are selected) is not implemented by casa-rs yet (#1059)"
+    )]
+    SourceFrameCubeWindows {
+        /// The number selected.
+        selected: usize,
+    },
     /// `fitspw` does not name exactly the selected spectral window.
     #[error("continuum fit selector must name exactly the selected spectral window")]
     ContinuumFitWindow,
@@ -186,9 +358,9 @@ pub enum PrepareError {
         /// The selected fields.
         selected: BTreeSet<i32>,
     },
-    /// `phasecenter` is not `J2000 lon lat`.
+    /// `phasecenter` is not a supported fixed-frame longitude/latitude literal.
     #[error(
-        "phasecenter {text:?} must be 'J2000 lon lat', for example 'J2000 19:59:28.500 +40.44.01.50'"
+        "phasecenter {text:?} must give a supported frame and two angles, for example 'J2000 19:59:28.500 +40.44.01.50'"
     )]
     PhaseCentreSyntax {
         /// The given text.
@@ -200,16 +372,31 @@ pub enum PrepareError {
         /// The given angle.
         angle: String,
     },
+    /// One native channel does not constrain a moving mosaic's Taylor slope.
+    #[error(
+        "psfphasecenter for a tracked Taylor mosaic requires more than one selected native channel (#1062)"
+    )]
+    MovingTaylorPsfSingleChannel,
+    /// Separate PSF views must have one channel for each main image plane.
+    #[error("psfphasecenter gives {psf} cube channels for {main} main image channels (#1062)")]
+    AlternatePsfChannelCount {
+        /// Channels in the main image.
+        main: usize,
+        /// Channels in the alternate PSF.
+        psf: usize,
+    },
     /// A moving source's fields are only partly attached to ephemerides.
     #[error("moving-source selection mixes FIELD rows with and without attached ephemerides")]
     MixedEphemerisFields,
     /// A source-frame cube needs an ephemeris phase centre.
     #[error("source-frame cube imaging requires a moving phase centre")]
     MovingPhaseCentre,
-    /// An analytic primary beam for a moving phase centre: CASA shifts each
-    /// field's beam with the source (`SynthesisImagerVi2::getMovingDirection`),
-    /// which casa-rs does not.
-    #[error("write_pb and pbcor need a fixed phase centre with the standard and wproject gridders")]
+    /// An analytic primary beam for a field that follows an ephemeris under
+    /// a fixed phase centre, where CASA's `makePrimaryBeam` tracks no beam.
+    #[error(
+        "write_pb and pbcor need a moving phase centre for a field that follows an ephemeris, \
+         with the standard and wproject gridders"
+    )]
     MovingAnalyticPrimaryBeam,
     /// An analytic primary beam for a field whose `PHASE_DIR` polynomial
     /// has a nonzero rate term: CASA evaluates it at the field's first
@@ -253,12 +440,6 @@ pub enum PrepareError {
     /// The MeasurementSet has neither `CORRECTED_DATA` nor `DATA`.
     #[error("MS has neither CORRECTED_DATA nor DATA")]
     NoVisibilityColumn,
-    /// A selected polarization holds a correlation code with no law.
-    #[error("unsupported correlation code {code}")]
-    UnsupportedCorrelation {
-        /// The stored `CORR_TYPE`.
-        code: i32,
-    },
     /// The ANTENNA table is empty; a primary beam needs dish diameters.
     #[error("a primary-beam response requires ANTENNA dish metadata")]
     NoAntennaDishes,
@@ -301,8 +482,11 @@ pub enum PrepareError {
         /// Its dish diameter.
         diameter_m: f64,
     },
-    /// Native aperture generation models the EVLA only.
-    #[error("native aperture generation requires an EVLA observation")]
+    /// Native aperture generation models the EVLA only; without the
+    /// aperture a VLA observation serves too.
+    #[error(
+        "native aperture generation requires an EVLA observation (or a VLA one with aterm=False)"
+    )]
     NativeAwTelescope,
     /// Native EVLA generation models 25 m dishes only.
     #[error("native EVLA generation requires the explicit homogeneous 25 m dish model")]
@@ -330,9 +514,6 @@ pub enum PrepareError {
     /// Native EVLA AW images Stokes I or one circular parallel hand.
     #[error("native EVLA AW currently supports Stokes I or one circular parallel hand")]
     NativeAwPolarization,
-    /// The FEED table's `RECEPTOR_ANGLE` is not `Float64`.
-    #[error("native EVLA feed receptor angles require Float64 metadata")]
-    FeedAngleType,
     /// A FEED row has no finite first receptor angle.
     #[error("native EVLA feed has no finite receptor-zero angle")]
     FeedAngleNotFinite,
@@ -343,9 +524,22 @@ pub enum PrepareError {
     #[error("native EVLA request has no applicable antenna-zero feed metadata")]
     NoApplicableFeed,
     /// Native AW reads the parallactic angle of an unflagged
-    /// cross-correlation row, and the selection has none.
-    #[error("native AW has no unflagged cross-correlation row")]
+    /// cross-correlation sample, and the selection has none.
+    #[error("native AW has no unflagged cross-correlation sample")]
     NoCrossCorrelationRow,
+    /// Native cache generation at a non-default PA compute step outside its verified scope.
+    #[error(
+        "native computepastep currently supports MFS with one selected EVLA field and spectral window (#1070)"
+    )]
+    NativeAwPaScope,
+    /// CASA cannot reload both generated PA buffers at this spacing.
+    #[error("computepastep cannot preserve native PA coverage when CASA reloads the cache (#1070)")]
+    NativeAwPaSpacing,
+    /// Runtime rotation's remaining imaging combinations.
+    #[error(
+        "rotatepastep currently supports fresh imported AW continuum on one VLA or EVLA field with the aperture, default computepastep and recomputed PSF and residual: dirty or Högbom with one spectral window, or wideband MT-MFS with one partition per window, a common array and feed angle, and matching valid integration times (#1070)"
+    )]
+    AwRotationScope,
     /// `cf_resident_mb` is larger than the address space.
     #[error("cf_resident_mb {megabytes} exceeds addressable memory")]
     CfResidentSize {
@@ -375,9 +569,11 @@ pub enum PrepareError {
     /// A reconstruction mask image is complex-valued.
     #[error("reconstruction masks require a real CASA image")]
     ComplexMaskImage,
-    /// A reconstruction mask image is not one direction plane.
+    /// A reconstruction mask image has an axis besides its direction,
+    /// Stokes and spectral axes with more than one pixel.
     #[error(
-        "reconstruction mask must contain one two-dimensional direction plane; shape {shape:?}"
+        "a reconstruction mask image has direction, Stokes and spectral axes, and any other \
+         axis one pixel long; shape {shape:?}"
     )]
     MaskImageShape {
         /// The image shape.
@@ -386,8 +582,54 @@ pub enum PrepareError {
     /// A reconstruction mask image has no direction coordinate.
     #[error("mask image has no direction coordinate")]
     MaskImageDirection,
-    /// Native mask reprojection supports SIN only.
-    #[error("native mask reprojection currently requires SIN coordinates, not {projection:?}")]
+    /// tclean cannot expand a mask image to the image's channels or Stokes
+    /// planes (`SDMaskHandler::expandMask`), and refuses it.
+    #[error("Error in constructing the clean mask from {}: {reason}", path.display())]
+    MaskImageExpansion {
+        /// The mask image.
+        path: PathBuf,
+        /// CASA's reason.
+        reason: String,
+    },
+    /// A mask image tclean regrids along frequency or Stokes onto the image
+    /// (`SDMaskHandler::copyMask`), which casa-rs does not yet.
+    #[error(
+        "mask image {} of shape {shape:?} would be regridded along frequency or Stokes onto \
+         the image, which casa-rs does not implement yet (#980)",
+        path.display()
+    )]
+    MaskImageRegrid {
+        /// The mask image.
+        path: PathBuf,
+        /// Its shape.
+        shape: Vec<usize>,
+    },
+    /// Image lists currently accept one aligned continuum plane per input.
+    #[error("mask image {} must be one plane on the output direction grid (#823)", path.display())]
+    MaskListGrid {
+        /// The supplied mask image.
+        path: PathBuf,
+    },
+    /// MEM's image mask needs the output tangent plane for direction import.
+    #[error("MEM mask image {} must share the output tangent plane (#823)", path.display())]
+    MemMaskGrid {
+        /// The supplied mask image.
+        path: PathBuf,
+    },
+    /// `projection='NCP'` centred on the celestial equator, where its SIN
+    /// slant `cot δ₀` is infinite. CASA writes it unguarded and places every
+    /// pixel at NaN; casa-rs refuses it (`docs/CASA (C++) bugs.md`).
+    #[error(
+        "projection 'NCP' is undefined for an image centred on the celestial equator: its \
+         slant cot(dec) is infinite (CASA writes it and places every pixel at NaN)"
+    )]
+    NcpAtEquator,
+    /// A mask image's projection, with its parameters, is not one casa-rs
+    /// images in (`casa_imaging_model::Projection`).
+    #[error(
+        "a mask image in projection {projection:?} with these parameters is not one casa-rs \
+         images in yet (#1101)"
+    )]
     MaskImageProjection {
         /// The mask's projection.
         projection: ProjectionType,
@@ -397,6 +639,14 @@ pub enum PrepareError {
     MaskImageFrame {
         /// The mask's frame.
         frame: DirectionRef,
+    },
+    /// A mask grid's native and converted frames cannot yet be represented.
+    #[error("mask direction conversion from {native} to {conversion} is unsupported (#977)")]
+    MaskImageConversion {
+        /// The native frame.
+        native: DirectionRef,
+        /// The conversion frame.
+        conversion: DirectionRef,
     },
     /// A `startmodel` casa-rs cannot start from.
     #[error("startmodel {}: {reason}", path.display())]

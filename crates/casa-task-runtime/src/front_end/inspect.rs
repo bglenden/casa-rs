@@ -56,6 +56,12 @@ pub fn display_value(value: &ParameterValue) -> String {
         ParameterValue::Bool(value) => value.to_string(),
         ParameterValue::Integer(value) => value.to_string(),
         ParameterValue::Float(value) => value.to_string(),
+        ParameterValue::Complex([real, imag]) => format!("({}{:+}j)", real.0, imag.0),
+        ParameterValue::EmptyArray { dtype, shape } => format!("empty {dtype:?} array {shape:?}"),
+        ParameterValue::ScalarArray(value) => format!("array({})", display_value(value)),
+        ParameterValue::NumpyScalar { dtype, value } => {
+            format!("{dtype:?}({})", display_value(value))
+        }
         ParameterValue::String(value) => format!("{value:?}"),
         ParameterValue::Array(values) => format!(
             "[{}]",
@@ -144,7 +150,7 @@ fn describe_concept(
 }
 
 /// Validate a profile's text, against `bundle` when given, else against the
-/// surface the profile names; return the summary line and its warnings.
+/// surface the profile names; return the summary line.
 pub fn validate_profile_text(
     source: &str,
     bundle: Option<&SurfaceContractBundle>,
@@ -152,7 +158,7 @@ pub fn validate_profile_text(
     let profile = parse_profile(source).map_err(format_profile_error)?;
     let named;
     let bundle = match bundle {
-        Some(bundle) if bundle.surface.answers_to(&profile.header.surface) => bundle,
+        Some(bundle) if bundle.surface.id() == profile.header.surface => bundle,
         Some(bundle) => {
             return Err(format!(
                 "the profile is for {:?}, not {:?}",
@@ -167,16 +173,13 @@ pub fn validate_profile_text(
     };
     let resolved = resolve_profile(&profile, bundle).map_err(format_profile_error)?;
     let count = resolved.explicit_overrides.len();
-    let mut text = format!(
+    let text = format!(
         "valid {} {} profile (contract {}, {count} explicit override{})\n",
         profile.header.kind,
         profile.header.surface,
         profile.header.contract,
         if count == 1 { "" } else { "s" }
     );
-    for diagnostic in resolved.diagnostics {
-        text.push_str(&format!("warning: {}\n", diagnostic.message));
-    }
     Ok(text)
 }
 
@@ -227,12 +230,15 @@ mod tests {
 
     #[test]
     fn a_profile_for_another_surface_is_refused() {
-        let profile = "[casars]\nformat = 1\nsurface = \"imstat\"\nkind = \"task\"\ncontract = 3\n\n[parameters]\nimagename = [\"x.image\"]\n";
         let imstat = builtin_surface_bundle("imstat").unwrap();
-        let text = validate_profile_text(profile, Some(&imstat)).unwrap();
+        let profile = format!(
+            "[casars]\nformat = 1\nsurface = \"imstat\"\nkind = \"task\"\ncontract = {}\n\n[parameters]\nimagename = [\"x.image\"]\n",
+            imstat.surface.contract_version()
+        );
+        let text = validate_profile_text(&profile, Some(&imstat)).unwrap();
         assert!(text.starts_with("valid task imstat profile"), "{text}");
         let imhead = builtin_surface_bundle("imhead").unwrap();
-        let error = validate_profile_text(profile, Some(&imhead)).unwrap_err();
+        let error = validate_profile_text(&profile, Some(&imhead)).unwrap_err();
         assert!(error.contains("not \"imhead\""), "{error}");
     }
 }

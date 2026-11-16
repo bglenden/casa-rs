@@ -127,6 +127,27 @@ fn a_start_model_is_the_first_generation_of_the_model() {
     );
 }
 
+#[test]
+fn mem_predicts_an_explicit_start_model_before_solving() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let controls = json!({
+        "deconvolver":"mem", "niter":2,
+        "cyclefactor":0.0001, "minpsffraction":0.0
+    });
+    let [deep, predicted, dirty] = assert_first_generation(&observation, "mem-seed", &controls);
+    assert!(
+        difference(&dirty, &predicted, ".residual") > 1e-4,
+        "the explicit model changes the initial residual"
+    );
+    let mut controls = controls;
+    controls["startmodel"] = json!(observation.scratch("mem-seed-deep.model"));
+    let (_, resumed) = observation.image("mem-from-explicit-model", controls);
+    assert!(
+        difference(&deep, &resumed, ".model") > 1e-4,
+        "MEM adds a new update to the explicit model"
+    );
+}
+
 /// A sixteen-channel cube interpolated linearly onto its LSRK channels, of
 /// a source whose flux falls by 9% across the band: a start model that
 /// differs in every channel.
@@ -252,4 +273,337 @@ fn a_start_models_model_data_is_the_deep_runs() {
         worst / peak
     );
     assert!(worst <= 1.0e-5 * peak, "MODEL_DATA: {worst} of {peak}");
+}
+
+/// `controls` extended by `extra`.
+fn with(controls: &Value, extra: Value) -> Value {
+    let mut controls = controls.clone();
+    controls
+        .as_object_mut()
+        .expect("controls")
+        .extend(extra.as_object().expect("extra").clone());
+    controls
+}
+
+/// An MT-MFS start model is one image per Taylor term (#1067,
+/// `SIImageStoreMultiTerm::setModelImage`): started from a deep run's
+/// `.model.tt0` and `.model.tt1` with no minor cycle, the run is the deep
+/// run's last major cycle again, every term's residual included; an empty
+/// entry leaves its term zero (CASA's `test_startmodel_mtmfs_restart`
+/// passes `['', 'tst1.model.tt1']`).
+#[test]
+fn an_mtmfs_start_model_is_one_image_per_taylor_term() {
+    let steep = Component {
+        spectral_index: -1.0,
+        ..POINT
+    };
+    let observation = Observation::synthesise_band(8, &[("point", steep)]);
+    let controls = json!({
+        "weighting": "natural",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "niter": 500,
+        "threshold": "0.005Jy",
+    });
+    let (_, deep) = observation.image("mtmfs-deep", controls.clone());
+    let terms = [
+        observation.scratch("mtmfs-deep.model.tt0"),
+        observation.scratch("mtmfs-deep.model.tt1"),
+    ];
+    let (_, started) = observation.image(
+        "mtmfs-started",
+        with(&controls, json!({ "niter": 0, "startmodel": terms })),
+    );
+    for product in [".model.tt0", ".model.tt1", ".residual.tt0", ".residual.tt1"] {
+        let worst = difference(&deep, &started, product);
+        eprintln!("T1 mtmfs startmodel: {product} differs by {worst:.2e} of its peak");
+        assert!(worst < 1.0e-5, "{product}: {worst:e}");
+    }
+    let (_, second) = observation.image(
+        "mtmfs-second-term",
+        with(
+            &controls,
+            json!({ "niter": 0, "startmodel": ["", terms[1]] }),
+        ),
+    );
+    assert!(
+        second
+            .get(".model.tt0")
+            .values()
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+    assert!(difference(&deep, &second, ".model.tt1") < 1.0e-5);
+}
+
+/// A start model on another spectral grid is regridded along frequency
+/// (#1067, `SIImageStore::regridToModelImage`'s `ImageRegrid` over the
+/// direction and spectral axes, linear): an eight-channel model of
+/// channels 4 to 11 seeds a sixteen-channel cube with those channels'
+/// planes, and the channels beyond it with its end planes, as casacore's
+/// linear interpolation writes them (CASA's `test_modelvis_7` regrids such
+/// a model onto its whole window).
+#[test]
+fn a_start_model_on_another_spectral_grid_is_regridded_along_frequency() {
+    let steep = Component {
+        spectral_index: -2.0,
+        ..POINT
+    };
+    let observation = Observation::synthesise_band(16, &[("point", steep)]);
+    let controls = json!({
+        "specmode": "cube",
+        "nchan": -1,
+        "weighting": "natural",
+        "deconvolver": "hogbom",
+        "niter": 300,
+        "threshold": "0.01Jy",
+    });
+    let (_, part) = observation.image("regrid-part", with(&controls, json!({ "spw": "0:4~11" })));
+    let (_, whole) = observation.image(
+        "regrid-whole",
+        with(
+            &controls,
+            json!({ "niter": 0, "startmodel": observation.scratch("regrid-part.model") }),
+        ),
+    );
+    let (part, whole) = (part.get(".model"), whole.get(".model"));
+    assert_eq!((part.channels(), whole.channels()), (8, 16));
+    for channel in 0..16 {
+        let source = part.plane(channel.clamp(4, 11) - 4);
+        let seeded = whole.plane(channel);
+        let peak = source.iter().fold(0.0_f32, |m, v| m.max(v.abs()));
+        let worst = source
+            .iter()
+            .zip(&seeded)
+            .fold(0.0_f32, |m, (a, b)| m.max((a - b).abs()));
+        assert!(
+            worst <= 1.0e-5 * peak,
+            "channel {channel}: {worst} of the model plane's peak {peak}"
+        );
+    }
+}
+
+/// A plane no sample reaches restores its start model: CASA's
+/// `SIImageStore::restore` convolves every plane's model with its beam and
+/// adds the residual, whatever the plane's weights, and `makeImageBeamSet`
+/// gives the plane the largest beam of the domain. Its residual is zero, so
+/// its restored image is the model's point convolved with that beam: a peak
+/// of the model's flux, and the beam's area in the ratio of its sum to its
+/// peak.
+#[test]
+fn a_plane_without_weights_restores_its_start_model() {
+    let observation = Observation::synthesise_band(16, &[("point", POINT)]);
+    let controls = json!({
+        "specmode": "cube",
+        "start": 0,
+        "nchan": 16,
+        "weighting": "natural",
+        "deconvolver": "hogbom",
+        "niter": 300,
+        "threshold": "0.01Jy",
+    });
+    let (_, deep) = observation.image("unweighted-deep", controls.clone());
+    let (_, started) = observation.image(
+        "unweighted-started",
+        with(
+            &controls,
+            json!({
+                "niter": 0,
+                "spw": "0:2~15",
+                "startmodel": observation.scratch("unweighted-deep.model"),
+            }),
+        ),
+    );
+    assert_eq!(started.get(".sumwt").channel_values()[0], 0.0);
+    assert!(started.get(".residual").plane(0).iter().all(|v| *v == 0.0));
+    let flux: f32 = deep.get(".model").plane(0).iter().sum();
+    let restored = started.get(".image").plane(0);
+    let peak = restored.iter().fold(0.0_f32, |m, v| m.max(*v));
+    assert!(
+        flux > 0.5 && (peak - flux).abs() < 0.02 * flux,
+        "the unweighted plane restores a peak of {peak} for a model of {flux} Jy"
+    );
+    // The fitted beams of the channels with data, read off the run's PSF.
+    let image = started.get(".image");
+    let largest = (2..16)
+        .map(|channel| image.channel_beam(channel))
+        .map(|beam| beam.major_in("arcsec").unwrap() * beam.minor_in("arcsec").unwrap())
+        .fold(0.0_f64, f64::max);
+    let smallest = (2..16)
+        .map(|channel| image.channel_beam(channel))
+        .map(|beam| beam.major_in("arcsec").unwrap() * beam.minor_in("arcsec").unwrap())
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        largest > 1.05 * smallest,
+        "the channels' beams must differ for this law: {smallest} and {largest} arcsec²"
+    );
+    let cell_arcsec = observation.geometry().cell_arcsec[0];
+    let gaussian = std::f64::consts::PI / (4.0 * std::f64::consts::LN_2);
+    let expected = gaussian * largest / (cell_arcsec * cell_arcsec);
+    let sum: f64 = restored.iter().map(|value| f64::from(*value)).sum();
+    let area = sum / f64::from(peak);
+    assert!(
+        (area - expected).abs() < 0.02 * expected,
+        "the unweighted plane's beam covers {area} pixels, the largest beam {expected}"
+    );
+}
+#[test]
+fn separate_outlier_start_models_resolve_flux_on_each_field() {
+    use casa_images::PagedImage;
+    use ndarray::{ArrayD, IxDyn};
+
+    let point = Component {
+        offset_px: [3, 0],
+        ..POINT
+    };
+    let observation = Observation::synthesise(&[("point", point)]);
+    let [longitude, latitude] = super::fixture::PHASE_CENTER_RAD;
+    let signed_longitude = longitude - std::f64::consts::TAU;
+    let centre = format!("J2000 {signed_longitude}rad {latitude}rad");
+    let run = |name: &str, main: &str, field_model: Option<&str>| {
+        let outlier = observation.scratch(&format!("{name}-outlier"));
+        let definition = observation.scratch(&format!("outliers-{name}.txt"));
+        let mut text = format!(
+            "imagename={}\nphasecenter={centre}\nimsize=[20,18]\n",
+            outlier.display()
+        );
+        if let Some(seed) = field_model {
+            text.push_str(&format!("startmodel={seed}\n"));
+        }
+        std::fs::write(&definition, text).unwrap();
+        observation.try_image(
+            name,
+            json!({
+                "imsize": [32,32], "niter":0, "deconvolver":"hogbom",
+                "phasecenter":centre, "outlierfile":definition, "startmodel":main,
+            }),
+        )
+    };
+
+    let (_, blank) = run("field-templates", "", None).unwrap();
+    let main = observation.scratch("field-templates.model");
+    let outlier = observation.scratch("field-templates-outlier.model");
+    for (path, pixels) in [
+        (&main, &[(3, 4, 0.5), (16, 16, 1.25), (18, 14, 0.75)][..]),
+        (&outlier, &[(10, 9, 3.0), (12, 7, 0.375)][..]),
+    ] {
+        let mut image = PagedImage::<f32>::open(path).unwrap();
+        let mut samples = ArrayD::zeros(IxDyn(image.shape()));
+        for &(x, y, flux) in pixels {
+            samples[[x, y, 0, 0]] = flux;
+        }
+        image.put_slice(&samples, &[0; 4]).unwrap();
+        image.save().unwrap();
+    }
+    let path = |seed: &std::path::Path| seed.to_str().unwrap().to_owned();
+    let (main_seed, outlier_seed) = (path(&main), path(&outlier));
+    let assert_models = |name: &str, [outer, first, second]: [f32; 3]| {
+        for (suffix, [nx, ny], points) in [
+            (
+                "",
+                [32, 32],
+                [(3, 4, outer), (16, 16, first), (18, 14, second)],
+            ),
+            (
+                "-outlier",
+                [20, 18],
+                [(0, 0, 0.0), (10, 9, first), (12, 7, second)],
+            ),
+        ] {
+            let image =
+                PagedImage::<f32>::open(observation.scratch(&format!("{name}{suffix}.model")))
+                    .unwrap();
+            assert_eq!(image.shape(), [nx, ny, 1, 1]);
+            let actual = image.get().unwrap();
+            let mut expected = ArrayD::zeros(IxDyn(&[nx, ny, 1, 1]));
+            for (x, y, flux) in points {
+                expected[[x, y, 0, 0]] = flux;
+            }
+            assert!(
+                actual
+                    .iter()
+                    .zip(&expected)
+                    .all(|(a, b)| (*a - *b).abs() < 1e-6),
+                "{name}{suffix} did not get its field's model"
+            );
+        }
+    };
+    for (name, main, outlier, expected) in [
+        (
+            "separate-fields",
+            main_seed.as_str(),
+            Some(outlier_seed.as_str()),
+            [0.5, 3.0, 0.375],
+        ),
+        (
+            "inherited-field",
+            main_seed.as_str(),
+            None,
+            [0.5, 1.25, 0.75],
+        ),
+        ("blank-field", main_seed.as_str(), Some(""), [0.5, 0.0, 0.0]),
+        (
+            "outlier-no-main",
+            "",
+            Some(outlier_seed.as_str()),
+            [0.0, 3.0, 0.375],
+        ),
+    ] {
+        let (_, products) = run(name, main, outlier).unwrap();
+        assert_models(name, expected);
+        assert!(
+            difference(&blank, &products, ".residual") > 1e-3,
+            "{name}: seeds must affect prediction"
+        );
+    }
+
+    let outlier_psf =
+        PagedImage::<f32>::open(observation.scratch("separate-fields-outlier.psf")).unwrap();
+    let stored_lon = outlier_psf.coordinates().coordinate(0).reference_value()[0];
+    assert!(
+        (stored_lon - longitude).abs() < 1e-12,
+        "outlier header longitude {stored_lon}"
+    );
+    let Err(reason) = run("separate-fields", "", Some(&outlier_seed)) else {
+        panic!("a fresh outlier seed must not replace an existing model");
+    };
+    assert!(
+        reason.contains("supplying a new outlier start model with saved products"),
+        "{reason}"
+    );
+    assert_models("separate-fields", [0.5, 3.0, 0.375]);
+
+    let set_saved_longitude = |value| {
+        let path = observation.scratch("separate-fields-outlier.model");
+        let mut image = PagedImage::<f32>::open(path).unwrap();
+        image.set_reference_value(0, value).unwrap();
+        image.save().unwrap();
+    };
+    set_saved_longitude(signed_longitude);
+    run("separate-fields", "", None).expect("an equivalent longitude turn must allow restart");
+    assert_models("separate-fields", [0.5, 3.0, 0.375]);
+    set_saved_longitude(signed_longitude + 1e-3);
+    let Err(reason) = run("separate-fields", "", None) else {
+        panic!("a genuinely different longitude must refuse restart");
+    };
+    assert!(reason.contains("coordinate system mismatch"), "{reason}");
+
+    let multi = observation.scratch("outliers-many.txt");
+    let definition: String = ["outlier-z", "outlier-a"]
+        .into_iter()
+        .map(|name| {
+            format!(
+                "imagename={}\nphasecenter={centre}\nimsize=[20,18]\nstartmodel={outlier_seed}\n",
+                observation.scratch(name).display()
+            )
+        })
+        .collect();
+    std::fs::write(&multi, definition).unwrap();
+    let Err(reason) = observation.try_image(
+        "guard-ambiguous-field-order",
+        json!({"imsize":[32,32],"niter":0,"deconvolver":"hogbom","phasecenter":centre,"outlierfile":multi,"startmodel":main_seed}),
+    ) else {
+        panic!("fresh seeds on more than one outlier require CASA's field order");
+    };
+    assert!(reason.contains("MFS with one outlier (#1105)"), "{reason}");
 }

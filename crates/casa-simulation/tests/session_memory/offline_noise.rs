@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Saved additive fields and their four-parameter tables retain their admission.
+use super::apply::{check, measured};
+use super::{alone, charge_process_caches, configured, reserved_memory, resources, scan};
+use casa_simulation::NoiseSpec;
+const BUDGET: u64 = 512 << 20;
+
+#[test]
+fn narrow_supplied_noise_admits_wide_output_interpolation() {
+    if !alone("offline_noise::narrow_supplied_noise_admits_wide_output_interpolation") {
+        return;
+    }
+    let policy = resources(BUDGET);
+    charge_process_caches(policy.host(), policy.policy()).unwrap();
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().unwrap();
+    let prefix = root.path().join("narrow");
+    let mut reference = configured(&root.path().join("reference.ms"), &measures, BUDGET, 1);
+    reference.observe(&scan(1)).unwrap();
+    reference
+        .set_noise(&NoiseSpec {
+            simple_noise_jy: 0.25,
+            on_the_fly: false,
+            table: prefix.display().to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+    reference.close().unwrap();
+    let mut sm = configured(&root.path().join("wide.ms"), &measures, BUDGET, 16385);
+    sm.observe(&scan(1)).unwrap();
+    sm.set_apply(&casa_simulation::ApplySpec {
+        table: format!("{}.A.cal", prefix.display()),
+        kind: String::new(),
+        interp: "linear,linear".into(),
+        interval_s: 0.,
+        calwt: false,
+        spwmap: vec![-1],
+        opacity: 0.,
+    })
+    .unwrap();
+    // Warm process caches, then measure a second independent application.
+    sm.corrupt().unwrap();
+    let call = measured(|| sm.corrupt().unwrap());
+    check("narrow A table on a wide output", &call);
+}
+
+#[test]
+fn additive_fields_hold_their_admission_and_reset_releases_unsaved_fields() {
+    if !alone(
+        "offline_noise::additive_fields_hold_their_admission_and_reset_releases_unsaved_fields",
+    ) {
+        return;
+    }
+    let policy = resources(BUDGET);
+    charge_process_caches(policy.host(), policy.policy()).unwrap();
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().unwrap();
+    for (mode, named) in [
+        ("simplenoise", false),
+        ("simplenoise", true),
+        ("tsys-manual", false),
+        ("tsys-manual", true),
+        ("tsys-atm", false),
+        ("tsys-atm", true),
+    ] {
+        let mut sm = configured(
+            &root.path().join(format!("{mode}-{named}.ms")),
+            &measures,
+            BUDGET,
+            32,
+        );
+        sm.observe(&scan(1000)).unwrap();
+        if mode != "simplenoise" {
+            sm.set_noise(&NoiseSpec {
+                mode: mode.into(),
+                water_vapour_mm: 1.,
+                ..NoiseSpec::default()
+            })
+            .unwrap();
+            sm.reset();
+        }
+        let before = reserved_memory();
+        let call = measured(|| {
+            sm.set_noise(&NoiseSpec {
+                mode: mode.into(),
+                water_vapour_mm: 1.,
+                simple_noise_jy: 0.25,
+                on_the_fly: false,
+                table: if named {
+                    root.path().join("noise.cal").to_string_lossy().into_owned()
+                } else {
+                    String::new()
+                },
+                ..NoiseSpec::default()
+            })
+            .unwrap()
+        });
+        check("a saved additive field", &call);
+        sm.reset();
+        if named {
+            let retained = reserved_memory();
+            assert!(retained > before + 1_000_000);
+            sm.set_noise(&NoiseSpec {
+                mode: mode.into(),
+                water_vapour_mm: 1.,
+                simple_noise_jy: 0.5,
+                on_the_fly: false,
+                table: root.path().join("noise.cal").to_string_lossy().into_owned(),
+                ..NoiseSpec::default()
+            })
+            .unwrap();
+            sm.reset();
+            assert_eq!(
+                reserved_memory(),
+                retained,
+                "only the newest export stays charged"
+            );
+        } else {
+            assert_eq!(reserved_memory(), before);
+        }
+        drop(sm);
+        assert_eq!(reserved_memory(), before);
+    }
+}
+
+#[test]
+fn four_parameter_additive_tables_write_within_their_admission() {
+    if !alone("offline_noise::four_parameter_additive_tables_write_within_their_admission") {
+        return;
+    }
+    let policy = resources(BUDGET);
+    charge_process_caches(policy.host(), policy.policy()).unwrap();
+    let measures = casa_test_support::deterministic_measures_provider();
+    let root = tempfile::tempdir().unwrap();
+    let mut sm = configured(&root.path().join("wide.ms"), &measures, BUDGET, 2048);
+    sm.observe(&scan(8)).unwrap();
+    sm.set_noise(&NoiseSpec {
+        simple_noise_jy: 0.25,
+        on_the_fly: false,
+        table: root.path().join("noise.cal").to_string_lossy().into_owned(),
+        ..NoiseSpec::default()
+    })
+    .unwrap();
+    sm.reset();
+    let call = measured(|| sm.close().unwrap());
+    check("writing a four-parameter A Noise table", &call);
+}

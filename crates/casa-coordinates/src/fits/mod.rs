@@ -50,5 +50,5 @@ pub mod coordinate_util;
 pub mod header;
 mod obs_date;
 
-pub use coordinate_util::{from_fits_header, to_fits_header};
+pub use coordinate_util::{from_fits_header, to_fits_header, try_to_fits_header};
 pub use header::{FitsHeader, FitsKeyword, FitsValue};

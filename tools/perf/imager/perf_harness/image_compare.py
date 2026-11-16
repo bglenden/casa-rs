@@ -17,6 +17,8 @@ from .tolerances import (
 )
 from .tree_identity import sha256_file
 from .metadata_contract import (
+    coordinate_records_equivalent,
+    direction_wcs_field_parity,
     metadata_field_parity,
     normalize_metadata_contract,
     scientific_beam_products,
@@ -25,8 +27,6 @@ from .metadata_contract import (
 
 CASA_IMAGE_COMPARATOR = pathlib.Path(__file__).with_name("casa_image_compare.py")
 COMPARISON_SCHEMA_VERSION = 4
-COORDINATE_RELATIVE_TOLERANCE = 1.0e-12
-COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-12
 DIRECTION_WCS_FIELDS = (
     "axes",
     "cdelt",
@@ -479,6 +479,7 @@ def validate_comparison_output(
                 product,
                 suffix=suffix,
                 required=True,
+                metadata_contract=request.get("metadata_contract"),
             )
         if product.get("status") == "compared":
             _validate_product_metadata(
@@ -665,7 +666,7 @@ def _validate_product_metadata(
         if metadata_contract is not None
         else {
             field: (
-                _coordinate_records_equivalent(left.get(field), right.get(field))
+                coordinate_records_equivalent(left.get(field), right.get(field))
                 if field == "coordinates"
                 else left.get(field) == right.get(field)
             )
@@ -770,7 +771,11 @@ def _positive_shape(value: Any, *, label: str) -> list[int]:
 
 
 def _validate_product_direction_wcs(
-    product: dict[str, Any], *, suffix: str, required: bool
+    product: dict[str, Any],
+    *,
+    suffix: str,
+    required: bool,
+    metadata_contract: dict[str, Any] | None,
 ) -> None:
     label = f"image comparison product {suffix}"
     if product.get("direction_wcs_parity_required") is not required:
@@ -795,15 +800,13 @@ def _validate_product_direction_wcs(
         raise ValueError(f"{label} direction-WCS fields do not match protocol")
     left = _validate_direction_wcs_operand(result.get("left"), label=f"{label} left")
     right = _validate_direction_wcs_operand(result.get("right"), label=f"{label} right")
-    expected_parity = {
-        "shape": left["shape"] == right["shape"],
-        "direction": _coordinate_records_equivalent(
-            left["direction"], right["direction"]
+    expected_parity = direction_wcs_field_parity(
+        left,
+        right,
+        coordinate_tolerances=(
+            metadata_contract["coordinates"] if metadata_contract else None
         ),
-        "axis_topology": left["axis_topology"] == right["axis_topology"],
-        "stokes": _coordinate_records_equivalent(left["stokes"], right["stokes"]),
-        "spectral_axis": left["spectral_axis"] == right["spectral_axis"],
-    }
+    )
     parity = (
         left["status"] == "complete"
         and right["status"] == "complete"
@@ -865,30 +868,6 @@ def _validate_direction_wcs_operand(value: Any, *, label: str) -> dict[str, Any]
     if value.get("missing_fields") != missing or value.get("status") != expected_status:
         raise ValueError(f"{label} capture status is not derived")
     return value
-
-
-def _coordinate_records_equivalent(left: Any, right: Any) -> bool:
-    if isinstance(left, dict) and isinstance(right, dict):
-        return left.keys() == right.keys() and all(
-            _coordinate_records_equivalent(left[key], right[key]) for key in left
-        )
-    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
-        return len(left) == len(right) and all(
-            _coordinate_records_equivalent(left_value, right_value)
-            for left_value, right_value in zip(left, right)
-        )
-    if isinstance(left, bool) or isinstance(right, bool):
-        return left == right
-    if isinstance(left, int) and isinstance(right, int):
-        return left == right
-    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-        return math.isclose(
-            float(left),
-            float(right),
-            rel_tol=COORDINATE_RELATIVE_TOLERANCE,
-            abs_tol=COORDINATE_ABSOLUTE_TOLERANCE,
-        )
-    return left == right
 
 
 def _scientific_beam_reference(

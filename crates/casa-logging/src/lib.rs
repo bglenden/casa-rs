@@ -28,6 +28,11 @@ use tracing_subscriber::layer::{Context, Filter, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{Layer, Registry};
 
+mod replay;
+
+use replay::output_was_configured;
+pub use replay::replay_info_record;
+
 const UNIX_EPOCH_MJD_DAYS: f64 = 40587.0;
 const SECONDS_PER_DAY: f64 = 86400.0;
 const LOG_TABLE_README: &str = "Repository for software-generated logging messages";
@@ -621,6 +626,19 @@ impl Default for CasaLoggingConfig {
 }
 
 impl CasaLoggingConfig {
+    /// Whether the environment or command line explicitly selects an output sink.
+    ///
+    /// A priority for a log table alone does not select a table. An explicit
+    /// stderr priority (including `off`) or a table path does select output.
+    #[must_use]
+    pub fn output_was_configured(args: &[OsString]) -> bool {
+        output_was_configured(
+            args,
+            std::env::var_os("CASA_RS_LOG_TABLE").is_some(),
+            std::env::var_os("CASA_RS_LOG_STDERR_PRIORITY").is_some(),
+        )
+    }
+
     /// Build logging configuration from `CASA_RS_LOG_*` environment variables.
     pub fn from_env() -> Result<Self, CasaLoggingError> {
         Ok(Self {
@@ -904,7 +922,9 @@ where
             )
         });
         let record = CasaLogRecord {
-            time_mjd_seconds: system_time_to_mjd_seconds(SystemTime::now()),
+            time_mjd_seconds: visitor
+                .time_mjd_seconds
+                .unwrap_or_else(|| system_time_to_mjd_seconds(SystemTime::now())),
             priority,
             message: trim_message(message),
             location,
@@ -946,6 +966,7 @@ struct EventVisitor {
     priority: Option<String>,
     location: Option<String>,
     object_id: Option<String>,
+    time_mjd_seconds: Option<f64>,
     fields: String,
 }
 
@@ -959,6 +980,13 @@ impl EventVisitor {
 }
 
 impl Visit for EventVisitor {
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        if field.name() == "casa.time_mjd_seconds" {
+            self.time_mjd_seconds = Some(value);
+        } else {
+            self.push_field(field.name(), format_args!("{value:?}"));
+        }
+    }
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
         let rendered = format!("{value:?}");
         match field.name() {
@@ -1033,7 +1061,8 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    // Tracing callsite interest and environment variables are process-global.
+    fn global_state_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
@@ -1050,7 +1079,7 @@ mod tests {
 
     #[test]
     fn cli_flags_refine_a_chosen_configuration_without_the_environment() {
-        let _lock = env_lock();
+        let _lock = global_state_lock();
         clear_log_env();
         unsafe {
             std::env::set_var("CASA_RS_LOG_TABLE_PRIORITY", "INVALID");
@@ -1148,7 +1177,7 @@ mod tests {
 
     #[test]
     fn cli_logging_args_are_stripped_and_applied() {
-        let _guard = env_lock();
+        let _guard = global_state_lock();
         clear_log_env();
         let (filtered, config) = configure_from_env_and_args([
             OsString::from("--vis"),
@@ -1172,7 +1201,7 @@ mod tests {
 
     #[test]
     fn cli_logging_args_can_be_stripped_without_env_config() {
-        let _guard = env_lock();
+        let _guard = global_state_lock();
         clear_log_env();
         unsafe {
             std::env::set_var("CASA_RS_LOG_TABLE_PRIORITY", "invalid");
@@ -1196,7 +1225,7 @@ mod tests {
 
     #[test]
     fn env_logging_config_supports_stderr_off() {
-        let _guard = env_lock();
+        let _guard = global_state_lock();
         clear_log_env();
         unsafe {
             std::env::set_var("CASA_RS_LOG_TABLE", "env.log");
@@ -1212,7 +1241,7 @@ mod tests {
 
     #[test]
     fn invalid_env_priority_is_reported() {
-        let _guard = env_lock();
+        let _guard = global_state_lock();
         clear_log_env();
         unsafe {
             std::env::set_var("CASA_RS_LOG_TABLE_PRIORITY", "loud");
@@ -1311,7 +1340,29 @@ mod tests {
     }
 
     #[test]
+    fn selecting_a_sink_is_distinct_from_setting_only_a_table_priority() {
+        assert!(!output_was_configured(
+            &["--log-table-priority".into(), "WARN".into()],
+            false,
+            false
+        ));
+        assert!(output_was_configured(
+            &["--log-stderr-priority=off".into()],
+            false,
+            false
+        ));
+        assert!(output_was_configured(
+            &["--log-table".into(), "history.log".into()],
+            false,
+            false
+        ));
+        assert!(output_was_configured(&[], true, false));
+        assert!(output_was_configured(&[], false, true));
+    }
+
+    #[test]
     fn a_debug_sink_enables_debug_profiles() {
+        let _guard = global_state_lock();
         use tracing_subscriber::layer::SubscriberExt;
 
         let sink = Arc::new(MemorySink::new(CasaPriority::Debug1));
@@ -1326,6 +1377,7 @@ mod tests {
 
     #[test]
     fn an_event_logs_its_fields_after_its_message() {
+        let _guard = global_state_lock();
         use tracing_subscriber::layer::SubscriberExt;
 
         let sink = Arc::new(MemorySink::new(CasaPriority::Info));
@@ -1337,6 +1389,7 @@ mod tests {
             tracing::info!("plain\n");
             tracing::info!(phase = ?"major cycle 1", seconds = 0.5, "imaging phase\n");
             tracing::info!(bytes = 7_u64);
+            tracing::info!(elapsed = 2.0_f64, "elapsed time");
             tracing::info!(path = "/My Data/x.ms", empty = "", name = "x.ms", "opened");
         });
         let messages = sink
@@ -1351,9 +1404,29 @@ mod tests {
                 "plain",
                 "imaging phase phase=\"major cycle 1\" seconds=0.5",
                 "bytes=7",
+                "elapsed time elapsed=2.0",
                 "opened path=\"/My Data/x.ms\" empty=\"\" name=x.ms"
             ]
         );
+    }
+
+    #[test]
+    fn an_event_can_replay_a_casa_history_timestamp() {
+        let _guard = global_state_lock();
+        use tracing_subscriber::layer::SubscriberExt;
+        let sink = Arc::new(MemorySink::new(CasaPriority::Info));
+        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(
+                casa.time_mjd_seconds = 42.25_f64,
+                casa.location = "::origin",
+                "original"
+            );
+        });
+        let records = sink.records().unwrap();
+        assert_eq!(records[0].time_mjd_seconds, 42.25);
+        assert_eq!(records[0].location, "::origin");
+        assert_eq!(records[0].message, "original");
     }
 
     /// Counts the events it receives, as an independent collector would.
@@ -1371,6 +1444,7 @@ mod tests {
 
     #[test]
     fn a_casa_sink_filters_only_its_own_layer() {
+        let _guard = global_state_lock();
         use tracing::subscriber::with_default;
         use tracing_subscriber::layer::SubscriberExt;
 
@@ -1406,6 +1480,7 @@ mod tests {
 
     #[test]
     fn each_subscriber_applies_its_own_sink_threshold() {
+        let _guard = global_state_lock();
         use tracing_subscriber::layer::SubscriberExt;
 
         let records = |priority| {

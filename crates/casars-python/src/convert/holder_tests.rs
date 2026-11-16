@@ -9,10 +9,13 @@ fn text(value: &str) -> Variant {
 }
 
 fn quantity_field(value: f64, unit: &str) -> Variant {
-    Variant::Record(BTreeMap::from([
-        ("value".to_string(), Variant::Number(value)),
-        ("unit".to_string(), text(unit)),
-    ]))
+    Variant::Record(
+        BTreeMap::from([
+            ("value".to_string(), Variant::Number(value)),
+            ("unit".to_string(), text(unit)),
+        ])
+        .into(),
+    )
 }
 
 fn record(kind: &str, refer: &str, values: &[(f64, &str)]) -> BTreeMap<String, Variant> {

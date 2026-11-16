@@ -23,11 +23,11 @@ use casa_ms::observation_io::creation::{
     CreationInput, CreationOptions, CreationPlan, Destination, HistoryRow, LossKind, MemoryCharges,
     PaddingRows,
 };
-use casa_ms::{
-    MeasurementSet, SubtableId, SyntheticField, SyntheticObservationRequest,
-    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
-};
+use casa_ms::{MeasurementSet, SubtableId};
 use casa_observation::{MergeTolerance, ObservationError};
+use casa_simulation::synthetic::{
+    Field, ObservationRequest, generate_unflagged, tutorial_vla_a_antennas,
+};
 use casa_types::{ArrayValue, ScalarValue, Value};
 
 #[global_allocator]
@@ -122,6 +122,7 @@ const ACCEPT: [LossKind; 4] = [
 
 fn options(batch_bytes: usize, memory_bytes: usize) -> CreationOptions {
     CreationOptions {
+        copy_pointing: true,
         data_groups: None,
         accept: ACCEPT.to_vec(),
         batch_bytes,
@@ -144,7 +145,7 @@ fn track(
     (offset_s, integrations, channels): (f64, usize, usize),
 ) -> PathBuf {
     let synthetic = root.join(format!("synthetic-{name}.ms"));
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
+    let mut request = ObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &synthetic,
         tutorial_vla_a_antennas(),
@@ -155,11 +156,11 @@ fn track(
     request.predict_model = false;
     request.spectral_windows[0].channel_count = channels;
     request.spectral_windows[0].channel_width_hz = 1.0e6;
-    request.fields = vec![SyntheticField {
+    request.fields = vec![Field {
         name: request.field_name.clone(),
         phase_center_rad: request.phase_center_rad,
     }];
-    generate_synthetic_observation_ms(&request).expect("synthesise the MS");
+    generate_unflagged(&request).expect("synthesise the MS");
     let three = root.join(format!("{name}.ms"));
     let groups = ["base", "corrected", "model"].map(String::from).to_vec();
     CreationPlan::new(
@@ -218,6 +219,42 @@ fn stated(root: &Path) -> PathBuf {
             .set_cell(0, column, value)
             .unwrap_or_else(|error| panic!("{column}: {error}"));
     }
+    ms.save().expect("save");
+    path
+}
+
+/// Actual CASA metadata, with large opaque model and pointing strings.
+fn stored_metadata(root: &Path) -> PathBuf {
+    let directory = root.join("stored-metadata");
+    std::fs::create_dir_all(&directory).expect("directory");
+    tar::Archive::new(flate2::read::GzDecoder::new(
+        &include_bytes!("fixtures/concat/concat_inputs.tar.gz")[..],
+    ))
+    .unpack(&directory)
+    .expect("fixture");
+    let path = directory.join("twelve.ms");
+    let mut ms = MeasurementSet::open(&path).expect("ms");
+    let text = |length: usize| "m".repeat(length);
+    let pointing = ms.subtable_mut(SubtableId::Pointing).expect("POINTING");
+    assert!(pointing.row_count() > 0);
+    pointing
+        .row_accessor_mut()
+        .set_cell(0, "NAME", Value::Scalar(ScalarValue::String(text(1 << 20))))
+        .expect("long pointing name");
+    let source = ms.subtable_mut(SubtableId::Source).expect("SOURCE");
+    source
+        .row_accessor_mut()
+        .set_cell(
+            0,
+            "SOURCE_MODEL",
+            Value::Record(casa_types::RecordValue::new(vec![
+                casa_types::RecordField::new(
+                    "message",
+                    Value::Scalar(ScalarValue::String(text(2 << 20))),
+                ),
+            ])),
+        )
+        .expect("large source model");
     ms.save().expect("save");
     path
 }
@@ -402,6 +439,12 @@ fn a_creation_plan_holds_what_it_admits() {
     let stated = [CreationInput::new(stated(root.path())), inputs[1].clone()];
     warm(&stated);
     holds_its_charges(&stated, &destination, &options(1 << 24, generous));
+
+    // Opaque source-model records and pointing names are admitted before
+    // their copies and their serialized output are allocated.
+    let stored = [CreationInput::new(stored_metadata(root.path()))];
+    warm(&stored);
+    holds_its_charges(&stored, &destination, &options(1 << 24, generous));
 
     // A long track's POINTING is read, not kept.
     let long = [CreationInput::new(track(

@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Bounded prepared POINTING lookup for native selected-observation evaluation.
+//! A bounded read of the `POINTING` rows a query domain needs, which the
+//! MSv2 adapter gives as the observation boundary's pointing series.
 
 use std::time::Instant;
 
-use casa_imaging_model::PointingTimeSampling;
 use casa_types::{ArrayValue, ScalarValue, measures::direction::DirectionRef};
 
 use crate::{
-    MeasurementSet, MsError, MsResult,
-    derived::engine::{MsCalEngine, resolve_direction_reference_selected},
+    MeasurementSet, MsError, MsResult, derived::engine::resolve_direction_reference_selected,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,36 +25,6 @@ impl PointingDirectionColumn {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct PointingDirectionQuery {
-    antenna_id: i32,
-    time_mjd_seconds: f64,
-}
-
-impl PointingDirectionQuery {
-    pub(crate) fn new(antenna_id: i32, time_mjd_seconds: f64) -> MsResult<Self> {
-        if antenna_id < 0 || !time_mjd_seconds.is_finite() {
-            return Err(MsError::InvalidInput(
-                "POINTING query requires a non-negative antenna and finite epoch".to_string(),
-            ));
-        }
-        Ok(Self {
-            antenna_id,
-            time_mjd_seconds,
-        })
-    }
-
-    #[must_use]
-    pub(crate) const fn antenna_id(self) -> i32 {
-        self.antenna_id
-    }
-
-    #[must_use]
-    pub(crate) const fn time_mjd_seconds(self) -> f64 {
-        self.time_mjd_seconds
-    }
-}
-
 /// Selected antennas and query-time envelope needed to prepare POINTING once.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SelectedPointingQueryDomain {
@@ -67,8 +36,7 @@ impl Eq for SelectedPointingQueryDomain {}
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct AntennaPointingQueryDomain {
     antenna_id: i32,
-    visibility_time_bounds: [f64; 2],
-    centroid_time_bounds: [f64; 2],
+    time_bounds: [f64; 2],
 }
 
 impl SelectedPointingQueryDomain {
@@ -77,31 +45,18 @@ impl SelectedPointingQueryDomain {
         SelectedPointingQueryDomainBuilder::default()
     }
 
-    /// Heap bytes of the per-antenna bounds.
-    #[must_use]
-    pub(crate) fn heap_bytes(&self) -> usize {
-        self.antennas.len() * size_of::<AntennaPointingQueryDomain>()
-    }
-
     pub(crate) fn antenna_ids(&self) -> impl ExactSizeIterator<Item = i32> + '_ {
         self.antennas.iter().map(|antenna| antenna.antenna_id)
     }
 
     #[must_use]
-    pub(crate) fn time_bounds_mjd_seconds(
-        &self,
-        antenna_id: i32,
-        sampling: PointingTimeSampling,
-    ) -> Option<[f64; 2]> {
+    pub(crate) fn time_bounds_mjd_seconds(&self, antenna_id: i32) -> Option<[f64; 2]> {
         let antenna = self.antennas.get(
             self.antennas
                 .binary_search_by_key(&antenna_id, |antenna| antenna.antenna_id)
                 .ok()?,
         )?;
-        match sampling {
-            PointingTimeSampling::VisibilityTime => Some(antenna.visibility_time_bounds),
-            PointingTimeSampling::VisibilityTimeCentroid => Some(antenna.centroid_time_bounds),
-        }
+        Some(antenna.time_bounds)
     }
 }
 
@@ -117,41 +72,29 @@ impl SelectedPointingQueryDomainBuilder {
         antenna1: i32,
         antenna2: i32,
         time_mjd_seconds: f64,
-        time_centroid_mjd_seconds: f64,
     ) -> MsResult<()> {
-        if antenna1 < 0
-            || antenna2 < 0
-            || !time_mjd_seconds.is_finite()
-            || !time_centroid_mjd_seconds.is_finite()
-        {
+        if antenna1 < 0 || antenna2 < 0 || !time_mjd_seconds.is_finite() {
             return Err(MsError::InvalidInput(
                 "selected POINTING domain requires non-negative antennas and finite epochs"
                     .to_string(),
             ));
         }
-        self.observe_antenna(antenna1, time_mjd_seconds, time_centroid_mjd_seconds);
-        self.observe_antenna(antenna2, time_mjd_seconds, time_centroid_mjd_seconds);
+        self.observe_antenna(antenna1, time_mjd_seconds);
+        self.observe_antenna(antenna2, time_mjd_seconds);
         Ok(())
     }
 
-    fn observe_antenna(
-        &mut self,
-        antenna_id: i32,
-        time_mjd_seconds: f64,
-        time_centroid_mjd_seconds: f64,
-    ) {
+    fn observe_antenna(&mut self, antenna_id: i32, time_mjd_seconds: f64) {
         if let Some(antenna) = self
             .antennas
             .iter_mut()
             .find(|antenna| antenna.antenna_id == antenna_id)
         {
-            extend_bounds(&mut antenna.visibility_time_bounds, time_mjd_seconds);
-            extend_bounds(&mut antenna.centroid_time_bounds, time_centroid_mjd_seconds);
+            extend_bounds(&mut antenna.time_bounds, time_mjd_seconds);
         } else {
             self.antennas.push(AntennaPointingQueryDomain {
                 antenna_id,
-                visibility_time_bounds: [time_mjd_seconds; 2],
-                centroid_time_bounds: [time_centroid_mjd_seconds; 2],
+                time_bounds: [time_mjd_seconds; 2],
             });
         }
     }
@@ -199,50 +142,6 @@ impl PointingReadPlan {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct PointingDirectionCandidate {
-    row_index: usize,
-    row_time_mjd_seconds: f64,
-    direction_j2000_rad: [f64; 2],
-}
-
-impl PointingDirectionCandidate {
-    #[must_use]
-    pub(crate) const fn row_index(self) -> usize {
-        self.row_index
-    }
-    #[must_use]
-    pub(crate) const fn row_time_mjd_seconds(self) -> f64 {
-        self.row_time_mjd_seconds
-    }
-    #[must_use]
-    pub(crate) const fn direction_j2000_rad(self) -> [f64; 2] {
-        self.direction_j2000_rad
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct PointingDirectionBracket {
-    covering: Option<PointingDirectionCandidate>,
-    before: Option<PointingDirectionCandidate>,
-    after: Option<PointingDirectionCandidate>,
-}
-
-impl PointingDirectionBracket {
-    #[must_use]
-    pub(crate) const fn covering(self) -> Option<PointingDirectionCandidate> {
-        self.covering
-    }
-    #[must_use]
-    pub(crate) const fn before(self) -> Option<PointingDirectionCandidate> {
-        self.before
-    }
-    #[must_use]
-    pub(crate) const fn after(self) -> Option<PointingDirectionCandidate> {
-        self.after
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct CandidateMetadata {
     row_index: usize,
@@ -285,10 +184,12 @@ impl SelectedPointingCatalogMeasurements {
     pub(crate) const fn source_rows_scanned(self) -> usize {
         self.source_rows_scanned
     }
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn retained_rows(self) -> usize {
         self.retained_rows
     }
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn build_nanos(self) -> u64 {
         self.build_nanos
@@ -299,11 +200,13 @@ impl SelectedPointingCatalogMeasurements {
 pub(crate) struct PreparedSelectedPointingCatalog {
     rows: Vec<CatalogRow>,
     coefficients: Vec<f64>,
-    maximum_half_interval_seconds: f64,
+    /// What the read held, which the counting laws check.
+    #[cfg_attr(not(test), allow(dead_code))]
     measurements: SelectedPointingCatalogMeasurements,
 }
 
 impl PreparedSelectedPointingCatalog {
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn measurements(&self) -> SelectedPointingCatalogMeasurements {
         self.measurements
@@ -376,68 +279,6 @@ impl PreparedSelectedPointingCatalog {
             );
         }
         Ok(series)
-    }
-
-    pub(crate) fn direction_brackets(
-        &self,
-        engine: &MsCalEngine,
-        queries: &[PointingDirectionQuery],
-    ) -> MsResult<Vec<PointingDirectionBracket>> {
-        queries
-            .iter()
-            .copied()
-            .map(|query| self.direction_bracket(engine, query))
-            .collect()
-    }
-
-    fn direction_bracket(
-        &self,
-        engine: &MsCalEngine,
-        query: PointingDirectionQuery,
-    ) -> MsResult<PointingDirectionBracket> {
-        let start = self
-            .rows
-            .partition_point(|row| row.metadata.antenna_id < query.antenna_id);
-        let end = self
-            .rows
-            .partition_point(|row| row.metadata.antenna_id <= query.antenna_id);
-        let rows = &self.rows[start..end];
-        let first_at_or_after =
-            rows.partition_point(|row| row.metadata.time_mjd_seconds < query.time_mjd_seconds);
-        let first_after =
-            rows.partition_point(|row| row.metadata.time_mjd_seconds <= query.time_mjd_seconds);
-        let before = if first_after == 0 {
-            None
-        } else {
-            let time = rows[first_after - 1].metadata.time_mjd_seconds;
-            rows[..first_after]
-                .iter()
-                .find(|row| row.metadata.time_mjd_seconds.to_bits() == time.to_bits())
-        };
-        let after = rows.get(first_at_or_after);
-
-        let lower = query.time_mjd_seconds - self.maximum_half_interval_seconds;
-        let upper = query.time_mjd_seconds + self.maximum_half_interval_seconds;
-        let covering_start = rows.partition_point(|row| row.metadata.time_mjd_seconds < lower);
-        let covering_end = rows.partition_point(|row| row.metadata.time_mjd_seconds <= upper);
-        let covering = rows[covering_start..covering_end]
-            .iter()
-            .filter(|row| {
-                row.metadata.interval_seconds > 0.0
-                    && (row.metadata.time_mjd_seconds - query.time_mjd_seconds).abs()
-                        <= 0.5 * row.metadata.interval_seconds
-            })
-            .min_by(|left, right| {
-                (left.metadata.time_mjd_seconds - query.time_mjd_seconds)
-                    .abs()
-                    .total_cmp(&(right.metadata.time_mjd_seconds - query.time_mjd_seconds).abs())
-                    .then_with(|| left.metadata.row_index.cmp(&right.metadata.row_index))
-            });
-        Ok(PointingDirectionBracket {
-            covering: evaluate_candidate(engine, &self.coefficients, covering, query)?,
-            before: evaluate_candidate(engine, &self.coefficients, before, query)?,
-            after: evaluate_candidate(engine, &self.coefficients, after, query)?,
-        })
     }
 }
 
@@ -513,7 +354,6 @@ impl MeasurementSet {
         &self,
         column: PointingDirectionColumn,
         domain: &SelectedPointingQueryDomain,
-        sampling: PointingTimeSampling,
         plan: PointingReadPlan,
     ) -> MsResult<PreparedSelectedPointingCatalog> {
         let started = Instant::now();
@@ -523,7 +363,6 @@ impl MeasurementSet {
                 return Ok(PreparedSelectedPointingCatalog {
                     rows: Vec::new(),
                     coefficients: Vec::new(),
-                    maximum_half_interval_seconds: 0.0,
                     measurements: SelectedPointingCatalogMeasurements {
                         build_nanos: elapsed_nanos(started),
                         ..Default::default()
@@ -585,7 +424,7 @@ impl MeasurementSet {
             for (slot, row_index) in rows.into_iter().enumerate() {
                 let antenna_id = required_i32(&antennas, slot, "ANTENNA_ID", row_index)?;
                 let Some([first_query_time, last_query_time]) =
-                    domain.time_bounds_mjd_seconds(antenna_id, sampling)
+                    domain.time_bounds_mjd_seconds(antenna_id)
                 else {
                     continue;
                 };
@@ -801,11 +640,6 @@ impl MeasurementSet {
                 .checked_add(row_indices.capacity() * size_of::<usize>())
                 .ok_or_else(byte_overflow)?,
         );
-        let maximum_half_interval_seconds = catalog_rows
-            .iter()
-            .filter(|row| row.metadata.interval_seconds > 0.0)
-            .map(|row| 0.5 * row.metadata.interval_seconds)
-            .fold(0.0, f64::max);
         let measurements = SelectedPointingCatalogMeasurements {
             retained_bytes,
             construction_peak_bytes,
@@ -816,47 +650,9 @@ impl MeasurementSet {
         Ok(PreparedSelectedPointingCatalog {
             rows: catalog_rows,
             coefficients,
-            maximum_half_interval_seconds,
             measurements,
         })
     }
-}
-
-fn evaluate_candidate(
-    engine: &MsCalEngine,
-    coefficients: &[f64],
-    row: Option<&CatalogRow>,
-    query: PointingDirectionQuery,
-) -> MsResult<Option<PointingDirectionCandidate>> {
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let offset_seconds = query.time_mjd_seconds - row.metadata.time_origin_mjd_seconds;
-    let coefficient_count = 2 * row.metadata.polynomial_terms;
-    let coefficients =
-        &coefficients[row.coefficient_offset..row.coefficient_offset + coefficient_count];
-    let mut angles_rad = [0.0; 2];
-    for axis in 0..2 {
-        for term in (0..row.metadata.polynomial_terms).rev() {
-            angles_rad[axis] = angles_rad[axis] * offset_seconds
-                + coefficients[axis * row.metadata.polynomial_terms + term];
-        }
-    }
-    if !angles_rad.into_iter().all(f64::is_finite) {
-        return Err(MsError::InvalidInput(format!(
-            "POINTING row {} evaluates to a non-finite direction",
-            row.metadata.row_index
-        )));
-    }
-    Ok(Some(PointingDirectionCandidate {
-        row_index: row.metadata.row_index,
-        row_time_mjd_seconds: row.metadata.time_mjd_seconds,
-        direction_j2000_rad: engine.direction_angles_j2000(
-            query.time_mjd_seconds,
-            angles_rad,
-            row.source_ref,
-        )?,
-    }))
 }
 
 fn required_i32(
@@ -1017,18 +813,6 @@ pub(crate) fn catalog_peak_bytes(
         .checked_add(antennas.checked_mul(size_of::<[Option<CandidateMetadata>; 2]>())?)
 }
 
-pub(crate) fn selected_pointing_preparation_peak_bytes(
-    selected_rows: usize,
-    scan_rows: usize,
-    maximum_polynomial_terms: usize,
-    _direction_column: PointingDirectionColumn,
-) -> Option<usize> {
-    let candidate_rows = selected_rows.checked_mul(2)?.checked_add(2)?;
-    catalog_upper_bound_bytes(candidate_rows, maximum_polynomial_terms)
-        .ok()?
-        .checked_add(scan_rows.checked_mul(SCALAR_SCAN_BYTES_PER_ROW)?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1042,8 +826,8 @@ mod tests {
         use casa_types::{RecordField, RecordValue, Value};
 
         let mut builder = SelectedPointingQueryDomain::builder();
-        builder.observe_row(0, 1, 0.0, 0.0).unwrap();
-        builder.observe_row(0, 1, 100.0, 100.0).unwrap();
+        builder.observe_row(0, 1, 0.0).unwrap();
+        builder.observe_row(0, 1, 100.0).unwrap();
         let domain = builder.finish().unwrap().unwrap();
         let terms = 4;
         let mut ms = MeasurementSet::create_memory(crate::MeasurementSetBuilder::new()).unwrap();
@@ -1091,7 +875,6 @@ mod tests {
                 .prepare_selected_pointing_catalog(
                     PointingDirectionColumn::Direction,
                     &domain,
-                    PointingTimeSampling::VisibilityTime,
                     PointingReadPlan::new(scan_rows, terms, budget).unwrap(),
                 )
                 .unwrap_or_else(|error| panic!("scan {scan_rows}: {error}"));
@@ -1109,8 +892,8 @@ mod tests {
         use casa_types::{RecordField, RecordValue, Value};
 
         let mut builder = SelectedPointingQueryDomain::builder();
-        builder.observe_row(0, 1, 0.0, 0.0).unwrap();
-        builder.observe_row(0, 1, 100.0, 100.0).unwrap();
+        builder.observe_row(0, 1, 0.0).unwrap();
+        builder.observe_row(0, 1, 100.0).unwrap();
         let domain = builder.finish().unwrap().unwrap();
         for row_count in [0, 1, 19] {
             for terms in [1, 4] {
@@ -1157,7 +940,6 @@ mod tests {
                         .prepare_selected_pointing_catalog(
                             PointingDirectionColumn::Direction,
                             &domain,
-                            PointingTimeSampling::VisibilityTime,
                             PointingReadPlan::new(scan_rows, terms, catalog_budget).unwrap(),
                         )
                         .unwrap();
@@ -1175,7 +957,7 @@ mod tests {
     fn catalog_requirements_reject_zero_and_overflowing_polynomial_bounds() {
         let ms = MeasurementSet::create_memory(crate::MeasurementSetBuilder::new()).unwrap();
         let mut builder = SelectedPointingQueryDomain::builder();
-        builder.observe_row(0, 1, 0.0, 0.0).unwrap();
+        builder.observe_row(0, 1, 0.0).unwrap();
         let domain = builder.finish().unwrap().unwrap();
         for terms in [0, usize::MAX] {
             assert!(matches!(
@@ -1187,20 +969,14 @@ mod tests {
     }
 
     #[test]
-    fn selected_domain_uses_requested_time_sampling_and_sorted_antennas() {
+    fn a_domain_bounds_each_antennas_times_and_sorts_the_antennas() {
         let mut builder = SelectedPointingQueryDomain::builder();
-        builder.observe_row(7, 2, 30.0, 31.0).unwrap();
-        builder.observe_row(2, 5, 10.0, 12.0).unwrap();
+        builder.observe_row(7, 2, 30.0).unwrap();
+        builder.observe_row(2, 5, 10.0).unwrap();
         let domain = builder.finish().unwrap().unwrap();
         assert_eq!(domain.antenna_ids().collect::<Vec<_>>(), [2, 5, 7]);
-        assert_eq!(
-            domain.time_bounds_mjd_seconds(2, PointingTimeSampling::VisibilityTime),
-            Some([10.0, 30.0])
-        );
-        assert_eq!(
-            domain.time_bounds_mjd_seconds(5, PointingTimeSampling::VisibilityTimeCentroid),
-            Some([12.0, 12.0])
-        );
+        assert_eq!(domain.time_bounds_mjd_seconds(2), Some([10.0, 30.0]));
+        assert_eq!(domain.time_bounds_mjd_seconds(5), Some([10.0, 10.0]));
     }
 
     #[test]

@@ -349,6 +349,42 @@ fn a_table_replaces_a_link_not_what_it_points_to() {
 }
 
 #[test]
+fn failed_frequency_predictions_report_casas_cause_without_publishing_an_ms() {
+    for (frame, message) in [
+        ("REST", "No MeasFrame specified for conversion of Frequency"),
+        (
+            "Undefined",
+            "Transformations to/from frame \"Undefined\" are not possible.",
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let parameters = fixture.parameters(|parameters| parameters.outframe = frame.into());
+        let error = simobserve(&fixture.request(parameters)).expect_err("CASA prediction refusal");
+        assert_eq!(error.to_string(), message);
+        assert!(!fixture.path("p/p.tiny.ms").exists());
+        assert!(fixture.path("p/p.tiny.ptg.txt").exists());
+    }
+
+    // CASA accepts REST images. The failure above belongs to its component
+    // frequency conversion, rather than every REST-labelled observation.
+    let fixture = Fixture::new();
+    let original = simobserve(&fixture.request(fixture.parameters(|_| {}))).unwrap();
+    let image = original
+        .products
+        .iter()
+        .find(|path| path.to_string_lossy().ends_with(".compskymodel"))
+        .unwrap();
+    let parameters = fixture.parameters(|parameters| {
+        parameters.project = fixture.path("rest-image").display().to_string();
+        parameters.complist.clear();
+        parameters.skymodel = image.display().to_string();
+        parameters.outframe = "REST".into();
+    });
+    simobserve(&fixture.request(parameters)).expect("CASA accepts REST image prediction");
+    assert!(fixture.path("rest-image/rest-image.tiny.ms").exists());
+}
+
+#[test]
 fn what_casa_refuses_is_refused_with_its_message() {
     let fixture = Fixture::new();
     let refusal = |changes: fn(&mut SimobserveParameters)| {
@@ -356,6 +392,10 @@ fn what_casa_refuses_is_refused_with_its_message() {
             .expect_err("a refusal")
             .to_string()
     };
+    assert_eq!(
+        refusal(|parameters| parameters.project.clear()),
+        "[Errno 2] No such file or directory: ''"
+    );
     assert_eq!(
         refusal(|parameters| parameters.antennalist = "missing.cfg".to_string()),
         "Couldn't find antennalist: missing.cfg"

@@ -1,0 +1,143 @@
+{
+ "schema": "simobserve-parity-receipt/1",
+ "work_issue": 1053,
+ "date": "2026-11-03",
+ "oracle": "casatasks 6.7.6.14, casatools 6.7.6-14 (task_simobserve.py)",
+ "native_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "host": "bg-mac-mini, macOS arm64, CPU",
+ "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata /Volumes/home/casatestdata --atmosphere-model TARGET/release/examples/at_tool_quantities",
+ "comparator": "simobserve_parity.py: files, pointing file byte for byte, images (coordinates 1e-12, pixels 1e-6 of peak), calibrator list, and each MeasurementSet through compare_sm_ms.py (DATA NRMS <= 1e-3; noise and leakage by statistics)",
+ "summary": {
+  "cases": 11,
+  "agree": 11
+ },
+ "cases": [
+  {
+   "name": "psimvla1",
+   "differences": [],
+   "ms": [
+    "psimvla1: OK, 9 known (UVW within 5.41e-06 m); DATA NRMS 2.02e-07 over 1263600 samples (cross 2.02e-07)"
+   ],
+   "seconds": {
+    "casa": 12.592379374895245,
+    "casa-rs": 15.407818625
+   }
+  },
+  {
+   "name": "psimvla3",
+   "differences": [],
+   "ms": [
+    "psimvla3: OK, 9 known (UVW within 5.41e-06 m); DATA NRMS 2.01e-07 over 1263600 samples (cross 2.01e-07)",
+    "psimvla3-noisy: OK, 9 known (UVW within 5.41e-06 m); tsys-manual noise over sigma 0.0821-0.08231 Jy, normalized cross re/im[/auto] variance CASA [0.9994/0.9991, 0.9985/1.0002], casa-rs [1.0024/1.0009, 0.9986/1.0011], KS p 0.58; 8 groups, worst pull 2.32, chi2/group 1.88"
+   ],
+   "seconds": {
+    "casa": 11.356489666970447,
+    "casa-rs": 21.293678208
+   }
+  },
+  {
+   "name": "psim2",
+   "differences": [],
+   "ms": [
+    "psim2: OK, 9 known (UVW within 1.19e-05 m); DATA NRMS 1.72e-07 over 294000 samples (cross 1.72e-07)",
+    "psim2-noisy: OK, 9 known (UVW within 1.19e-05 m); tsys-atm noise over sigma 0.03489-0.03492 Jy, normalized cross re/im[/auto] variance CASA [1.0012/1.0000, 0.9996/0.9947], casa-rs [0.9986/0.9964, 0.9946/0.9955], KS p 0.92; no direct groups"
+   ],
+   "seconds": {
+    "casa": 2.4191035418771207,
+    "casa-rs": 1.414918834
+   }
+  },
+  {
+   "name": "comp_atm",
+   "differences": [],
+   "ms": [
+    "comp_atm: OK, 9 known (UVW within 9.93e-08 m); DATA NRMS 6.20e-08 over 73500 samples (cross 6.20e-08)",
+    "comp_atm-noisy: OK, 9 known (UVW within 9.93e-08 m); tsys-atm noise over sigma 0.01438-0.01438 Jy, normalized cross re/im[/auto] variance CASA [0.9971/1.0028, 1.0026/1.0009], casa-rs [1.0079/0.9924, 0.9910/0.9889], KS p 0.11; no direct groups"
+   ],
+   "seconds": {
+    "casa": 1.1592451250180602,
+    "casa-rs": 0.47628975
+   }
+  },
+  {
+   "name": "leak_manual",
+   "differences": [],
+   "ms": [
+    "leak_manual: OK, 9 known (UVW within 3.65e-08 m); DATA NRMS 1.05e-06 over 147000 samples (cross 1.05e-06)",
+    "leak_manual-fullpol: OK, 9 known (UVW within 3.65e-08 m); leakage XY/YX re/im mean-square scale CASA [0.833, 1.185, 1.010, 1.171], casa-rs [1.103, 0.949, 1.196, 1.056]",
+    "leak_manual-noisy: OK, 9 known (UVW within 3.65e-08 m); tsys-manual noise over sigma 0.4075-0.4075 Jy, normalized cross re/im[/auto] variance CASA [0.9971/1.0028, 0.9957/0.9921, 0.9922/0.9918, 1.0026/1.0009], casa-rs [1.0079/0.9924, 0.9910/0.9889, 0.9989/0.9929, 0.9956/0.9982], KS p 0.44; 8 groups, worst pull 2.25, chi2/group 1.81"
+   ],
+   "seconds": {
+    "casa": 11.424385708058253,
+    "casa-rs": 6.6510835
+   }
+  },
+  {
+   "name": "leak_atm",
+   "differences": [],
+   "ms": [
+    "leak_atm: OK, 9 known (UVW within 3.65e-08 m); DATA NRMS 1.04e-06 over 147000 samples (cross 1.04e-06)",
+    "leak_atm-fullpol: OK, 9 known (UVW within 3.65e-08 m); leakage XY/YX re/im mean-square scale CASA [0.833, 1.185, 1.010, 1.171], casa-rs [1.103, 0.949, 1.196, 1.056]",
+    "leak_atm-noisy: OK, 9 known (UVW within 3.65e-08 m); tsys-atm noise over sigma 0.4066-0.4066 Jy, normalized cross re/im[/auto] variance CASA [0.9971/1.0028, 0.9957/0.9921, 0.9922/0.9918, 1.0026/1.0009], casa-rs [1.0079/0.9924, 0.9910/0.9889, 0.9989/0.9929, 0.9956/0.9982], KS p 0.44; no direct groups"
+   ],
+   "seconds": {
+    "casa": 11.417684958083555,
+    "casa-rs": 6.475640708
+   }
+  },
+  {
+   "name": "calibrator",
+   "differences": [],
+   "ms": [
+    "calibrator: OK, 9 known (UVW within 3.8e-08 m); DATA NRMS 5.29e-09 over 41650 samples (cross 5.29e-09)"
+   ],
+   "seconds": {
+    "casa": 3.7199260001070797,
+    "casa-rs": 4.236526584
+   }
+  },
+  {
+   "name": "calibrator_lists",
+   "differences": [],
+   "ms": [
+    "calibrator_lists: OK, 9 known (UVW within 3.8e-08 m); DATA NRMS 5.46e-09 over 41650 samples (cross 5.46e-09)"
+   ],
+   "seconds": {
+    "casa": 2.808248082874343,
+    "casa-rs": 5.036835208
+   }
+  },
+  {
+   "name": "single_dish",
+   "differences": [],
+   "ms": [
+    "single_dish: OK, 9 known (UVW within 0 m); DATA NRMS 8.67e-09 over 720 samples (auto 8.67e-09)",
+    "single_dish-noisy: OK, 9 known (UVW within 0 m); tsys-atm noise over sigma 0.575-0.5763 Jy, normalized cross re/im[/auto] variance CASA [-/-/0.9197, -/-/0.9016], casa-rs [-/-/1.0389, -/-/1.0293], KS p 0.35; no direct groups"
+   ],
+   "seconds": {
+    "casa": 2.577594750095159,
+    "casa-rs": 0.586637333
+   }
+  },
+  {
+   "name": "pointing_file",
+   "differences": [],
+   "ms": [
+    "pointing_file: OK, 9 known (UVW within 3.75e-08 m); DATA NRMS 2.91e-07 over 73500 samples (cross 2.91e-07)"
+   ],
+   "seconds": {
+    "casa": 1.9499621249269694,
+    "casa-rs": 3.566012
+   }
+  },
+  {
+   "name": "coarse_cell",
+   "differences": [],
+   "refused": "Sky model cell of 4.0 asec is very large compared to highest resolution 1.450637756194225 asec - this will lead to blank or erroneous output. (Did you set incell?)",
+   "seconds": {
+    "casa": null,
+    "casa-rs": null
+   }
+  }
+ ]
+}

@@ -10,8 +10,11 @@ use casa_imaging_application::{Cancel, HostResources, ImagingRequest, ResourcePo
 /// catalog's `auto` would move a test onto the GPU wherever the host has
 /// one. A value these tests were written against when it was the imager's
 /// default fills in for CASA's (#931): a 512-pixel image of 1-arcsecond
-/// cells, 1000-iteration minor cycles, W planes derived from the data, and
-/// the imager's fixed `conjbeams` and `mosweight`.
+/// cells, 1000-iteration minor cycles, W planes derived from the data, the
+/// A-projection's `conjbeams` and the mosaic's `mosweight` it once fixed.
+/// These component fixtures also keep the old PB opt-in: some intentionally
+/// omit telescope metadata. The live default is checked through the task's
+/// production entry point in `casars-imager`'s PB-default T1 test.
 pub fn request(values: serde_json::Value) -> ImagingRequest {
     let serde_json::Value::Object(mut values) = values else {
         panic!("request values are a JSON object");
@@ -20,6 +23,7 @@ pub fn request(values: serde_json::Value) -> ImagingRequest {
     values.entry("imsize").or_insert_with(|| 512.into());
     values.entry("cell").or_insert_with(|| "1arcsec".into());
     values.entry("cycleniter").or_insert_with(|| 1000.into());
+    values.entry("write_pb").or_insert_with(|| false.into());
     match values.get("gridder").and_then(serde_json::Value::as_str) {
         Some("wproject") => {
             values.entry("wprojplanes").or_insert_with(|| (-1).into());

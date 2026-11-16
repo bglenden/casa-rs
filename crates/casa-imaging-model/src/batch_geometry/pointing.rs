@@ -10,10 +10,11 @@ use casa_types::measures::{EpochRef, MjdHighPrec};
 use super::{BatchGeometry, BatchGeometryError, GeometryPlan};
 use crate::aw_pointing::{AwPointingEpochs, AwPointingGrouping};
 use crate::geometry::{
-    ObservationPointingLaw, PointingCentreLaw, PointingTimeSampling, SkyDirection,
+    DirectionFrame, MissingPointingPolicy, ObservationPointingLaw, PointingCentreLaw,
+    PointingTimeSampling, SkyDirection,
 };
 use crate::pointing_law::{PointingSample, PointingSamples};
-use crate::selected_observation_sample::SelectedPointingDirections;
+use crate::sample_antennas::SelectedPointingDirections;
 
 /// One time of a batch, as its geometry is evaluated.
 pub(super) struct TimeContext<'a, 'b> {
@@ -21,9 +22,9 @@ pub(super) struct TimeContext<'a, 'b> {
     pub(super) time: usize,
     pub(super) time_mjd_s: f64,
     pub(super) field: FieldId,
-    /// The phase-tracking direction: the pointing law's fallback.
+    /// The phase-tracking direction requested for imaging.
     pub(super) phase: SkyDirection,
-    /// The field's observation direction.
+    /// The field's observation direction, also used when AW has no pointing sample.
     pub(super) observation: SkyDirection,
     pub(super) rows: &'a [bool],
 }
@@ -104,6 +105,12 @@ impl GeometryPlan {
             PointingCentreLaw::Observation(law) => *law,
         };
         let series = series.ok_or(BatchGeometryError::MissingInput("pointing samples"))?;
+        if !series.store_has_pointing
+            && law.missing() == MissingPointingPolicy::FieldCentreWithoutPointingTable
+        {
+            fill(context, out, both(context.observation));
+            return Ok(());
+        }
         let batch = context.batch;
         let per_time = batch.samples_per_time();
         let centroid = match law.time_sampling() {
@@ -131,7 +138,7 @@ impl GeometryPlan {
                         antenna,
                         [time_s, centroid.seconds_since(sample, mjd_origin)],
                         context.scale(),
-                        context.phase,
+                        context.observation,
                     )?;
                     directions
                         .centroid
@@ -143,6 +150,63 @@ impl GeometryPlan {
                 antenna1: direction(baseline.antenna1)?,
                 antenna2: direction(baseline.antenna2)?,
             };
+        }
+        Ok(())
+    }
+
+    /// The time's rows' antenna-1 pointings placed on each chart
+    /// ([`BatchGeometry::chart_pointing`]): each J2000 pointing less the
+    /// moving phase centre's shift since the image's epoch, converted to
+    /// the chart's frame from the observatory at the time.
+    ///
+    /// CASA converts the pointing to the image frame first and shifts it
+    /// there (`SimplePBConvFunc::toPix`), by the source's motion in the
+    /// image frame (`FTMachine::girarUVW`); shifting in J2000 differs by
+    /// the frames' relative rotation applied to the shift, below 1e-6 of
+    /// it between the equatorial frames.
+    pub(super) fn chart_pointings(
+        &self,
+        context: &TimeContext<'_, '_>,
+        out: &mut BatchGeometry,
+    ) -> Result<(), BatchGeometryError> {
+        let time = (context.time_mjd_s, context.scale());
+        let [dx, dy] = self
+            .moving_shift(context.time_mjd_s, context.scale(), context.phase)?
+            .unwrap_or([0.0; 2]);
+        // Rows share their antenna-1 pointing under the field-centre law:
+        // each distinct direction is converted once.
+        let mut placed: Vec<([u64; 2], Vec<SkyDirection>)> = Vec::new();
+        for sample in context.row_samples() {
+            let pointing = out.pointing[sample].antenna1;
+            let key = [
+                pointing.longitude_rad().to_bits(),
+                pointing.latitude_rad().to_bits(),
+            ];
+            let index = match placed.iter().position(|(known, _)| *known == key) {
+                Some(index) => index,
+                None => {
+                    let shifted = [pointing.longitude_rad() - dx, pointing.latitude_rad() - dy];
+                    let on_charts = self
+                        .charts
+                        .iter()
+                        .map(|chart| {
+                            let frame = chart.centre.frame();
+                            let [longitude, latitude] = self.frames.convert(
+                                time,
+                                shifted,
+                                DirectionFrame::J2000.direction_ref(),
+                                frame.direction_ref(),
+                            )?;
+                            Ok(SkyDirection::new(frame, longitude, latitude))
+                        })
+                        .collect::<Result<Vec<_>, BatchGeometryError>>()?;
+                    placed.push((key, on_charts));
+                    placed.len() - 1
+                }
+            };
+            let charts = out.charts;
+            out.chart_pointing[sample * charts..(sample + 1) * charts]
+                .copy_from_slice(&placed[index].1);
         }
         Ok(())
     }
@@ -208,7 +272,7 @@ impl GeometryPlan {
             antenna,
             [context.partition_time_s(), context.time_mjd_s],
             context.scale(),
-            context.phase,
+            context.observation,
         )?;
         directions.visibility.insert(antenna, direction);
         Ok(direction)

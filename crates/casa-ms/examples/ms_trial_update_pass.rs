@@ -3,8 +3,7 @@
 //! it holds, through an update session, and report the pass's time, the
 //! time its updaters' finishes took (an MSv4 updater synchronizes the
 //! directories it changed there) and the update reports: the cost of
-//! write-back's atomic chunk replacement and synchronization at scale, for
-//! the measurements in `docs/measurement-set/trial/README.md`.
+//! write-back's atomic chunk replacement and synchronization at scale.
 //!
 //! ```text
 //! ms_trial_update_pass STORE [--batch-mib M]

@@ -12,9 +12,47 @@ from casars.parameters import ParameterOrigin, TaskParameters
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
+@pytest.mark.parametrize(
+    ("surface", "name", "state"),
+    [("flagdata", "timedev", ""), ("flagdata", "timedev", "none"),
+     ("tclean", "cf_resident_mb", "auto")],
+)
+def test_zero_dimensional_optional_values_match_scalar_states(
+    tmp_path: Path, surface: str, name: str, state: str,
+) -> None:
+    import numpy as np
+
+    plain = TaskParameters.defaults(surface, workspace=tmp_path)
+    array = TaskParameters.defaults(surface, workspace=tmp_path)
+    plain[name] = state
+    array[name] = np.array(state)
+    assert array[name] == plain[name]
+
+
+@pytest.mark.parametrize("name", ["phasecenter", "start", "width", "psfphasecenter"])
+def test_malformed_numpy_scalar_profile_is_rejected_before_number_as_text(
+    tmp_path: Path, name: str,
+) -> None:
+    payload = {"kind": "numpy_scalar", "value": {"dtype": "int8", "value": {"kind": "integer", "value": 1000}}}
+    current = parameters.definition("tclean")["contract_version"]
+    profile = f'''[casars]
+format = 1
+surface = "tclean"
+kind = "task"
+contract = {current}
+
+[parameters]
+
+[typed_parameters]
+{name} = '{json.dumps(payload)}'
+'''
+    with pytest.raises((TypeError, ValueError), match="invalid value"):
+        TaskParameters("tclean", base_source="file", profile_toml=profile, workspace=tmp_path)
+
+
 def test_catalog_and_definition_are_projected_from_rust() -> None:
     catalog = parameters.catalog()
-    assert len(catalog["surfaces"]) == 26
+    assert len(catalog["surfaces"]) == 31
     assert {surface["kind"] for surface in catalog["surfaces"]} == {"task"}
 
     imager = parameters.definition("tclean")
@@ -85,13 +123,14 @@ def test_task_parameters_mutate_reset_save_reload_and_track_origins(
 
 
 def test_load_infers_surface_with_the_authoritative_toml_parser(tmp_path: Path) -> None:
+    version = parameters.definition("flagmanager")["contract_version"]
     profile = tmp_path / "single-quoted.toml"
     profile.write_text(
-        """[casars]
+        f"""[casars]
 format = 1
 surface = 'flagmanager'
 kind = 'task'
-contract = 1
+contract = {version}
 
 [parameters]
 vis = ['target.ms']
@@ -107,10 +146,10 @@ comment = 'parsed by Rust'
     assert loaded["comment"] == "parsed by Rust"
 
     profile.write_text(
-        """[casars]
+        f"""[casars]
 format = 1
 kind = 'task'
-contract = 1
+contract = {version}
 
 [parameters]
 vis = ['target.ms']
@@ -213,3 +252,33 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
     assert values["vis"] == [f"{name}.ms"]
     for parameter, value in overrides.items():
         assert values[parameter] == value, parameter
+
+
+@pytest.mark.parametrize("slot", ["file", "last", "last_successful"])
+def test_stale_profile_is_rejected_without_rewriting_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, slot: str
+) -> None:
+    monkeypatch.delenv("CASA_RS_STATE_DIR", raising=False)
+    current = parameters.definition("tclean")["contract_version"]
+    source = f'''[casars]
+format = 1
+surface = "tclean"
+kind = "task"
+contract = {current - 1}
+[parameters]
+vis = ["unused.ms"]
+imagename = "unused"
+cell = "1arcsec"
+'''
+    if slot == "file":
+        path = tmp_path / "legacy.toml"
+        load = lambda: parameters.load("tclean", path, workspace=tmp_path)
+    else:
+        filename = "last.toml" if slot == "last" else "last-successful.toml"
+        path = tmp_path / ".casa-rs" / "parameters" / "tclean" / filename
+        load = lambda: getattr(parameters, slot)("tclean", workspace=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
+    with pytest.raises(ValueError, match="too old.*recreate the profile"):
+        load()
+    assert path.read_text(encoding="utf-8") == source

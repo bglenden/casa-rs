@@ -1,0 +1,563 @@
+{
+  "casatools": "6.7.6-14",
+  "components": [
+    {
+      "shape": "point",
+      "majoraxis": "2arcsec",
+      "minoraxis": "1arcsec",
+      "positionangle": "0deg"
+    },
+    {
+      "shape": "Gaussian",
+      "majoraxis": "2arcsec",
+      "minoraxis": "1arcsec",
+      "positionangle": "30deg"
+    },
+    {
+      "shape": "Disk",
+      "majoraxis": "0.5deg",
+      "minoraxis": "1arcmin",
+      "positionangle": "0.5rad"
+    },
+    {
+      "shape": "Gaussian",
+      "majoraxis": "2arcmin",
+      "minoraxis": "30arcsec",
+      "positionangle": "-30deg"
+    }
+  ],
+  "cases": [
+    {
+      "stage": "empty",
+      "which": -1,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "empty",
+      "which": 0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "empty",
+      "which": 1,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "empty",
+      "which": 2,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "empty",
+      "which": 3,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "empty",
+      "which": 4,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "empty",
+      "which": 4294967296,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "empty",
+      "which": 2147483648,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "empty",
+      "which": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "empty",
+      "which": 1.5,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "stage": "empty",
+      "which": "0",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "stage": "added",
+      "which": -1,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "added",
+      "which": 0,
+      "result": {}
+    },
+    {
+      "stage": "added",
+      "which": 1,
+      "result": {
+        "majoraxis": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcsec",
+          "value": 1.0
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 29.999999999999996
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "stage": "added",
+      "which": 2,
+      "result": {
+        "majoraxis": {
+          "unit": "deg",
+          "value": 0.5
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.5
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "stage": "added",
+      "which": 3,
+      "result": {
+        "majoraxis": {
+          "unit": "arcmin",
+          "value": 2.0
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcsec",
+          "value": 30.0
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 150.0
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "stage": "added",
+      "which": 4,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "added",
+      "which": 4294967296,
+      "result": {}
+    },
+    {
+      "stage": "added",
+      "which": 2147483648,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "added",
+      "which": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "added",
+      "which": 1.5,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "stage": "added",
+      "which": "0",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "stage": "renamed",
+      "which": -1,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "renamed",
+      "which": 0,
+      "result": {}
+    },
+    {
+      "stage": "renamed",
+      "which": 1,
+      "result": {
+        "majoraxis": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcsec",
+          "value": 1.0
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 29.999999999999996
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "stage": "renamed",
+      "which": 2,
+      "result": {
+        "majoraxis": {
+          "unit": "deg",
+          "value": 0.5
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.5
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "stage": "renamed",
+      "which": 3,
+      "result": {
+        "majoraxis": {
+          "unit": "arcmin",
+          "value": 2.0
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcsec",
+          "value": 30.0
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 150.0
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "stage": "renamed",
+      "which": 4,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "renamed",
+      "which": 4294967296,
+      "result": {}
+    },
+    {
+      "stage": "renamed",
+      "which": 2147483648,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "renamed",
+      "which": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "renamed",
+      "which": 1.5,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "stage": "renamed",
+      "which": "0",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "stage": "reopened",
+      "which": -1,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "reopened",
+      "which": 0,
+      "result": {}
+    },
+    {
+      "stage": "reopened",
+      "which": 1,
+      "result": {
+        "majoraxis": {
+          "unit": "arcmin",
+          "value": 0.03333333333333333
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcmin",
+          "value": 0.016666666666666666
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 29.999999999999996
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "stage": "reopened",
+      "which": 2,
+      "result": {
+        "majoraxis": {
+          "unit": "arcmin",
+          "value": 30.000000000000004
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 28.64788975654116
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "stage": "reopened",
+      "which": 3,
+      "result": {
+        "majoraxis": {
+          "unit": "arcmin",
+          "value": 2.0
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcmin",
+          "value": 0.5
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 150.0
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "stage": "reopened",
+      "which": 4,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "reopened",
+      "which": 4294967296,
+      "result": {}
+    },
+    {
+      "stage": "reopened",
+      "which": 2147483648,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "reopened",
+      "which": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      }
+    },
+    {
+      "stage": "reopened",
+      "which": 1.5,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "stage": "reopened",
+      "which": "0",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    }
+  ]
+}

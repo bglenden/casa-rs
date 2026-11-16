@@ -45,7 +45,7 @@ use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{Array3, IxDyn};
 
-use super::{SkyModelError, pixel_axes};
+use super::{SkyModelError, pixel_axes, require_native_direction_frame};
 use crate::simutil::{SimutilError, qa};
 
 /// The image's grid, as the components are placed on it.
@@ -178,6 +178,7 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
     let CoordinateModel::Direction(direction) = coordinates.coordinate(direction_index) else {
         unreachable!("the coordinate found is a direction coordinate");
     };
+    require_native_direction_frame(direction)?;
     let increment = direction.increment();
     let mut placement = Placement {
         direction,

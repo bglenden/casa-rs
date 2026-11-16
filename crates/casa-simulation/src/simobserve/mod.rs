@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The `simobserve` task (simulation Phase 5c, #841): CASA 6.7.6's
-//! `task_simobserve.py`, ported as its specification (ADR-0018) onto the
+//! `task_simobserve.py`, ported as its specification (ADR-0017) onto the
 //! simulator session ([`Simulator`]) and the `simutil` helpers
 //! ([`crate::simutil`]).
 //!
@@ -23,9 +23,12 @@
 //! The files are CASA's: `<stem>.skymodel` and `.skymodel.flat` (or
 //! `.compskymodel` and `.compskymodel.flat`), `.ptg.txt`, `.cal.cclist`,
 //! `.ms` (or `.sd.ms`), `.fullpol.ms` and `.fullpol.cal`, and `.noisy.ms`,
-//! `.noisier.ms` or `.noisy.sd.ms`. Graphics (`.skymodel.png`,
-//! `.observe.png`, `.quick.psf`) come in Phase 5e; until then `graphics`
-//! writes none and says so.
+//! `.noisier.ms` or `.noisy.sd.ms`. [`simobserve_with_plots`] also prepares
+//! complete model/observation figures for the Python renderer to display
+//! or save as `.skymodel.png` and `.observe.png`. A headless caller using
+//! [`simobserve()`] gets a warning that PNG rendering needs the host.
+//! Interferometric graphics write the numerical `.quick.psf` through the
+//! native imaging application in either case.
 //!
 //! Where CASA raises, the task returns [`SimobserveError`] with CASA's
 //! message. Where CASA's task does something physically wrong, casa-rs
@@ -41,6 +44,10 @@
 //!   predicts from the two lists' names joined by a comma, which is not a
 //!   table, so its `predict` fails and the MeasurementSet is left
 //!   unpredicted. casa-rs predicts both lists.
+//! - **Failed frequency conversions.** CASA ignores `predict=False` for
+//!   Undefined output frames and REST component predictions, leaving a
+//!   successful-looking zero MS. casa-rs reports the simulator's cause
+//!   before publishing that unpredicted MS; REST images remain supported.
 //! - **`<stem>.noisier.T.cal`.** CASA deletes the Tsys table `tsys-atm`
 //!   writes beside `.noisy.ms` and `.noisy.sd.ms` but leaves the one beside
 //!   `.noisier.ms`; casa-rs writes none.
@@ -67,11 +74,13 @@
 //! over a large model can need more memory than the session's budget,
 //! which refuses it before it starts.
 
-mod antennas;
+pub(crate) mod antennas;
+pub(crate) mod graphics;
 mod noise;
 mod observe;
 mod parameters;
 mod pointings;
+mod quick_psf;
 mod schedule;
 mod sky;
 #[cfg(test)]
@@ -105,7 +114,7 @@ pub struct SimobserveRequest {
 }
 
 /// What a run wrote.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SimobserveOutcome {
     /// The project directory (`project`).
     pub directory: PathBuf,
@@ -116,6 +125,9 @@ pub struct SimobserveOutcome {
     pub products: Vec<PathBuf>,
     /// What the run did not do that it was asked to, such as graphics.
     pub warnings: Vec<String>,
+    /// Native-prepared figures for the caller's renderer, with array views
+    /// into the file supplied to [`simobserve_with_plots`].
+    pub plots: Vec<casa_ms::plot_document::PlotFigure>,
 }
 
 /// What `simobserve` refuses.
@@ -176,7 +188,53 @@ impl SimobserveError {
 /// What CASA raises, with its message, and what the sky-model helpers, the
 /// antenna-list reader and the simulator sessions refuse.
 pub fn simobserve(request: &SimobserveRequest) -> Result<SimobserveOutcome, SimobserveError> {
-    let mut run = Run::start(request)?;
+    run(request, None, false)
+}
+
+/// Simulate and prepare complete figure data in a caller-owned payload file.
+/// The file must already exist; the run truncates it. The caller renders
+/// the returned documents, then removes its file. No CASA parameter names
+/// or defaults are added by this host-only transport.
+///
+/// # Errors
+///
+/// Simulation failures, a payload file that cannot be opened or written,
+/// or plot preparation that exceeds the session's memory policy.
+pub fn simobserve_with_plots(
+    request: &SimobserveRequest,
+    payload: &Path,
+) -> Result<SimobserveOutcome, SimobserveError> {
+    run(request, Some(payload), false)
+}
+
+pub(crate) fn simobserve_append_plots(
+    request: &SimobserveRequest,
+    payload: &Path,
+) -> Result<SimobserveOutcome, SimobserveError> {
+    run(request, Some(payload), true)
+}
+
+fn run(
+    request: &SimobserveRequest,
+    payload: Option<&Path>,
+    append: bool,
+) -> Result<SimobserveOutcome, SimobserveError> {
+    let payload = payload
+        .filter(|_| {
+            matches!(
+                request.parameters.graphics.as_str(),
+                "file" | "screen" | "both"
+            )
+        })
+        .map(|path| {
+            if append {
+                graphics::open_append(path)
+            } else {
+                graphics::open(path)
+            }
+        })
+        .transpose()?;
+    let mut run = Run::start(request, payload.is_some())?;
     let input = sky::prepare(&mut run)?;
     let array = antennas::resolve(&mut run, &input)?;
     let sky = sky::complete(&mut run, input, &array)?;
@@ -194,6 +252,10 @@ pub fn simobserve(request: &SimobserveRequest) -> Result<SimobserveOutcome, Simo
         }
         run.uvmode = !noise::is_total_power(&ms)?;
     }
+    quick_psf::prepare(&mut run, &sky)?;
+    if let Some(payload) = payload {
+        graphics::prepare(&mut run, &sky, &array, &pointings, payload)?;
+    }
     noise::corrupt(&mut run, &sky, &array)?;
     run.clean_up(&sky)?;
     Ok(SimobserveOutcome {
@@ -201,6 +263,7 @@ pub fn simobserve(request: &SimobserveRequest) -> Result<SimobserveOutcome, Simo
         stem: run.stem,
         products: run.products,
         warnings: run.warnings,
+        plots: run.plots,
     })
 }
 
@@ -222,12 +285,14 @@ struct Run<'a> {
     products: Vec<PathBuf>,
     /// The outcome's warnings.
     warnings: Vec<String>,
+    /// Renderer-neutral native figures prepared in this run.
+    plots: Vec<casa_ms::plot_document::PlotFigure>,
 }
 
 impl<'a> Run<'a> {
     /// The mode, the project directory and the stem, and the checks CASA
     /// makes before reading the sky model.
-    fn start(request: &'a SimobserveRequest) -> Result<Self, SimobserveError> {
+    fn start(request: &'a SimobserveRequest, render_plots: bool) -> Result<Self, SimobserveError> {
         let parameters = &request.parameters;
         let obsmode = parameters.obsmode.as_str();
         tracing::info!("Requested obsmode is \"{obsmode}\"");
@@ -251,6 +316,11 @@ impl<'a> Run<'a> {
             true
         };
         let directory = PathBuf::from(&parameters.project);
+        if parameters.project.is_empty() {
+            return Err(SimobserveError::raised(
+                "[Errno 2] No such file or directory: ''",
+            ));
+        }
         if !directory.exists() {
             std::fs::create_dir(&directory).map_err(SimobserveError::io(&directory))?;
         }
@@ -272,13 +342,14 @@ impl<'a> Run<'a> {
             antennalist,
             products: Vec::new(),
             warnings: Vec::new(),
+            plots: Vec::new(),
         };
         run.check_overwrite()?;
         run.check_sky_inputs()?;
-        if !matches!(parameters.graphics.as_str(), "none" | "") {
+        if !render_plots && !matches!(parameters.graphics.as_str(), "none" | "") {
             let warning = format!(
-                "graphics='{}' is not yet implemented in casa-rs (#841 Phase 5e): no .png or \
-                 .quick.psf is written",
+                "graphics='{}' needs the Python plotting host for PNG rendering (#1025): \
+                 no .png is written by this headless invocation",
                 parameters.graphics
             );
             tracing::warn!("{warning}");

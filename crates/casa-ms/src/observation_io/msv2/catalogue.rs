@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_observation::{
-    AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, Receptors,
-    ScanEntry, ScanId, UvwFrame, VisibilityUnits,
+    AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, PartitionEntry,
+    Receptors, ScanEntry, ScanId, UvwFrame, VisibilityUnits,
 };
 use casa_tables::Table;
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -20,6 +20,7 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 use super::{invalid, storage};
 use crate::derived::engine::resolve_direction_reference_selected;
 use crate::observation_io::heap;
+use crate::subtables::SubTable;
 use crate::{MeasurementSet, SubtableId};
 
 /// A column's `MEASINFO` record, if it has one.
@@ -79,13 +80,24 @@ fn quantum_units(table: &Table, column: &str) -> Option<Vec<String>> {
     }
 }
 
-/// What visibility column `column`'s `QuantumUnits` declares: janskys
-/// only when it says `Jy`.
+/// The declared visibility unit: CASA reads legacy `UNIT` first, then
+/// `QuantumUnits`, taking the first nonempty scalar/array entry.
 pub(super) fn data_units(table: &Table, column: &str) -> VisibilityUnits {
-    match quantum_units(table, column).as_deref() {
-        None | Some([]) => VisibilityUnits::Undeclared,
-        Some([unit, ..]) if unit == "Jy" => VisibilityUnits::Jansky,
-        Some([unit, ..]) => VisibilityUnits::Declared(unit.clone()),
+    let unit = table.column_keywords(column).and_then(|keywords| {
+        ["UNIT", "QuantumUnits"].into_iter().find_map(|key| {
+            let text = match keywords.get(key)? {
+                Value::Scalar(ScalarValue::String(unit)) => unit.as_str(),
+                Value::Array(ArrayValue::String(units)) => units.iter().next()?.as_str(),
+                _ => return None,
+            }
+            .trim();
+            (!text.is_empty()).then_some(text.to_owned())
+        })
+    });
+    match unit.as_deref() {
+        None => VisibilityUnits::Undeclared,
+        Some("Jy") => VisibilityUnits::Jansky,
+        Some(unit) => VisibilityUnits::Declared(unit.to_owned()),
     }
 }
 
@@ -428,9 +440,6 @@ pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, Ob
 /// window -1 standing for every window, in table order.
 pub(crate) struct Feeds {
     rows: BTreeMap<(i32, i32, i32), Vec<Receptors>>,
-    /// Some row names a window: casacore's `MSIter` then reads only each
-    /// window's own rows, and XRADIO's converter likewise.
-    window_dependent: bool,
 }
 
 /// The `FEED` rows.
@@ -458,27 +467,47 @@ pub(crate) fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError>
             .or_default()
             .push(Receptors { types, angles });
     }
-    let window_dependent = rows.keys().any(|(_, _, window)| *window != -1);
-    Ok(Feeds {
-        rows,
-        window_dependent,
-    })
+    Ok(Feeds { rows })
 }
 
 impl Feeds {
+    /// The retained feed lookup and all rows of receptor values it owns.
+    pub(super) fn held_bytes(&self) -> usize {
+        casa_types::memory::btree_node_bytes::<(i32, i32, i32), Vec<Receptors>>(self.rows.len())
+            + self
+                .rows
+                .values()
+                .map(|rows| heap::entries(rows, heap::receptors_bytes))
+                .sum::<usize>()
+    }
+
     /// Antenna `antenna`'s receptors through feed `feed` in spectral window
-    /// `window`, as casacore's `MSIter::setFeedInfo` and XRADIO's converter
-    /// select them: the window's own rows when any row names a window, else
-    /// the rows for every window (-1). A partition's receptors are one set
-    /// (MSv4 holds no time dependence), so where rows of one antenna, feed
-    /// and window differ, `FEED` stating receptors per time, the last row
-    /// in table order is taken, as casacore's `MSIter` takes it (with a
-    /// warning); XRADIO's converter refuses such rows, and a conversion
-    /// reports them as a loss ([`Self::varying`]). `None` without a row.
+    /// `window`: the rows of that antenna, feed and window, else its rows
+    /// for every window (-1), which the MeasurementSet definition (and
+    /// casacore's `MSFeed`) makes valid for all windows. `None` without
+    /// either, as for ALMA's WVR window or a window a simulator wrote no
+    /// row for (#943).
+    ///
+    /// XRADIO's converter (1.3.1, `extract_feed_info`) and casacore's
+    /// `MSIter::setFeedInfo` choose the same rows wherever a table's rows
+    /// are all for every window or all name windows. Where the two kinds
+    /// stand together, both take only a window's own rows (XRADIO once any
+    /// row of the dataset's antennas and feeds names a window, `MSIter`
+    /// once any row of the table does), so a window without its own row
+    /// has none in XRADIO and keeps the previous window's angles in
+    /// `MSIter`'s cache. Here the rows for every window serve it, as the
+    /// definition says.
+    ///
+    /// A partition's receptors are one set (MSv4 holds no time
+    /// dependence), so where rows of one antenna, feed and window differ,
+    /// `FEED` stating receptors per time, the last row in table order is
+    /// taken, as casacore's `MSIter` takes it (with a warning); XRADIO's
+    /// converter refuses such rows, and a conversion reports them as a
+    /// loss ([`Self::varying`]).
     pub(super) fn receptors(&self, antenna: i32, feed: i32, window: i32) -> Option<&Receptors> {
-        let window = if self.window_dependent { window } else { -1 };
         self.rows
             .get(&(antenna, feed, window))
+            .or_else(|| self.rows.get(&(antenna, feed, -1)))
             .and_then(|rows| rows.last())
     }
 
@@ -494,16 +523,45 @@ impl Feeds {
     }
 
     /// The first (antenna, feed, window) whose rows differ, among the rows
-    /// [`Self::receptors`] reads: `FEED` states receptors that vary in
-    /// time, of which it keeps the last. Rows for every window (-1) beside
-    /// window rows are never read, and do not count.
-    pub(crate) fn varying(&self) -> Option<(i32, i32, i32)> {
-        self.rows
+    /// [`Self::receptors`] reads for `reads` (what partitions read:
+    /// [`feed_reads`]): `FEED` states receptors that vary in time, of which
+    /// it keeps the last. Rows no read takes (another feed's, a window's
+    /// no partition is in, or rows for every window where the window has
+    /// its own) do not count.
+    pub(crate) fn varying(&self, reads: &BTreeSet<(i32, i32, i32)>) -> Option<(i32, i32, i32)> {
+        reads
             .iter()
-            .filter(|((_, _, window), _)| !self.window_dependent || *window != -1)
-            .find(|(_, rows)| rows.iter().any(|row| row != &rows[0]))
-            .map(|(key, _)| *key)
+            .filter_map(|&(antenna, feed, window)| {
+                [(antenna, feed, window), (antenna, feed, -1)]
+                    .into_iter()
+                    .find(|key| self.rows.contains_key(key))
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .find(|key| {
+                let rows = &self.rows[key];
+                rows.iter().any(|row| row != &rows[0])
+            })
     }
+}
+
+/// Each (antenna, feed, window) whose receptors the partitions `entries`
+/// read: every antenna their baselines name, through its side of the
+/// partition's feed pair, in the partition's window. A partition without a
+/// feed pair (an MSv4's) reads none.
+pub(crate) fn feed_reads(entries: &[PartitionEntry]) -> BTreeSet<(i32, i32, i32)> {
+    let mut reads = BTreeSet::new();
+    for entry in entries {
+        let Some([feed1, feed2]) = entry.feeds else {
+            continue;
+        };
+        let window = entry.window.0 as i32;
+        for baseline in &entry.baselines {
+            reads.insert((baseline.antenna1.0 as i32, feed1 as i32, window));
+            reads.insert((baseline.antenna2.0 as i32, feed2 as i32, window));
+        }
+    }
+    reads
 }
 
 pub(crate) fn metres(value: f64) -> Quantity {
@@ -626,9 +684,13 @@ pub(super) fn setups_bytes(ms: &MeasurementSet) -> Result<usize, ObservationErro
 }
 
 /// Every `DATA_DESCRIPTION` row's spectral setup.
-pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>, ObservationError> {
+pub(super) fn spectral_setups(
+    ms: &MeasurementSet,
+    visibility_frequency_frame: bool,
+) -> Result<Vec<SpectralSetup>, ObservationError> {
     let descriptions = ms.data_description().map_err(storage)?;
     let windows = ms.spectral_window().map_err(storage)?;
+    let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(windows.table());
     if let Some(window_table) = ms.subtable(SubtableId::SpectralWindow) {
         require_units(window_table, "CHAN_FREQ", "Hz")?;
         require_units(window_table, "CHAN_WIDTH", "Hz")?;
@@ -640,9 +702,12 @@ pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>,
                 .map_err(|_| invalid("negative SPECTRAL_WINDOW_ID"))?;
             let polarization = usize::try_from(descriptions.polarization_id(row).map_err(storage)?)
                 .map_err(|_| invalid("negative POLARIZATION_ID"))?;
-            let frame_code = windows.meas_freq_ref(window).map_err(storage)?;
-            let frequency_frame = FrequencyRef::from_casacore_code(frame_code)
-                .ok_or_else(|| invalid(format!("unknown MEAS_FREQ_REF {frame_code}")))?;
+            let frequency_frame = if visibility_frequency_frame {
+                frequency_refs.visibility_frequency_reference(window)
+            } else {
+                frequency_refs.frequency_reference(window)
+            }
+            .map_err(storage)?;
             let correlations = polarizations
                 .corr_type(polarization)
                 .map_err(storage)?

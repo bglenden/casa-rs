@@ -45,6 +45,10 @@ pub struct TaskRunRequest {
     /// The values the caller set, keyed by CASA parameter name, as plain JSON.
     #[serde(default)]
     pub values: Map<String, Value>,
+    /// Typed values that JSON cannot represent directly, such as complex
+    /// scalars nested within records. A name must appear in only one map.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub typed_values: std::collections::BTreeMap<String, crate::ParameterValue>,
 }
 
 /// Why a task did not succeed.

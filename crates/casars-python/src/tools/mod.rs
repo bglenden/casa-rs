@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA tools as pyo3 classes, exposed as `casars.tools` (ADR-0019), and
+//! CASA tools as pyo3 classes, exposed as `casars.tools` (ADR-0017), and
 //! the CASA helper classes casa-rs ports beside them (`casars.simutil`).
 //!
 //! Each tool is a class with CASA's name, method names, parameter order and
@@ -50,6 +50,8 @@ pub(crate) enum Level {
     Warning,
     /// CASA's SEVERE.
     Error,
+    /// CASA's DEBUG levels, below its log's default filter.
+    Debug,
 }
 
 /// A message to log once the tool's lock is released, so a logging handler
@@ -75,6 +77,13 @@ impl LogLine {
         }
     }
 
+    pub(crate) fn debug(message: impl Into<String>) -> Self {
+        Self {
+            level: Level::Debug,
+            message: message.into(),
+        }
+    }
+
     pub(crate) fn error(message: impl Into<String>) -> Self {
         Self {
             level: Level::Error,
@@ -94,21 +103,15 @@ pub(crate) fn emit(py: Python<'_>, logger: &str, lines: &[LogLine]) -> PyResult<
             Level::Info => "info",
             Level::Warning => "warning",
             Level::Error => "error",
+            Level::Debug => "debug",
         };
         logger.call_method1(method, (line.message.as_str(),))?;
     }
     Ok(())
 }
 
-/// A method of `tool` that a later phase implements (#841).
-pub(crate) fn not_yet_implemented<T>(tool: &str, method: &str) -> PyResult<T> {
-    Err(PyNotImplementedError::new_err(format!(
-        "{tool}.{method} is not yet implemented in casa-rs"
-    )))
-}
-
 /// A method of `tool` casa-rs does not implement yet, refused naming the
-/// issue that records it (#1025).
+/// issue that records it: every refusal names one.
 pub(crate) fn not_yet_implemented_in<T>(tool: &str, method: &str, issue: u32) -> PyResult<T> {
     Err(PyNotImplementedError::new_err(format!(
         "{tool}.{method} is not yet implemented in casa-rs (#{issue})"

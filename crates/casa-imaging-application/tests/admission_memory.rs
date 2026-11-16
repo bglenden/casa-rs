@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Admission covers every live phase (plan section 7 as R3 amended it).
+//! Admission covers every live phase.
 //!
 //! This binary's global allocator counts the process's live heap bytes. At
 //! every allocation of a measured run it compares the bytes the run holds
@@ -32,12 +32,7 @@ use std::time::Instant;
 
 use casa_imaging_application::{
     Admission, ApplicationDispatchError, HostResources, ImagingOutcome, ImagingRequest,
-    ResourcePolicy, RunContext, SourceRoute,
-};
-use casa_ms::{
-    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticObservationRequest,
-    SyntheticSkyModel, SyntheticSpectralSetup, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
+    ResourcePolicy, RunContext,
 };
 use serde_json::{Value, json};
 
@@ -46,6 +41,19 @@ mod imaging;
 
 #[path = "common/synthetic_observation.rs"]
 mod synthetic_observation;
+
+#[path = "admission_memory/aw.rs"]
+mod aw;
+#[path = "admission_memory/mosaic_cube_restart.rs"]
+mod mosaic_cube_restart;
+#[path = "admission_memory/mvc_view.rs"]
+mod mvc_view;
+#[path = "admission_memory/outliers.rs"]
+mod outliers;
+#[path = "admission_memory/single_dish.rs"]
+mod single_dish;
+#[path = "admission_memory/staging.rs"]
+mod staging;
 use synthetic_observation::{CELL_ARCSEC, observation, observation_as};
 
 #[global_allocator]
@@ -132,7 +140,9 @@ unsafe impl GlobalAlloc for CountingHeap {
             if moved != pointer {
                 // The block moved: the old and the new bytes were held at
                 // once while it was copied.
-                observe(LIVE.load(Ordering::Relaxed) + new);
+                let peak = LIVE.load(Ordering::Relaxed) + new;
+                mvc_view::allocation(new, peak);
+                observe(peak);
             }
             if new >= old {
                 grow(new - old);
@@ -146,6 +156,7 @@ unsafe impl GlobalAlloc for CountingHeap {
 
 fn grow(bytes: u64) {
     let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
+    mvc_view::allocation(bytes, live);
     observe(live);
 }
 
@@ -297,6 +308,18 @@ impl tracing::field::Visit for PhaseName {
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for PhaseRecorder {
     fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        if event.metadata().target() == "casa_imaging::model_seed" {
+            outliers::record_seed(event);
+            return;
+        }
+        if event.metadata().target() == "casa_imaging::saved_products" {
+            outliers::record_read(event, &outliers::OUTLIER_READ_BYTES);
+            return;
+        }
+        if event.metadata().target() == "casa_imaging::saved_residual_mask" {
+            outliers::record_read(event, &outliers::OUTLIER_MASK_BYTES);
+            return;
+        }
         if event.metadata().target() != casa_imaging_runtime::STAGE_TIMING {
             return;
         }
@@ -536,6 +559,14 @@ fn continuum_runs_stay_within_their_admission() {
         ),
         ("mtmfs", json!({ "deconvolver": "mtmfs", "nterms": 2 })),
         (
+            "mtmfs 1 term",
+            json!({ "deconvolver": "mtmfs", "nterms": 1 }),
+        ),
+        (
+            "mtmfs IQUV",
+            json!({ "deconvolver": "mtmfs", "nterms": 2, "stokes": "IQUV" }),
+        ),
+        (
             "hogbom uniform",
             json!({ "deconvolver": "hogbom", "weighting": "uniform" }),
         ),
@@ -630,6 +661,64 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
+/// CASA's automatic mask of every channel and Stokes plane (#980) through
+/// the cycle loop: a run keeps the generation of masks in use and the one
+/// being made, every holder of a generation (the plan the next boundary
+/// evolves from, the minor cycle that cleans within it, the outcome)
+/// sharing its support, and admits them twice. A cube of 16 channels and
+/// four Stokes planes, 512 pixels square, holds 16.8 MB a generation, above
+/// what the law resolves; each boundary once copied a generation into the
+/// plan and the outcome, four held at once. Several minor cycles run, so
+/// the masks evolve.
+#[test]
+fn an_automatic_cube_mask_stays_within_its_admission() {
+    if !alone("an_automatic_cube_mask_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), CUBE_CHANNELS);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    let measured = check(
+        &mut breaches,
+        "automatic IQUV cube",
+        &request(
+            &measurement_set,
+            &root.path().join("automask"),
+            512,
+            json!({
+                "deconvolver": "hogbom",
+                "specmode": "cube",
+                "outframe": "TOPO",
+                "spw": "0",
+                "channel_start": 0,
+                "channel_count": CUBE_CHANNELS,
+                "start": "0",
+                "width": "1",
+                "stokes": "IQUV",
+                "usemask": "auto-multithresh",
+                // A ten-minute snapshot's PSF sidelobes are high: CASA's
+                // default sidelobethreshold of 3 would mask nothing.
+                "sidelobethreshold": 1.0,
+                "noisethreshold": 3.0,
+                "niter": 400,
+                "cycleniter": 20,
+            }),
+        ),
+        4,
+        AMPLE,
+    );
+    if let Ok(outcome) = &measured.outcome {
+        assert!(
+            outcome.minor_cycles.len() >= 3,
+            "the masks evolve over several boundaries: {} minor cycles, stop {:?}",
+            outcome.minor_cycles.len(),
+            outcome.stop
+        );
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
 /// Run `request` on four workers just above what it needs, recording
 /// breaches under `label`: the ceiling rises from 1 MiB by what each
 /// refusal reports missing, and a third more, until the run completes, so
@@ -662,25 +751,21 @@ fn just_above(breaches: &mut Vec<String>, label: &str, request: &ImagingRequest)
     }
 }
 
-/// The observation-batch route (#932, step 4) holds no more than it is
-/// admitted: its batches, their geometry, the parallactic cache, the
+/// The observation's batches (#932, step 4) hold no more than they are
+/// admitted: the batches, their geometry, the parallactic cache, the
 /// opening and its index, and the channel-window survey of a cube's
 /// restricted waves. Continuum runs under natural and uniform weighting,
 /// at one worker and at four, a cube resident and in waves, and a window
 /// of 101 channels whole and sparsely selected (`0:0~1;100`), whose
 /// batches span every channel between the selected ones.
 #[test]
-fn the_observation_batch_route_stays_within_its_admission() {
-    if !alone("the_observation_batch_route_stays_within_its_admission") {
+fn the_batches_stay_within_their_admission() {
+    if !alone("the_batches_stay_within_their_admission") {
         return;
     }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), CUBE_CHANNELS);
     warm(&measurement_set, root.path());
-    let batches = |mut request: ImagingRequest| {
-        request.source_route = SourceRoute::ObservationBatches;
-        request
-    };
     let mut breaches = Vec::new();
     for (label, controls) in [
         ("hogbom", json!({ "deconvolver": "hogbom" })),
@@ -697,7 +782,7 @@ fn the_observation_batch_route_stays_within_its_admission() {
             check(
                 &mut breaches,
                 &format!("batches {label} {imsize} px {workers} workers"),
-                &batches(request(&measurement_set, &image, imsize, controls.clone())),
+                &request(&measurement_set, &image, imsize, controls.clone()),
                 workers,
                 AMPLE,
             );
@@ -706,22 +791,22 @@ fn the_observation_batch_route_stays_within_its_admission() {
     check(
         &mut breaches,
         "batches cube resident",
-        &batches(cube(
+        &cube(
             &measurement_set,
             &root.path().join("batches-resident"),
             json!({}),
-        )),
+        ),
         4,
         AMPLE,
     );
     let waves = just_above(
         &mut breaches,
         "batches cube",
-        &batches(cube(
+        &cube(
             &measurement_set,
             &root.path().join("batches-waved"),
             json!({}),
-        )),
+        ),
     );
     assert!(
         waves.is_some_and(|planes| (planes as usize) < CUBE_CHANNELS),
@@ -734,19 +819,19 @@ fn the_observation_batch_route_stays_within_its_admission() {
     check(
         &mut breaches,
         "batches continuum of 101 channels",
-        &batches(request(
+        &request(
             &wide,
             &wide_root.join("batches-continuum"),
             256,
             json!({ "deconvolver": "hogbom" }),
-        )),
+        ),
         4,
         AMPLE,
     );
     check(
         &mut breaches,
         "batches sparse linear cube",
-        &batches(request(
+        &request(
             &wide,
             &wide_root.join("batches-sparse"),
             256,
@@ -760,7 +845,7 @@ fn the_observation_batch_route_stays_within_its_admission() {
                 "interpolation": "linear",
                 "niter": 0,
             }),
-        )),
+        ),
         2,
         2 << 30,
     );
@@ -874,9 +959,9 @@ fn a_refused_run_holds_no_more_than_it_was_admitted() {
 }
 
 /// A cleaned run that writes its model to `MODEL_DATA`: its last pass
-/// predicts every selected sample and hands each block to the writer, on
-/// either route. The batch route runs first, so its first run creates and
-/// seeds `MODEL_DATA` (#932, step 5).
+/// predicts every selected sample and hands each block to the update
+/// session's writer. Its first run creates and seeds `MODEL_DATA` (#932,
+/// step 5).
 #[test]
 fn a_visibility_write_stays_within_its_admission() {
     if !alone("a_visibility_write_stays_within_its_admission") {
@@ -886,23 +971,91 @@ fn a_visibility_write_stays_within_its_admission() {
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
-    for route in [SourceRoute::ObservationBatches, SourceRoute::SelectedRows] {
-        for (imsize, workers) in [(256, 1), (1024, 4)] {
-            let mut savemodel = request(
-                &measurement_set,
-                &root.path().join(format!("savemodel-{route:?}-{imsize}")),
-                imsize,
-                json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
-            );
-            savemodel.source_route = route;
-            check(
-                &mut breaches,
-                &format!("savemodel {route:?} {imsize} px {workers} workers"),
-                &savemodel,
-                workers,
-                AMPLE,
-            );
-        }
+    for (imsize, workers) in [(256, 1), (1024, 4)] {
+        let savemodel = request(
+            &measurement_set,
+            &root.path().join(format!("savemodel-{imsize}")),
+            imsize,
+            json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
+        );
+        check(
+            &mut breaches,
+            &format!("savemodel {imsize} px {workers} workers"),
+            &savemodel,
+            workers,
+            AMPLE,
+        );
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// A final parent-model traversal keeps its prepared grids, predictor,
+/// source block and writer within the run's admission, at one and four
+/// workers. `nsigma` selects the separate CASA prediction path.
+#[test]
+fn a_separate_final_prediction_stays_within_its_admission() {
+    if !alone("a_separate_final_prediction_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), 4);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    for (imsize, workers) in [(256, 1), (1024, 4)] {
+        let prediction = request(
+            &measurement_set,
+            &root.path().join(format!("separate-prediction-{imsize}")),
+            imsize,
+            json!({ "specmode": "cube", "nchan": 4, "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn" }),
+        );
+        let measured = check(
+            &mut breaches,
+            "separate final prediction",
+            &prediction,
+            workers,
+            AMPLE,
+        );
+        let completion = measured
+            .outcome
+            .as_ref()
+            .expect("prediction run")
+            .visibility_products
+            .expect("model write completed");
+        assert!(
+            completion.sample_count() > 0,
+            "the separate pass wrote model samples"
+        );
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// A cleaned run that saves its model as CASA's virtual model: once its
+/// products are published, the selection's models are cleared, its
+/// combinations read a chunk at a time, and the final model's grid formed
+/// and written into the grid image a plane at a time.
+#[test]
+fn a_virtual_model_stays_within_its_admission() {
+    if !alone("a_virtual_model_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), 4);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    for (imsize, workers) in [(256, 1), (1024, 4)] {
+        let savemodel = request(
+            &measurement_set,
+            &root.path().join(format!("virtual-{imsize}")),
+            imsize,
+            json!({ "deconvolver": "hogbom", "savemodel": "virtual" }),
+        );
+        check(
+            &mut breaches,
+            &format!("virtual model {imsize} px {workers} workers"),
+            &savemodel,
+            workers,
+            AMPLE,
+        );
     }
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
@@ -1086,7 +1239,7 @@ fn a_seeded_mosaic_stays_within_its_admission() {
 /// full-size residual and PSF, and an eight-channel mosaic cube, whose paged
 /// state also holds each channel's weight image. Both charges are smaller
 /// than the slack of an ample admission, so this law does not resolve them
-/// alone; `a_stitch_charges_its_full_images_and_one_held_facet_psf` and
+/// alone; `a_stitch_charges_its_full_images_and_reference` and
 /// `a_dense_sensitivity_charges_a_second_invariant_plane_per_plane` pin
 /// their sizes.
 #[test]
@@ -1110,6 +1263,16 @@ fn facets_and_mosaic_cubes_stay_within_their_admission() {
         2,
         AMPLE,
     );
+    let mut faceted = cube(
+        &measurement_set,
+        &root.path().join("faceted-cube"),
+        json!({
+            "facets": 2, "deconvolver": "hogbom", "specmode": "cubedata", "channel_count": 8,
+            "interpolation": "nearest", "niter": 20,
+        }),
+    );
+    faceted.imsize = [512; 2];
+    check(&mut breaches, "faceted cube 8 × 512²", &faceted, 2, AMPLE);
     let alma = observation_as(root.path(), CUBE_CHANNELS, "ALMA");
     warm(&alma, root.path());
     let mut mosaic = cube(
@@ -1173,8 +1336,8 @@ fn kernel_sets_and_sparse_selections_stay_within_their_admission() {
 }
 
 /// The fixed charges a run makes whatever its size, which the over-charge
-/// bound allows beside its proportion: the Measures catalogs (16 MiB), the
-/// walks and envelope of the MeasurementSet, a kernel set's index.
+/// bound allows beside its proportion: the Measures catalogs (16 MiB),
+/// compile's survey of the observation, a kernel set's index.
 const FIXED_ALLOWANCE: u64 = 64 << 20;
 /// How far a run's reservations may stand above what it holds, beyond
 /// [`FIXED_ALLOWANCE`] (#738).
@@ -1226,9 +1389,9 @@ fn mtmfs_controls() -> Value {
     })
 }
 
-/// #738: MT-MFS at 1024² and 2048² on one worker, and at 1024² on four,
-/// whose per-worker charges (chunks, transform planes, minor-cycle loads)
-/// grow with the workers, is admitted close to what it holds. Before the
+/// #738: MT-MFS at 1024² and 2048² on one worker, at 1024² on four, whose
+/// per-worker charges (chunks, transform planes, minor-cycle loads) grow
+/// with the workers, and of full Stokes, is admitted close to what it holds. Before the
 /// charges followed their owners' footprints the 2048² run reserved 2.25 GB
 /// for a peak of 1.57 GB: the minor cycle charged the plane loads and the
 /// Taylor solver's transients as if they all coexisted, and the first pass
@@ -1242,17 +1405,28 @@ fn mtmfs_is_admitted_close_to_what_it_holds() {
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
-    for (imsize, workers) in [(1024, 1), (1024, 4), (2048, 1)] {
-        let label = format!("mtmfs {imsize} px {workers} workers");
+    // A Taylor family per Stokes plane: the products and minor cycle hold
+    // four.
+    let mut full_stokes = mtmfs_controls();
+    full_stokes["stokes"] = json!("IQUV");
+    let mut facets = mtmfs_controls();
+    facets["facets"] = json!(2);
+    for (imsize, workers, controls) in [
+        (1024, 1, mtmfs_controls()),
+        (1024, 4, mtmfs_controls()),
+        (2048, 1, mtmfs_controls()),
+        (1024, 1, full_stokes),
+        (1024, 1, facets),
+    ] {
+        let stokes = controls["stokes"].as_str().unwrap_or("I");
+        let facets = controls["facets"].as_u64().unwrap_or(1);
+        let label =
+            format!("mtmfs {stokes} {imsize} px {facets}x{facets} facets {workers} workers");
+        let image = root.path().join(label.replace(' ', "-"));
         let measured = check(
             &mut breaches,
             &label,
-            &request(
-                &measurement_set,
-                &root.path().join(format!("mtmfs-{imsize}-{workers}")),
-                imsize,
-                mtmfs_controls(),
-            ),
+            &request(&measurement_set, &image, imsize, controls),
             workers,
             AMPLE,
         );
@@ -1265,58 +1439,7 @@ fn mtmfs_is_admitted_close_to_what_it_holds() {
 /// pads drawn 35 times towards their centroid (a 41″ beam), a 1 Jy point
 /// at the phase centre, two 8 MHz channels at 1.5 GHz over an hour.
 fn evla_observation(root: &Path) -> PathBuf {
-    let measurement_set = root.join("admission-EVLA.ms");
-    let mut antennas = tutorial_vla_a_antennas();
-    let count = antennas.len() as f64;
-    let centroid = antennas.iter().fold([0.0; 3], |sum, antenna| {
-        [
-            sum[0] + antenna.position_m[0] / count,
-            sum[1] + antenna.position_m[1] / count,
-            sum[2] + antenna.position_m[2] / count,
-        ]
-    });
-    for antenna in &mut antennas {
-        for (position, centre) in antenna.position_m.iter_mut().zip(centroid) {
-            *position = centre + (*position - centre) / 35.0;
-        }
-    }
-    let mut request = SyntheticObservationRequest::vla_ppdisk(
-        root.join("unused.fits"),
-        &measurement_set,
-        antennas,
-    );
-    request.telescope_name = "EVLA".to_string();
-    request.duration_seconds = 3_600.0;
-    request.integration_seconds = 60.0;
-    request.spectral_windows = vec![SyntheticSpectralSetup {
-        name: "admission-lband".to_string(),
-        start_frequency_hz: 1.5e9,
-        channel_width_hz: 8.0e6,
-        channel_count: 2,
-    }];
-    request.model = Some(SyntheticSkyModel::AnalyticComponents {
-        path: None,
-        schema_version: Some(1),
-        name: Some("admission-aw".to_string()),
-        components: vec![SyntheticAnalyticComponent::Point {
-            name: Some("point".to_string()),
-            l_rad: 0.0,
-            m_rad: 0.0,
-            spectrum: SyntheticAnalyticSpectrum {
-                flux_jy: 1.0,
-                spectral_index: -0.7,
-                reference_frequency_hz: Some(1.5e9),
-                line_peak_jy: 0.0,
-                line_center_fraction: 0.5,
-                line_sigma_fraction: 0.1,
-                absorption_peak_jy: 0.0,
-                absorption_center_fraction: 0.5,
-                absorption_sigma_fraction: 0.1,
-            },
-        }],
-    });
-    generate_synthetic_observation_ms(&request).expect("synthesise the EVLA MS");
-    measurement_set
+    aw::l_band_observation(root, "EVLA", &[1.5e9], 2, false)
 }
 
 /// A paraboloid EVLA dish surface in the radius/height/slope text format,
@@ -1335,66 +1458,4 @@ fn evla_surface(root: &Path) -> PathBuf {
         .collect::<String>();
     std::fs::write(&path, text).expect("write the EVLA surface");
     path
-}
-
-/// #738: native A-projection MT-MFS at 1024², generating its catalog and
-/// then reusing it, is admitted close to what it holds. Generation is
-/// admitted before it starts: uncharged, it held 274 MB beyond the
-/// admitted memory. A catalog whose groups all fit its bound is charged
-/// those groups: charged the bound of `cf_resident_mb = 512`, the run
-/// reserved 974 MB for a peak of 398 MB. An automatic bound
-/// (`cf_resident_mb = auto`, #449) is admitted by the same path. This
-/// catalog's 15.6 MB of cells lie under its 256 MiB floor, so the bound is
-/// not raised here (#781 review): `aw::cache`'s laws pin the raise, and B3
-/// measured it end to end.
-#[test]
-fn aw_mtmfs_is_admitted_close_to_what_it_holds() {
-    if !alone("aw_mtmfs_is_admitted_close_to_what_it_holds") {
-        return;
-    }
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = evla_observation(root.path());
-    let surface = evla_surface(root.path());
-    warm(&measurement_set, root.path());
-    let cache = root.path().join("native-cf");
-    let mut breaches = Vec::new();
-    for (label, resident) in [
-        ("aw generating", json!(512)),
-        ("aw reusing", json!(512)),
-        ("aw automatic", json!("auto")),
-    ] {
-        let mut values = json!({
-            "vis": measurement_set,
-            "imagename": root.path().join(label.replace(' ', "-")),
-            "imsize": 1024,
-            "cell": "10arcsec",
-            "weighting": "natural",
-            "niter": 200,
-            "cycleniter": 50,
-            "gain": 0.2,
-            "threshold": "1mJy",
-            "gridder": "awproject",
-            "wprojplanes": 32,
-            "aw_cf_source": "native-evla",
-            "native_cf_cache": cache,
-            "evla_surface": surface,
-            "native_cf_policy": "generate-missing",
-            "native_cf_working_size": 2048,
-            "native_cf_oversampling": 4,
-            "native_cf_cache_bytes": 2_147_483_648_u64,
-            "native_cf_maximum_cells": 128,
-            "cf_resident_mb": resident,
-            "normtype": "flatnoise",
-            "pbcor": true,
-        });
-        values.as_object_mut().expect("AW controls").extend(
-            mtmfs_controls()
-                .as_object()
-                .expect("MT-MFS controls")
-                .clone(),
-        );
-        let measured = check(&mut breaches, label, &imaging::request(values), 1, AMPLE);
-        breaches.extend(over_charge(label, &measured));
-    }
-    assert!(breaches.is_empty(), "{breaches:#?}");
 }

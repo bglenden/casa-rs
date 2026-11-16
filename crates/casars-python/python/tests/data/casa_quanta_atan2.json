@@ -1,0 +1,1301 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "x": 0.0,
+      "y": 0.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "x": 0.0,
+      "y": -0.0,
+      "result": {
+        "unit": "rad",
+        "value": 3.141592653589793
+      }
+    },
+    {
+      "x": 0.0,
+      "y": 1.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "x": 0.0,
+      "y": -1.0,
+      "result": {
+        "unit": "rad",
+        "value": 3.141592653589793
+      }
+    },
+    {
+      "x": 0.0,
+      "y": 2.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "x": 0.0,
+      "y": "50%",
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "x": 0.0,
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": 0.0,
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": 0.0,
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": 0.0,
+      "y": null,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "x": 0.0,
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": 0.0,
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": -0.0,
+      "y": 0.0,
+      "result": {
+        "unit": "rad",
+        "value": -0.0
+      }
+    },
+    {
+      "x": -0.0,
+      "y": -0.0,
+      "result": {
+        "unit": "rad",
+        "value": -3.141592653589793
+      }
+    },
+    {
+      "x": -0.0,
+      "y": 1.0,
+      "result": {
+        "unit": "rad",
+        "value": -0.0
+      }
+    },
+    {
+      "x": -0.0,
+      "y": -1.0,
+      "result": {
+        "unit": "rad",
+        "value": -3.141592653589793
+      }
+    },
+    {
+      "x": -0.0,
+      "y": 2.0,
+      "result": {
+        "unit": "rad",
+        "value": -0.0
+      }
+    },
+    {
+      "x": -0.0,
+      "y": "50%",
+      "result": {
+        "unit": "rad",
+        "value": -0.0
+      }
+    },
+    {
+      "x": -0.0,
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": -0.0,
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": -0.0,
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": -0.0,
+      "y": null,
+      "result": {
+        "unit": "rad",
+        "value": -0.0
+      }
+    },
+    {
+      "x": -0.0,
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": -0.0,
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": 1.0,
+      "y": 0.0,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "x": 1.0,
+      "y": -0.0,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "x": 1.0,
+      "y": 1.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.7853981633974483
+      }
+    },
+    {
+      "x": 1.0,
+      "y": -1.0,
+      "result": {
+        "unit": "rad",
+        "value": 2.356194490192345
+      }
+    },
+    {
+      "x": 1.0,
+      "y": 2.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.4636476090008061
+      }
+    },
+    {
+      "x": 1.0,
+      "y": "50%",
+      "result": {
+        "unit": "rad",
+        "value": 1.1071487177940904
+      }
+    },
+    {
+      "x": 1.0,
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": 1.0,
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": 1.0,
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": 1.0,
+      "y": null,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "x": 1.0,
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": 1.0,
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": -1.0,
+      "y": 0.0,
+      "result": {
+        "unit": "rad",
+        "value": -1.5707963267948966
+      }
+    },
+    {
+      "x": -1.0,
+      "y": -0.0,
+      "result": {
+        "unit": "rad",
+        "value": -1.5707963267948966
+      }
+    },
+    {
+      "x": -1.0,
+      "y": 1.0,
+      "result": {
+        "unit": "rad",
+        "value": -0.7853981633974483
+      }
+    },
+    {
+      "x": -1.0,
+      "y": -1.0,
+      "result": {
+        "unit": "rad",
+        "value": -2.356194490192345
+      }
+    },
+    {
+      "x": -1.0,
+      "y": 2.0,
+      "result": {
+        "unit": "rad",
+        "value": -0.4636476090008061
+      }
+    },
+    {
+      "x": -1.0,
+      "y": "50%",
+      "result": {
+        "unit": "rad",
+        "value": -1.1071487177940904
+      }
+    },
+    {
+      "x": -1.0,
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": -1.0,
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": -1.0,
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": -1.0,
+      "y": null,
+      "result": {
+        "unit": "rad",
+        "value": -1.5707963267948966
+      }
+    },
+    {
+      "x": -1.0,
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": -1.0,
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": 2.0,
+      "y": 0.0,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "x": 2.0,
+      "y": -0.0,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "x": 2.0,
+      "y": 1.0,
+      "result": {
+        "unit": "rad",
+        "value": 1.1071487177940904
+      }
+    },
+    {
+      "x": 2.0,
+      "y": -1.0,
+      "result": {
+        "unit": "rad",
+        "value": 2.0344439357957027
+      }
+    },
+    {
+      "x": 2.0,
+      "y": 2.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.7853981633974483
+      }
+    },
+    {
+      "x": 2.0,
+      "y": "50%",
+      "result": {
+        "unit": "rad",
+        "value": 1.3258176636680326
+      }
+    },
+    {
+      "x": 2.0,
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": 2.0,
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": 2.0,
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": 2.0,
+      "y": null,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "x": 2.0,
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": 2.0,
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": "50%",
+      "y": 0.0,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "x": "50%",
+      "y": -0.0,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "x": "50%",
+      "y": 1.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.4636476090008061
+      }
+    },
+    {
+      "x": "50%",
+      "y": -1.0,
+      "result": {
+        "unit": "rad",
+        "value": 2.677945044588987
+      }
+    },
+    {
+      "x": "50%",
+      "y": 2.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.24497866312686414
+      }
+    },
+    {
+      "x": "50%",
+      "y": "50%",
+      "result": {
+        "unit": "rad",
+        "value": 0.7853981633974483
+      }
+    },
+    {
+      "x": "50%",
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '%'"
+      }
+    },
+    {
+      "x": "50%",
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '%'"
+      }
+    },
+    {
+      "x": "50%",
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '%'"
+      }
+    },
+    {
+      "x": "50%",
+      "y": null,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "x": "50%",
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "50%",
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": "2_",
+      "y": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '_'"
+      }
+    },
+    {
+      "x": "2_",
+      "y": -0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '_'"
+      }
+    },
+    {
+      "x": "2_",
+      "y": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '_'"
+      }
+    },
+    {
+      "x": "2_",
+      "y": -1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '_'"
+      }
+    },
+    {
+      "x": "2_",
+      "y": 2.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '_'"
+      }
+    },
+    {
+      "x": "2_",
+      "y": "50%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '_'"
+      }
+    },
+    {
+      "x": "2_",
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '_'"
+      }
+    },
+    {
+      "x": "2_",
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '_'"
+      }
+    },
+    {
+      "x": "2_",
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '_'"
+      }
+    },
+    {
+      "x": "2_",
+      "y": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type '_'"
+      }
+    },
+    {
+      "x": "2_",
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "2_",
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'rad'"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": -0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'rad'"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'rad'"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": -1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'rad'"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": 2.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'rad'"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": "50%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'rad'"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'rad'"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'rad'"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'rad'"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'rad'"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "1rad",
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": "1m",
+      "y": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'm'"
+      }
+    },
+    {
+      "x": "1m",
+      "y": -0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'm'"
+      }
+    },
+    {
+      "x": "1m",
+      "y": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'm'"
+      }
+    },
+    {
+      "x": "1m",
+      "y": -1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'm'"
+      }
+    },
+    {
+      "x": "1m",
+      "y": 2.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'm'"
+      }
+    },
+    {
+      "x": "1m",
+      "y": "50%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'm'"
+      }
+    },
+    {
+      "x": "1m",
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'm'"
+      }
+    },
+    {
+      "x": "1m",
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'm'"
+      }
+    },
+    {
+      "x": "1m",
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'm'"
+      }
+    },
+    {
+      "x": "1m",
+      "y": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type 'm'"
+      }
+    },
+    {
+      "x": "1m",
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "1m",
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": null,
+      "y": 0.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "x": null,
+      "y": -0.0,
+      "result": {
+        "unit": "rad",
+        "value": 3.141592653589793
+      }
+    },
+    {
+      "x": null,
+      "y": 1.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "x": null,
+      "y": -1.0,
+      "result": {
+        "unit": "rad",
+        "value": 3.141592653589793
+      }
+    },
+    {
+      "x": null,
+      "y": 2.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "x": null,
+      "y": "50%",
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "x": null,
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": null,
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": null,
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan2 illegal unit type ''"
+      }
+    },
+    {
+      "x": null,
+      "y": null,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "x": null,
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": null,
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": -0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": -1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": 2.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": "50%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": "nonsense",
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": -0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": -1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": 2.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": "50%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": "2_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "x": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "y": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    }
+  ]
+}

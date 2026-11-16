@@ -10,7 +10,7 @@ execution concepts used by the imaging architecture.
 The one typed request for an imaging run, deserialized from the imager
 parameters the provider catalog resolves and validated once. Every frontend
 reaches it through the same catalog resolution; compiling it against its
-MeasurementSet yields the Compiled Problem.
+MeasurementSets yields the Compiled Problem.
 _Avoid_: CLI configuration, task request mirror
 
 **Compiled Problem**:
@@ -29,11 +29,14 @@ _Avoid_: Gridder configuration, sample coordinate cache
 **Observation Snapshot**:
 The immutable logical description of selected MS data. It is a manifest, not
 a materialized copy of bulk samples. Its compiler canonicalizes exact per-MS
-row, SPW/channel, and correlation semantics plus the selected data, flag, and
-weight columns and whether MAIN has `CORRECTED_DATA`. Selected rows are
-retained only as counts and the DATA_DESCRIPTION identifiers they use.
-Sources keep request order and their locations. Nothing of it is stored in
-the MeasurementSet, and nothing of it is hashed.
+sample predicates, partitions, SPW/channel, and correlation semantics plus
+the selected data, flag, and weight columns and whether MAIN has
+`CORRECTED_DATA`. Selected samples are retained only as their count and the
+observation partitions that hold them.
+Sources, one per MeasurementSet of tclean's `vis` list, keep their locations
+and the order CASA's tclean images them in: by each MeasurementSet's
+earliest `TIME`, a MeasurementSet whose selection holds no sample left out.
+Nothing of it is stored in the MeasurementSet, and nothing of it is hashed.
 _Avoid_: MeasurementSet clone, input path
 
 **Observation Transaction**:
@@ -50,9 +53,10 @@ products are not part of it: each is staged and replaced on its own.
 _Avoid_: Incremental output write, best-effort model save
 
 **Selected Observation**:
-The bounded stream evaluating an Observation Snapshot and compiled transform
-specifications into visibility samples, flags, weights, and per-row
-coordinates. Chunking has no scientific identity.
+The bounded stream of an Observation Snapshot's selected partitions, read as
+the observation boundary's batches and evaluated with the compiled transform
+specifications into visibility samples, flags, weights, and per-sample
+coordinates. Batching has no scientific identity.
 _Avoid_: Observation snapshot, input rows
 
 **Spectral Coordinate Law**:
@@ -132,12 +136,6 @@ order. Each member is staged and replaced on its own, so a member already
 replaced stays valid if a later one fails.
 _Avoid_: Output files, sidecars
 
-**Migration Obligation**:
-A visible, executable record of a scientific capability that is intentionally
-unavailable during architectural migration and must be restored before the
-programme completes.
-_Avoid_: Ignored test, temporary fallback
-
 **Current-Only Profile Contract**:
 A sparse human parameter contract that accepts exactly the current version and
 canonical names, adopting current defaults for omitted optional values without
@@ -146,8 +144,7 @@ _Avoid_: Compatibility profile, historical run replay
 
 ## Observation access
 
-The vocabulary of the MSv2/MSv4 observation boundary
-(`crates/casa-observation`, `docs/measurement-set/trial/revision-2-design.md`).
+The vocabulary of the MSv2/MSv4 observation boundary (`crates/casa-observation`).
 
 **Partition**:
 One store unit of an opened observation, described by its content: spectral
@@ -322,7 +319,7 @@ _Avoid_: Planning, lease
 The one record a run leaves beside its products, whether it completes or
 fails: the request echo, each phase with its wall time and peak resident
 memory, the worker count, the backend, the minor-cycle totals, the product
-list and a failed run's error (plan section 8.3). It is O(1) per phase.
+list and a failed run's error. It is O(1) per phase.
 _Avoid_: Execution receipt, log, metrics blob
 
 **Acceptance Contract**:

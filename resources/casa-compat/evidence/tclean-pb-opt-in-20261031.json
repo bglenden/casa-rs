@@ -1,0 +1,38 @@
+{
+  "casa_tasks": "6.7.6.14",
+  "casars_revision": "ad40d127779ef75d5bfbe30475be85e61e52bf3a",
+  "write_pb": true,
+  "nrms": 0.0001779000758937712,
+  "mask_mismatches": 0,
+  "native_shape": [
+    64,
+    64,
+    1,
+    1
+  ],
+  "casa_shape": [
+    64,
+    64,
+    1,
+    1
+  ],
+  "scope": "Opt-in PB calculation only. Does not establish default artifact equivalence.",
+  "parameters": {
+    "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/point.ms",
+    "datacolumn": "data",
+    "imsize": [
+      64
+    ],
+    "cell": "2arcsec",
+    "weighting": "natural",
+    "niter": 0,
+    "gain": 0.1,
+    "threshold": "0Jy",
+    "pblimit": -0.1,
+    "startmodel": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/q-start.model",
+    "imagename": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/probe-final-2/native-pb-diagnostic/image",
+    "backend": "cpu",
+    "gridprecision": "f64",
+    "write_pb": true
+  }
+}
