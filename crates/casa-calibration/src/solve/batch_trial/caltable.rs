@@ -220,7 +220,12 @@ fn a_batch_solve_persists_the_msv2s_own_namespace() {
     let root = tempfile::tempdir().expect("root");
     let path = fixture(root.path(), "ms_trial.ms");
     let production = gain_request(root.path().join("production.G"));
-    solve_gain(&MeasurementSet::open(&path).expect("ms"), &production).expect("production");
+    solve_gain(
+        &MeasurementSet::open(&path).expect("ms"),
+        &production,
+        crate::CalibrationOutputMode::Create,
+    )
+    .expect("production");
     let observation = open(&path, &OpenOptions::default()).expect("open");
     let namespace = persisted_namespace(&path, &OpenOptions::default()).expect("namespace");
     let request = gain_request(root.path().join("batch.G"));
@@ -299,7 +304,12 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
         min_baselines_per_antenna: 3,
         ..gain_request(root.path().join("production.G"))
     };
-    solve_gain(&MeasurementSet::open(&without).expect("ms"), &production).expect("gaincal");
+    solve_gain(
+        &MeasurementSet::open(&without).expect("ms"),
+        &production,
+        crate::CalibrationOutputMode::Create,
+    )
+    .expect("gaincal");
     let applied = fixture(&root.path().join("applied"), "ms_trial.ms");
     execute_apply_from_path(
         &applied,
@@ -1231,7 +1241,12 @@ fn an_unbound_field_takes_no_solutions() {
     let root = tempfile::tempdir().expect("root");
     let solved = fixture(root.path(), "ms_trial.ms");
     let request = gain_request(root.path().join("production.G"));
-    solve_gain(&MeasurementSet::open(&solved).expect("ms"), &request).expect("gaincal");
+    solve_gain(
+        &MeasurementSet::open(&solved).expect("ms"),
+        &request,
+        crate::CalibrationOutputMode::Create,
+    )
+    .expect("gaincal");
     let target = fixture(&root.path().join("moved"), "ms_trial.ms");
     let mut ms = MeasurementSet::open(&target).expect("ms");
     let moved = casa_types::ArrayValue::Float64(
@@ -1286,7 +1301,7 @@ fn the_binding_refuses_an_applier_of_another_opening() {
         )
         .expect("scan");
     ms.save().expect("save");
-    solve_gain(&ms, &request).expect("gaincal");
+    solve_gain(&ms, &request, crate::CalibrationOutputMode::Create).expect("gaincal");
     drop(ms);
     let by_scan = OpenOptions {
         partition_scheme: casa_ms::observation_io::PartitionScheme {

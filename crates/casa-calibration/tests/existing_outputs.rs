@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! The calibration tasks' guards (#931): CASA's parameters are the consent.
-//! A table or MeasurementSet a second run would replace is refused and kept;
+//! Product publication follows each task's CASA lifecycle;
 //! a refused report changes nothing; `applycal` changes only the rows its
 //! selection names; and `calonly` and `trial` change no flags.
 
@@ -93,7 +93,7 @@ fn antenna0_gain_table(path: &Path) -> PathBuf {
 }
 
 #[test]
-fn solved_and_scaled_tables_are_refused_and_kept() {
+fn gaincal_replaces_and_fluxscale_refuses_an_existing_product() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     let table = dir.path().join("solved.gcal");
@@ -104,18 +104,13 @@ fn solved_and_scaled_tables_are_refused_and_kept() {
         )
     };
     solve().expect("first gaincal");
-    let before = snapshot(&table);
-    let error = solve().expect_err("second gaincal refused");
-    assert!(
-        error.to_string().contains("output already exists"),
-        "{error}"
-    );
-    assert_eq!(snapshot(&table), before);
+    solve().expect("CASA gaincal replaces by default");
 
     let input = two_field_gain_table(&dir.path().join("input.gcal"));
     let scaled = dir.path().join("scaled.gcal");
     let scale = || {
         fluxscale(&FluxScaleRequest {
+            append: false,
             input_table: input.clone(),
             output_table: scaled.clone(),
             reference_fields: vec!["REF*".to_string()],
@@ -184,9 +179,8 @@ fn a_refused_report_runs_nothing() {
 }
 
 #[test]
-fn overwrite_reaches_the_report_but_not_the_caltable() {
-    // As the calibration guide says: `--overwrite` replaces the `-o` report
-    // and an existing caltable is refused and kept (#945).
+fn overwrite_replaces_the_report_and_gaincal_replaces_its_table() {
+    // CASA gaincal replaces a table by default; report overwrite is separate (#945).
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     let first_table = dir.path().join("first.gcal");
@@ -220,9 +214,11 @@ fn overwrite_reaches_the_report_but_not_the_caltable() {
 
     let before = snapshot(&first_table);
     let second = solve(&first_table);
-    assert!(!second.status.success());
-    let stderr = String::from_utf8_lossy(&second.stderr);
-    assert!(stderr.contains("output already exists"), "{stderr}");
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
     assert_eq!(snapshot(&first_table), before);
     assert_eq!(std::fs::read_to_string(&report).unwrap(), replaced);
 }

@@ -515,6 +515,7 @@ pub(super) fn write_gain_table(
         name(&namespace.source),
         request,
         &translated,
+        crate::CalibrationOutputMode::Create,
     )
     .map_err(|error| ObservationError::Storage(Box::new(error)))
 }

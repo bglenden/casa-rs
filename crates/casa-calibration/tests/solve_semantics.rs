@@ -15,10 +15,10 @@ use std::path::{Path, PathBuf};
 
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
-    BandpassSolveError, BandpassSolveReport, BandpassSolveRequest, BandpassType,
-    CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
-    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveReport,
-    GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path, solve_calibration,
+    BandpassSolveReport, BandpassSolveRequest, BandpassType, CalibrationDataset, CalibrationError,
+    CalibrationSolveRequest, CalibrationSolveResult, GainSolveCombine, GainSolveInterval,
+    GainSolveMode, GainSolveModelSource, GainSolveReport, GainSolveRequest, GainType,
+    RefAntSelector, execute_apply_from_path, solve_calibration,
 };
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
@@ -414,11 +414,10 @@ fn bandpass_with_no_unflagged_data_writes_no_table() {
 
     let result = run_bandpass_solve(&ms_path, &bandpass_request(caltable.clone(), Vec::new()));
 
-    match result {
-        Err(CalibrationError::Bandpass(error))
-            if matches!(*error, BandpassSolveError::NoSolutions) => {}
-        other => panic!("expected NoSolutions, got {other:?}"),
-    }
+    assert_eq!(
+        result.expect("CASA no-solution report").solution_row_count,
+        0
+    );
     assert!(!caltable.exists());
 }
 

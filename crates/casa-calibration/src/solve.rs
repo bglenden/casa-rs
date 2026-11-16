@@ -282,13 +282,6 @@ pub enum GainSolveError {
         spw_id: i32,
     },
 
-    /// No solution interval could be solved, so there is no caltable to
-    /// write; CASA logs "No output calibration table written." here.
-    #[error(
-        "gain solve found no solution in any interval (no usable data, too few baselines per antenna, or no convergence); no caltable written"
-    )]
-    NoSolutions,
-
     /// Persisting the output caltable failed.
     #[error("failed to save caltable {path}: {source}")]
     SaveCalibrationTable {
@@ -325,9 +318,10 @@ pub enum GainSolveError {
 pub(crate) fn solve_gain(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
+    mode: crate::CalibrationOutputMode,
 ) -> Result<GainSolveReport, GainSolveError> {
     let solved = solve_gain_rows(ms, request)?;
-    write_gain_caltable(ms, request, &solved)
+    write_gain_caltable(ms, request, &solved, mode)
 }
 
 /// A gain solve's solutions, before they are written.
@@ -361,6 +355,7 @@ pub(crate) fn solve_gain_rows(
         return Err(GainSolveError::MissingModelColumn);
     }
     validate_solve_interval(request.solve_interval)?;
+    let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
         &request.selection,
@@ -386,6 +381,8 @@ pub(crate) fn solve_gain_rows(
         return Err(GainSolveError::EmptySelection);
     }
 
+    drop(input_phase);
+    let kernel_phase = crate::timing::Phase::start("gain_solve");
     let mut solution_rows = Vec::new();
     let mut attempted_spw_ids = BTreeSet::new();
     let mut solve_stats = SolveStatsBuilder::new(
@@ -432,9 +429,6 @@ pub(crate) fn solve_gain_rows(
         solution_rows.extend(group_rows);
         intervals.push((spw_id, start..solution_rows.len()));
     }
-    if solution_rows.is_empty() {
-        return Err(GainSolveError::NoSolutions);
-    }
     apply_flex_refant(
         &mut solution_rows,
         context.refant_id,
@@ -458,6 +452,7 @@ pub(crate) fn solve_gain_rows(
             solve_stats.used_as_refant(spw_id, refant.antenna_id);
         }
     }
+    drop(kernel_phase);
     Ok(SolvedGains {
         rows: solution_rows,
         refant_id: context.refant_id,

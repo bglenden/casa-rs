@@ -43,3 +43,10 @@ controls (`gainfield`, `interp`, `spwmap`, `calwt`) are `;`-separated strings
 aligned to `gaintables`, one value for every table or one per table.
 
 The `calibrate` binary takes the same parameters on its own command line.
+
+`gaincal` and `bandpass` replace their caltable by default; `append=True`
+adds compatible solutions. `fluxscale` requires `append=True` when its output
+already exists. `gencal` accumulates specified corrections. A solve with no
+successful solutions returns statistics and leaves the destination alone.
+The keyword-only `overwrite` controls the report on CASA-named tasks; on
+native `calibrate` it also permits scientific-product replacement.

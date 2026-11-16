@@ -806,3 +806,31 @@ def test_msconvert_converts_both_ways_and_reports_its_losses(
     )
     assert plain.successful, plain.describe()
     assert not (tmp_path / "ms_trial.ps.zarr" / "ms_trial_0" / "pointing_xds").exists()
+
+
+def test_gencal_cumulates_and_report_refusal_preserves_product(
+    calibrate: str, small_ms: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CASA 6.7.6.14 adds real corrections; report policy is independent."""
+    import numpy as np
+    from casars import tools
+
+    monkeypatch.chdir(small_ms.parent)
+    table_path = small_ms.parent / 'cumulative.cal'
+    tasks.gencal(small_ms.name, str(table_path), 'opac', parameter=[0.05])
+    tasks.gencal(vis=small_ms.name, caltable=str(table_path), caltype='opac', parameter=[0.12])
+    reader = tools.table()
+    reader.open(str(table_path))
+    np.testing.assert_allclose(reader.getcol('FPARAM'), 0.17, rtol=1e-6)
+    reader.close()
+    report = small_ms.parent / 'report.txt'
+    report.write_text('keep')
+    before = {p.relative_to(table_path): p.read_bytes() for p in table_path.rglob('*') if p.is_file()}
+    with pytest.raises(tasks.TaskParameterError):
+        tasks.gencal(vis=small_ms.name, caltable=str(table_path), caltype='opac', parameter=[0.12], output=str(report))
+    assert report.read_text() == 'keep'
+    assert {p.relative_to(table_path): p.read_bytes() for p in table_path.rglob('*') if p.is_file()} == before
+    tasks.gencal(vis=small_ms.name, caltable=str(table_path), caltype='opac', parameter=[0.12], output=str(report), overwrite=True)
+    reader.open(str(table_path))
+    np.testing.assert_allclose(reader.getcol('FPARAM'), 0.29, rtol=1e-6)
+    reader.close()

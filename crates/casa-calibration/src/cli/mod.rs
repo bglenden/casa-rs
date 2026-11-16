@@ -66,13 +66,32 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     // Checked before the task runs, so a refused report changes nothing.
     if let Some(path) = report.output.as_deref() {
         refuse_existing_report(path, report.overwrite)?;
+        refuse_report_in_product(path, &request)?;
+    }
+    if task.surface() == "fluxscale"
+        && let CalibrationTaskRequest::FluxScale(scale) = &request
+        && !scale.append
+        && scale.output_table.exists()
+    {
+        return Err(TaskFailure::validation(format!("fluxtable {} exists. Please specify a different name. Or set append=True, to append the results to the table.",scale.output_table.display())).at("fluxtable"));
     }
     let applied = match &request {
         CalibrationTaskRequest::SolveGain(solve) => solve.prior_calibration_tables.clone(),
         CalibrationTaskRequest::SolveBandpass(solve) => solve.prior_calibration_tables.clone(),
         _ => Vec::new(),
     };
-    let result = request.execute().map_err(TaskFailure::execution)?;
+    let mode = if task.surface() == "calibrate" {
+        Some(if report.overwrite {
+            crate::CalibrationOutputMode::Replace
+        } else {
+            crate::CalibrationOutputMode::Create
+        })
+    } else {
+        None
+    };
+    let result = request
+        .execute_with_output_mode(mode)
+        .map_err(TaskFailure::execution)?;
     let value = casa_value(task.surface(), &applied, &result);
     let rendered = render::render(report.format, &result).map_err(TaskFailure::execution)?;
     let text = match report.output.as_deref() {
@@ -85,6 +104,30 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         None => rendered,
     };
     Ok(TaskSuccess::new(value, &result)?.with_text(text))
+}
+
+fn refuse_report_in_product(
+    path: &Path,
+    request: &CalibrationTaskRequest,
+) -> Result<(), TaskFailure> {
+    let products: Vec<&Path> = match request {
+        CalibrationTaskRequest::SolveGain(r) => vec![&r.measurement_set, &r.output_table],
+        CalibrationTaskRequest::SolveBandpass(r) => vec![&r.measurement_set, &r.output_table],
+        CalibrationTaskRequest::Gencal(r) => vec![&r.measurement_set, &r.output_table],
+        CalibrationTaskRequest::FluxScale(r) => vec![&r.input_table, &r.output_table],
+        CalibrationTaskRequest::ExportCorrectedData(r) => vec![&r.input_ms, &r.output_ms],
+        CalibrationTaskRequest::ExecuteApply(r) => vec![&r.measurement_set],
+        _ => Vec::new(),
+    };
+    if products
+        .iter()
+        .any(|product| crate::paths::overlap(path, product))
+    {
+        return Err(
+            TaskFailure::validation("report path overlaps a scientific product").at("output"),
+        );
+    }
+    Ok(())
 }
 
 /// What `surface` returns for `result`, as CASA's task of that name does;

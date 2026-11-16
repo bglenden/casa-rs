@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::{
-    MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetCreateTarget,
-    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
-    MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
-    MeasurementSetWriteResources, MeasurementSetWriteSession, MsError, MsTransformRequest,
-    TransformDataColumn, maximum_visibility_cell_elements, mstransform, selection::MsSelection,
+    MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
+    MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
+    MeasurementSetWriteColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    MeasurementSetWriteSession, MsError, MsTransformRequest, TransformDataColumn,
+    maximum_visibility_cell_elements, mstransform, selection::MsSelection,
 };
 use casa_tables::TableError;
 use schemars::JsonSchema;
@@ -124,21 +124,27 @@ pub enum ExportCorrectedDataError {
 pub fn export_corrected_data(
     request: &ExportCorrectedDataRequest,
 ) -> Result<ExportCorrectedDataReport, ExportCorrectedDataError> {
-    if request.input_ms == request.output_ms {
+    export_corrected_data_with_overwrite(request, false)
+}
+
+pub(crate) fn export_corrected_data_with_overwrite(
+    request: &ExportCorrectedDataRequest,
+    overwrite: bool,
+) -> Result<ExportCorrectedDataReport, ExportCorrectedDataError> {
+    if crate::paths::overlap(&request.input_ms, &request.output_ms) {
         return Err(ExportCorrectedDataError::SameInputOutput {
             path: request.input_ms.display().to_string(),
         });
     }
     // Like CASA's split, refuse an existing output MS (#931).
     let target =
-        MeasurementSetCreateTarget::prepare(&request.output_ms, false).map_err(|error| {
-            ExportCorrectedDataError::PrepareOutput {
+        crate::output::CalibrationOutput::prepare_measurement_set(&request.output_ms, overwrite)
+            .map_err(|error| ExportCorrectedDataError::PrepareOutput {
                 path: request.output_ms.display().to_string(),
                 reason: error.to_string(),
-            }
-        })?;
+            })?;
     let mut physical_request = request.clone();
-    physical_request.output_ms = target.staging_path().to_path_buf();
+    physical_request.output_ms = target.staging.clone();
     let mut report = export_corrected_data_staged(&physical_request)?;
     target
         .commit()
@@ -198,6 +204,14 @@ fn export_corrected_data_staged(
     }
 
     drop(ms);
+    if request.output_ms.exists() {
+        fs::remove_dir(&request.output_ms).map_err(|error| {
+            ExportCorrectedDataError::PrepareOutput {
+                path: request.output_ms.display().to_string(),
+                reason: error.to_string(),
+            }
+        })?;
+    }
     let transformed = mstransform(&MsTransformRequest {
         input_ms: request.input_ms.clone(),
         output_ms: request.output_ms.clone(),
@@ -238,6 +252,9 @@ fn export_all_corrected_data_by_copy(
             source,
         }
     })?;
+    if clone_corrected_tiles(&mut output, output_ms)? {
+        return Ok(());
+    }
     let row_indices = (0..output.row_count()).collect::<Vec<_>>();
     let maximum_data_bytes = maximum_visibility_cell_elements(&output)
         .and_then(|elements| {
@@ -345,6 +362,84 @@ fn export_all_corrected_data_by_copy(
         }
     })?;
     Ok(())
+}
+
+/// A complete tiled corrected column can be copied as encoded tiles. Keep
+/// the row-wise path for empty cells (which use the original DATA) and other
+/// storage layouts. All structural edits happen in the unpublished stage.
+fn clone_corrected_tiles(
+    output: &mut MeasurementSet,
+    path: &Path,
+) -> Result<bool, ExportCorrectedDataError> {
+    let fail = |source| ExportCorrectedDataError::MutateMeasurementSet {
+        path: path.display().to_string(),
+        source: Box::new(source),
+    };
+    let table = output.main_table_mut();
+    let temporary = format!("__casa_rs_export_data_{}", std::process::id());
+    let supported = |column: &str| {
+        table.data_manager_info().iter().any(|manager| {
+            manager.columns.len() == 1
+                && manager.columns[0] == column
+                && matches!(
+                    manager.dm_type.as_str(),
+                    "TiledShapeStMan" | "TiledColumnStMan"
+                )
+        })
+    };
+    if !supported("DATA")
+        || !supported("CORRECTED_DATA")
+        || table
+            .schema()
+            .is_some_and(|schema| schema.contains_column(&temporary))
+        || table.data_manager_info().iter().any(|manager| {
+            !matches!(
+                manager.dm_type.as_str(),
+                "TiledShapeStMan"
+                    | "TiledColumnStMan"
+                    | "StandardStMan"
+                    | "IncrementalStMan"
+                    | "StManAipsIO"
+            )
+        })
+    {
+        return Ok(false);
+    }
+    let shape_phase = crate::timing::Phase::start("export_check_corrected_cells");
+    for row in 0..table.row_count() {
+        if !table
+            .array_shape(row, "CORRECTED_DATA")
+            .map_err(fail)?
+            .is_some_and(|shape| shape.len() == 2 && shape.iter().all(|n| *n > 0))
+        {
+            return Ok(false);
+        }
+    }
+    drop(shape_phase);
+    let _clone_phase = crate::timing::Phase::start("export_clone_tiles");
+    let keywords = table.column_keywords("DATA").cloned();
+    table
+        .add_column(
+            casa_tables::ColumnSchema::array_variable(
+                &temporary,
+                casa_types::PrimitiveType::Complex32,
+                Some(2),
+            ),
+            None,
+        )
+        .map_err(fail)?;
+    if let Some(keywords) = keywords {
+        table.set_column_keywords(&temporary, keywords);
+    }
+    table
+        .prepare_write()
+        .add_tiled_column_clone("CORRECTED_DATA", &temporary, &format!("Tiled{temporary}"))
+        .map_err(fail)?;
+    table.remove_columns_in_place(&["DATA"]).map_err(fail)?;
+    table
+        .rename_column_in_place(&temporary, "DATA")
+        .map_err(fail)?;
+    Ok(true)
 }
 
 fn prepare_output_root(path: &Path) -> Result<(), ExportCorrectedDataError> {

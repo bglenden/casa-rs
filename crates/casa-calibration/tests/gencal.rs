@@ -44,10 +44,22 @@ fn gencal_antpos_writes_offsets_for_selected_antennas_and_zeroes_others() {
     assert_fparam(&table, 2, &[0.0, 0.0, 0.0]);
     assert!(caltable_path.join("ANTENNA").exists());
     assert!(caltable_path.join("SPECTRAL_WINDOW").exists());
+    // NewCalTable::flagAbsentSpws marks windows without parameter rows.
+    let windows = Table::open(TableOptions::new(caltable_path.join("SPECTRAL_WINDOW"))).unwrap();
+    for row in 0..windows.row_count() {
+        assert_eq!(
+            windows
+                .cell_accessor(row, "FLAG_ROW")
+                .unwrap()
+                .value()
+                .unwrap(),
+            Some(&Value::Scalar(ScalarValue::Bool(row != 0)))
+        );
+    }
 }
 
 #[test]
-fn gencal_rejects_an_output_collision_without_modifying_the_existing_table() {
+fn gencal_refuses_a_non_table_destination_without_modifying_it() {
     let dir = tempfile::tempdir().expect("tempdir");
     let ms_path =
         common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
@@ -67,7 +79,8 @@ fn gencal_rejects_an_output_collision_without_modifying_the_existing_table() {
     })
     .expect_err("existing output must be rejected");
 
-    assert!(error.to_string().contains("output already exists"));
+    // Updating an existing calibration table is now valid; a plain directory is refused (#945).
+    assert!(error.to_string().contains("not a Calibration"));
     assert_eq!(std::fs::read(sentinel).expect("sentinel remains"), b"keep");
 }
 
@@ -148,7 +161,7 @@ fn gencal_gceff_uses_gaincurve_rows_and_vla_efficiency() {
     write_gaincurve_table(&gaincurve_path);
     let caltable_path = dir.path().join("gceff.cal");
 
-    let report = gencal(&GencalRequest {
+    let request = GencalRequest {
         measurement_set: ms_path,
         output_table: caltable_path.clone(),
         caltype: GencalType::Gceff,
@@ -156,8 +169,8 @@ fn gencal_gceff_uses_gaincurve_rows_and_vla_efficiency() {
         spw: String::new(),
         parameter: vec![],
         gaincurve_table: Some(gaincurve_path),
-    })
-    .expect("gceff gencal");
+    };
+    let report = gencal(&request).expect("gceff gencal");
 
     assert_eq!(report.caltype, GencalType::Gceff);
     assert_eq!(report.table_subtype, "EGainCurve");
@@ -175,6 +188,17 @@ fn gencal_gceff_uses_gaincurve_rows_and_vla_efficiency() {
     assert!((row2[1] / row0[1] - 2.0).abs() < 1.0e-6);
     assert_scalar_i32(&table, 3, "SPECTRAL_WINDOW_ID", 1);
     assert_scalar_i32(&table, 0, "OBSERVATION_ID", -1);
+    // EGainCurve::setSpecify regenerates absolute coefficients (#945).
+    let first = table.rows().unwrap().to_vec();
+    drop(table);
+    gencal(&request).unwrap();
+    assert_eq!(
+        Table::open(TableOptions::new(&caltable_path))
+            .unwrap()
+            .rows()
+            .unwrap(),
+        first.as_slice()
+    );
 }
 
 #[test]

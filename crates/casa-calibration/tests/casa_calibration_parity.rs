@@ -1200,6 +1200,7 @@ fn fluxscale_matches_casa_on_ngc5921_gain_table() {
 
     let rust_fcal = dir.path().join("rust.fcal");
     let rust_report = fluxscale(&FluxScaleRequest {
+        append: false,
         input_table: input_gcal.clone(),
         output_table: rust_fcal.clone(),
         reference_fields: vec!["1331+305*".to_string()],

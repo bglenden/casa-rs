@@ -50,6 +50,9 @@ pub struct FluxScaleRequest {
     pub gainthreshold: Option<f64>,
     /// Emit only multiplicative correction factors instead of a fully scaled table.
     pub incremental: bool,
+    /// Append compatible solutions to an existing flux table.
+    #[serde(default)]
+    pub append: bool,
 }
 
 /// Per-SPW flux result for one transfer field.
@@ -105,6 +108,9 @@ pub struct FluxScaleReport {
 /// Errors returned by the limited `fluxscale` implementation.
 #[derive(Debug, Error)]
 pub enum FluxScaleError {
+    /// Staging or publishing the complete scientific product failed.
+    #[error(transparent)]
+    CalibrationTable(#[from] crate::CalibrationTableWriteError),
     /// Opening or validating the input caltable failed.
     #[error("failed to summarize input calibration table: {source}")]
     SummarizeInput {
@@ -216,6 +222,21 @@ struct FluxScaleEstimate {
 
 /// Execute a first-wave `fluxscale` request.
 pub fn fluxscale(request: &FluxScaleRequest) -> Result<FluxScaleReport, FluxScaleError> {
+    fluxscale_with_output_mode(
+        request,
+        if request.append {
+            crate::CalibrationOutputMode::Append
+        } else {
+            crate::CalibrationOutputMode::Create
+        },
+    )
+}
+
+pub(crate) fn fluxscale_with_output_mode(
+    request: &FluxScaleRequest,
+    mode: crate::CalibrationOutputMode,
+) -> Result<FluxScaleReport, FluxScaleError> {
+    let input_phase = crate::timing::Phase::start("fluxscale_read");
     validate_request(request)?;
     let summary = summarize_table(&request.input_table)
         .map_err(|source| FluxScaleError::SummarizeInput { source })?;
@@ -233,6 +254,8 @@ pub fn fluxscale(request: &FluxScaleRequest) -> Result<FluxScaleReport, FluxScal
         &rows,
     )?;
 
+    drop(input_phase);
+    let compute_phase = crate::timing::Phase::start("fluxscale_estimate");
     let estimates = derive_estimates(
         &rows,
         &reference_field_ids,
@@ -241,13 +264,17 @@ pub fn fluxscale(request: &FluxScaleRequest) -> Result<FluxScaleReport, FluxScal
         &request.refspwmap,
     )?;
 
+    drop(compute_phase);
+    let write_phase = crate::timing::Phase::start("fluxscale_write");
     write_scaled_output(
         &request.input_table,
         &request.output_table,
         &rows,
         &estimates,
         request.incremental,
+        mode,
     )?;
+    drop(write_phase);
     Ok(build_report(
         &request.output_table,
         &transfer_field_ids,
@@ -594,10 +621,23 @@ fn write_scaled_output(
     rows: &[GainSampleRow],
     estimates: &HashMap<(i32, i32), FluxScaleEstimate>,
     incremental: bool,
+    mode: crate::CalibrationOutputMode,
 ) -> Result<(), FluxScaleError> {
-    prepare_output_root(input_root, output_root)?;
-    copy_table_tree(input_root, output_root)?;
-    let mut table = Table::open(TableOptions::new(output_root)).map_err(|source| {
+    if crate::paths::overlap(input_root, output_root) {
+        return Err(FluxScaleError::PrepareOutput {
+            path: output_root.display().to_string(),
+            reason: "input_table and output_table must differ".to_string(),
+        });
+    }
+    if mode == crate::CalibrationOutputMode::Create && output_root.exists() {
+        return Err(FluxScaleError::PrepareOutput {
+            path: output_root.display().to_string(),
+            reason: "fluxtable exists; please specify a different name or append=True".to_string(),
+        });
+    }
+    let target = crate::output::CalibrationOutput::prepare(output_root, mode)?;
+    copy_table_tree(input_root, &target.staging)?;
+    let mut table = Table::open(TableOptions::new(&target.staging)).map_err(|source| {
         FluxScaleError::MutateOutput {
             path: output_root.display().to_string(),
             source: Box::new(source),
@@ -616,12 +656,17 @@ fn write_scaled_output(
                 source: Box::new(source),
             })?;
     }
-    table
-        .save(TableOptions::new(output_root))
-        .map_err(|source| FluxScaleError::MutateOutput {
-            path: output_root.display().to_string(),
-            source: Box::new(source),
-        })?;
+    if mode == crate::CalibrationOutputMode::Append && output_root.exists() {
+        let spw = crate::output_merge::merge_spw(output_root, &target.staging)?;
+        let mut old = crate::output_merge::open(output_root)?;
+        crate::output_merge::append(&mut old, &table, output_root)?;
+        crate::output_merge::preserve_subtables(output_root, &target.staging)?;
+        spw.save(TableOptions::new(target.staging.join("SPECTRAL_WINDOW")))
+            .map_err(|e| crate::output_merge::invalid(output_root, e.to_string()))?;
+        table = old;
+    }
+    crate::output_merge::save_sorted(&mut table, &target.staging)?;
+    target.commit()?;
     Ok(())
 }
 
@@ -721,31 +766,12 @@ fn build_report(
     }
 }
 
-fn prepare_output_root(input_root: &Path, output_root: &Path) -> Result<(), FluxScaleError> {
-    if input_root == output_root {
-        return Err(FluxScaleError::PrepareOutput {
-            path: output_root.display().to_string(),
-            reason: "input_table and output_table must differ".to_string(),
-        });
-    }
-    // CASA's fluxscale refuses an existing fluxtable unless `append=True`;
-    // casa-rs has no append (#931).
-    if output_root.exists() {
-        return Err(FluxScaleError::PrepareOutput {
-            path: output_root.display().to_string(),
-            reason: "fluxtable exists; please specify a different name".to_string(),
-        });
-    }
-    if let Some(parent) = output_root.parent() {
-        fs::create_dir_all(parent).map_err(|error| FluxScaleError::PrepareOutput {
-            path: output_root.display().to_string(),
-            reason: error.to_string(),
-        })?;
-    }
-    Ok(())
-}
-
 fn copy_table_tree(source: &Path, destination: &Path) -> Result<(), FluxScaleError> {
+    // casacore table.lock contains synchronization state, including row
+    // counts; copying it can override the new table.dat on a CASA reopen.
+    if source.file_name().is_some_and(|name| name == "table.lock") {
+        return Ok(());
+    }
     if source.is_dir() {
         fs::create_dir_all(destination).map_err(|error| FluxScaleError::CopyTableTree {
             source_path: source.display().to_string(),

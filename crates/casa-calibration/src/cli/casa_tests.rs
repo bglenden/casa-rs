@@ -247,6 +247,7 @@ fn gaincal_reads_casas_values() {
     assert_eq!(
         solve,
         crate::SolveGainTaskRequest {
+            append: false,
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection {
                 field: Some("0".into()),
@@ -481,6 +482,7 @@ fn fluxscale_reads_casas_values() {
             "incremental": true,
         })),
         FluxScaleRequest {
+            append: false,
             input_table: PathBuf::from("gain.gcal"),
             output_table: PathBuf::from("flux.gcal"),
             reference_fields: vec!["1331+305".into()],
@@ -565,7 +567,7 @@ fn gencal_reads_casas_values() {
 }
 
 #[test]
-fn gencal_refuses_the_antenna_and_opacity_forms_casa_reads_otherwise() {
+fn gencal_selects_opacity_antennas_and_refuses_automatic_antpos_lookup() {
     let gencal = |values: Value| {
         let mut base = json!({"vis": "t.ms", "caltable": "c.cal"});
         base.as_object_mut()
@@ -574,13 +576,15 @@ fn gencal_refuses_the_antenna_and_opacity_forms_casa_reads_otherwise() {
         casa("gencal", base)
     };
     // CASA looks antenna position corrections up when no antenna is named,
-    // and writes an opacity for the named antennas alone.
-    for values in [
-        json!({"caltype": "antpos", "parameter": [0.01, 0, 0]}),
-        json!({"caltype": "opac", "antenna": "VA01", "parameter": [0.05]}),
-    ] {
-        assert!(refused(gencal(values), "antenna").contains("#979"));
-    }
+    // while named-antenna opacity is implemented (#945).
+    assert!(
+        refused(
+            gencal(json!({"caltype": "antpos", "parameter": [0.01, 0, 0]})),
+            "antenna"
+        )
+        .contains("#979")
+    );
+    assert!(gencal(json!({"caltype":"opac","antenna":"VA01","parameter":[0.05]})).is_ok());
     // With no window named, CASA takes one opacity, which holds for all.
     let message = refused(
         gencal(json!({"caltype": "opac", "parameter": [0.05, 0.06]})),
