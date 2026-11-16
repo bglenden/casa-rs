@@ -592,11 +592,12 @@ impl MeasurementOperator {
         })
     }
 
-    /// A channel cube transforms every plane with one plan, so measured
-    /// planning pays off; a constant or Taylor operator transforms a few
-    /// planes per pass.
+    /// Small channel-local cubes use estimated planning, as constant and
+    /// Taylor operators do: measuring a plan dominates their first pass.
+    /// Cubes with more than four planes retain measured planning so its
+    /// setup can be amortized over their transforms.
     const fn measured_fft(&self) -> bool {
-        matches!(self.basis, Basis::ChannelLocal { .. })
+        matches!(self.basis, Basis::ChannelLocal { planes } if planes > 4)
     }
 
     /// Correction (when `correct`) and crop of one transformed grid plane,
