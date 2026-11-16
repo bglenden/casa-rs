@@ -983,6 +983,18 @@ where
 }
 
 #[pyfunction]
+fn linearmosaic(
+    py: Python<'_>,
+    pointings: Vec<(PathBuf, PathBuf)>,
+    template: PathBuf,
+    output: PathBuf,
+    output_weight: PathBuf,
+) -> PyResult<()> {
+    py.detach(move || casa_images::linearmosaic(&pointings, &template, &output, &output_weight))
+        .map_err(image_err)
+}
+
+#[pyfunction]
 fn data_protocol_info_json() -> PyResult<String> {
     serde_json::to_string_pretty(&DataObjectProtocolInfo::current())
         .map_err(|error| PyRuntimeError::new_err(format!("serialize data protocol info: {error}")))
@@ -1012,6 +1024,7 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<tools::msmetadata::PyMsMetadata>()?;
     module.add_class::<tools::ms::PyMsTool>()?;
     module.add_class::<tools::simutil::PySimutil>()?;
+    module.add_function(wrap_pyfunction!(linearmosaic, module)?)?;
     module.add_function(wrap_pyfunction!(data_protocol_info_json, module)?)?;
     module.add_function(wrap_pyfunction!(data_schema_bundle_json, module)?)?;
     module.add_function(wrap_pyfunction!(parameters::parameter_catalog, module)?)?;

@@ -20,6 +20,23 @@ ArrayLike: TypeAlias = npt.NDArray[Any]
 RecordLike: TypeAlias = dict[str, Any]
 
 
+def linearmosaic(
+    pointings: Sequence[tuple[StrPath, StrPath]],
+    *,
+    template: StrPath,
+    output: StrPath,
+    output_weight: StrPath,
+) -> None:
+    """Stitch pairs of restored ``.image`` and primary-beam ``.pb`` products.
+
+    Use uncorrected images restored with a common beam. A CASA image supplies
+    the output grid through ``template``. Pointings may have different sky
+    centres but must share the template's spectral and Stokes axes and frame.
+    Both outputs must be new. The weight image records beam-squared coverage.
+    """
+    _core.linearmosaic(pointings, template, output, output_weight)
+
+
 @dataclass(frozen=True)
 class ProtocolInfo:
     """Compatibility descriptor for the canonical `casars.data` object surface."""
@@ -413,6 +430,7 @@ __all__ = [
     "RecordLike",
     "StrPath",
     "Table",
+    "linearmosaic",
     "measurement_set_plot",
     "plot_matplotlib",
     "protocol_info",
