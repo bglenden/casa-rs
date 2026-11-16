@@ -4,9 +4,10 @@
 
 use casa_coordinates::{Coordinate, CoordinateModel};
 use casa_images::PagedImage;
+use casa_types::measures::direction::DirectionRef;
 use serde_json::json;
 
-use super::fixture::{Observation, Product, Setup};
+use super::fixture::{Component, Observation, Product, Setup};
 use super::mosaic::mosaic_run;
 
 fn setup(cube: bool) -> (Observation, serde_json::Value, String) {
@@ -94,6 +95,119 @@ fn check_alternate_psf(cube: bool) {
         assert!((psf.major / expected.major - 1.0).abs() < 1e-5);
         assert!((psf.minor / expected.minor - 1.0).abs() < 1e-5);
     }
+}
+
+fn tracked_evla() -> Observation {
+    let mut setup = Setup::vla_q_band(4);
+    setup.telescope = "EVLA".to_owned();
+    super::ephemeris::following_body(Observation::synthesise_setup(
+        setup,
+        &[(
+            "point",
+            Component {
+                offset_px: [10, -6],
+                flux_jy: 1.0,
+                fwhm_px: None,
+                spectral_index: 0.0,
+            },
+        )],
+    ))
+}
+
+#[test]
+fn a_tracked_mosaic_forms_and_reuses_a_fixed_alternate_psf() {
+    let observation = tracked_evla();
+    let [longitude, latitude] = Setup::pointing([12.0_f64.to_radians() / 3600.0, 0.0]);
+    let alternate = format!("J2000 {longitude}rad {latitude}rad");
+    let mut controls = json!({
+        "gridder": "mosaic", "weighting": "natural", "phasecenter": "TRACKFIELD",
+        "imsize": 192, "cell": "0.5arcsec", "pblimit": -0.2, "write_pb": true, "niter": 0
+    });
+    let (_, ordinary) = observation.image("tracked", controls.clone());
+    let mut fixed = controls.clone();
+    fixed["phasecenter"] = json!(alternate);
+    let (_, shifted) = observation.image("fixed", fixed);
+    controls["psfphasecenter"] = json!(alternate);
+    let (_, separate) = observation.image("alternate", controls.clone());
+
+    assert_same(separate.get(".psf"), shifted.get(".psf"), ".psf");
+    assert!(nrms(separate.get(".psf"), ordinary.get(".psf")) > 1e-3);
+    for suffix in [".residual", ".pb", ".weight", ".sumwt"] {
+        assert_same(separate.get(suffix), ordinary.get(suffix), suffix);
+    }
+    assert_eq!(
+        separate.get(".image").channel_beam(0),
+        separate.get(".psf").channel_beam(0)
+    );
+
+    controls.as_object_mut().unwrap().remove("psfphasecenter");
+    controls["calcpsf"] = json!(false);
+    let (_, resumed) = observation.image("alternate", controls);
+    assert_same(resumed.get(".image"), separate.get(".image"), ".image");
+    assert!(!resumed.suffixes().contains(".psf"));
+    let saved = Product::open(&observation.scratch("alternate.psf"));
+    assert_same(&saved, separate.get(".psf"), ".psf");
+
+    let Err(reason) = observation.try_image(
+        "source-frame-with-fixed-psf",
+        json!({
+            "gridder": "mosaic", "weighting": "natural", "phasecenter": "TRACKFIELD",
+            "specmode": "cubesource", "psfphasecenter": alternate, "niter": 0
+        }),
+    ) else {
+        panic!("a fixed alternate PSF was admitted for a source-frame cube");
+    };
+    assert!(
+        reason.contains("a fixed alternate PSF centre cannot track"),
+        "{reason}"
+    );
+
+    let Err(reason) = observation.try_image(
+        "single-channel-tracked-taylor-with-fixed-psf",
+        json!({
+            "gridder": "mosaic", "weighting": "natural", "phasecenter": "TRACKFIELD",
+            "deconvolver": "mtmfs", "nterms": 2, "spw": "0:0", "psfphasecenter": alternate,
+            "niter": 0
+        }),
+    ) else {
+        panic!("an alternate Taylor PSF was admitted on a single tracked channel");
+    };
+    assert!(
+        reason.contains("more than one selected native channel"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn a_tracked_cube_reuses_a_saved_psf_with_equal_coordinates_in_another_frame() {
+    let observation = tracked_evla();
+    let mut controls = json!({
+        "gridder": "mosaic", "weighting": "natural", "phasecenter": "TRACKFIELD",
+        "specmode": "cube", "outframe": "LSRK", "nchan": 2, "start": 0, "width": 1,
+        "imsize": 192, "cell": "0.5arcsec", "pblimit": -0.2, "write_pb": true, "niter": 0
+    });
+    let (_, ordinary) = observation.image("tracked-cube", controls.clone());
+    let CoordinateModel::Direction(main) =
+        ordinary.get(".residual").image.coordinates().coordinate(0)
+    else {
+        panic!("the main image has a direction coordinate");
+    };
+    assert_eq!(main.direction_ref(), DirectionRef::ICRS);
+    let [longitude, latitude] = [main.reference_value()[0], main.reference_value()[1]];
+    controls["psfphasecenter"] = json!(format!("J2000 {longitude}rad {latitude}rad"));
+    let (_, seeded) = observation.image("alternate-cube", controls.clone());
+    let CoordinateModel::Direction(psf) = seeded.get(".psf").image.coordinates().coordinate(0)
+    else {
+        panic!("the PSF has a direction coordinate");
+    };
+    assert_eq!(psf.direction_ref(), DirectionRef::J2000);
+    assert_eq!(psf.reference_value(), main.reference_value());
+
+    controls.as_object_mut().unwrap().remove("psfphasecenter");
+    controls["calcpsf"] = json!(false);
+    let (_, resumed) = observation.image("alternate-cube", controls);
+    assert_same(resumed.get(".image"), seeded.get(".image"), ".image");
+    assert!(!resumed.suffixes().contains(".psf"));
 }
 
 fn taylor_setup() -> (Observation, serde_json::Value, String) {

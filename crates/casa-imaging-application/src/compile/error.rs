@@ -372,9 +372,11 @@ pub enum PrepareError {
         /// The given angle.
         angle: String,
     },
-    /// A separately formed PSF is currently compiled for a fixed mosaic direction.
-    #[error("psfphasecenter with a moving mosaic phase centre is not implemented yet (#1062)")]
-    MovingMosaicPsf,
+    /// One native channel does not constrain a moving mosaic's Taylor slope.
+    #[error(
+        "psfphasecenter for a tracked Taylor mosaic requires more than one selected native channel (#1062)"
+    )]
+    MovingTaylorPsfSingleChannel,
     /// Separate PSF views must have one channel for each main image plane.
     #[error("psfphasecenter gives {psf} cube channels for {main} main image channels (#1062)")]
     AlternatePsfChannelCount {

@@ -60,7 +60,7 @@ pub(super) fn moving_track() -> Observation {
 }
 
 /// `observation` with its field following [`body`], as [`moving_track`].
-fn following_body(observation: Observation) -> Observation {
+pub(super) fn following_body(observation: Observation) -> Observation {
     let path = observation.measurement_set();
     let mut ms = MeasurementSet::open(path).expect("the T1 MeasurementSet");
     let reference_time = ms

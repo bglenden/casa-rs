@@ -326,7 +326,7 @@ pub(crate) fn prepare_with_view_hooks(
     let psf_view = psf_view::prepare(
         request,
         &domains[0],
-        &centre,
+        centre.ephemeris.is_some(),
         surveyed,
         context,
         &specification,
