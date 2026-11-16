@@ -70,7 +70,15 @@ fn packed_ssm_column_bytes(col_sizes_bits: &[usize], rows: usize) -> usize {
 /// positive bucket-size argument instead fills that bucket with as many rows
 /// as fit. casa-rs knows the creation row count, so large new tables use the
 /// latter policy while small tables retain the casacore default geometry.
-fn new_ssm_bucket_layout(col_sizes_bits: &[usize], row_count: usize) -> (u32, u32) {
+pub(super) fn new_ssm_bucket_layout_with_policy(
+    col_sizes_bits: &[usize],
+    row_count: usize,
+    casacore_default_small: bool,
+) -> (u32, u32) {
+    if casacore_default_small {
+        let data_size = packed_ssm_column_bytes(col_sizes_bits, 32);
+        return (32, data_size.max(128) as u32);
+    }
     if col_sizes_bits.iter().all(|bits| *bits == 0) {
         return (32, DEFAULT_SSM_BUCKET_SIZE);
     }
@@ -97,6 +105,10 @@ fn new_ssm_bucket_layout(col_sizes_bits: &[usize], row_count: usize) -> (u32, u3
     } else {
         (rows as u32, DEFAULT_SSM_BUCKET_SIZE)
     }
+}
+
+fn new_ssm_bucket_layout(col_sizes_bits: &[usize], row_count: usize) -> (u32, u32) {
+    new_ssm_bucket_layout_with_policy(col_sizes_bits, row_count, false)
 }
 
 #[cfg(test)]
@@ -161,7 +173,6 @@ fn ssm_cell_element_count(col_desc: &ColumnDescContents) -> usize {
 struct SsmHeader {
     bucket_size: u32,
     nr_buckets: u32,
-    #[allow(dead_code)]
     pers_cache_size: u32,
     #[allow(dead_code)]
     nr_free_buckets: u32,
@@ -278,6 +289,45 @@ fn parse_ssm_dm_blob(data: &[u8]) -> Result<SsmDmInfo, StorageError> {
 /// `table.dat`; `None` for a blob that does not parse.
 pub(crate) fn dm_name_from_blob(data: &[u8]) -> Option<String> {
     parse_ssm_dm_blob(data).ok().map(|info| info.name)
+}
+
+/// Whether an existing on-disk `StandardStMan` file uses smaller buckets than
+/// casa-rs's 32 KiB default (such as casacore's default 32-row layout).
+pub(crate) fn ssm_has_small_buckets(data_path: &Path) -> Result<bool, StorageError> {
+    let mut file = File::open(data_path)?;
+    let header = parse_ssm_header(&mut file)?;
+    Ok(header.bucket_size < DEFAULT_SSM_BUCKET_SIZE)
+}
+
+/// The `SPEC` record of a `StandardStMan` manager (`SSMBase::dataManagerSpec`).
+pub(crate) fn ssm_spec(
+    table_path: &Path,
+    dm_seq_nr: u32,
+) -> Result<casa_types::RecordValue, StorageError> {
+    let data_path = table_path.join(format!("{}{dm_seq_nr}", super::TABLE_DATA_FILE_PREFIX));
+    let mut file = File::open(&data_path)?;
+    let header = parse_ssm_header(&mut file)?;
+    let bucket_size = i32::try_from(header.bucket_size)
+        .map_err(|_| StorageError::FormatMismatch("SSM bucket size exceeds i32".into()))?;
+    let index_length = i32::try_from(header.index_length)
+        .map_err(|_| StorageError::FormatMismatch("SSM index length exceeds i32".into()))?;
+    let pers_cache_size = i32::try_from(header.pers_cache_size)
+        .map_err(|_| StorageError::FormatMismatch("SSM cache size exceeds i32".into()))?;
+    Ok(casa_types::RecordValue::new(vec![
+        casa_types::RecordField::new("BUCKETSIZE", Value::Scalar(ScalarValue::Int32(bucket_size))),
+        casa_types::RecordField::new(
+            "IndexLength",
+            Value::Scalar(ScalarValue::Int32(index_length)),
+        ),
+        casa_types::RecordField::new(
+            "MaxCacheSize",
+            Value::Scalar(ScalarValue::Int32(pers_cache_size)),
+        ),
+        casa_types::RecordField::new(
+            "PERSCACHESIZE",
+            Value::Scalar(ScalarValue::Int32(pers_cache_size)),
+        ),
+    ]))
 }
 
 /// Read a `Block<uInt>` as serialised by C++ casacore's `putBlock`.
@@ -1849,7 +1899,27 @@ pub(crate) fn write_ssm_file(
     rows: &[casa_types::RecordValue],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    write_ssm_file_impl(file_path, col_descs, rows, None, big_endian)
+    write_ssm_file_impl(file_path, col_descs, rows, None, big_endian, false, "SSM")
+}
+
+/// Like [`write_ssm_file`], with explicit casacore small-bucket policy and manager name.
+pub(crate) fn write_ssm_file_with_options(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    rows: &[casa_types::RecordValue],
+    big_endian: bool,
+    casacore_default_small: bool,
+    dm_name: &str,
+) -> Result<Vec<u8>, StorageError> {
+    write_ssm_file_impl(
+        file_path,
+        col_descs,
+        rows,
+        None,
+        big_endian,
+        casacore_default_small,
+        dm_name,
+    )
 }
 
 pub(crate) fn write_ssm_file_indexed(
@@ -1859,7 +1929,15 @@ pub(crate) fn write_ssm_file_indexed(
     field_indices: &[usize],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    write_ssm_file_impl(file_path, col_descs, rows, Some(field_indices), big_endian)
+    write_ssm_file_impl(
+        file_path,
+        col_descs,
+        rows,
+        Some(field_indices),
+        big_endian,
+        false,
+        "SSM",
+    )
 }
 
 pub(crate) fn write_ssm_file_scalar_columns(
@@ -1916,7 +1994,7 @@ pub(crate) fn write_ssm_file_column_sources(
     }) {
         return write_ssm_fixed_scalar_sources_streaming(file_path, col_descs, sources, big_endian);
     }
-    column_writer::write_ssm_file_columns(file_path, col_descs, sources, big_endian)
+    column_writer::write_ssm_file_columns(file_path, col_descs, sources, big_endian, false, "SSM")
 }
 
 fn write_ssm_file_impl(
@@ -1925,12 +2003,16 @@ fn write_ssm_file_impl(
     rows: &[casa_types::RecordValue],
     field_indices: Option<&[usize]>,
     big_endian: bool,
+    casacore_default_small: bool,
+    dm_name: &str,
 ) -> Result<Vec<u8>, StorageError> {
     column_writer::write_ssm_file_columns(
         file_path,
         col_descs,
         &column_writer::RowCells::new(rows, field_indices, col_descs),
         big_endian,
+        casacore_default_small,
+        dm_name,
     )
 }
 
@@ -2738,7 +2820,7 @@ fn serialize_ssm_header(
     buf.put_bool(big_endian);
     buf.put_u32(bucket_size);
     buf.put_u32(nr_buckets);
-    buf.put_u32(0); // persCacheSize
+    buf.put_u32(2); // persCacheSize (casacore default cache size is 2)
     buf.put_u32(nr_free_buckets);
     buf.put_i32(first_free_bucket);
     buf.put_u32(nr_idx_buckets);

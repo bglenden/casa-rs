@@ -127,3 +127,115 @@ fn a_reference_table_has_the_byte_order_of_the_table_it_refers_to() {
         Some(EndianFormat::BigEndian)
     );
 }
+
+#[test]
+fn root_row_numbers_compose_reference_maps_and_keep_duplicates() {
+    let parent = grouped_table("root_rows", "", EndianFormat::BigEndian);
+    let table = Table::open(TableOptions::new(&parent)).expect("open parent");
+    assert_eq!(table.root_row_numbers().expect("plain rows"), [0, 1, 2]);
+    let view = parent.with_file_name("view.table");
+    table
+        .select_rows(&[2, 0, 2])
+        .expect("select")
+        .save(TableOptions::new(&view))
+        .expect("save view");
+    let first = Table::open(TableOptions::new(&view)).expect("open view");
+    assert_eq!(first.root_row_numbers().expect("view rows"), [2, 0, 2]);
+    let nested = parent.with_file_name("nested.table");
+    first
+        .select_rows(&[2, 1])
+        .expect("nested select")
+        .save(TableOptions::new(&nested))
+        .expect("save nested");
+    let second = Table::open(TableOptions::new(&nested)).expect("open nested");
+    assert_eq!(second.root_row_numbers().expect("nested rows"), [2, 0]);
+}
+
+#[test]
+fn root_row_numbers_refuse_a_reference_cycle() {
+    let parent = grouped_table("root_cycle", "", EndianFormat::BigEndian);
+    let table = Table::open(TableOptions::new(&parent)).expect("open parent");
+    let view = parent.with_file_name("view.table");
+    table
+        .select_rows(&[2])
+        .expect("select")
+        .save(TableOptions::new(&view))
+        .expect("save view");
+    let opened = Table::open(TableOptions::new(&view)).expect("open view");
+    let control = view.join("table.dat");
+    let TableDatResult::Ref(mut reference) = read_table_dat_dispatch(&control).expect("control")
+    else {
+        panic!("expected reference table");
+    };
+    reference.parent_relative_path = "./view.table".into();
+    crate::storage::table_control::write_ref_table_dat(&control, &reference).expect("write cycle");
+    assert!(
+        opened
+            .root_row_numbers()
+            .expect_err("cycle refused")
+            .to_string()
+            .contains("cycle")
+    );
+    assert!(
+        opened
+            .simple_reference_root()
+            .expect_err("cycle refused")
+            .to_string()
+            .contains("cycle")
+    );
+    assert!(
+        opened
+            .cache_plain_table_paths()
+            .expect_err("cycle refused")
+            .to_string()
+            .contains("cycle")
+    );
+}
+
+#[test]
+fn cache_plain_table_paths_follow_references_and_concatenations() {
+    let first = grouped_table("cache_first", "", EndianFormat::BigEndian);
+    let second = grouped_table("cache_second", "", EndianFormat::BigEndian);
+    let a = Table::open(TableOptions::new(&first)).expect("open first");
+    assert_eq!(
+        a.cache_plain_table_paths().expect("plain cache"),
+        [crate::table::table_cache_name(&first).unwrap()]
+    );
+    let view = first.with_file_name("view.table");
+    a.select_rows(&[2, 0])
+        .expect("select")
+        .save(TableOptions::new(&view))
+        .expect("save view");
+    let view_table = Table::open(TableOptions::new(&view)).expect("open view");
+    assert_eq!(
+        view_table
+            .cache_plain_table_paths()
+            .expect("reference cache"),
+        [crate::table::table_cache_name(&first).unwrap()]
+    );
+    let b = Table::open(TableOptions::new(&second)).expect("open second");
+    let concat = Table::concat(vec![a, b]).expect("concatenate");
+    let path = first.with_file_name("joined.table");
+    concat.save(TableOptions::new(&path)).expect("save concat");
+    let opened = Table::open(TableOptions::new(&path)).expect("open concat");
+    let mut expected = vec![
+        crate::table::table_cache_name(&first).unwrap(),
+        crate::table::table_cache_name(&second).unwrap(),
+    ];
+    expected.sort();
+    assert_eq!(
+        opened.cache_plain_table_paths().expect("concat cache"),
+        expected
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn cache_plain_table_paths_preserve_a_symbolic_link_name() {
+    let original = grouped_table("cache_link", "", EndianFormat::BigEndian);
+    let alias = original.with_file_name("alias.table");
+    assert!(alias.is_absolute());
+    std::os::unix::fs::symlink(&original, &alias).expect("link");
+    let table = Table::open(TableOptions::new(&alias)).expect("open alias");
+    assert_eq!(table.cache_plain_table_paths().expect("cache"), [alias]);
+}

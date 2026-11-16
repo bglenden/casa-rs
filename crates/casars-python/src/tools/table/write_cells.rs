@@ -231,15 +231,16 @@ impl State {
         value: Incoming,
         log: &mut Vec<LogLine>,
     ) -> Reply {
-        self.write_with(Target::Cells, log, move |table| {
+        self.write_with(Target::Cells, log, move |table, row_map| {
             let (ty, array) = describe(table, &column)?;
-            let nrows = table.row_count();
+            let nrows = row_map.map_or_else(|| table.row_count(), <[usize]>::len);
             let rows = rows
                 .into_iter()
                 .map(|row| {
                     usize::try_from(row)
                         .ok()
                         .filter(|row| *row < nrows)
+                        .map(|row| row_map.map_or(row, |map| map[row]))
                         .ok_or_else(|| put_column_error("no such row"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -265,15 +266,20 @@ impl State {
         selection: (i64, i64, i64),
         log: &mut Vec<LogLine>,
     ) -> Reply {
-        self.write_with(Target::Cells, log, move |table| {
+        self.write_with(Target::Cells, log, move |table, row_map| {
             let (ty, array) = describe(table, &column)?;
+            let nrows = row_map.map_or_else(|| table.row_count(), <[usize]>::len);
             let selected = rows(
-                table.row_count(),
+                nrows,
                 selection.0,
                 selection.1,
                 selection.2,
                 "TableProxy::TableProxy::putColumn: no such row",
             )?;
+            let selected: Vec<usize> = selected
+                .into_iter()
+                .map(|row| row_map.map_or(row, |map| map[row]))
+                .collect();
             let cells = match (value, ty) {
                 (Incoming::Wide(wide), Some(_)) => {
                     split_rows(wide, array, &column, selected.len())?
@@ -315,16 +321,21 @@ impl State {
         selection: (i64, i64, i64),
         log: &mut Vec<LogLine>,
     ) -> Reply {
-        self.write_with(Target::Cells, log, move |table| {
+        self.write_with(Target::Cells, log, move |table, row_map| {
             let (ty, array) = describe(table, &column)?;
+            let nrows = row_map.map_or_else(|| table.row_count(), <[usize]>::len);
             let selected = rows_stepping(
-                table.row_count(),
+                nrows,
                 selection.0,
                 selection.1,
                 selection.2,
                 "TableProxy::TableProxy::putVarColumn: no such row",
                 "TableProxy::putVarColumn: rowincr<=0",
             )?;
+            let selected: Vec<usize> = selected
+                .into_iter()
+                .map(|row| row_map.map_or(row, |map| map[row]))
+                .collect();
             if fields.len() != selected.len() {
                 return runtime("TableProxy::putVarColumn: #rows mismatches #elem in value".into());
             }

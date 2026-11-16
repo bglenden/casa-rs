@@ -42,7 +42,9 @@ IMPLEMENTED["table"] = {
     "getcellslice", "getcolslice", "putcellslice", "putcolslice", "getcoldesc",
     "addrows", "removerows", "renamecol", "removecols", "addcols", "getdminfo",
     "endianformat", "flush", "resync", "datachanged", "ismultiused", "setmaxcachesize",
-    "clearlocks", "copyrows", "copy",
+    "clearlocks", "copyrows", "copy", "create", "createmultitable", "rownumbers", "getdesc",
+    "isopened", "showcache", "listlocks", "testincrstman", "statistics", "selectrows",
+    "summary", "browse",
 }  # fmt: skip
 
 
