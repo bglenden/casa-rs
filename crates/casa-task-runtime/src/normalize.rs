@@ -17,7 +17,11 @@ pub fn normalize_value(
     concept: &ParameterConcept,
 ) -> Result<ParameterValue, NormalizationError> {
     validate_wrapped_values(value)?;
-    reject_forbidden_strings(value, names_project(&concept.normalization))?;
+    reject_forbidden_strings(
+        value,
+        names_project(&concept.normalization),
+        matches!(concept.normalization, NormalizationRule::TcleanField),
+    )?;
     let value = if reads_numbers_as_text(&concept.normalization) {
         number_as_text(value)
     } else {
@@ -84,6 +88,7 @@ fn names_project(rule: &NormalizationRule) -> bool {
 fn reject_forbidden_strings(
     value: &ParameterValue,
     project: bool,
+    tclean_field: bool,
 ) -> Result<(), NormalizationError> {
     match value {
         ParameterValue::String(value) => {
@@ -95,22 +100,31 @@ fn reject_forbidden_strings(
             } else {
                 value.clone()
             };
-            if checked.contains('$') || checked.contains('`') {
+            let forbidden_dollar = if tclean_field {
+                field_has_expansion(&checked)
+            } else {
+                checked.contains('$')
+            };
+            if forbidden_dollar || checked.contains('`') {
                 return Err(NormalizationError::EnvironmentExpression(value.clone()));
             }
         }
         ParameterValue::Array(values) => {
             for value in values {
-                reject_forbidden_strings(value, project)?;
+                reject_forbidden_strings(value, project, tclean_field)?;
             }
         }
         ParameterValue::Table(values) => {
             for value in values.values() {
-                reject_forbidden_strings(value, project)?;
+                reject_forbidden_strings(value, project, tclean_field)?;
             }
         }
-        ParameterValue::ScalarArray(value) => reject_forbidden_strings(value, project)?,
-        ParameterValue::NumpyScalar { value, .. } => reject_forbidden_strings(value, project)?,
+        ParameterValue::ScalarArray(value) => {
+            reject_forbidden_strings(value, project, tclean_field)?
+        }
+        ParameterValue::NumpyScalar { value, .. } => {
+            reject_forbidden_strings(value, project, tclean_field)?
+        }
         ParameterValue::Bool(_)
         | ParameterValue::Integer(_)
         | ParameterValue::Float(_)
@@ -130,6 +144,31 @@ pub fn validate_value(
     validate_constraints(value, &concept.base_constraints)?;
     validate_refinements(value, concept, refinements)?;
     Ok(())
+}
+
+// FIELD treats a bare dollar and regex end anchor as text. Keep rejecting
+// shell substitution prefixes, including a dollar before an opening quote.
+fn field_has_expansion(value: &str) -> bool {
+    let mut delimiter = None;
+    for (index, byte) in value.bytes().enumerate() {
+        match (delimiter, byte) {
+            (None, b'"' | b'/') => delimiter = Some(byte),
+            (Some(closing), byte) if closing == byte => delimiter = None,
+            (_, b'$') => {
+                let Some(&next) = value.as_bytes().get(index + 1) else {
+                    continue;
+                };
+                let field_boundary = matches!(next, b'/' | b',' | b')' | b'|' | b']')
+                    || next.is_ascii_whitespace()
+                    || (next == b'"' && delimiter == Some(b'"'));
+                if !field_boundary {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Compare two values after invariant normalization.
@@ -325,7 +364,7 @@ fn apply_rule(
     rule: &NormalizationRule,
 ) -> Result<ParameterValue, NormalizationError> {
     match rule {
-        NormalizationRule::Identity => Ok(value),
+        NormalizationRule::Identity | NormalizationRule::TcleanField => Ok(value),
         NormalizationRule::Trim => map_strings(value, |value| Ok(value.trim().to_string())),
         NormalizationRule::Lowercase => {
             map_strings(value, |value| Ok(value.trim().to_ascii_lowercase()))

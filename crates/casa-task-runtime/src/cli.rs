@@ -239,7 +239,10 @@ fn validated_cli_value(
     // FIELD spaces are a token that can match an empty NAME or CODE.
     let exact_field_text = one_selector
         && binding.context_role == Some(ContextRole::FieldSelection)
-        && matches!(concept.normalization, NormalizationRule::Identity);
+        && matches!(
+            concept.normalization,
+            NormalizationRule::Identity | NormalizationRule::TcleanField
+        );
     if text.trim().is_empty()
         && !exact_empty_default
         && !exact_field_text

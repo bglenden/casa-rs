@@ -74,6 +74,67 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tclean_field_preserves_literal_dollars_and_regex_end_anchors() {
+        let bundle = builtin_surface_bundle("tclean").unwrap();
+        let field = ParameterValue::Array(
+            ["CODE$", r#""CODE$""#, "/Alpha1$/", "/(Alpha1$|Beta)/"]
+                .into_iter()
+                .map(ParameterValue::from)
+                .collect(),
+        );
+        let values = BTreeMap::from([("field".to_string(), field.clone())]);
+        assert_eq!(normalize_overrides(&bundle, &values).unwrap(), values);
+    }
+
+    #[test]
+    fn tclean_field_still_refuses_expansion_and_other_parameters_keep_the_guard() {
+        let tclean = builtin_surface_bundle("tclean").unwrap();
+        let flagdata = builtin_surface_bundle("flagdata").unwrap();
+        let refuses = |bundle: &SurfaceContractBundle, name: &str, value: ParameterValue| {
+            let error = normalize_overrides(bundle, &BTreeMap::from([(name.to_owned(), value)]))
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("environment or executable expansion"),
+                "{error}"
+            );
+        };
+        for expression in [
+            "$HOME",
+            "${HOME}",
+            "$_variable",
+            "$9",
+            "$é",
+            "$^options",
+            "$=options",
+            "$~options",
+            "$?",
+            "$$",
+            "$!",
+            "$#",
+            "$*",
+            "$@",
+            "$-",
+            "$(hostname)",
+            "$[1+2]",
+            "$'quoted'",
+            r#"$"quoted""#,
+            r#"/^x$(hostname)/"#,
+            "`hostname`",
+        ] {
+            refuses(&tclean, "field", ParameterValue::from(expression));
+        }
+        refuses(
+            &tclean,
+            "field",
+            ParameterValue::Array(vec!["CODE$".into(), "$HOME".into()]),
+        );
+        refuses(&tclean, "imagename", "literal$".into());
+        refuses(&flagdata, "field", "CODE$".into());
+    }
+
+    #[test]
     fn casa_integer_type_refusals_name_the_parameter_and_casa_type() {
         for (surface, name, value) in [
             ("simobserve", "comp_nchan", ParameterValue::Float(-1.0)),

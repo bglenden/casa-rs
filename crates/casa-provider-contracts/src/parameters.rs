@@ -378,13 +378,15 @@ pub const PROJECT_TOKEN: &str = "$project";
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NormalizationRule {
     Identity,
+    /// Preserve tclean FIELD text, including literal dollar signs.
+    TcleanField,
     Trim,
     Lowercase,
     Path,
     /// A path that may name the task's project as [`PROJECT_TOKEN`], which
     /// the task replaces (CASA's `simobserve` names `$project.ptg.txt`):
     /// cleaned as a [`Path`](Self::Path), the token kept. Any other `$` or
-    /// backtick is refused, as everywhere.
+    /// backtick in the path is refused.
     ProjectPath,
     CasaSelector {
         grammar: SelectorGrammar,
