@@ -6196,6 +6196,9 @@ mask to the weighted signal and uses the primary beam's mask for the
 coverage. With a constant 1.5 restored image and a primary beam of 0.5,
 masking only the restored pixel gives zero signal and a coverage weight of
 0.25. In an overlap, that weight dilutes the flux from a valid pointing.
+With a 6 × 5 pointing aligned in a 10 × 6 output, CASA's copy path can
+carry both values through a pixel masked in both inputs. At the masked
+pixel in the same constant example it wrote 3 and 0.25.
 
 casa-rs uses both masks for both contributions. A pixel masked in either
 input contributes neither signal nor coverage, and valid pointings still

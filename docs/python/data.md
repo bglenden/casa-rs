@@ -67,6 +67,8 @@ output coordinates for your observation. Only the template's grid is used.
 `stitched.weight` gives the beam-squared coverage on that grid. The
 flux-correct image is zero where coverage is at most `1e-6` of peak coverage.
 Both outputs are CASA images, and both paths must be new.
+When a projected footprint edge falls exactly halfway between output pixels,
+coordinate rounding can move the edge by a pixel compared with CASA.
 
 ## Tables
 

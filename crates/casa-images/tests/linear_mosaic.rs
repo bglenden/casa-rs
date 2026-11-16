@@ -102,10 +102,12 @@ fn a_masked_image_or_beam_pixel_contributes_neither_flux_nor_weight() {
     let dir = tempfile::tempdir().unwrap();
     let path = |name| dir.path().join(name);
     let pairs = [(path("pointing"), path("pb"))];
+    let template = path("template");
     let output = path("mosaic.image");
     let weight = path("mosaic.weight");
     write(&pairs[0].0, 6, 3.0, |_| 1.5);
     write(&pairs[0].1, 6, 3.0, |_| 0.5);
+    write(&template, 10, 5.0, |_| 0.0);
     for (name, x) in [(&pairs[0].0, 1), (&pairs[0].1, 2)] {
         let mut input = Image::open(name).unwrap();
         let mut mask = ndarray::ArrayD::from_elem(IxDyn(input.shape()), true);
@@ -114,15 +116,17 @@ fn a_masked_image_or_beam_pixel_contributes_neither_flux_nor_weight() {
         input.put_mask("valid", &mask).unwrap();
         input.save().unwrap();
     }
-    linearmosaic(&pairs, &pairs[0].0, &output, &weight).unwrap();
+    linearmosaic(&pairs, &template, &output, &weight).unwrap();
     let image = Image::open(output).unwrap().get().unwrap();
     let coverage = Image::open(weight).unwrap().get().unwrap();
-    for x in [1, 2] {
+    for x in [3, 4] {
         assert_eq!(image[[x, 2]], 0.0);
         assert_eq!(coverage[[x, 2]], 0.0);
     }
-    assert_eq!(image[[3, 2]], 3.0);
-    assert_eq!(coverage[[3, 2]], 0.25);
+    assert_eq!(image[[2, 2]], 3.0);
+    assert_eq!(coverage[[2, 2]], 0.25);
+    assert_eq!(image[[5, 2]], 3.0);
+    assert_eq!(coverage[[5, 2]], 0.25);
 }
 
 #[test]

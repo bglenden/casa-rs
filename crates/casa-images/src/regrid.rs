@@ -558,15 +558,21 @@ where
         });
     }
     let mut grid = positions(input_direction, output_direction, out_plane);
-    if mosaic_pointing {
-        clip_pointing_grid(
+    let method = if mosaic_pointing
+        && clip_pointing_grid(
             &mut grid,
             input_direction,
             output_direction,
             in_plane,
             out_plane,
-        );
-    }
+        ) {
+        // When the cropped output has the input's WCS and shape, CASA copies
+        // directly. Sampling the matching pixel also avoids requiring valid
+        // neighbours that contribute nothing to that pixel.
+        RegridMethod::Nearest
+    } else {
+        method
+    };
     let data = input.get()?;
     let mask = input.default_mask()?;
     // The direction pass keeps the input's channels; the spectral pass
@@ -619,7 +625,7 @@ fn clip_pointing_grid(
     output: &DirectionCoordinate,
     input_shape: [usize; 2],
     output_shape: [usize; 2],
-) {
+) -> bool {
     // LinearMosaic::addOnToImage projects the two LCBox corners through a
     // WCBox and rounds them back to output pixels. An invalid or disjoint
     // box leaves ImageRegrid to restrict the full output by interpolation.
@@ -632,15 +638,15 @@ fn clip_pointing_grid(
             .then(|| [(pixel[0] + 0.5) as isize, (pixel[1] + 0.5) as isize])
     };
     let Some(start) = project([0.0, 0.0]) else {
-        return;
+        return false;
     };
     let Some(end) = project(input_shape.map(|n| n as f64 - 1.0)) else {
-        return;
+        return false;
     };
     let start = start.map(|p| p.max(0));
     let end = std::array::from_fn::<_, 2, _>(|i| end[i].min(output_shape[i] as isize - 1));
     if start[0] > end[0] || start[1] > end[1] {
-        return;
+        return false;
     }
     for (y, row) in grid.chunks_mut(output_shape[0]).enumerate() {
         if !(start[1]..=end[1]).contains(&(y as isize)) {
@@ -650,6 +656,19 @@ fn clip_pointing_grid(
             row[end[0] as usize + 1..].fill(None);
         }
     }
+    let region_shape = std::array::from_fn(|i| (end[i] - start[i] + 1) as usize);
+    let centre = output.reference_pixel();
+    region_shape == input_shape
+        && same_axes(
+            &CoordinateModel::Direction(input.clone()),
+            &CoordinateModel::Direction(
+                output.clone().with_reference_pixel([
+                    centre[0] - start[0] as f64,
+                    centre[1] - start[1] as f64,
+                ]),
+            ),
+            &input_shape,
+        )
 }
 
 /// The direction planes of an array with its direction axes at
