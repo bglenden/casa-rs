@@ -911,7 +911,11 @@ impl ImagingRequest {
         if self.calcpsf && self.uses_separate_psf() && !self.supports_separate_psf() {
             return Err(InvalidRequest {
                 parameters: "psfphasecenter",
-                reason: "a separate PSF centre is supported for a fixed MFS mosaic or a single-term cube mosaic without outliers (#1062)",
+                reason: if self.specmode == SpecMode::Cubesource {
+                    "a fixed alternate PSF centre cannot track the moving source required by cubesource (#1062)"
+                } else {
+                    "a separate fixed PSF centre is supported for an MFS mosaic or a single-term cube mosaic without outliers (#1062)"
+                },
             });
         }
         Ok(())

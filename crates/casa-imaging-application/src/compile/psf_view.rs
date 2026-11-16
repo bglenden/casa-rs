@@ -14,13 +14,13 @@ use casa_imaging_model::{
 use casa_imaging_products::CasaImageWriter;
 use casa_imaging_runtime::{Admitted, Demand, Reservation, admit};
 
-use super::direction::{self, Centre};
+use super::direction;
 use super::domains::PreparedImageDomain;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 
 use super::spectral::{self, FrameContext, PreparedSpectralAxis};
 use super::{PrepareError, Surveyed, envelope, instrument, selection};
-use crate::{Gridder, ImagingRequest, RunContext, SpecMode};
+use crate::{Deconvolver, Gridder, ImagingRequest, RunContext, SpecMode};
 
 pub(crate) struct PsfView {
     specification: ProblemSpecification,
@@ -59,7 +59,7 @@ impl PsfView {
 pub(super) fn prepare(
     request: &ImagingRequest,
     main: &PreparedImageDomain,
-    centre: &Centre,
+    tracks_source: bool,
     surveyed: &Surveyed<'_>,
     context: &RunContext,
     specification: &ProblemSpecification,
@@ -71,8 +71,20 @@ pub(super) fn prepare(
     if !request.calcpsf || !matches!(request.gridder, Gridder::Mosaic { .. }) {
         return Ok(None);
     }
-    if centre.ephemeris.is_some() {
-        return Err(PrepareError::MovingMosaicPsf);
+    // A single selected channel leaves only the tiny frame-conversion
+    // changes to determine the Taylor slope of the tracked continuum.
+    if tracks_source
+        && request.deconvolver == Deconvolver::Mtmfs
+        && surveyed
+            .spectral
+            .selected_source_channels
+            .iter()
+            .flat_map(|windows| windows.values())
+            .map(Vec::len)
+            .sum::<usize>()
+            == 1
+    {
+        return Err(PrepareError::MovingTaylorPsfSingleChannel);
     }
     let phase = direction::parse_phase_center_direction(text)?;
     let (longitude, latitude) = (phase.longitude_rad(), phase.latitude_rad());
