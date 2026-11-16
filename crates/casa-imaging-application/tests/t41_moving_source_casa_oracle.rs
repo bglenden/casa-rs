@@ -14,6 +14,7 @@ use casa_images::PagedImage;
 use casa_imaging_application::execute;
 use casa_imaging_application::store_law::row_pointing;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
+use casa_types::Correlation;
 use casa_types::measures::frequency::FrequencyRef;
 use serde::Deserialize;
 use serde_json::json;
@@ -24,7 +25,11 @@ mod imaging;
 const DATASET: &str = "measurementset/alma/alma_ephemobj_icrs.ms";
 const CASA_PREFIX_ENV: &str = "CASA_RS_T41_CASA_PREFIX";
 const PRODUCTS: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
-const SELECTED_SAMPLE_COUNT: u64 = 1_620 * 1_024 * 2;
+const SELECTED_ROWS: u64 = 1_620;
+const SELECTED_CHANNELS: u32 = 1_024;
+/// The 1,080 unflagged cross baselines each place 1,007 in-band REST samples.
+/// The two parallel hands contribute to the same Stokes I placement.
+const PLACED_SAMPLES: u64 = 1_080 * 1_007;
 const TRACKFIELD_ORACLE: &str = include_str!("fixtures/t41_trackfield_casa_6_7_6_14.json");
 /// CASA's `TRACKFIELD` direction at a row time, as `imager`'s
 /// `SIImageStore` evaluates it, and the batch geometry's agree to this.
@@ -139,11 +144,49 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     }));
     let result = execute(&request, imaging::context(request.resource_policy()))?;
     let samples = result.scientific().normal_state().sample_count();
-    eprintln!("t41 samples={samples}");
-    if samples != SELECTED_SAMPLE_COUNT {
+    let [source] = result
+        .problem
+        .observation_transaction()
+        .read_set()
+        .sources()
+    else {
+        return Err("expected one Uranus input".into());
+    };
+    let selected = source.selection();
+    assert_eq!(
+        selected.samples(),
+        SELECTED_ROWS,
+        "selected MS time/baseline rows"
+    );
+    let [window] = selected.spectral_windows() else {
+        return Err("expected one Uranus spectral window".into());
+    };
+    assert_eq!(window.spectral_window_id(), 0);
+    assert!(
+        window
+            .channel_indices()
+            .iter()
+            .copied()
+            .eq(0..SELECTED_CHANNELS),
+        "the production selection must retain all native channels (#986)"
+    );
+    for partition in selected.partitions() {
+        let hand = partition
+            .products()
+            .iter()
+            .map(|product| product.correlation_type());
+        assert!(
+            hand.eq([Correlation::XX, Correlation::YY]),
+            "both input hands are selected"
+        );
+    }
+    eprintln!(
+        "t41 selected rows={} placed samples={samples}",
+        selected.samples()
+    );
+    if samples != PLACED_SAMPLES {
         failures.push(format!(
-            "{samples} samples, not {SELECTED_SAMPLE_COUNT}: production traversal must retain \
-             all 1,024 channels and both parallel hands (#986)"
+            "placed {samples} samples, expected {PLACED_SAMPLES}"
         ));
     }
     assert_matching_wcs(&rust_prefix, &casa_prefix)?;
@@ -334,22 +377,31 @@ fn assert_matching_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<(), Box
         PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", rust_prefix.display())))?;
     let casa =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", casa_prefix.display())))?;
-    for pixel in [[256.0, 256.0, 0.0, 0.0], [256.0, 256.0, 0.0, 15.0]] {
-        let rust_world = rust.coordinates().to_world(&pixel)?;
-        let casa_world = casa.coordinates().to_world(&pixel)?;
-        for axis in 0..2 {
+    for [x, y] in [
+        [0.0, 0.0],
+        [0.0, 511.0],
+        [256.0, 256.0],
+        [511.0, 0.0],
+        [511.0, 511.0],
+    ] {
+        for channel in 0..16 {
+            let pixel = [x, y, 0.0, f64::from(channel)];
+            let rust_world = rust.coordinates().to_world(&pixel)?;
+            let casa_world = casa.coordinates().to_world(&pixel)?;
+            for axis in 0..2 {
+                assert!(
+                    (rust_world[axis] - casa_world[axis]).abs() <= 1.0e-10,
+                    "tracked direction WCS axis {axis} differs at {pixel:?}"
+                );
+            }
+            let spectral_tolerance_hz = casa_world[3].abs().max(1.0) * 2.0e-12;
             assert!(
-                (rust_world[axis] - casa_world[axis]).abs() <= 1.0e-10,
-                "tracked direction WCS axis {axis} differs at {pixel:?}"
+                (rust_world[3] - casa_world[3]).abs() <= spectral_tolerance_hz,
+                "REST spectral WCS differs at {pixel:?}: Rust {} CASA {}",
+                rust_world[3],
+                casa_world[3],
             );
         }
-        let spectral_tolerance_hz = casa_world[3].abs().max(1.0) * 2.0e-12;
-        assert!(
-            (rust_world[3] - casa_world[3]).abs() <= spectral_tolerance_hz,
-            "REST spectral WCS differs at {pixel:?}: Rust {} CASA {}",
-            rust_world[3],
-            casa_world[3],
-        );
     }
     for image in [&rust, &casa] {
         let CoordinateModel::Spectral(spectral) = image.coordinates().coordinate(2) else {

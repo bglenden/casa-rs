@@ -115,12 +115,39 @@ def scientific_beam_products(contract: dict[str, Any] | None) -> list[str]:
     )
 
 
+def direction_wcs_field_parity(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    *,
+    coordinate_tolerances: dict[str, Any] | None,
+) -> dict[str, bool]:
+    # Use the declared rounding policy, including fields excluded from
+    # the broad metadata check, while requiring exact image-axis mapping.
+    tolerances = (
+        {
+            key: coordinate_tolerances[key]
+            for key in ("relative_tolerance", "absolute_tolerance")
+        }
+        if coordinate_tolerances is not None
+        else {}
+    )
+    return {
+        "shape": left["shape"] == right["shape"],
+        "direction": coordinate_records_equivalent(
+            left["direction"], right["direction"], **tolerances
+        ),
+        "axis_topology": left["axis_topology"] == right["axis_topology"],
+        "stokes": coordinate_records_equivalent(left["stokes"], right["stokes"]),
+        "spectral_axis": left["spectral_axis"] == right["spectral_axis"],
+    }
+
+
 def coordinate_records_equivalent(
     left: Any,
     right: Any,
     *,
-    relative_tolerance: float,
-    absolute_tolerance: float,
+    relative_tolerance: float = 1.0e-12,
+    absolute_tolerance: float = 1.0e-12,
 ) -> bool:
     if isinstance(left, dict) and isinstance(right, dict):
         return left.keys() == right.keys() and all(

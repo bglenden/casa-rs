@@ -59,6 +59,8 @@ uvrange="${IMAGER_BENCH_UVRANGE:-}"
 intent="${IMAGER_BENCH_INTENT:-}"
 usepointing="${IMAGER_BENCH_USEPOINTING:-}"
 phasecenter_field="${IMAGER_BENCH_PHASECENTER_FIELD:-}"
+phasecenter="${IMAGER_BENCH_PHASECENTER:-}"
+outframe="${IMAGER_BENCH_OUTFRAME:-}"
 spw="${IMAGER_BENCH_SPW:-0}"
 channel_start="${IMAGER_BENCH_CHANNEL_START:-0}"
 channel_count="${IMAGER_BENCH_CHANNEL_COUNT:-1}"
@@ -267,8 +269,8 @@ if [[ -n "$prepared_aw_casa_cache$native_aw_cf_cache" ]] && {
   exit 2
 fi
 
-if [[ "$specmode" != "mfs" && "$specmode" != "cube" && "$specmode" != "cubedata" ]]; then
-  echo "error: IMAGER_BENCH_SPECMODE must be mfs, cube, or cubedata" >&2
+if [[ "$specmode" != "mfs" && "$specmode" != "cube" && "$specmode" != "cubedata" && "$specmode" != "cubesource" ]]; then
+  echo "error: IMAGER_BENCH_SPECMODE must be mfs, cube, cubedata, or cubesource" >&2
   exit 2
 fi
 
@@ -420,7 +422,7 @@ case "$parallel" in
 esac
 
 if [[ -z "$perchanweightdensity" ]]; then
-  if [[ "$specmode" == "cube" || "$specmode" == "cubedata" ]]; then
+  if [[ "$specmode" == "cube" || "$specmode" == "cubedata" || "$specmode" == "cubesource" ]]; then
     perchanweightdensity_enabled=1
   else
     perchanweightdensity_enabled=0
@@ -731,8 +733,13 @@ build_rust_cli_args() {
   if [[ "$facets" != "1" ]]; then
     rust_cli_args+=(--facets "$facets")
   fi
-  if [[ -n "$phasecenter_field" ]]; then
+  if [[ -n "$phasecenter" ]]; then
+    rust_cli_args+=(--phasecenter "$phasecenter")
+  elif [[ -n "$phasecenter_field" ]]; then
     rust_cli_args+=(--phasecenter "$phasecenter_field")
+  fi
+  if [[ -n "$outframe" ]]; then
+    rust_cli_args+=(--outframe "$outframe")
   fi
   # One structured event per phase, read back as the Rust stage medians.
   rust_cli_args+=(--stage-timing --log-stderr-priority INFO)
@@ -825,6 +832,8 @@ def env_bool(name):
 
 usepointing = env_bool("CASA_RS_BENCH_USEPOINTING")
 phasecenter_field = os.environ["CASA_RS_BENCH_PHASECENTER_FIELD"]
+phasecenter = os.environ.get("CASA_RS_BENCH_PHASECENTER", "")
+outframe = os.environ.get("CASA_RS_BENCH_OUTFRAME", "")
 spw = os.environ["CASA_RS_BENCH_SPW"]
 uvrange = os.environ["CASA_RS_BENCH_UVRANGE"]
 intent = os.environ["CASA_RS_BENCH_INTENT"]
@@ -978,7 +987,7 @@ with tempfile.TemporaryDirectory() as td:
         )
         if restoringbeam:
             kwargs["restoringbeam"] = restoringbeam
-        if specmode in ("cube", "cubedata"):
+        if specmode in ("cube", "cubedata", "cubesource"):
             casa_start = int(cube_start) if cube_start else chan_start
             casa_width = int(cube_width) if cube_width else 1
             kwargs.update(
@@ -996,8 +1005,12 @@ with tempfile.TemporaryDirectory() as td:
             # CASA defaults wprojplanes to one, which silently selects ordinary
             # 2-D gridding. Match casa-rs Auto by requesting CASA's Auto mode.
             kwargs["wprojplanes"] = -1
-        if phasecenter_field:
+        if phasecenter:
+            kwargs["phasecenter"] = phasecenter
+        elif phasecenter_field:
             kwargs["phasecenter"] = int(phasecenter_field)
+        if outframe:
+            kwargs["outframe"] = outframe
         result = tclean(**kwargs)
         elapsed = time.perf_counter() - start
         times.append(elapsed)
@@ -1032,6 +1045,8 @@ else
   CASA_RS_BENCH_INTENT="$intent" \
   CASA_RS_BENCH_USEPOINTING="$usepointing_enabled" \
   CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
+  CASA_RS_BENCH_PHASECENTER="$phasecenter" \
+  CASA_RS_BENCH_OUTFRAME="$outframe" \
   CASA_RS_BENCH_SPW="$spw" \
   CASA_RS_BENCH_CHANNEL_START="$channel_start" \
   CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
@@ -1147,6 +1162,8 @@ if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_cas
   CASA_RS_BENCH_STOKES="$stokes" \
   CASA_RS_BENCH_USEPOINTING="$usepointing_enabled" \
   CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
+  CASA_RS_BENCH_PHASECENTER="$phasecenter" \
+  CASA_RS_BENCH_OUTFRAME="$outframe" \
   CASA_RS_BENCH_SPW="$spw" \
   CASA_RS_BENCH_CHANNEL_START="$channel_start" \
   CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \

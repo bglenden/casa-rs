@@ -11,7 +11,6 @@ import tempfile
 
 import numpy as np
 
-
 # Full-native structure analysis must remain comfortably below the resident
 # size of a VLASS plane.  Every temporary ndarray created by the helpers below
 # is derived from this budget; exact full-plane intermediates live in the
@@ -21,8 +20,6 @@ SCIENTIFIC_BEAM_TOLERANCE_FIELDS = {
     "beam_area_relative",
     "beam_kernel_nrmse",
 }
-COORDINATE_RELATIVE_TOLERANCE = 1.0e-12
-COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-12
 DIRECTION_WCS_FIELDS = (
     "axes",
     "cdelt",
@@ -292,8 +289,9 @@ def normalized_request(request):
     )
     metadata_contract = request.get("metadata_contract")
     if metadata_contract is not None:
-        _, normalize_contract = metadata_contract_functions()
-        metadata_contract = normalize_contract(metadata_contract, products=products)
+        metadata_contract = comparison_metadata().normalize_metadata_contract(
+            metadata_contract, products=products
+        )
     if metadata_contract is not None:
         normalized["metadata_contract"] = metadata_contract
     binding = comparison_request_binding(normalized)
@@ -850,7 +848,13 @@ def compare_one(
         )
     )
     direction_wcs = (
-        compare_direction_wcs(left_path, right_path)
+        compare_direction_wcs(
+            left_path,
+            right_path,
+            coordinate_tolerances=(
+                metadata_contract["coordinates"] if metadata_contract else None
+            ),
+        )
         if require_direction_wcs_parity
         else None
     )
@@ -1504,13 +1508,14 @@ def compare_image_metadata(
             "parity": False,
         }
     if contract is not None:
-        field_parity, _ = metadata_contract_functions()
-        parity = field_parity(left, right, suffix=suffix, contract=contract)
+        parity = comparison_metadata().metadata_field_parity(left, right, suffix=suffix, contract=contract)
     else:
         fields = ("shape", "unit", "coordinates", "restoring_beam", "masks")
         parity = {
             name: (
-                coordinate_records_equivalent(left.get(name), right.get(name))
+                comparison_metadata().coordinate_records_equivalent(
+                    left.get(name), right.get(name)
+                )
                 if name == "coordinates"
                 else left.get(name) == right.get(name)
             )
@@ -1526,19 +1531,18 @@ def compare_image_metadata(
     }
 
 
-def metadata_contract_functions():
+def comparison_metadata():
     try:
-        from .metadata_contract import (
-            metadata_field_parity,
-            normalize_metadata_contract,
-        )
+        from . import metadata_contract
     except ImportError:
-        from metadata_contract import metadata_field_parity, normalize_metadata_contract
-    return metadata_field_parity, normalize_metadata_contract
+        import metadata_contract
+    return metadata_contract
 
 
-def compare_direction_wcs(left_path, right_path, image_factory=None):
-    """Compare only direction geometry and the image-axis mapping contract."""
+def compare_direction_wcs(
+    left_path, right_path, image_factory=None, *, coordinate_tolerances=None
+):
+    """Compare the complete direction record and exact image-axis mapping."""
 
     try:
         left = direction_wcs_projection(
@@ -1553,15 +1557,9 @@ def compare_direction_wcs(left_path, right_path, image_factory=None):
             "reason": str(error),
             "parity": False,
         }
-    field_parity = {
-        "shape": left["shape"] == right["shape"],
-        "direction": coordinate_records_equivalent(
-            left["direction"], right["direction"]
-        ),
-        "axis_topology": left["axis_topology"] == right["axis_topology"],
-        "stokes": coordinate_records_equivalent(left["stokes"], right["stokes"]),
-        "spectral_axis": left["spectral_axis"] == right["spectral_axis"],
-    }
+    field_parity = comparison_metadata().direction_wcs_field_parity(
+        left, right, coordinate_tolerances=coordinate_tolerances
+    )
     parity = (
         left["status"] == "complete"
         and right["status"] == "complete"
@@ -1631,30 +1629,6 @@ def direction_wcs_projection(metadata):
         "spectral_axis": spectral_axis,
         "missing_fields": missing_fields,
     }
-
-
-def coordinate_records_equivalent(left, right):
-    if isinstance(left, dict) and isinstance(right, dict):
-        return left.keys() == right.keys() and all(
-            coordinate_records_equivalent(left[key], right[key]) for key in left
-        )
-    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
-        return len(left) == len(right) and all(
-            coordinate_records_equivalent(left_value, right_value)
-            for left_value, right_value in zip(left, right)
-        )
-    if isinstance(left, bool) or isinstance(right, bool):
-        return left == right
-    if isinstance(left, int) and isinstance(right, int):
-        return left == right
-    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-        return math.isclose(
-            float(left),
-            float(right),
-            rel_tol=COORDINATE_RELATIVE_TOLERANCE,
-            abs_tol=COORDINATE_ABSOLUTE_TOLERANCE,
-        )
-    return left == right
 
 
 def has_scientific_beam_contract(contract):
