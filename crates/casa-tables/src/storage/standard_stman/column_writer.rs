@@ -28,8 +28,8 @@ use super::index::{IndexLayout, write_index_and_header};
 use super::{
     CasacoreDataType, ColumnDescContents, ColumnSources, StManArrayFileWriter, StorageError,
     StringBuckets, bucket_offset, canonical_element_size, is_ssm_fixed_string, is_ssm_indirect,
-    is_ssm_variable_string, new_ssm_bucket_layout, serialize_ssm_dm_blob, ssm_cell_element_count,
-    write_cell_to_bucket, write_i64_be, write_i64_le,
+    is_ssm_variable_string, new_ssm_bucket_layout_with_policy, serialize_ssm_dm_blob,
+    ssm_cell_element_count, write_cell_to_bucket, write_i64_be, write_i64_le,
 };
 
 /// The cells a StandardStMan file is written from, by column and row.
@@ -141,6 +141,8 @@ pub(super) fn write_ssm_file_columns(
     col_descs: &[ColumnDescContents],
     cells: &impl SsmCells,
     big_endian: bool,
+    casacore_default_small: bool,
+    dm_name: &str,
 ) -> Result<Vec<u8>, StorageError> {
     let nrrow = cells.row_count();
     let ncol = col_descs.len();
@@ -158,7 +160,8 @@ pub(super) fn write_ssm_file_columns(
         None
     };
     let bits = column_bits(col_descs);
-    let (rows_per_bucket, bucket_size) = new_ssm_bucket_layout(&bits, nrrow);
+    let (rows_per_bucket, bucket_size) =
+        new_ssm_bucket_layout_with_policy(&bits, nrrow, casacore_default_small);
     let bucket_rows = rows_per_bucket as usize;
     let bucket_bytes = bucket_size as usize;
     let mut column_offsets = Vec::with_capacity(ncol);
@@ -246,7 +249,7 @@ pub(super) fn write_ssm_file_columns(
         },
         big_endian,
     )?;
-    serialize_ssm_dm_blob("SSM", &column_offsets, ncol)
+    serialize_ssm_dm_blob(dm_name, &column_offsets, ncol)
 }
 
 /// Append an indirect cell to the array file and return its offset there:
@@ -485,6 +488,8 @@ mod tests {
                 &col_descs,
                 &RowCells::new(&records, None, &col_descs),
                 big_endian,
+                false,
+                "SSM",
             )
             .expect("column writer");
             assert_eq!(reference_blob, streamed_blob, "DM blob, {rows} rows");
@@ -517,6 +522,8 @@ mod tests {
             &col_descs,
             &RowCells::new(&records, None, &col_descs),
             false,
+            false,
+            "SSM",
         )
         .expect("column writer");
         let mut file = File::open(&path).expect("open");

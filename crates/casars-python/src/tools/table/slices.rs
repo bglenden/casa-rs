@@ -92,46 +92,47 @@ impl Corners {
     }
 }
 
+fn cell_slice(
+    table: &Table,
+    column: &str,
+    row: usize,
+    corners: &Corners,
+    end_ok: bool,
+) -> Result<(CasaValue, Slicer), Fail> {
+    let shape = table.array_shape(row, column)?.ok_or_else(|| {
+        Fail::Runtime(format!(
+            "Table DataManager error: Invalid operation: no array in row {row} of column {column}"
+        ))
+    })?;
+    let (slicer, _) = corners.over(&shape, end_ok)?;
+    let Value::Array(array) = table.get_cell_slice(column, row, &slicer)? else {
+        return runtime(format!("row {row} of column {column} is not an array"));
+    };
+    Ok((values::array(&array), slicer))
+}
+
+fn require_array_column(table: &Table, column: &str, what: &str) -> Result<(), Fail> {
+    let schema = table
+        .schema()
+        .and_then(|schema| schema.column(column))
+        .ok_or_else(|| Fail::Runtime(format!("Table column {column} is unknown")))?;
+    if matches!(schema.column_type(), ColumnType::Array(_)) {
+        Ok(())
+    } else {
+        runtime(format!(
+            "TableProxy::{what}: column {column} is not an array column"
+        ))
+    }
+}
+
 impl Open {
-    /// The slice of one array cell.
-    fn cell_slice(
-        &self,
-        column: &str,
-        row: usize,
-        corners: &Corners,
-        end_ok: bool,
-    ) -> Result<(CasaValue, Slicer), Fail> {
-        let shape = self
-            .table
-            .array_shape(row, column)?
-            .ok_or_else(|| Fail::Runtime(format!(
-                "Table DataManager error: Invalid operation: no array in row {row} of column {column}"
-            )))?;
-        let (slicer, _) = corners.over(&shape, end_ok)?;
-        let Value::Array(array) = self.table.get_cell_slice(column, row, &slicer)? else {
-            return runtime(format!("row {row} of column {column} is not an array"));
-        };
-        Ok((values::array(&array), slicer))
-    }
-
-    fn require_array_column(&self, column: &str, what: &str) -> Result<(), Fail> {
-        let schema = self
-            .table
-            .schema()
-            .and_then(|schema| schema.column(column))
-            .ok_or_else(|| Fail::Runtime(format!("Table column {column} is unknown")))?;
-        if matches!(schema.column_type(), ColumnType::Array(_)) {
-            Ok(())
-        } else {
-            runtime(format!(
-                "TableProxy::{what}: column {column} is not an array column"
-            ))
-        }
-    }
-
     fn getcellslice(&self, column: &str, row: i64, corners: &Corners) -> Reply {
-        self.require_array_column(column, "getCellSlice")?;
-        let nrows = self.table.row_count();
+        let root = self.root();
+        require_array_column(&root.table, column, "getCellSlice")?;
+        let nrows = self
+            .row_map
+            .as_ref()
+            .map_or_else(|| root.table.row_count(), Vec::len);
         let row = usize::try_from(row)
             .ok()
             .filter(|row| *row < nrows)
@@ -142,29 +143,36 @@ impl Open {
                     self.name.display()
                 ))
             })?;
-        Ok(self.cell_slice(column, row, corners, false)?.0)
+        let row = self.translate_row(row);
+        Ok(cell_slice(&root.table, column, row, corners, false)?.0)
     }
 
     fn getcolslice(&self, column: &str, corners: &Corners, selection: (i64, i64, i64)) -> Reply {
-        self.require_array_column(column, "getColumnSlice")?;
+        let root = self.root();
+        require_array_column(&root.table, column, "getColumnSlice")?;
+        let nrows = self
+            .row_map
+            .as_ref()
+            .map_or_else(|| root.table.row_count(), Vec::len);
         let selected = rows(
-            self.table.row_count(),
+            nrows,
             selection.0,
             selection.1,
             selection.2,
             "TableProxy::getColumnSlice: no such row",
         )?;
         if selected.is_empty() {
-            let data_type = self
+            let data_type = root
                 .table
                 .schema()
                 .and_then(|schema| schema.column(column))
                 .and_then(|schema| schema.data_type());
             return Ok(values::empty_column(data_type));
         }
-        let cells = selected
-            .iter()
-            .map(|row| Ok(self.cell_slice(column, *row, corners, true)?.0))
+        let cells = self
+            .translate_rows(&selected)
+            .into_iter()
+            .map(|row| Ok(cell_slice(&root.table, column, row, corners, true)?.0))
             .collect::<Result<Vec<_>, Fail>>()?;
         values::stack_rows(&cells)
     }
@@ -238,7 +246,7 @@ impl State {
         corners: Corners,
         log: &mut Vec<LogLine>,
     ) -> Reply {
-        self.write_with(Target::Cells, log, move |table| {
+        self.write_with(Target::Cells, log, move |table, row_map| {
             let wide = wide_of(value)?;
             let array_column = table
                 .schema()
@@ -251,9 +259,11 @@ impl State {
                 }
                 Some(true) => {}
             }
+            let nrows = row_map.map_or_else(|| table.row_count(), <[usize]>::len);
             let row = usize::try_from(row)
                 .ok()
-                .filter(|row| *row < table.row_count())
+                .filter(|row| *row < nrows)
+                .map(|row| row_map.map_or(row, |map| map[row]))
                 .ok_or_else(|| put_column_error("no such row"))?;
             let shape = table
                 .array_shape(row, &column)?
@@ -282,7 +292,7 @@ impl State {
         selection: (i64, i64, i64),
         log: &mut Vec<LogLine>,
     ) -> Reply {
-        self.write_with(Target::Cells, log, move |table| {
+        self.write_with(Target::Cells, log, move |table, row_map| {
             let wide = wide_of(value)?;
             let array_column = table
                 .schema()
@@ -295,13 +305,18 @@ impl State {
                 }
                 Some(true) => {}
             }
+            let nrows = row_map.map_or_else(|| table.row_count(), <[usize]>::len);
             let selected = rows(
-                table.row_count(),
+                nrows,
                 selection.0,
                 selection.1,
                 selection.2,
                 "TableProxy::TableProxy::putColumn: no such row",
             )?;
+            let selected: Vec<usize> = selected
+                .into_iter()
+                .map(|row| row_map.map_or(row, |map| map[row]))
+                .collect();
             let given = wide.shape.as_ref().and_then(|shape| shape.last()).copied().unwrap_or(1);
             let per_row = split_rows(wide, true, &column, selected.len()).map_err(|_| {
                 Fail::Runtime(format!(

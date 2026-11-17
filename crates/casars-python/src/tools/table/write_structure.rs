@@ -35,12 +35,11 @@ fn invalid(message: String) -> Fail {
 /// The options that write `table` in full as it is laid out, or the refusal
 /// of a layout casa-tables cannot rewrite without changing it.
 pub(super) fn whole_table(table: &Table, what: &str) -> Result<TableOptions, Fail> {
-    table.single_stman_aipsio_options()?.ok_or_else(|| {
+    table.single_rewrite_options()?.ok_or_else(|| {
         Fail::Unsupported(format!(
-            "table.{what} of a table that is not one StManAipsIO group (without a manager name \
-             of its own) is not yet implemented \
-             in casa-rs: casa-tables cannot change the rows or columns of other storage \
-             managers in place (#1028)"
+            "table.{what} of a table that is not one StManAipsIO group (or one StandardStMan \
+             group) is not yet implemented in casa-rs: casa-tables cannot change the rows or \
+             columns of other storage managers in place (#1028)"
         ))
     })
 }
@@ -123,10 +122,16 @@ impl State {
     /// `renamecol(oldname, newname)`.
     pub(super) fn renamecol(&mut self, old: String, new: String, log: &mut Vec<LogLine>) -> Reply {
         let path = self.table_path();
-        self.write_with(
+        let (old_memory, new_memory) = (old.clone(), new.clone());
+        let result = self.write_with(
             Target::Structure("Table::renameColumn"),
             log,
-            move |table| {
+            move |table, row_map| {
+                if row_map.is_some() {
+                    return Err(Fail::Unsupported(
+                        "table.renamecol on a selectrows view is not yet implemented in casa-rs (#1028)".into(),
+                    ));
+                }
                 let schema = table.schema();
                 if schema.and_then(|schema| schema.column(&old)).is_none() {
                     return Err(invalid(format!(
@@ -138,19 +143,37 @@ impl State {
                         "Table::renameColumn; new column {new} already exists in table {path}"
                     )));
                 }
-                table.rename_column_in_place(&old, &new)?;
+                if table.is_memory() {
+                    table.rename_column(&old, &new)?;
+                } else {
+                    table.rename_column_in_place(&old, &new)?;
+                }
                 Ok(Persist::Done)
             },
-        )
+        );
+        if matches!(&result, Ok(CasaValue::Bool(true)))
+            && let Some(open) = self.open.as_ref()
+        {
+            let mut root = open.root();
+            if root.memory_added_columns.remove(&old_memory) {
+                root.memory_added_columns.insert(new_memory);
+            }
+        }
+        result
     }
 
     /// `removecols(columnames)`: all or none of the columns go.
     pub(super) fn removecols(&mut self, columns: Vec<String>, log: &mut Vec<LogLine>) -> Reply {
         let path = self.table_path();
-        self.write_with(
+        let result = self.write_with(
             Target::Structure("Table::removeColumn"),
             log,
-            move |table| {
+            move |table, row_map| {
+                if row_map.is_some() {
+                    return Err(invalid(format!(
+                        "Table::removeColumn - cannot remove columns from selection view {path}"
+                    )));
+                }
                 let schema = table.schema();
                 if let Some(missing) = columns
                     .iter()
@@ -172,18 +195,39 @@ impl State {
                 // One StManAipsIO group keeps every column in one file, so a
                 // column cannot be taken out of it in place: the table is
                 // written again without it.
-                match table.single_stman_aipsio_options()? {
+                if table.is_memory() {
+                    for name in &distinct {
+                        table.remove_column(name)?;
+                    }
+                    return Ok(Persist::Done);
+                }
+                match table.single_rewrite_options()? {
                     Some(options) => {
                         for name in &distinct {
                             table.remove_column(name)?;
                         }
                         table.save(options)?;
+                        table.resync()?;
                     }
                     None => table.remove_columns_in_place(&distinct)?,
                 }
                 Ok(Persist::Done)
             },
-        )
+        );
+        if let Some(open) = self.open.as_ref()
+            && open.is_memory
+        {
+            let mut root = open.root();
+            let kept: std::collections::HashSet<String> = root
+                .table
+                .schema()
+                .into_iter()
+                .flat_map(|schema| schema.columns())
+                .map(|column| column.name().to_string())
+                .collect();
+            root.memory_added_columns.retain(|name| kept.contains(name));
+        }
+        result
     }
 
     /// `addcols(desc, dminfo)`: columns of default values (a cell of an array
@@ -197,75 +241,131 @@ impl State {
         with_dminfo: bool,
         log: &mut Vec<LogLine>,
     ) -> Reply {
-        self.write_with(Target::Structure("Table::addColumn"), log, move |table| {
-            // The description is a record, whose fields casatools sorts by
-            // name: the columns are added in that order.
-            let mut description = description;
-            description.sort_by(|a, b| a.0.cmp(&b.0));
-            let columns: Vec<_> = description
-                .iter()
-                .map(|(name, column)| parse(name, column))
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect();
-            let schema = table.schema();
-            if let Some(existing) = columns.iter().find(|column| {
-                schema.is_some_and(|schema| schema.column(column.schema.name()).is_some())
-            }) {
-                return Err(Fail::Runtime(format!(
-                    "Invalid description of column {}: column already exists",
-                    existing.schema.name()
-                )));
-            }
-            if columns.is_empty() {
-                return Ok(Persist::Nothing);
-            }
-            if with_dminfo || columns.iter().any(|column| column.names_manager) {
-                return Err(Fail::Unsupported(
+        let before = self
+            .open
+            .as_ref()
+            .filter(|open| open.is_memory)
+            .map(|open| {
+                open.root()
+                    .table
+                    .schema()
+                    .into_iter()
+                    .flat_map(|schema| schema.columns())
+                    .map(|column| column.name().to_string())
+                    .collect::<std::collections::HashSet<_>>()
+            });
+        let path = self.table_path();
+        let result = self.write_with(
+            Target::Structure("Table::addColumn"),
+            log,
+            move |table, row_map| {
+                if row_map.is_some() {
+                    return Err(invalid(format!(
+                        "RefTable::addColumn; cannot add columns to selection view {path}"
+                    )));
+                }
+                // The description is a record, whose fields casatools sorts by
+                // name: the columns are added in that order.
+                let mut description = description;
+                description.sort_by(|a, b| a.0.cmp(&b.0));
+                let columns: Vec<_> = description
+                    .iter()
+                    .map(|(name, column)| parse(name, column))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                let schema = table.schema();
+                if let Some(existing) = columns.iter().find(|column| {
+                    schema.is_some_and(|schema| schema.column(column.schema.name()).is_some())
+                }) {
+                    return Err(Fail::Runtime(format!(
+                        "Invalid description of column {}: column already exists",
+                        existing.schema.name()
+                    )));
+                }
+                if columns.is_empty() {
+                    return Ok(Persist::Nothing);
+                }
+                if with_dminfo || columns.iter().any(|column| column.names_manager) {
+                    return Err(Fail::Unsupported(
                     "table.addcols with a storage manager of its own is not yet implemented in \
                      casa-rs: a column goes into the table's one StManAipsIO group (#1028)"
                         .to_string(),
                 ));
-            }
-            let options = whole_table(table, "addcols")?;
-            for column in columns {
-                let name = column.schema.name().to_string();
-                let default = default_value(&column.schema);
-                table.add_column(column.schema, default)?;
-                if let Some(keywords) = column.keywords {
-                    table.set_column_keywords(&name, keywords);
                 }
+                let options = if table.is_memory() {
+                    None
+                } else {
+                    Some(whole_table(table, "addcols")?)
+                };
+                for column in columns {
+                    let name = column.schema.name().to_string();
+                    let default = default_value(&column.schema);
+                    table.add_column(column.schema, default)?;
+                    if let Some(keywords) = column.keywords {
+                        table.set_column_keywords(&name, keywords);
+                    }
+                }
+                if let Some(options) = options {
+                    table.save(options)?;
+                    // Refresh the data-manager description after a full save.
+                    table.resync()?;
+                }
+                Ok(Persist::Done)
+            },
+        );
+        if let (Some(before), Some(open)) = (before, self.open.as_ref()) {
+            let mut root = open.root();
+            let added: Vec<String> = root
+                .table
+                .schema()
+                .into_iter()
+                .flat_map(|schema| schema.columns())
+                .filter(|column| !before.contains(column.name()))
+                .map(|column| column.name().to_string())
+                .collect();
+            for name in added {
+                root.memory_added_columns.insert(name);
             }
-            table.save(options)?;
-            // The new columns are in the manager now: the handle takes its
-            // description of the managers from the disk (no row is removed,
-            // so the count last published is the table's).
-            table.resync()?;
-            Ok(Persist::Done)
-        })
+        }
+        result
     }
 
     /// `addrows(nrow)`: rows of default values, a cell of an array of
     /// variable shape left undefined.
     pub(super) fn addrows(&mut self, count: i64, log: &mut Vec<LogLine>) -> Reply {
-        self.write_with(Target::Structure("Table::addRow"), log, move |table| {
-            let count = usize::try_from(count).map_err(|_| {
-                Fail::Runtime(
-                    "TableProxy::addRow: the number of rows must not be negative".to_string(),
-                )
-            })?;
-            if count == 0 {
-                return Ok(Persist::Nothing);
-            }
-            let options = whole_table(table, "addrows")?;
-            let row = default_row(table);
-            for _ in 0..count {
-                table.add_row(row.clone())?;
-            }
-            table.save(options)?;
-            Ok(Persist::Done)
-        })
+        let path = self.table_path();
+        self.write_with(
+            Target::Structure("Table::addRow"),
+            log,
+            move |table, row_map| {
+                if row_map.is_some() {
+                    return Err(invalid(format!("Table: cannot add a row to table {path}")));
+                }
+                let count = usize::try_from(count).map_err(|_| {
+                    Fail::Runtime(
+                        "TableProxy::addRow: the number of rows must not be negative".to_string(),
+                    )
+                })?;
+                if count == 0 {
+                    return Ok(Persist::Nothing);
+                }
+                let options = if table.is_memory() {
+                    None
+                } else {
+                    Some(whole_table(table, "addrows")?)
+                };
+                let row = default_row(table);
+                for _ in 0..count {
+                    table.add_row(row.clone())?;
+                }
+                if let Some(options) = options {
+                    table.save(options)?;
+                }
+                Ok(Persist::Done)
+            },
+        )
     }
 
     /// `removerows(rownrs)`, as `Table::removeRow(Vector)` does it: the row
@@ -276,7 +376,12 @@ impl State {
     /// repeated number past the end; here none is removed.)
     pub(super) fn removerows(&mut self, rows: Vec<i64>, log: &mut Vec<LogLine>) -> Reply {
         let path = self.table_path();
-        self.write_with(Target::Structure("Table::rowmoveRow"), log, move |table| {
+        self.write_with(Target::Structure("Table::rowmoveRow"), log, move |table, row_map| {
+            if row_map.is_some() {
+                return Err(Fail::Unsupported(
+                    "table.removerows on a selectrows view is not yet implemented in casa-rs (#1028)".into(),
+                ));
+            }
             if rows.is_empty() {
                 return Ok(Persist::Nothing);
             }
@@ -313,9 +418,15 @@ impl State {
                     !stays
                 })
                 .collect();
-            let options = whole_table(table, "removerows")?;
+            let options = if table.is_memory() {
+                None
+            } else {
+                Some(whole_table(table, "removerows")?)
+            };
             table.remove_rows(&removed)?;
-            table.save(options)?;
+            if let Some(options) = options {
+                table.save(options)?;
+            }
             Ok(Persist::Done)
         })
     }

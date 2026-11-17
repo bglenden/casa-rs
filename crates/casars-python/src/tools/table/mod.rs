@@ -17,18 +17,25 @@
 //! goes to the Python logger `casars.tools.table`, its INFO at INFO, WARN at
 //! WARNING and SEVERE at ERROR.
 
+mod cache;
 mod cell_convert;
 mod cell_value;
 mod copy;
+mod create;
+mod create_multi_move;
+mod description;
 mod housekeeping;
 mod keyword_value;
 mod new_column;
 mod read;
 mod registry;
+mod rownumbers;
 mod slices;
 mod state;
+mod statistics;
 mod stubs;
 pub(crate) mod surface;
+mod testincr;
 pub(crate) mod values;
 mod write;
 mod write_cells;
@@ -122,7 +129,7 @@ pub(crate) fn define_component_keyword(
 const ISSUE: u32 = 1028;
 
 /// The Python logger CASA's `tb` messages go to.
-const LOGGER: &str = "casars.tools.table";
+pub(super) const LOGGER: &str = "casars.tools.table";
 
 /// A method casa-rs does not implement yet.
 fn stub(method: &str) -> PyResult<Py<PyAny>> {

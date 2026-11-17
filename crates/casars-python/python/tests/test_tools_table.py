@@ -18,6 +18,9 @@ Departures, each recorded in `docs/CASA (C++) bugs.md`:
   ("TSM: ..."); only the start of the message is compared.
 * An empty string array has a NumPy width of its own in CASA; only its kind
   is compared.
+* The new `statistics` recordings compare floating-point results to 1e-7
+  relative tolerance: CASA switches accumulation algorithms with data size,
+  which changes rounding. Field names, types and counts are still exact.
 
 Log messages (CASA's INFO "No table opened." and the like) go to the Python
 logger `casars.tools.table` and are not compared.
@@ -26,6 +29,8 @@ logger `casars.tools.table` and are not compared.
 from __future__ import annotations
 
 import json
+import logging
+import math
 import shutil
 import subprocess
 import sys
@@ -234,7 +239,20 @@ def test_the_tool_answers_as_casa_does(
                 same_error(got["error"], step["error"], where)
         else:
             assert "value" in got, f"{where}: CASA gave a value, casa-rs raised {got['error']}"
-            same_value(got["value"], step["value"], where)
+            if scenario in {"statistics_scalar", "statistics_ms"} and step["method"] == "statistics":
+                actual = decode_value(got["value"], path)
+                expected = decode_value(step["value"], path)
+                assert actual.keys() == expected.keys(), where
+                for name in expected:
+                    assert actual[name].keys() == expected[name].keys(), where
+                    for field in expected[name]:
+                        assert type(actual[name][field]) is float, where
+                        if field == "npts":
+                            assert actual[name][field] == expected[name][field], where
+                        else:
+                            assert actual[name][field] == pytest.approx(expected[name][field], rel=1e-7, abs=0), where
+            else:
+                same_value(got["value"], step["value"], where)
     tool.done()
     for other in bound.values():
         other.done()
@@ -761,8 +779,9 @@ def test_a_table_of_several_managers_refuses_rows_before_anything_changes(
         tool.addrows(2)
     with pytest.raises(NotImplementedError, match="StManAipsIO group"):
         tool.addcols({"extra": {"valueType": "double"}})
-    with pytest.raises(NotImplementedError, match="getdminfo.*IncrementalStMan|getdminfo.*Tiled"):
-        tool.getdminfo()
+    dminfo = tool.getdminfo()
+    assert "*1" in dminfo
+    assert any(entry["TYPE"] == "TiledShapeStMan" and "HYPERCUBES" in entry["SPEC"] for entry in dminfo.values())
     with pytest.raises(RuntimeError, match="Rows cannot be removed from table .*do not support it"):
         tool.removerows([0])
     assert tool.nrows() == 1058
@@ -1190,4 +1209,233 @@ def test_a_copy_removes_a_table_or_an_empty_directory_at_the_target_and_nothing_
     with pytest.raises(RuntimeError, match="one inside the other"):
         tool.copy(str(tmp_path.resolve()))
     assert (path / "table.dat").is_file() and not (path / "inside.table").exists()
+    tool.done()
+
+
+def test_selectrows_persistent_errors_and_view_guardrails(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """`selectrows` creates persistent RefTables when named, rejects invalid
+    rows or closed tables with CASA messages, and refuses structural or copy
+    mutations on row-selection views (#1028)."""
+    closed = tools.table()
+    with pytest.raises(RuntimeError, match="Unable to create table"):
+        closed.selectrows([0])
+    closed.done()
+
+    parent = tmp_path.resolve() / "parent.table"
+    shutil.copytree(fixtures["table"], parent)
+    sel_path = tmp_path.resolve() / "persisted_view.table"
+
+    tool = tools.table()
+    assert tool.open(str(parent), nomodify=False)
+    for bad in ([[-1]], [[tool.nrows()]]):
+        with pytest.raises(RuntimeError, match="rownumbers should be >= 1 and <= nrow"):
+            tool.selectrows(bad[0])
+
+    view = tool.selectrows([2, 0, 2], name=str(sel_path))
+    assert (sel_path / "table.dat").is_file()
+    assert view.nrows() == 3
+    assert view.rownumbers().tolist() == [2, 0, 2]
+    assert view.getcol("id", rowincr=2).tolist() == [3, 3]
+    assert list(view.getvarcol("vary")) == ["r1", "r2", "r3"]
+    expected_spectrum_sum = float(sum(np.sum(tool.getcell("spectrum", r)) for r in (2, 0, 2)))
+    assert view.statistics("spectrum")["spectrum"]["sum"] == pytest.approx(expected_spectrum_sum)
+    assert view.putcell("id", 0, 777)
+    assert tool.getcell("id", 2) == 777
+    assert view.putcol("id", np.array([10, 20, 30]))
+    assert [tool.getcell("id", r) for r in (0, 2)] == [20, 30]
+    view_slice = view.getcellslice("spectrum", 0, [0, 0], [0, 1], [1, 1])
+    assert view.putcellslice("spectrum", 0, view_slice + 1.0, [0, 0], [0, 1], [1, 1])
+    assert np.allclose(tool.getcellslice("spectrum", 2, [0, 0], [0, 1], [1, 1]), view_slice + 1.0)
+    empty_view = tool.selectrows([])
+    assert empty_view.nrows() == 0
+    assert empty_view.rownumbers().tolist() == []
+    empty_view.done()
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        view.selectrows([0], name=str(sel_path))
+
+    with pytest.raises(RuntimeError, match="cannot add a row"):
+        view.addrows(1)
+    with pytest.raises(NotImplementedError):
+        view.removerows([0])
+    with pytest.raises(RuntimeError, match="RefTable::addColumn"):
+        view.addcols({"extra": {"valueType": "int"}})
+    with pytest.raises(RuntimeError, match="cannot remove columns from selection view"):
+        view.removecols(["id"])
+    with pytest.raises(NotImplementedError):
+        view.renamecol("id", "id2")
+    with pytest.raises(NotImplementedError):
+        view.copy(str(tmp_path.resolve() / "view_copy.table"))
+    with pytest.raises(NotImplementedError):
+        view.copyrows(str(parent))
+
+    view.done()
+    tool.done()
+
+    reopened = tools.table()
+    assert reopened.open(str(sel_path), nomodify=False)
+    assert reopened.nrows() == 3
+    assert reopened.getdminfo()["*1"]["TYPE"] == "StManAipsIO"
+    with pytest.raises(NotImplementedError, match="reference table"):
+        reopened.putcell("id", 0, 123)
+    with pytest.raises(RuntimeError, match="still open"):
+        reopened.copy(str(parent))
+    assert reopened.getcell("id", 0) == 30
+    reopened.done()
+
+    # Root shrinking makes a stale view row index fail cleanly rather than panic.
+    assert tool.open(str(parent), nomodify=False)
+    stale_view = tool.selectrows([tool.nrows() - 1])
+    assert tool.removerows([tool.nrows() - 1])
+    with pytest.raises(RuntimeError, match="out of range"):
+        stale_view.rownumbers()
+    stale_view.done()
+    tool.done()
+
+
+def test_statistics_nan_inf_and_column_types(tmp_path: Path) -> None:
+    """`statistics` matches CASA's type filtering, Inf moments, single-row NaN
+    `var`/`stddev == 0.0`, and deterministic NaN bounds (#1028)."""
+    table_path = tmp_path / "stats.table"
+    tool = tools.table()
+    assert tool.create(
+        str(table_path),
+        {
+            "fcol": {"valueType": "float"},
+            "dcol": {"valueType": "double"},
+            "nan1": {"valueType": "double"},
+            "nan2": {"valueType": "double"},
+            "inf1": {"valueType": "float"},
+            "inf2": {"valueType": "double"},
+            "uc": {"valueType": "uchar"},
+            "sh": {"valueType": "short"},
+            "ui": {"valueType": "uint"},
+        },
+        nrow=2,
+    )
+    assert tool.putcell("fcol", 0, np.float32(1.0))
+    assert tool.putcell("fcol", 1, np.float32(3.0))
+    assert tool.putcell("dcol", 0, 2.0)
+    assert tool.putcell("dcol", 1, 4.0)
+    assert tool.putcell("nan2", 0, float("nan"))
+    assert tool.putcell("nan2", 1, 2.0)
+    assert tool.putcell("inf1", 0, float("inf"))
+    assert tool.putcell("inf1", 1, 1.0)
+    assert tool.putcell("inf2", 0, float("inf"))
+    assert tool.putcell("inf2", 1, float("-inf"))
+
+    assert tool.statistics("fcol")["fcol"] == pytest.approx(
+        {
+            "min": 1.0,
+            "max": 3.0,
+            "sum": 4.0,
+            "sumsq": 10.0,
+            "mean": 2.0,
+            "var": 2.0,
+            "stddev": math.sqrt(2.0),
+            "rms": math.sqrt(5.0),
+            "median": 2.0,
+            "medabsdevmed": 1.0,
+            "quartile": 2.0,
+            "npts": 2.0,
+        },
+        rel=1e-7,
+    )
+    assert tool.statistics("dcol")["dcol"]["mean"] == pytest.approx(3.0)
+
+    nan2 = tool.statistics("nan2")["nan2"]
+    assert nan2["min"] == 2.0 and nan2["max"] == 2.0 and nan2["npts"] == 2.0
+    for key in ("sum", "sumsq", "mean", "var", "stddev", "rms", "median", "medabsdevmed", "quartile"):
+        assert math.isnan(nan2[key]), key
+
+    inf1 = tool.statistics("inf1")["inf1"]
+    assert inf1["min"] == 1.0 and inf1["max"] == float("inf")
+    assert inf1["mean"] == float("inf") and math.isnan(inf1["var"]) and math.isnan(inf1["stddev"])
+
+    inf2 = tool.statistics("inf2")["inf2"]
+    assert inf2["min"] == float("-inf") and inf2["max"] == float("inf")
+    assert inf2["rms"] == float("inf") and math.isnan(inf2["mean"]) and math.isnan(inf2["sum"])
+
+    for col, type_name in (("uc", "uChar"), ("sh", "Short"), ("ui", "uInt")):
+        with pytest.raises(RuntimeError, match=f"Sorry, no support for {type_name} scalar columns"):
+            tool.statistics(col)
+    tool.done()
+
+    single = tmp_path / "single_nan.table"
+    one = tools.table()
+    assert one.create(str(single), {"nan1": {"valueType": "double"}}, nrow=1)
+    assert one.putcell("nan1", 0, float("nan"))
+    nan1 = one.statistics("nan1")["nan1"]
+    assert nan1["var"] == 0.0 and nan1["stddev"] == 0.0 and nan1["npts"] == 1.0
+    assert math.isnan(nan1["min"]) and math.isnan(nan1["max"])
+    one.done()
+
+
+def test_summary_recurse_cycles_and_headless_browse(
+    fixtures: dict[str, Path], tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`summary` logs structure and safely recurses cyclic `Table:` subtable
+    references (including relative subtable links from `selectrows` views);
+    headless `browse` warns and returns `False` (#1028)."""
+    parent_path = tmp_path / "parent.table"
+    sub_path = tmp_path / "sub.table"
+    parent, sub = tools.table(), tools.table()
+    assert parent.create(str(parent_path), {"id": {"valueType": "int"}}, nrow=2)
+    assert sub.create(str(sub_path), {"val": {"valueType": "double"}}, nrow=1)
+    assert sub.putkeyword("BACK", f"Table: {parent_path}")
+    sub.close()
+    assert parent.putkeyword("SUB", f"Table: {sub_path}")
+
+    with caplog.at_level(logging.INFO, logger="casars.tools.table"):
+        caplog.clear()
+        assert parent.summary(recurse=False)
+        flat = "\n".join(caplog.messages)
+        assert f"Table summary: {parent_path}" in flat
+        assert f"Table summary: {sub_path}" not in flat
+
+        caplog.clear()
+        assert parent.summary(recurse=True)
+        recursive = "\n".join(caplog.messages)
+        assert recursive.count("Table summary:") == 2
+        assert f"Table summary: {parent_path}" in recursive
+        assert f"Table summary: {sub_path}" in recursive
+
+    ms_copy = tmp_path / "ms_view"
+    shutil.copytree(fixtures["ms"], ms_copy)
+    ms_tool = tools.table()
+    assert ms_tool.open(str(ms_copy))
+    ms_view = ms_tool.selectrows([0, 1])
+    with caplog.at_level(logging.INFO, logger="casars.tools.table"):
+        caplog.clear()
+        assert ms_view.summary(recurse=True)
+        ms_text = "\n".join(caplog.messages)
+        assert f"Table summary: {ms_copy / 'ANTENNA'}" in ms_text
+    ms_view.done()
+    ms_tool.done()
+
+    with caplog.at_level(logging.WARNING, logger="casars.tools.table"):
+        caplog.clear()
+        assert not parent.browse()
+        assert "not available in headless casa-rs" in "\n".join(caplog.messages)
+    parent.done()
+
+
+def test_copyrows_onto_itself_preserves_live_selectrows_view(
+    fixtures: dict[str, Path], tmp_path: Path
+) -> None:
+    """`copyrows` onto a read-only handle reopens it for update without
+    detaching live `selectrows` views sharing its `RootOpen` (#1028)."""
+    path = tmp_path.resolve() / "self_copy.table"
+    shutil.copytree(fixtures["table"], path)
+    tool = tools.table()
+    assert tool.open(str(path))
+    view = tool.selectrows([2, 0])
+    assert tool.copyrows(str(path), 0, 2, 1)
+    assert view.nrows() == 2
+    assert view.getcell("id", 0) == tool.getcell("id", 0)
+    assert view.putcell("id", 1, 555)
+    assert tool.getcell("id", 0) == 555
+    view.done()
     tool.done()

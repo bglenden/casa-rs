@@ -6253,3 +6253,18 @@ append creates a first table, then requires compatible metadata for later
 appends. A solve without successful solutions still creates nothing.
 `calibration_lifecycle_oracle.py` records CASA's failure (suppressed by the
 bandpass wrapper) and native creation on otherwise identical valid inputs.
+
+## `table.summary(recurse=True)` use-after-free and `statistics` `NaN` ordering
+
+In CASA 6.7.6.14, calling `tb.summary(recurse=True)` on a table with a `Table:`
+subtable keyword passes a destroyed `String` buffer when recursing into subtable
+paths in `TableProxy::printValueHolder`, aborting with a `UnicodeDecodeError` or
+corrupted path. Calling `tb.statistics` on floating columns containing `NaN` also
+violates strict weak ordering in casacore's `GenSort::kthLargest`, making `median`,
+`medabsdevmed`, `quartile`, `min`, and `max` depend arbitrarily on input array index
+positions.
+
+casa-rs safely canonicalizes and deduplicates `Table:` keyword subtable paths in
+`tb.summary(recurse=True)` without invalid memory access, and in `tb.statistics`
+ignores `NaN` for `min`/`max` while returning `NaN` deterministically for moments
+and order statistics on `NaN` inputs. [Table tool issue #1028](https://github.com/bglenden/casa-rs/issues/1028)

@@ -39,7 +39,7 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("addrows", &[param("nrow", K::Int, Int(1))], R::Any, Yes),
-    method("browse", &[], R::Any, No),
+    method("browse", &[], R::Any, Yes),
     method(
         "calc",
         &[
@@ -122,7 +122,7 @@ const METHODS: &[Method] = &[
             param("dminfo", K::Record, EmptyRecord),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "createmultitable",
@@ -132,7 +132,7 @@ const METHODS: &[Method] = &[
             param("subdirname", K::Any, Required),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("datachanged", &[], R::Any, Yes),
     method("done", &[], R::Any, Yes),
@@ -280,7 +280,7 @@ const METHODS: &[Method] = &[
         "getdesc",
         &[param("actual", K::Bool, Bool(true))],
         R::Any,
-        No,
+        Yes,
     ),
     method("getdminfo", &[], R::Any, Yes),
     method(
@@ -327,7 +327,7 @@ const METHODS: &[Method] = &[
         "isopened",
         &[param("tablename", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "isscalarcol",
@@ -343,7 +343,7 @@ const METHODS: &[Method] = &[
     ),
     method("iswritable", &[], R::Any, Yes),
     method("keywordnames", &[], R::Any, Yes),
-    method("listlocks", &[], R::Any, No),
+    method("listlocks", &[], R::Any, Yes),
     method(
         "lock",
         &[
@@ -531,7 +531,7 @@ const METHODS: &[Method] = &[
             param("nbytes", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "selectrows",
@@ -540,7 +540,7 @@ const METHODS: &[Method] = &[
             param("name", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setmaxcachesize",
@@ -555,7 +555,7 @@ const METHODS: &[Method] = &[
         "showcache",
         &[param("verbose", K::Bool, Bool(true))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "statistics",
@@ -564,13 +564,13 @@ const METHODS: &[Method] = &[
             param("complex_value", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "summary",
         &[param("recurse", K::Bool, Bool(false))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "taql",
@@ -582,7 +582,7 @@ const METHODS: &[Method] = &[
         "testincrstman",
         &[param("column", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "toasciifmt",

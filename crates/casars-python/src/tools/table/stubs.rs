@@ -15,12 +15,6 @@ use super::{PyTableTool, stub};
 )]
 impl PyTableTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn browse(&self) -> PyResult<Py<PyAny>> {
-        stub("browse")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (expr, prefix = None, showtaql = None), text_signature = "($self, expr, prefix='using style base0, endincl, fortranorder', showtaql=False)")]
     fn calc(
         &self,
@@ -29,32 +23,6 @@ impl PyTableTool {
         showtaql: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("calc")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (tablename = None, tabledesc = None, lockoptions = None, endianformat = None, memtype = None, nrow = None, dminfo = None), text_signature = "($self, tablename='', tabledesc={}, lockoptions={}, endianformat='', memtype='', nrow=0, dminfo={})")]
-    fn create(
-        &self,
-        tablename: Option<&Bound<'_, PyAny>>,
-        tabledesc: Option<&Bound<'_, PyAny>>,
-        lockoptions: Option<&Bound<'_, PyAny>>,
-        endianformat: Option<&Bound<'_, PyAny>>,
-        memtype: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        dminfo: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("create")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outputTableName, tables, subdirname), text_signature = "($self, outputTableName, tables, subdirname)")]
-    fn createmultitable(
-        &self,
-        outputTableName: &Bound<'_, PyAny>,
-        tables: &Bound<'_, PyAny>,
-        subdirname: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("createmultitable")
     }
 
     /// Not yet implemented in casa-rs.
@@ -116,24 +84,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (actual = None), text_signature = "($self, actual=True)")]
-    fn getdesc(&self, actual: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("getdesc")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (tablename), text_signature = "($self, tablename)")]
-    fn isopened(&self, tablename: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("isopened")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn listlocks(&self) -> PyResult<Py<PyAny>> {
-        stub("listlocks")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (query = None, name = None, sortlist = None, columns = None, style = None), text_signature = "($self, query='String', name='', sortlist='', columns='', style='')")]
     fn query(
         &self,
@@ -157,57 +107,9 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (tab = None, nbytes = None), text_signature = "($self, tab={}, nbytes=0)")]
-    fn rownumbers(
-        &self,
-        tab: Option<&Bound<'_, PyAny>>,
-        nbytes: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("rownumbers")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (rownrs, name = None), text_signature = "($self, rownrs, name='')")]
-    fn selectrows(
-        &self,
-        rownrs: &Bound<'_, PyAny>,
-        name: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("selectrows")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (verbose = None), text_signature = "($self, verbose=True)")]
-    fn showcache(&self, verbose: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("showcache")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (column, complex_value = None), text_signature = "($self, column, complex_value='')")]
-    fn statistics(
-        &self,
-        column: &Bound<'_, PyAny>,
-        complex_value: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("statistics")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (recurse = None), text_signature = "($self, recurse=False)")]
-    fn summary(&self, recurse: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("summary")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (taqlcommand = None), text_signature = "($self, taqlcommand='TaQL expression')")]
     fn taql(&self, taqlcommand: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("taql")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (column), text_signature = "($self, column)")]
-    fn testincrstman(&self, column: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("testincrstman")
     }
 
     /// Not yet implemented in casa-rs.

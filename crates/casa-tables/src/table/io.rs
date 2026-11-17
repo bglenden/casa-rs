@@ -253,6 +253,8 @@ impl Table {
                 &self.virtual_bindings,
                 options.data_manager,
                 options.data_manager_group.as_deref(),
+                options.casacore_default_ssm,
+                options.preserve_ssm_group_name,
                 options.endian_format.is_big_endian(),
                 options.tile_shape.as_deref(),
             )
@@ -745,11 +747,32 @@ impl Table {
                             self.row_count(),
                             &group_col_descs,
                         )?;
-                        let dm_data = crate::storage::standard_stman::write_ssm_file(
+                        let stored_name = table_dat
+                            .column_set
+                            .data_managers
+                            .iter()
+                            .find(|entry| entry.seq_nr == group.seq_nr)
+                            .and_then(|entry| {
+                                crate::storage::standard_stman::dm_name_from_blob(&entry.data)
+                            });
+                        let dm_name = stored_name
+                            .as_deref()
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or(if group.name.is_empty() {
+                                "SSM"
+                            } else {
+                                group.name.as_str()
+                            });
+                        let casacore_default_small =
+                            crate::storage::standard_stman::ssm_has_small_buckets(&data_path)
+                                .unwrap_or(false);
+                        let dm_data = crate::storage::standard_stman::write_ssm_file_with_options(
                             &data_path,
                             &group_col_descs,
                             &rows,
                             table_dat.big_endian,
+                            casacore_default_small,
+                            dm_name,
                         )?;
                         if let Some(entry) = table_dat
                             .column_set
@@ -1835,6 +1858,8 @@ impl Table {
             &[],
             opts.data_manager,
             opts.data_manager_group.as_deref(),
+            opts.casacore_default_ssm,
+            opts.preserve_ssm_group_name,
             opts.endian_format.is_big_endian(),
             opts.tile_shape.as_deref(),
         )?;

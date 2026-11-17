@@ -43,6 +43,10 @@ use super::{ColumnSources, EncodedCells, RequiredScalarColumnData, StorageError}
 use crate::table::GeneratedScalarValueRun;
 
 mod cells;
+mod check_layout;
+
+pub use check_layout::IncrementalCorruption;
+pub(crate) use check_layout::check_incremental_layout;
 
 use cells::{decode_array_cell, encode_cell, flatten_array_cells};
 
@@ -95,6 +99,7 @@ thread_local! {
 struct IsmHeader {
     bucket_size: u32,
     nr_buckets: u32,
+    pers_cache_size: u32,
     big_endian: bool,
     io_order: ByteOrder,
 }
@@ -103,6 +108,7 @@ struct IsmHeader {
 /// `rows[nused]` is the total row count sentinel.
 #[derive(Debug, Clone)]
 struct IsmIndex {
+    used: usize,
     rows: Vec<u64>,
     bucket_nrs: Vec<u32>,
 }
@@ -164,7 +170,7 @@ fn parse_ism_header(file: &mut (impl Read + Seek)) -> Result<IsmHeader, StorageE
 
     let bucket_size = buf.read_u32()?;
     let nr_buckets = buf.read_u32()?;
-    let _pers_cache_size = buf.read_u32()?;
+    let pers_cache_size = buf.read_u32()?;
     let _uniq_nr = buf.read_u32()?;
     let _nr_free_buckets = buf.read_u32()?;
     let _first_free_bucket = buf.read_i32()?;
@@ -173,6 +179,7 @@ fn parse_ism_header(file: &mut (impl Read + Seek)) -> Result<IsmHeader, StorageE
     Ok(IsmHeader {
         bucket_size,
         nr_buckets,
+        pers_cache_size,
         big_endian,
         io_order,
     })
@@ -197,6 +204,34 @@ pub(crate) fn dm_name_from_blob(data: &[u8]) -> Option<String> {
     parse_ism_dm_blob(data).ok()
 }
 
+/// The `SPEC` record of an `IncrementalStMan` manager (`ISMBase::dataManagerSpec`).
+pub(crate) fn ism_spec(
+    table_path: &Path,
+    dm_seq_nr: u32,
+) -> Result<casa_types::RecordValue, StorageError> {
+    let data_path = table_path.join(format!("{}{dm_seq_nr}", super::TABLE_DATA_FILE_PREFIX));
+    let mut file = File::open(&data_path)?;
+    let header = parse_ism_header(&mut file)?;
+    let bucket_size = i32::try_from(header.bucket_size)
+        .map_err(|_| StorageError::FormatMismatch("ISM bucket size exceeds i32".into()))?;
+    let pers_cache_size = i32::try_from(header.pers_cache_size)
+        .map_err(|_| StorageError::FormatMismatch("ISM cache size exceeds i32".into()))?;
+    Ok(casa_types::RecordValue::new(vec![
+        casa_types::RecordField::new(
+            "BUCKETSIZE",
+            casa_types::Value::Scalar(ScalarValue::Int32(bucket_size)),
+        ),
+        casa_types::RecordField::new(
+            "MaxCacheSize",
+            casa_types::Value::Scalar(ScalarValue::Int32(pers_cache_size)),
+        ),
+        casa_types::RecordField::new(
+            "PERSCACHESIZE",
+            casa_types::Value::Scalar(ScalarValue::Int32(pers_cache_size)),
+        ),
+    ]))
+}
+
 // ---------------------------------------------------------------------------
 // Index parsing (at end of file, after all buckets)
 // ---------------------------------------------------------------------------
@@ -210,6 +245,7 @@ fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, Stor
 
     if index_data.is_empty() {
         return Ok(IsmIndex {
+            used: 0,
             rows: vec![0],
             bucket_nrs: vec![],
         });
@@ -218,7 +254,7 @@ fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, Stor
     let mut buf = AipsIoSliceReader::new(&index_data, header.io_order)?;
     let version = buf.getstart("ISMIndex")?;
 
-    let _nused = buf.read_u32()?;
+    let used = buf.read_u32()? as usize;
 
     let rows = if version == 1 {
         buf.read_block_u32()?
@@ -232,7 +268,11 @@ fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, Stor
     let bucket_nrs = buf.read_block_u32()?;
     buf.getend()?;
 
-    Ok(IsmIndex { rows, bucket_nrs })
+    Ok(IsmIndex {
+        used,
+        rows,
+        bucket_nrs,
+    })
 }
 
 // ---------------------------------------------------------------------------

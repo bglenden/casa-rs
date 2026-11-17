@@ -23,7 +23,7 @@ import pytest
 from casars import tools
 
 from _casa_tools import DATA
-from test_tools_table import HOLDER, fixtures, table_files  # noqa: F401 - `fixtures` is a fixture
+from test_tools_table import HOLDER, encode_value, fixtures, table_files  # noqa: F401 - `fixtures` is a fixture
 
 READER = """
 import sys
@@ -241,6 +241,91 @@ def test_a_reference_table_reports_the_byte_order_of_the_table_it_refers_to(
     assert [tool.getcell("id", row) for row in range(2)] == [1, 3]
     assert tool.endianformat() == "big"
     tool.done()
+
+
+def test_reference_rownumbers_return_the_parent_rows(
+    reference_tables: Path,
+) -> None:
+    tool = tools.table()
+    assert tool.open(str(reference_tables / "ref.table"))
+    assert tool.rownumbers().tolist() == [0, 2]
+    tool.done()
+
+
+def test_simple_reference_description_preserves_root_bindings(reference_tables: Path) -> None:
+    """CASA's simple reference retains the root's declared and actual bindings."""
+    parent, view = tools.table(), tools.table()
+    parent_path = str(reference_tables / "big.table")
+    view_path = str(reference_tables / "ref.table")
+    assert parent.open(parent_path)
+    assert view.open(view_path)
+    for actual in (True, False):
+        expected = encode_value(parent.getdesc(actual), parent_path)
+        assert encode_value(view.getdesc(actual), view_path) == expected
+    assert encode_value(view.getcoldesc("id"), view_path) == encode_value(parent.getcoldesc("id"), parent_path)
+    view.done()
+    parent.done()
+
+
+def test_reference_description_distinguishes_declared_and_actual_managers(tmp_path: Path) -> None:
+    """CASA bound StManAipsIO to a column declaring StandardStMan."""
+    with tarfile.open(DATA / "reftable_declared.tgz", "r:gz") as archive:
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(tmp_path, **extract)
+    root = tmp_path / "reftable-declared"
+    for name in ("parent.table", "ref.table"):
+        tool = tools.table()
+        assert tool.open(str(root / name))
+        actual, declared = tool.getdesc(True)["id"], tool.getdesc(False)["id"]
+        assert (actual["dataManagerType"], actual["dataManagerGroup"]) == ("StManAipsIO", "")
+        assert (declared["dataManagerType"], declared["dataManagerGroup"]) == ("StandardStMan", "StandardStMan")
+        tool.done()
+
+
+def test_projected_reference_descriptions_refuse_instead_of_inventing_bindings(tmp_path: Path) -> None:
+    """CASA wrote a reference that projects the parent's id and label columns."""
+    with tarfile.open(DATA / "reftable_projected.tgz", "r:gz") as archive:
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(tmp_path, **extract)
+    tool = tools.table()
+    assert tool.open(str(tmp_path / "reftable-projected" / "projected.table"))
+    with pytest.raises(NotImplementedError, match="reference"):
+        tool.getdesc()
+    with pytest.raises(NotImplementedError, match="reference"):
+        tool.getcoldesc("id")
+    tool.done()
+
+
+def test_nested_reference_rownumbers_keep_order_and_duplicates(tmp_path: Path) -> None:
+    """CASA 6.7.6.14 wrote views [2, 0, 2] and then [2, 1] of that view."""
+    with tarfile.open(DATA / "reftable_nested.tgz", "r:gz") as archive:
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(tmp_path, **extract)
+    root = tmp_path / "reftable-nested"
+    for name, expected in (("parent.table", [0, 1, 2]), ("view.table", [2, 0, 2]),
+                           ("nested.table", [2, 0])):
+        tool = tools.table()
+        assert tool.open(str(root / name))
+        assert tool.rownumbers().tolist() == expected
+        tool.done()
+
+
+def test_nested_reference_descriptions_match_casa(tmp_path: Path) -> None:
+    with tarfile.open(DATA / "reftable_nested.tgz", "r:gz") as archive:
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(tmp_path, **extract)
+    root = tmp_path / "reftable-nested"
+    for name in ("view.table", "nested.table"):
+        tool = tools.table()
+        assert tool.open(str(root / name))
+        for actual in (True, False):
+            desc = tool.getdesc(actual)
+            assert desc["_define_hypercolumn_"] == {}
+            assert desc["_keywords_"] == {}
+            assert desc["_private_keywords_"] == {}
+            assert desc["id"]["dataManagerType"] == "StandardStMan"
+            assert desc["id"]["dataManagerGroup"] == "StandardStMan"
+        tool.done()
 
 
 def test_a_plain_copy_of_a_reference_table_is_still_a_reference_table(
