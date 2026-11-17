@@ -2,7 +2,8 @@
 
 //! `applycal(flagbackup=True)`: a `calflag` run saves the flags to the next
 //! `applycal_N` version first, as CASA's task does, so `flagmanager` can undo
-//! it. Modes that change no flags, and requests that are rejected, save none.
+//! it. Cal-only/trial modes save none; a later selection/table error retains
+//! the backup CASA took before validation.
 
 mod common;
 
@@ -122,13 +123,15 @@ fn flagbackup_false_saves_no_backup() {
 }
 
 #[test]
-fn a_rejected_request_saves_no_backup_and_changes_no_flags() {
+fn a_rejected_request_retains_the_backup_without_changing_flags() {
     let dir = TempDir::new().expect("tempdir");
     let (ms_path, _) = fixture(dir.path());
     let before = row0_flags(&MeasurementSet::open(&ms_path).expect("open"));
     let missing = dir.path().join("missing.gcal");
     applycal(&ms_path, &missing, ApplyMode::CalFlag, true).expect_err("missing table");
-    assert!(version_names(&ms_path).is_empty());
+    // task_applycal.py backs up before selectvis/setapply, so the old empty
+    // expectation disagreed with CASA for a missing calibration table.
+    assert_eq!(version_names(&ms_path), ["applycal_1"]);
     assert_eq!(
         row0_flags(&MeasurementSet::open(&ms_path).expect("reopen")),
         before

@@ -61,6 +61,7 @@ use crate::plan::{
 mod availability;
 use availability::execute as execute_apply_plan;
 mod gain_validity;
+mod initialization;
 use gain_validity::correcting_gain;
 mod bandpass;
 mod channels;
@@ -363,10 +364,9 @@ pub struct ApplyExecutionOptions {
     /// Save the MAIN flags to the next free `applycal_N` flag version before
     /// anything is written, as CASA's `applycal(flagbackup=True)` does.
     ///
-    /// Only [`ApplyMode::CalFlag`] changes flags, so the other modes never
-    /// back up, as in CASA. The backup is taken once the plan has validated,
-    /// so a rejected request leaves no version behind; CASA takes it before
-    /// it reads the calibration tables.
+    /// Flag-writing modes save this before selection and calibration-table
+    /// validation, as CASA does; a rejected request can leave a backup.
+    /// Cal-only and trial modes save none.
     pub flag_backup: bool,
 }
 
@@ -708,8 +708,20 @@ pub fn execute_apply_from_path_with_options(
             }
         })?;
         let open_measurement_set_ns = open_started_at.elapsed().as_nanos() as u64;
+        let flag_backup_version = save_apply_flag_backup(&ms, request.apply_mode, options)?;
         let planning_started_at = Instant::now();
-        let (plan, plan_timings) = plan_apply_with_timings(&ms, request)?;
+        let (plan, plan_timings) = match plan_apply_with_timings(&ms, request) {
+            Ok(planned) => planned,
+            Err(error) => {
+                // CASA opens with addcorr=True before selectvis/setapply. Keep
+                // successful application on the existing single-write path;
+                // reproduce that initialization if planning rejects a request.
+                if request.apply_mode.writes_corrected_data() {
+                    initialization::corrected_data(&mut ms)?;
+                }
+                return Err(error.into());
+            }
+        };
         let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
         if plan.apply_mode == ApplyMode::Trial {
             // Calibrater::correct2 still runs the calibration operators in
@@ -737,7 +749,6 @@ pub fn execute_apply_from_path_with_options(
             });
         }
 
-        let flag_backup_version = save_apply_flag_backup(&ms, &plan, options)?;
         let (mut report, trace_summary) =
             execute_apply_plan(&mut ms, plan, Some(&mut perf_tracer))?;
         report.flag_backup_version = flag_backup_version;
@@ -787,10 +798,10 @@ pub fn execute_apply_from_path_with_options(
 
 fn save_apply_flag_backup(
     ms: &MeasurementSet,
-    plan: &ApplyPlan,
+    mode: ApplyMode,
     options: ApplyExecutionOptions,
 ) -> Result<Option<String>, ApplyExecutionError> {
-    if !options.flag_backup || !plan.apply_mode.writes_flags() {
+    if !options.flag_backup || !mode.writes_flags() {
         return Ok(None);
     }
     save_next_flag_backup(ms, "applycal")

@@ -59,9 +59,22 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
         )
         .at("gaintable"));
     }
+    let mut selection = selection(task)?;
+    selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
+    selection.uvrange = task.text("uvrange")?.filter(|text| !text.is_empty());
+    // CASA accepts these parameters even when disabled, retaining their input
+    // values for HISTORY while passing empty selectors to calibrater.selectvis.
+    if !task.flag("selectdata")? {
+        selection.timerange = None;
+        selection.uvrange = None;
+        selection.antenna = None;
+        selection.scan = None;
+        selection.observation = None;
+        selection.msselect = None;
+    }
     Ok(ExecuteApplyTaskRequest {
         measurement_set: task.path("vis")?,
-        selection: selection(task)?,
+        selection,
         calibration_tables,
         apply_mode: applymode(task)?,
         parang: task.flag("parang")?,
@@ -262,8 +275,6 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         selectdata: true,
         field: text("field")?,
         spw: text("spw")?,
-        intent: text("intent")?,
-        uvrange: text("uvrange")?,
         antenna: text("antenna")?,
         scan: text("scan")?,
         observation: text("observation")?,
