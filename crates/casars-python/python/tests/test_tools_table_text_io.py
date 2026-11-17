@@ -95,3 +95,15 @@ def test_toasciifmt_record_cells(tmp_path):
         '    [1, 2]\n  deep: {\n    n: Bool 1\n  }\n  delta: Double 0.1\n'
         '  text: String "word"\n}\n{}\n'
     )
+
+
+def test_fromascii_angles_use_casa_sexagesimal_rules(tmp_path):
+    data = tmp_path / "angles"
+    data.write_text(
+        'RA DEC\nHMS DMS\n12h 12d\n12h30m 12d30m\n'
+        '"12 h 30 m" "+12 d 30 m"\n"12:30:00" "-12:30:00"\n1.5 1.5\n'
+    )
+    tb = table()
+    assert tb.fromascii(str(tmp_path / "angles.table"), str(data), sep=" ")
+    np.testing.assert_allclose(tb.getcol("RA"), [np.pi, *np.deg2rad([187.5] * 3), 1.5])
+    np.testing.assert_allclose(tb.getcol("DEC"), [*np.deg2rad([12, 12.5, 12.5, -12.5]), 1.5])

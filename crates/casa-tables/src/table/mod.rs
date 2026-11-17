@@ -2322,7 +2322,7 @@ impl Drop for Table {
     fn drop(&mut self) {
         #[cfg(unix)]
         {
-            if self.kind != TableKind::Memory {
+            if self.kind != TableKind::Memory || self.is_named_memory_manager() {
                 // A write lock that changed nothing writes and publishes
                 // nothing, as in casacore.
                 let has_changes_to_flush = self.lock_state.as_ref().is_some_and(|state| {
@@ -2336,7 +2336,9 @@ impl Drop for Table {
                             .with_data_manager(state.data_manager)
                             .with_endian_format(state.endian_format)
                     });
-                    if let Some(save_opts) = save_opts {
+                    if self.is_named_memory_manager() {
+                        let _ = self.finish_memory_manager_write(true);
+                    } else if let Some(save_opts) = save_opts {
                         let _ = self.save(save_opts);
                     }
                 }

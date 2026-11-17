@@ -168,3 +168,32 @@ def test_variable_length_tdim_text_uses_each_heap_record(tmp_path):
     np.testing.assert_array_equal(out.getcell("DATA", 0), [[1, 3], [2, 4]])
     np.testing.assert_array_equal(out.getcell("DATA", 1), [5, 6, 7, 8])
     assert list(out.getcol("TDIM1")) == ["(2,2)", "(4)"]
+
+
+def test_named_memory_table_obeys_user_lock_and_keeps_empty_schema(tmp_path):
+    import subprocess
+    import sys
+
+    source = tmp_path / "source.fits"
+    _table_fits(source)
+    path = str(tmp_path / "mem.table")
+    tb = table()
+    out = tb.fromfits(path, str(source), storage="memory")
+    assert out.haslock(write=True)
+    assert out.done()
+    assert tb.open(path, lockoptions={"option": "user"}, nomodify=False)
+    assert not tb.haslock(write=True)
+    with pytest.raises(RuntimeError, match="should be locked"):
+        tb.addrows(1)
+    assert tb.lock(write=True, nattempts=1)
+    probe = (
+        "import sys; from casars.tools import table; t=table(); "
+        "t.open(sys.argv[1], lockoptions={'option': 'user'}, nomodify=False); "
+        "assert not t.lock(write=True, nattempts=1)"
+    )
+    subprocess.run([sys.executable, "-c", probe, path], check=True, timeout=10)
+    assert tb.removecols(tb.colnames())
+    assert tb.done()
+    assert tb.open(path)
+    assert tb.colnames() == []
+    assert tb.nrows() == 2

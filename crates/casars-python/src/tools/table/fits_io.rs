@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use casa_images::fits_table::read_fits_table;
-use casa_tables::{DataManagerKind, TableOptions};
+use casa_tables::{DataManagerKind, LockMode, LockOptions, LockType, TableOptions};
 use pyo3::prelude::*;
 
 use super::state::{LockSettings, Open};
@@ -60,7 +60,7 @@ fn import_fits(
     };
     let hdu = usize::try_from(hdu)
         .map_err(|_| Fail::Runtime("whichHDU is not valid, must be >= 1".into()))?;
-    let mut table = read_fits_table(
+    let table = read_fits_table(
         Path::new(input),
         hdu,
         convention.to_ascii_lowercase().contains("sdfi"),
@@ -73,7 +73,17 @@ fn import_fits(
         ..LockRequest::default()
     };
     let Some(kind) = kind else {
-        table.save_with_memory_manager(&path, group)?;
+        let mut table = table.into_named_memory_manager(
+            &path,
+            group,
+            LockOptions::new(LockMode::AutoNoReadLocking),
+        )?;
+        if !table.lock(LockType::Write, 1)? {
+            return Err(Fail::Runtime(format!(
+                "Table {} could not be write locked",
+                path.display()
+            )));
+        }
         return Ok(Open::from_detached_table(
             table,
             path,

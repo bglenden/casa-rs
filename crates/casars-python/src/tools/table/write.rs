@@ -252,12 +252,9 @@ pub(super) fn write_root(
             Target::RowProxy => "TableRowProxy: the given TableRow is not writable".into(),
         });
     }
-    // A memory table has no disk or lock file; changes stay in its handle.
-    if root.table.is_memory() {
+    let named_memory = root.table.is_named_memory_manager();
+    if root.table.is_memory() && !named_memory {
         change(&mut root.table, row_map)?;
-        if !matches!(target, Target::Cells | Target::RowProxy) {
-            root.table.flush_memory_manager_layout()?;
-        }
         return Ok(CasaValue::Bool(true));
     }
     if root.table.is_reference_table()? {
@@ -279,45 +276,56 @@ pub(super) fn write_root(
     }
     // Whether the change wrote itself and the handle holds what it wrote.
     let mut written = false;
-    let saved = change(&mut root.table, row_map).and_then(|persist| match persist {
-        Persist::Nothing => Ok(()),
-        Persist::Done => {
+    let saved = change(&mut root.table, row_map).and_then(|persist| {
+        if named_memory {
+            let metadata = !matches!(target, Target::Cells | Target::RowProxy)
+                && !matches!(persist, Persist::Nothing);
             written = true;
-            Ok(())
-        }
-        Persist::Metadata => root
-            .table
-            .save_metadata_only(TableOptions::new(&root.name))
-            .map_err(Fail::from),
-        Persist::Rows {
-            mut columns,
-            mut rows,
-        } => {
-            columns.sort_unstable();
-            columns.dedup();
-            rows.sort_unstable();
-            rows.dedup();
-            let col_refs: Vec<&str> = columns.iter().map(String::as_str).collect();
-            let partial = root
+            return root
                 .table
-                .prepare_write()
-                .save_selected_rows(&col_refs, &rows);
-            match partial {
-                // StManAipsIO keeps its table in one file and writes it
-                // in full, as casacore does. A table that is one such
-                // group is written in full with the group's name and
-                // byte order kept, which is the layout it has. Any
-                // other table must not be rewritten (it would lose its
-                // managers), so the refusal stands.
-                Err(TableError::Storage(message))
-                    if message.starts_with("partial in-place save does not support") =>
-                {
-                    match root.table.single_rewrite_options()? {
-                        Some(options) => root.table.save(options).map_err(Fail::from),
-                        None => Err(Fail::from(TableError::Storage(message))),
+                .finish_memory_manager_write(metadata)
+                .map_err(Fail::from);
+        }
+        match persist {
+            Persist::Nothing => Ok(()),
+            Persist::Done => {
+                written = true;
+                Ok(())
+            }
+            Persist::Metadata => root
+                .table
+                .save_metadata_only(TableOptions::new(&root.name))
+                .map_err(Fail::from),
+            Persist::Rows {
+                mut columns,
+                mut rows,
+            } => {
+                columns.sort_unstable();
+                columns.dedup();
+                rows.sort_unstable();
+                rows.dedup();
+                let col_refs: Vec<&str> = columns.iter().map(String::as_str).collect();
+                let partial = root
+                    .table
+                    .prepare_write()
+                    .save_selected_rows(&col_refs, &rows);
+                match partial {
+                    // StManAipsIO keeps its table in one file and writes it
+                    // in full, as casacore does. A table that is one such
+                    // group is written in full with the group's name and
+                    // byte order kept, which is the layout it has. Any
+                    // other table must not be rewritten (it would lose its
+                    // managers), so the refusal stands.
+                    Err(TableError::Storage(message))
+                        if message.starts_with("partial in-place save does not support") =>
+                    {
+                        match root.table.single_rewrite_options()? {
+                            Some(options) => root.table.save(options).map_err(Fail::from),
+                            None => Err(Fail::from(TableError::Storage(message))),
+                        }
                     }
+                    other => other.map_err(Fail::from),
                 }
-                other => other.map_err(Fail::from),
             }
         }
     });
@@ -339,7 +347,11 @@ pub(super) fn write_root(
     // wrote (a full save marks it flushed), and a reload under the lock
     // would read the row count last published, which a removal of rows
     // has lowered.
-    let reloaded = if saved.is_err() || (!automatic && !written) {
+    let reloaded = if named_memory && saved.is_err() {
+        root.table
+            .finish_memory_manager_write(false)
+            .map_err(Fail::from)
+    } else if !named_memory && (saved.is_err() || (!automatic && !written)) {
         root.table.resync_or_discard().map_err(Fail::from)
     } else {
         Ok(())

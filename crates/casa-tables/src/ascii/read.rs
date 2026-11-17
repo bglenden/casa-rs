@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use casa_types::quanta::Quantity;
+use casa_types::quanta::{Quantity, casacore::mvangle_radians};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::{Complex32, Complex64};
@@ -326,15 +326,41 @@ fn parse_int(text: &str) -> i64 {
 }
 
 fn angle(text: &str, dms: bool) -> f64 {
-    let input: String = text.split_whitespace().collect::<Vec<_>>().join(":");
-    Quantity::read(&input).map_or(0.0, |q| {
-        let radians = q.get_si_value();
-        if dms && input.contains(':') {
-            radians / 15.0
-        } else {
-            radians
+    // ReadAsciiTable::stringToPos tolerates whitespace around units and
+    // accepts spaces between unmarked sexagesimal components.
+    let mut input = String::with_capacity(text.len());
+    let mut blank = false;
+    let mut needs_value = true;
+    for ch in text.trim().chars().map(|ch| ch.to_ascii_lowercase()) {
+        if ch.is_ascii_whitespace() {
+            blank = true;
+            continue;
         }
-    })
+        if matches!(ch, ':' | '.' | 'h' | 'd' | 'm') {
+            if needs_value {
+                input.push('0');
+            }
+            needs_value = true;
+        } else if !matches!(ch, '+' | '-') {
+            if !needs_value && blank {
+                input.push(':');
+            }
+            needs_value = false;
+            blank = false;
+        }
+        input.push(ch);
+    }
+    let radians = input.parse::<f64>().unwrap_or_else(|_| {
+        Quantity::read(&input)
+            .ok()
+            .and_then(|q| mvangle_radians(&q).ok())
+            .unwrap_or(0.0)
+    });
+    if dms && input.contains(':') {
+        radians / 15.0
+    } else {
+        radians
+    }
 }
 
 fn make_array(
