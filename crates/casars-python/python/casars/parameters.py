@@ -403,7 +403,7 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
 
         explicit = self._explicit_values()
         originals = {name: value for name, value in self._overrides.items()
-                     if name in explicit}
+                     if name in explicit and (isinstance(value, str) or name == "spwmap")}
         projected = _native().parameter_provider_invocation(self.surface, explicit, originals)
         return ProviderInvocation(
             protocol_name=projected["protocol_name"],

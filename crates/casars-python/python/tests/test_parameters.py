@@ -292,6 +292,6 @@ def test_inactive_applycal_spwmap_preserves_the_callers_collection(tmp_path):
     task.set_many(dict(vis="data.ms", docallib=True, callib="apply.callib", spwmap=[999]))
     request = json.loads(task.provider_invocation().stdin)
     assert request["values"]["spwmap"] == [999]
-    task.set("docallib", False)
+    task.set_many({"docallib": False})
     request = json.loads(task.provider_invocation().stdin)
     assert request["values"]["spwmap"] == [[999]]
