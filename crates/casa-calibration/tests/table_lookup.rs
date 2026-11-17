@@ -136,3 +136,38 @@ fn a_delay_table_is_refused() {
         .expect("refused");
     assert!(refused.to_string().contains("not complex"), "{refused}");
 }
+
+#[test]
+fn context_free_lookup_refuses_contextual_or_invalid_modes() {
+    let dir = TempDir::new().unwrap();
+    let path = table(&dir);
+    for time in [
+        casa_calibration::TimeInterpolation::Nearest,
+        casa_calibration::TimeInterpolation::Cubic,
+    ] {
+        let mode = ApplyInterpolationMode::Casa {
+            time,
+            frequency: casa_calibration::FrequencyInterpolation::Linear,
+            per_observation: false,
+            per_scan: false,
+            phase_delay: false,
+            relative_frequency: false,
+        };
+        assert!(
+            CalibrationTableLookup::open(&path, mode)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("context")
+        );
+        assert!(
+            CalibrationTableLookup::open_with(
+                &path,
+                mode,
+                casa_calibration::FieldSelection::AnyField
+            )
+            .is_err()
+        );
+    }
+    assert!(CalibrationTableLookup::open(&path, ApplyInterpolationMode::Invalid).is_err());
+}

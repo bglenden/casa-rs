@@ -35,13 +35,12 @@ fn resample(
 pub(super) fn prepare(
     grid: Arc<CalibrationGrid>,
     input: &[f64],
-    interpolation: ApplyInterpolationMode,
     output: &crate::plan::SpectralWindowPlan,
-    row: &ApplyRowPlan,
-    antenna_id: i32,
     cache: Option<&mut RowGeometryCache>,
-    path: &Path,
+    table: &LoadedCalibrationTable,
 ) -> Result<Arc<CalibrationGrid>, ApplyExecutionError> {
+    let interpolation = table.interp;
+    let path = &table.path;
     let CalibrationGrid::Complex(gain) = grid.as_ref() else {
         return Ok(grid);
     };
@@ -52,7 +51,7 @@ pub(super) fn prepare(
         });
     }
     let key = MaterializedGridKey {
-        row: RowGeometryKey::new(row.time_seconds, row.field_id, antenna_id),
+        row: RowGeometryKey::new(0., -1, -1),
         kind: 4,
         data_spw_id: output.spw_id,
         grid_id: Arc::as_ptr(&grid) as usize,
@@ -122,6 +121,78 @@ pub(super) fn weight_factors(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constant_wide_bandpass_shares_payload_and_resampling_across_times() {
+        use crate::lookup::{TimePlan, TimeQuery};
+        let channels = 4096;
+        let raw = Arc::new(CalibrationGrid::Complex(GainGrid {
+            receptor_count: 2,
+            channel_count: channels,
+            values: ArrayD::from_elem(IxDyn(&[2, channels]), Complex32::new(2., 0.)),
+            flags: ArrayD::from_elem(IxDyn(&[2, channels]), false),
+        }));
+        let table = LoadedCalibrationTable {
+            path: "constant.bcal".into(),
+            interp: ApplyInterpolationMode::Linear,
+            supports_calwt: true,
+            engine: None,
+            time_is_delay: false,
+            phase_delay: false,
+            time_plans: HashMap::new(),
+            missing_grids: HashMap::new(),
+            solutions: HashMap::from([(
+                (0, 0, 0),
+                vec![CalibrationSolution {
+                    time_seconds: 0.,
+                    grid: raw.clone(),
+                }],
+            )]),
+        };
+        let options = crate::TimeInterpolationOptions::new(crate::TimeInterpolation::Linear);
+        let context = TimePlan::apply_context(&table, options).unwrap();
+        let plan = TimePlan::for_apply(&table, options, false, &context).unwrap();
+        let input = (0..channels)
+            .map(|channel| 1e9 + channel as f64 * 1e6)
+            .collect::<Vec<_>>();
+        let output = crate::SpectralWindowPlan {
+            spw_id: 0,
+            num_chan: channels as i32,
+            ref_frequency_hz: 1e9,
+            channel_frequencies_hz: input.iter().map(|frequency| frequency + 0.25e6).collect(),
+        };
+        let mut cache = RowGeometryCache::default();
+        let mut first = None;
+        for time in 0..1000 {
+            let selected = plan
+                .registered_grid(&TimeQuery {
+                    observation: 0,
+                    scan: 1,
+                    window: 0,
+                    antenna: 0,
+                    time: f64::from(time),
+                    frequency_hz: None,
+                })
+                .unwrap();
+            assert!(Arc::ptr_eq(&selected, &raw));
+            let sampled = prepare(selected, &input, &output, Some(&mut cache), &table).unwrap();
+            if let Some(first) = &first {
+                assert!(Arc::ptr_eq(first, &sampled));
+            } else {
+                first = Some(sampled);
+            }
+        }
+        assert_eq!(cache.materialized_grids.len(), 1);
+        let CalibrationGrid::Complex(gain) = first.unwrap().as_ref().clone() else {
+            unreachable!()
+        };
+        assert!(
+            gain.values
+                .iter()
+                .all(|value| (*value - Complex32::new(2., 0.)).norm() < 1e-6)
+        );
+        assert!(gain.flags.iter().all(|flag| !*flag));
+    }
 
     #[test]
     fn missing_bandpass_bin_interpolates_amplitude_phase_and_uses_full_band_power() {

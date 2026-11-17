@@ -337,14 +337,14 @@ impl TimePlan {
             real,
             rows,
             lookup.across_fields.take(),
+            None,
         )
     }
 
-    pub(crate) fn for_apply(
+    pub(crate) fn apply_context(
         table: &LoadedCalibrationTable,
         options: TimeInterpolationOptions,
-        real: bool,
-    ) -> Result<Self, ApplyExecutionError> {
+    ) -> Result<ApplyTimeContext, ApplyExecutionError> {
         let rows = if options.per_observation || options.per_scan {
             let mut rows = headers(&table.path)?;
             rows.retain(|row| table.solutions.contains_key(&(row[0], row[1], row[2])));
@@ -352,7 +352,30 @@ impl TimePlan {
         } else {
             None
         };
-        Self::from_table(table, options, real, rows, Some(across_fields(table)))
+        let scope = selected_scope(&table.path, rows.as_deref().unwrap_or_default(), options)?;
+        Ok(ApplyTimeContext { rows, scope })
+    }
+
+    pub(crate) fn for_apply(
+        table: &LoadedCalibrationTable,
+        options: TimeInterpolationOptions,
+        real: bool,
+        context: &ApplyTimeContext,
+    ) -> Result<Self, ApplyExecutionError> {
+        let rows = context.rows.as_ref().map(|rows| {
+            rows.iter()
+                .copied()
+                .filter(|row| table.solutions.contains_key(&(row[0], row[1], row[2])))
+                .collect()
+        });
+        Self::from_table(
+            table,
+            options,
+            real,
+            rows,
+            Some(across_fields(table)),
+            Some(context.scope),
+        )
     }
 
     fn from_table(
@@ -361,38 +384,15 @@ impl TimePlan {
         real: bool,
         rows: Option<Vec<[i32; 5]>>,
         across: Option<HashMap<(i32, i32), Vec<CalibrationSolution>>>,
+        fixed_scope: Option<TimeScope>,
     ) -> Result<Self, ApplyExecutionError> {
         let path = &table.path;
-        let mut scope = TimeScope::All;
+        let scope = if let Some(scope) = fixed_scope {
+            scope
+        } else {
+            selected_scope(path, rows.as_deref().unwrap_or_default(), options)?
+        };
         let series = if let Some(rows) = rows {
-            if options.per_scan {
-                if rows
-                    .iter()
-                    .map(|r| r[4])
-                    .min()
-                    .is_some_and(|scan| scan != -1)
-                {
-                    scope = TimeScope::Scan;
-                }
-            } else if options.per_observation {
-                let observations = rows.iter().map(|r| r[3]).collect::<HashSet<_>>();
-                let metadata = Table::open(TableOptions::new(path))
-                    .map_err(|e| invalid(path, &e.to_string()))?;
-                let observation_path = metadata
-                    .keywords()
-                    .get("OBSERVATION")
-                    .and_then(casa_types::Value::as_table_ref)
-                    .map(|name| casa_tables::add_directory(name, path))
-                    .unwrap_or_else(|| path.join("OBSERVATION"));
-                let count = Table::rows_on_disk(&observation_path)
-                    .map_err(|e| invalid(path, &e.to_string()))?;
-                if observations.len() > 1
-                    && observations.len() == count
-                    && count == options.observation_count
-                {
-                    scope = TimeScope::Observation;
-                }
-            }
             segmented(table, &rows, scope)?
         } else {
             across
@@ -444,6 +444,48 @@ impl TimePlan {
             1.
         })
     }
+}
+
+pub(crate) struct ApplyTimeContext {
+    rows: Option<Vec<[i32; 5]>>,
+    scope: TimeScope,
+}
+
+fn selected_scope(
+    path: &Path,
+    rows: &[[i32; 5]],
+    options: TimeInterpolationOptions,
+) -> Result<TimeScope, ApplyExecutionError> {
+    let mut scope = TimeScope::All;
+    if options.per_scan {
+        if rows
+            .iter()
+            .map(|r| r[4])
+            .min()
+            .is_some_and(|scan| scan != -1)
+        {
+            scope = TimeScope::Scan;
+        }
+    } else if options.per_observation {
+        let observations = rows.iter().map(|r| r[3]).collect::<HashSet<_>>();
+        let metadata =
+            Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
+        let observation_path = metadata
+            .keywords()
+            .get("OBSERVATION")
+            .and_then(casa_types::Value::as_table_ref)
+            .map(|name| casa_tables::add_directory(name, path))
+            .unwrap_or_else(|| path.join("OBSERVATION"));
+        let count =
+            Table::rows_on_disk(&observation_path).map_err(|e| invalid(path, &e.to_string()))?;
+        if observations.len() > 1
+            && observations.len() == count
+            && count == options.observation_count
+        {
+            scope = TimeScope::Observation;
+        }
+    }
+    Ok(scope)
 }
 
 /// Only scalar columns are read; CPARAM arrays are never rematerialized.

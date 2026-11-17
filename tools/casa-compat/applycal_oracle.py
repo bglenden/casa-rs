@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import resource
+import re
 import subprocess
 import sys
 import time
@@ -47,7 +48,7 @@ def copy_ms(source, destination, endian='aipsrc'):
     tool.close()
 
 
-def run(root, native_bin):
+def run(root, native_bin, only=None):
     from casars import tasks as native
     assert casa.version_string() == '6.7.6.14'
     reference = inspect.signature(casa.applycal)
@@ -207,10 +208,82 @@ def run(root, native_bin):
         tool.putcol('FLAG', flags)
         tool.close()
 
-    result = dict(casa_version=casa.version_string(), signature=str(reference), cases={}, failures=[],
+    from fluxscale_oracle import multi_window
+    multi_source, multi_gain = multi_window(chain_source, time_gain, root, name='chain-multi')
+    tool.open(str(multi_source/'DATA_DESCRIPTION'), nomodify=False)
+    descriptor_row = {column: tool.getcell(column, 0) for column in tool.colnames() if tool.iscelldefined(column, 0)}
+    tool.addrows(2)
+    for index in [1, 2]:
+        for column, value in descriptor_row.items():
+            tool.putcell(column, index, index if column == 'SPECTRAL_WINDOW_ID' else value)
+    tool.close()
+    tool.open(str(multi_source), nomodify=False)
+    tool.putcol('DATA_DESC_ID', np.arange(tool.nrows(), dtype=np.int32)%3)
+    tool.close()
+    missing_window_gain = root/'missing-window.gcal'
+    selected_window_gain = root/'selected-window.gcal'
+    missing_antenna_gain = root/'missing-antenna.gcal'
+    tied_gain = root/'tied-fields.gcal'
+    for destination in [missing_window_gain, selected_window_gain]:
+        copy_ms(multi_gain, destination)
+        tool.open(str(destination), nomodify=False)
+        windows, fields = tool.getcol('SPECTRAL_WINDOW_ID'), tool.getcol('FIELD_ID')
+        remove = windows == 2 if destination == missing_window_gain else windows != fields
+        tool.removerows(np.flatnonzero(remove).tolist())
+        tool.close()
+    copy_ms(observation_gain, missing_antenna_gain)
+    tool.open(str(missing_antenna_gain), nomodify=False)
+    tool.removerows(np.flatnonzero((tool.getcol('ANTENNA1') == 1) & (tool.getcol('OBSERVATION_ID') == 1)).tolist())
+    tool.close()
+    copy_ms(time_gain, tied_gain)
+    tool.open(str(tied_gain/'FIELD'), nomodify=False)
+    for column in ['PHASE_DIR', 'REFERENCE_DIR', 'DELAY_DIR']:
+        tool.putcell(column, 1, tool.getcell(column, 0))
+    tool.close()
+    scalar_bandpass = root/'scalar.bcal'
+    copy_ms(curved_bandpass, scalar_bandpass)
+    tool.open(str(scalar_bandpass), nomodify=False)
+    for column in ['CPARAM', 'FLAG', 'PARAMERR', 'SNR', 'WEIGHT']:
+        if column in tool.colnames() and tool.iscelldefined(column, 0):
+            tool.putcol(column, tool.getcol(column)[:, :1, :])
+    values = tool.getcol('CPARAM'); values[:] = 1.
+    values[:, :, tool.getcol('ANTENNA1') == 0] = np.exp(.4j)
+    tool.putcol('CPARAM', values)
+    tool.close()
+    tool.open(str(scalar_bandpass/'SPECTRAL_WINDOW'), nomodify=False)
+    for column in ['CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION']:
+        tool.putcol(column, tool.getcol(column)[:1, :])
+    tool.putcol('NUM_CHAN', np.ones_like(tool.getcol('NUM_CHAN')))
+    tool.close()
+    compressed_source, compressed_bandpass = root/'source-compressed.ms', root/'compressed.bcal'
+    make_cal_ms(str(compressed_source), channels=3)
+    tool.open(str(compressed_source/'SPECTRAL_WINDOW'), nomodify=False)
+    tool.putcell('CHAN_FREQ', 0, np.array([1., 2., 4.])*1e9)
+    tool.close()
+    tool.open(str(compressed_source), nomodify=False)
+    if 'CORRECTED_DATA' in tool.colnames():
+        tool.removecols(['CORRECTED_DATA'])
+    tool.close()
+    copy_ms(curved_bandpass, compressed_bandpass)
+    tool.open(str(compressed_bandpass), nomodify=False)
+    for column in ['CPARAM', 'FLAG', 'PARAMERR', 'SNR', 'WEIGHT']:
+        if column in tool.colnames() and tool.iscelldefined(column, 0):
+            tool.putcol(column, tool.getcol(column)[:, :4, :])
+    flags = tool.getcol('FLAG'); flags[:, 2, :] = True; tool.putcol('FLAG', flags)
+    tool.close()
+    tool.open(str(compressed_bandpass/'SPECTRAL_WINDOW'), nomodify=False)
+    for column in ['CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION']:
+        tool.putcol(column, tool.getcol(column)[:4, :])
+    tool.putcell('CHAN_FREQ', 0, np.arange(1., 5.)*1e9)
+    tool.putcol('NUM_CHAN', np.full_like(tool.getcol('NUM_CHAN'), 4))
+    tool.close()
+
+    result = dict(casa_version=casa.version_string(), signature=str(reference), case_filter=only, cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
     def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None):
+        if only is not None and re.search(only, name) is None:
+            return
         records, paths = {}, {}
         supplied_tables = (extra or {}).get('gaintable', [str(gain)])
         supplied_tables = [supplied_tables] if isinstance(supplied_tables, str) else supplied_tables
@@ -448,6 +521,19 @@ def run(root, native_bin):
     for method in ['LINEAR', 'aipslin', 'linear,aipslin', 'bogus']:
         case('chain-interpolation-invalid-'+method.replace(',', '-'), dict(interp=[method]), gain=time_gain, input_vis=chain_source)
     case('chain-frequency-unknown-linear-fallback', dict(interp=['linear,unknown']), gain=curved_bandpass, input_vis=shifted_source, precorrected=True)
+    case('review-scalar-bandpass-PD', dict(interp=['linearPD']), gain=scalar_bandpass, input_vis=phase_delay_source, precorrected=True)
+    case('review-nearest-perobs-scope', dict(gainfield=['nearest'], interp=['linearperobs']), gain=observation_gain, input_vis=observation_source, precorrected=True)
+    case('review-nearest-field-tie', dict(gainfield=['nearest']), gain=tied_gain, input_vis=chain_source)
+    for name, mapping in [('broadcast', [0]), ('prefix', [1, 0]), ('auto', [-999]), ('identity', [-1]), ('invalid-unselected', [0, 999]), ('negative-unselected', [0, -1])]:
+        case('review-multispw-'+name, dict(spwmap=mapping, spw='0' if 'unselected' in name else ''), gain=multi_gain, input_vis=multi_source, precorrected=True)
+    for mode in ['calflag', 'calflagstrict', 'calonly']:
+        case('review-map-empty-window-'+mode, dict(spwmap=[2], applymode=mode), gain=missing_window_gain, input_vis=multi_source, precorrected=True)
+        case('review-selected-window-'+mode, dict(gainfield=['0'], spw='1', applymode=mode), gain=selected_window_gain, input_vis=multi_source, precorrected=True)
+        case('review-missing-antenna-'+mode, dict(interp=['linearperobs'], applymode=mode), gain=missing_antenna_gain, input_vis=observation_source, precorrected=True)
+    for method in ['cubic', 'cubicflag']:
+        case('review-compressed-grid-'+method, dict(interp=['linear,'+method]), gain=compressed_bandpass, input_vis=compressed_source, precorrected=True)
+    if only is not None:
+        return result
     # CASA crashes when perscan is combined with multiple observation IDs.
     # Its documented/source partition is only by scan. Compare native results
     # to the same samples/scan series under CASA's working one-observation control.
@@ -490,13 +576,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
+    parser.add_argument('--only', help='Run case names matching this regular expression; crash controls require the full corpus')
     args = parser.parse_args()
     root = args.work.resolve()
     root.mkdir(parents=True, exist_ok=True)
     assert not any(root.iterdir()), 'work directory must be empty'
     native_bin = args.native_bin.resolve()
     os.chdir(root)
-    result = run(root, native_bin)
+    result = run(root, native_bin, args.only)
     assert not result['failures'], f"{len(result['failures'])} failed comparisons; see {root/'results.json'}"
 
 

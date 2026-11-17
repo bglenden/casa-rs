@@ -82,7 +82,9 @@ impl CalibrationTableLookup {
     }
 }
 
-type TimeSeries = HashMap<(i32, i32, i32), Vec<CalibrationSolution>>;
+type TimeKey = (i32, i32, i32);
+type TimeSeries = HashMap<TimeKey, Vec<CalibrationSolution>>;
+type SelectedSeries<'a> = (&'a TimeKey, &'a [CalibrationSolution]);
 
 pub(crate) struct TimePlan {
     mode: TimeInterpolation,
@@ -131,46 +133,88 @@ fn relative(time: f64, reference: f64) -> f64 {
     f64::from((time - reference) as f32)
 }
 
+struct Registration {
+    reference: f64,
+    time: f64,
+    upper: usize,
+    exact: bool,
+}
+
+impl Registration {
+    fn new(rows: &[CalibrationSolution], time: f64) -> Self {
+        let reference = (rows[0].time_seconds - 1.).floor();
+        let time = relative(time, reference);
+        let upper = rows.partition_point(|row| relative(row.time_seconds, reference) < time);
+        let exact = upper == 0
+            || upper == rows.len()
+            || relative(rows[upper].time_seconds, reference) == time;
+        Self {
+            reference,
+            time,
+            upper,
+            exact,
+        }
+    }
+    fn nearest(&self, rows: &[CalibrationSolution]) -> usize {
+        if self.exact {
+            self.upper.min(rows.len() - 1)
+        } else if relative(rows[self.upper].time_seconds, self.reference) - self.time
+            < self.time - relative(rows[self.upper - 1].time_seconds, self.reference)
+        {
+            self.upper
+        } else {
+            self.upper - 1
+        }
+    }
+}
+
 impl TimePlan {
+    fn candidates(&self, query: &TimeQuery) -> Option<SelectedSeries<'_>> {
+        let segment = match self.scope {
+            TimeScope::All => -1,
+            TimeScope::Observation => query.observation,
+            TimeScope::Scan => query.scan,
+        };
+        self.series
+            .get_key_value(&(segment, query.window, query.antenna))
+            .or_else(|| self.series.get_key_value(&(segment, query.window, -1)))
+            .filter(|(_, rows)| !rows.is_empty())
+            .map(|(key, rows)| (key, rows.as_slice()))
+    }
+
+    /// Exact, nearest and endpoint queries share immutable complex payloads.
+    pub(crate) fn registered_grid(
+        &self,
+        query: &TimeQuery,
+    ) -> Option<std::sync::Arc<CalibrationGrid>> {
+        if self.real || query.frequency_hz.is_some() {
+            return None;
+        }
+        let (_, rows) = self.candidates(query)?;
+        let registration = Registration::new(rows, query.time);
+        (registration.exact || self.mode == TimeInterpolation::Nearest)
+            .then(|| std::sync::Arc::clone(&rows[registration.nearest(rows)].grid))
+    }
+
     pub(crate) fn solution(
         &self,
         path: &Path,
         query: TimeQuery,
     ) -> Result<Option<ComplexSolution>, ApplyExecutionError> {
-        let TimeQuery {
-            observation,
-            scan,
-            window: spw,
-            antenna,
-            time,
-            frequency_hz,
-        } = query;
-        let segment = match self.scope {
-            TimeScope::All => -1,
-            TimeScope::Observation => observation,
-            TimeScope::Scan => scan,
-        };
-        let Some((key, candidates)) = self
-            .series
-            .get_key_value(&(segment, spw, antenna))
-            .or_else(|| self.series.get_key_value(&(segment, spw, -1)))
-            .filter(|(_, s)| !s.is_empty())
-        else {
+        let Some((key, candidates)) = self.candidates(&query) else {
             return Ok(None);
         };
-        let reference = (candidates[0].time_seconds - 1.).floor();
-        let time = relative(time, reference);
-        let at = |index: usize| relative(candidates[index].time_seconds, reference);
-        let upper = candidates.partition_point(|s| relative(s.time_seconds, reference) < time);
-        let exact = upper == 0 || upper == candidates.len() || at(upper) == time;
+        let spw = query.window;
+        let frequency_hz = query.frequency_hz;
+        let registration = Registration::new(candidates, query.time);
+        let Registration {
+            reference,
+            time,
+            upper,
+            exact,
+        } = registration;
         if exact || self.mode == TimeInterpolation::Nearest {
-            let index = if exact {
-                upper.min(candidates.len() - 1)
-            } else if at(upper) - time < time - at(upper - 1) {
-                upper
-            } else {
-                upper - 1
-            };
+            let index = registration.nearest(candidates);
             let mut output = ComplexSolution::of(grid(path, &candidates[index])?);
             if let Some(frequency) = frequency_hz.filter(|_| self.cycles.contains_key(key)) {
                 let scale = self.phase_scale(path, spw, frequency)?;

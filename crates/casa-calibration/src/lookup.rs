@@ -316,6 +316,15 @@ impl CalibrationTableLookup {
         fields: FieldSelection,
         real: bool,
     ) -> Result<Self, ApplyExecutionError> {
+        if matches!(
+            interp,
+            ApplyInterpolationMode::Casa { .. } | ApplyInterpolationMode::Invalid
+        ) {
+            return Err(ApplyExecutionError::UnsupportedInterpolation {
+                path: path.display().to_string(), interp,
+                reason: "context-free lookup supports nearest/linear; use the contextual time lookup for other curves".to_string(),
+            });
+        }
         let unsupported = |reason: String| ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason,
@@ -466,12 +475,17 @@ impl CalibrationTableLookup {
                 };
                 Ok(Some(Arc::clone(&candidates[nearest].grid)))
             }
-            _ => {
+            ApplyInterpolationMode::Linear => {
                 let last = candidates.len() - 1;
                 let lower = through.checked_sub(1).unwrap_or(after.min(last));
                 let upper = after.min(last).max(lower);
                 interpolate_time_linear(&self.path, &candidates[lower..=upper], time_s).map(Some)
             }
+            other => Err(ApplyExecutionError::UnsupportedInterpolation {
+                path: self.path.display().to_string(),
+                interp: other,
+                reason: "this lookup requires a supported context-free mode".to_string(),
+            }),
         }
     }
 }

@@ -17,6 +17,16 @@ pub(super) fn load(
                 .any(|selected| selected.field_id == *field)
         });
     }
+    // One flagged template per window handles missing antenna/context slices
+    // without copying a full parameter grid for each baseline.
+    for (&(_, window, _), rows) in &table.solutions {
+        if let std::collections::hash_map::Entry::Vacant(entry) = table.missing_grids.entry(window)
+        {
+            if let Some(row) = rows.first() {
+                entry.insert(flagged(&row.grid));
+            }
+        }
+    }
     let nearest_field = matches!(plan.spec.gainfield, Some(crate::GainFieldSelector::Nearest));
     let sample = table
         .solutions
@@ -44,9 +54,10 @@ pub(super) fn load(
             options.per_observation = false;
             options.phase_delay = false;
         }
-        table.phase_delay = options.phase_delay
-            && !table.time_is_delay
-            && matches!(sample, Some(CalibrationGrid::Complex(grid)) if grid.channel_count == 1);
+        // CASA dispatches scalar PD by Jones family, even for a one-channel B table.
+        options.phase_delay &= matches!(plan.summary.table_subtype.as_str(), "G Jones" | "T Jones");
+        table.phase_delay = options.phase_delay;
+        let context = TimePlan::apply_context(&table, options)?;
         let mut groups = HashMap::<_, HashMap<_, _>>::new();
         for (key, mut rows) in std::mem::take(&mut table.solutions) {
             if table.time_is_delay {
@@ -75,12 +86,13 @@ pub(super) fn load(
                 engine: None,
                 solutions,
                 time_plans: HashMap::new(),
+                missing_grids: HashMap::new(),
                 time_is_delay: false,
                 phase_delay: false,
             };
             table.time_plans.insert(
                 field,
-                TimePlan::for_apply(&selected, options, table.time_is_delay)?,
+                TimePlan::for_apply(&selected, options, table.time_is_delay, &context)?,
             );
         }
     } else if !nearest_field {
@@ -102,27 +114,29 @@ pub(super) fn lookup(
 ) -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError> {
     let Some(plan) = table.time_plans.get(&field) else {
         if !table.time_plans.is_empty() {
-            return Ok(None);
+            return Ok(table.missing_grids.get(&window).cloned());
         }
-        return table.lookup(field, window, antenna, row.time_seconds, table.interp);
+        return table
+            .lookup(field, window, antenna, row.time_seconds, table.interp)
+            .map(|grid| grid.or_else(|| table.missing_grids.get(&window).cloned()));
     };
     let frequencies = &data_window.channel_frequencies_hz;
     let frequency_hz = table
         .phase_delay
         .then(|| frequencies.iter().sum::<f64>() / frequencies.len() as f64);
-    let Some(solution) = plan.solution(
-        &table.path,
-        TimeQuery {
-            observation: row.observation_id,
-            scan: row.scan_number,
-            window,
-            antenna,
-            time: row.time_seconds,
-            frequency_hz,
-        },
-    )?
-    else {
-        return Ok(None);
+    let query = TimeQuery {
+        observation: row.observation_id,
+        scan: row.scan_number,
+        window,
+        antenna,
+        time: row.time_seconds,
+        frequency_hz,
+    };
+    if let Some(grid) = plan.registered_grid(&query) {
+        return Ok(Some(grid));
+    }
+    let Some(solution) = plan.solution(&table.path, query)? else {
+        return Ok(table.missing_grids.get(&window).cloned());
     };
     let shape = IxDyn(&[solution.receptors, solution.channels]);
     let values =
@@ -143,4 +157,17 @@ pub(super) fn lookup(
             flags,
         })
     })))
+}
+
+/// A missing slice has unity effect with flags, retaining its partner's gain.
+pub(super) fn flagged(grid: &CalibrationGrid) -> Arc<CalibrationGrid> {
+    let mut grid = grid.clone();
+    match &mut grid {
+        CalibrationGrid::Complex(grid) => grid.flags.fill(true),
+        CalibrationGrid::Delay(grid) => grid.flags.fill(true),
+        CalibrationGrid::Antpos(grid) => grid.flagged = true,
+        CalibrationGrid::GainCurve(grid) => grid.flags.fill(true),
+        CalibrationGrid::Opacity(grid) => grid.flagged = true,
+    }
+    Arc::new(grid)
 }

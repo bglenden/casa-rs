@@ -481,6 +481,22 @@ mod tests {
     };
 
     #[test]
+    fn interpolation_round_trip_keeps_the_effective_curve_and_modifiers() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("interpolation.callib");
+        for value in [
+            "nearest,unknown",
+            "linear,cubicflag",
+            "linearperobsperscanPD,splinerel",
+        ] {
+            let mut spec = ApplyCalibrationTableSpec::new(dir.path().join("g.gcal"));
+            spec.interp = ApplyInterpolationMode::parse_casa(value).unwrap();
+            save_apply_specs_to_callib(&path, &[spec.clone()]).unwrap();
+            assert_eq!(load_apply_specs_from_callib(&path).unwrap(), vec![spec]);
+        }
+    }
+
+    #[test]
     fn load_callib_parses_supported_apply_entries() {
         let dir = TempDir::new().expect("tempdir");
         let callib = dir.path().join("apply.callib");

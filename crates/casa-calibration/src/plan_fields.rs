@@ -93,6 +93,37 @@ fn resolve_gainfield_expression(
     }
 }
 
+pub(super) fn selected_spectral_windows(
+    summary: &CalibrationTableSummary,
+    selected: &[ResolvedGainField],
+) -> Result<Vec<i32>, ApplyPlanError> {
+    if selected.is_empty() {
+        return Ok(summary.spectral_window_ids.clone());
+    }
+    let table = Table::open(TableOptions::new(&summary.path)).map_err(|source| {
+        ApplyPlanError::OpenSubtable {
+            path: summary.path.display().to_string(),
+            subtable: "MAIN",
+            source,
+        }
+    })?;
+    let mut windows = BTreeSet::new();
+    for first in (0..table.row_count()).step_by(512) {
+        let indices = (first..table.row_count().min(first + 512)).collect::<Vec<_>>();
+        let fields = load_i32_column_rows(&table, "FIELD_ID", &indices)?;
+        let spws = load_i32_column_rows(&table, "SPECTRAL_WINDOW_ID", &indices)?;
+        for (field, window) in fields.into_iter().zip(spws) {
+            if field.is_some_and(|field| selected.iter().any(|selected| selected.field_id == field))
+            {
+                if let Some(window) = window {
+                    windows.insert(window);
+                }
+            }
+        }
+    }
+    Ok(windows.into_iter().collect())
+}
+
 #[derive(Debug, Clone)]
 struct FieldDirectionInfo {
     field_id: i32,
@@ -107,7 +138,13 @@ fn resolve_gainfield_nearest(
     summary: &CalibrationTableSummary,
     selected_field_ids: &[i32],
 ) -> Result<Vec<ResolvedNearestGainField>, ApplyPlanError> {
-    let ms_fields = load_ms_field_directions(ms, selected_field_ids)?;
+    let all_fields = (0..ms
+        .field()
+        .map_err(|source| ApplyPlanError::Selection { source })?
+        .row_count())
+        .map(|id| id as i32)
+        .collect::<Vec<_>>();
+    let ms_fields = load_ms_field_directions(ms, &all_fields)?;
     let cal_fields = load_caltable_field_directions(summary)?;
     if cal_fields.is_empty() {
         return Err(ApplyPlanError::ResolveGainField {
@@ -120,6 +157,7 @@ fn resolve_gainfield_nearest(
     let mut resolved = Vec::new();
     for ms_field in ms_fields {
         let mut best = None::<(&FieldDirectionInfo, f64)>;
+        let mut tied = false;
         for cal_field in &cal_fields {
             let separation = angular_separation_rad(
                 ms_field.ra_rad,
@@ -128,8 +166,14 @@ fn resolve_gainfield_nearest(
                 cal_field.dec_rad,
             );
             match best {
-                Some((_, best_separation)) if separation >= best_separation => {}
-                _ => best = Some((cal_field, separation)),
+                Some((_, best_separation)) if separation == best_separation => {
+                    tied = true;
+                }
+                Some((_, best_separation)) if separation > best_separation => {}
+                _ => {
+                    best = Some((cal_field, separation));
+                    tied = false;
+                }
             }
         }
         let Some((cal_field, separation)) = best else {
@@ -142,6 +186,17 @@ fn resolve_gainfield_nearest(
                 ),
             });
         };
+        if tied {
+            return Err(ApplyPlanError::ResolveGainField {
+                path: spec.path.display().to_string(),
+                selector: "nearest".to_string(),
+                reason: "more than one calibration field is at the minimum angular distance"
+                    .to_string(),
+            });
+        }
+        if !selected_field_ids.contains(&ms_field.field_id) {
+            continue;
+        }
         resolved.push(ResolvedNearestGainField {
             measurement_set_field_id: ms_field.field_id,
             measurement_set_field_name: ms_field.field_name.clone(),
@@ -255,4 +310,36 @@ fn phase_direction_to_radec(value: &ArrayValue) -> Result<(f64, f64), String> {
 fn angular_separation_rad(ra1: f64, dec1: f64, ra2: f64, dec2: f64) -> f64 {
     let cos_sep = dec1.sin() * dec2.sin() + dec1.cos() * dec2.cos() * (ra1 - ra2).cos();
     cos_sep.clamp(-1.0, 1.0).acos()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+
+    #[test]
+    fn direction_helpers_validate_shape_and_separation() {
+        let phase_dir = ArrayValue::Float64(
+            ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), vec![1.25_f64, -0.5]).unwrap(),
+        );
+        assert_eq!(phase_direction_to_radec(&phase_dir).unwrap(), (1.25, -0.5));
+        assert!(
+            phase_direction_to_radec(&ArrayValue::Int32(
+                ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), vec![1_i32, 2]).unwrap()
+            ))
+            .unwrap_err()
+            .contains("Float64")
+        );
+        assert!(
+            phase_direction_to_radec(&ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![1.0_f64, 2.0]).unwrap()
+            ))
+            .unwrap_err()
+            .contains("unsupported shape")
+        );
+
+        assert!(angular_separation_rad(0.0, 0.0, 0.0, 0.0) < 1.0e-12);
+        let pi = angular_separation_rad(0.0, 0.0, std::f64::consts::PI, 0.0);
+        assert!((pi - std::f64::consts::PI).abs() < 1.0e-12);
+    }
 }

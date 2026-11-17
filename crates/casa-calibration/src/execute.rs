@@ -2094,22 +2094,16 @@ fn apply_row_all_channels(
             let ant1 = bandpass::prepare(
                 ant1,
                 &cal_spw.channel_frequencies_hz,
-                table_plan.interp,
                 data_spw,
-                row,
-                row.antenna1,
                 geometry_cache.as_deref_mut(),
-                &loaded_table.path,
+                loaded_table,
             )?;
             let ant2 = bandpass::prepare(
                 ant2,
                 &cal_spw.channel_frequencies_hz,
-                table_plan.interp,
                 data_spw,
-                row,
-                row.antenna2,
                 geometry_cache.as_deref_mut(),
-                &loaded_table.path,
+                loaded_table,
             )?;
             (ant1, ant2)
         } else {
@@ -3408,6 +3402,7 @@ fn pol_id_of_ddid(ddid_row: usize) -> i32 {
 pub(crate) struct LoadedCalibrationTable {
     pub(crate) path: PathBuf,
     time_plans: HashMap<i32, crate::lookup::TimePlan>,
+    missing_grids: HashMap<i32, Arc<CalibrationGrid>>,
     time_is_delay: bool,
     phase_delay: bool,
     interp: ApplyInterpolationMode,
@@ -4048,7 +4043,15 @@ impl LoadedCalibrationTable {
                     .grid
                     .clone(),
             )),
-            _ => interpolate_time_linear(&self.path, candidates, time_seconds).map(Some),
+            ApplyInterpolationMode::Linear => {
+                interpolate_time_linear(&self.path, candidates, time_seconds).map(Some)
+            }
+            other => Err(ApplyExecutionError::UnsupportedInterpolation {
+                path: self.path.display().to_string(),
+                interp: other,
+                reason: "contextual interpolation requires the common apply time engine (#1518)"
+                    .to_string(),
+            }),
         }
     }
 
@@ -4258,6 +4261,7 @@ fn load_parameters(
         engine: geometry_engine.cloned(),
         solutions,
         time_plans: HashMap::new(),
+        missing_grids: HashMap::new(),
         time_is_delay: false,
         phase_delay: false,
     })
@@ -4329,6 +4333,7 @@ fn load_bpoly_calibration_table(
         engine: None,
         solutions,
         time_plans: HashMap::new(),
+        missing_grids: HashMap::new(),
         time_is_delay: false,
         phase_delay: false,
     })
@@ -5024,6 +5029,7 @@ mod tests {
                 row_index: 4,
                 field_id: 5,
                 observation_id: 6,
+                scan_number: 1,
                 data_desc_id: 7,
                 data_spw_id: 2,
                 polarization_id: 8,

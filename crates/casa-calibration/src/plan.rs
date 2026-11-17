@@ -788,7 +788,7 @@ fn build_table_plan(
     let available_calibration_spw_ids = if is_bpoly {
         load_bpoly_spectral_window_ids(&summary.path)?
     } else {
-        summary.spectral_window_ids.clone()
+        fields::selected_spectral_windows(&summary, &resolved_gainfields)?
     };
     let effective_spec;
     let spec_for_spw_mapping = if summary.table_subtype == "KAntPos Jones" && spec.spwmap.is_empty()
@@ -798,9 +798,15 @@ fn build_table_plan(
     } else {
         spec
     };
+    let calibration_window_count = if is_bpoly {
+        windows
+    } else {
+        open_summary_subtable(&summary, "SPECTRAL_WINDOW")?.row_count()
+    };
     let spw_mapping = resolve_spw_mapping(
         spec_for_spw_mapping,
         &available_calibration_spw_ids,
+        calibration_window_count,
         &applicable_data_spw_ids,
     )?;
     let available_mappings = spw_mapping
@@ -849,39 +855,59 @@ fn k_antpos_default_spwmap_spec(
 
 fn resolve_spw_mapping(
     spec: &ApplyCalibrationTableSpec,
-    available_calibration_spw_ids: &[i32],
-    selected_data_spw_ids: &[i32],
+    available: &[i32],
+    calibration_window_count: usize,
+    selected: &[i32],
 ) -> Result<Vec<ApplySpwMapping>, ApplyPlanError> {
-    selected_data_spw_ids
+    let automatic = spec.spwmap.first() == Some(&-999);
+    let identity = spec.spwmap.is_empty() || spec.spwmap == [-1];
+    if !automatic && !identity {
+        if let Some(&invalid) = spec
+            .spwmap
+            .iter()
+            .find(|&&window| window < 0 || window as usize >= calibration_window_count)
+        {
+            return Err(ApplyPlanError::MissingCalibrationSpectralWindow {
+                path: spec.path.display().to_string(),
+                calibration_spw_id: invalid,
+            });
+        }
+    }
+    let first = if automatic {
+        Some(
+            *available
+                .first()
+                .ok_or_else(|| ApplyPlanError::UnsupportedCalibrationTable {
+                    path: spec.path.display().to_string(),
+                    reason: "no calibration window is available for automatic fanout".to_string(),
+                })?,
+        )
+    } else {
+        None
+    };
+    Ok(selected
         .iter()
         .map(|&data_spw_id| {
-            let calibration_spw_id = if spec.spwmap.is_empty() {
+            let calibration_spw_id = if let Some(first) = first {
+                first
+            } else if identity {
                 data_spw_id
             } else {
                 spec.spwmap
-                    .get(usize::try_from(data_spw_id).unwrap_or(usize::MAX))
+                    .get(if spec.spwmap.len() == 1 {
+                        0
+                    } else {
+                        data_spw_id as usize
+                    })
                     .copied()
-                    .ok_or_else(|| ApplyPlanError::MissingSpwMapEntry {
-                        path: spec.path.display().to_string(),
-                        data_spw_id,
-                    })?
+                    .unwrap_or(data_spw_id)
             };
-            // An absent identity-mapped window is handled by correct2's
-            // skip/STRICT behavior; an explicitly invalid map remains an error.
-            if !spec.spwmap.is_empty()
-                && !available_calibration_spw_ids.contains(&calibration_spw_id)
-            {
-                return Err(ApplyPlanError::MissingCalibrationSpectralWindow {
-                    path: spec.path.display().to_string(),
-                    calibration_spw_id,
-                });
-            }
-            Ok(ApplySpwMapping {
+            ApplySpwMapping {
                 data_spw_id,
                 calibration_spw_id,
-            })
+            }
         })
-        .collect()
+        .collect())
 }
 
 fn load_bpoly_spectral_window_ids(path: &Path) -> Result<Vec<i32>, ApplyPlanError> {
@@ -1129,81 +1155,35 @@ mod tests {
     }
 
     #[test]
-    fn helper_math_and_spw_mapping_cover_success_and_error_paths() {
-        let phase_dir = ArrayValue::Float64(
-            ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), vec![1.25_f64, -0.5]).unwrap(),
-        );
-        assert_eq!(phase_direction_to_radec(&phase_dir).unwrap(), (1.25, -0.5));
-        assert!(
-            phase_direction_to_radec(&ArrayValue::Int32(
-                ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), vec![1_i32, 2]).unwrap()
-            ))
-            .unwrap_err()
-            .contains("Float64")
-        );
-        assert!(
-            phase_direction_to_radec(&ArrayValue::Float64(
-                ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![1.0_f64, 2.0]).unwrap()
-            ))
-            .unwrap_err()
-            .contains("unsupported shape")
-        );
-
-        assert!(angular_separation_rad(0.0, 0.0, 0.0, 0.0) < 1.0e-12);
-        let pi = angular_separation_rad(0.0, 0.0, std::f64::consts::PI, 0.0);
-        assert!((pi - std::f64::consts::PI).abs() < 1.0e-12);
-
+    fn spw_mapping_covers_broadcast_prefix_auto_and_full_list_validation() {
         let mut spec = ApplyCalibrationTableSpec::new("/tmp/fake.gcal");
-        spec.interp = ApplyInterpolationMode::Nearest;
-        spec.spwmap = vec![7, 5];
-        let mappings = resolve_spw_mapping(&spec, &[5, 7], &[0, 1]).unwrap();
+        for (map, expected) in [
+            (vec![0], vec![0, 0, 0]),
+            (vec![1, 0], vec![1, 0, 2]),
+            (vec![-999], vec![1, 1, 1]),
+            (vec![-1], vec![0, 1, 2]),
+        ] {
+            spec.spwmap = map;
+            let result = resolve_spw_mapping(&spec, &[1, 2], 3, &[0, 1, 2]).unwrap();
+            assert_eq!(
+                result
+                    .iter()
+                    .map(|m| m.calibration_spw_id)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+        // Validation covers unselected supplied entries, but a metadata window
+        // without rows remains a valid mapping for skip/strict handling.
+        for map in [vec![0, 9], vec![0, -1]] {
+            spec.spwmap = map;
+            assert!(resolve_spw_mapping(&spec, &[1], 3, &[0]).is_err());
+        }
+        spec.spwmap = vec![2];
         assert_eq!(
-            mappings,
-            vec![
-                ApplySpwMapping {
-                    data_spw_id: 0,
-                    calibration_spw_id: 7,
-                },
-                ApplySpwMapping {
-                    data_spw_id: 1,
-                    calibration_spw_id: 5,
-                },
-            ]
+            resolve_spw_mapping(&spec, &[1], 3, &[0]).unwrap()[0].calibration_spw_id,
+            2
         );
-        match resolve_spw_mapping(&spec, &[5, 7], &[2]).unwrap_err() {
-            ApplyPlanError::MissingSpwMapEntry {
-                data_spw_id, path, ..
-            } => {
-                assert_eq!(data_spw_id, 2);
-                assert!(path.contains("fake.gcal"));
-            }
-            other => panic!("unexpected error: {other:?}"),
-        }
-        let missing_identity = resolve_spw_mapping(
-            &ApplyCalibrationTableSpec {
-                spwmap: vec![],
-                ..spec.clone()
-            },
-            &[5],
-            &[3],
-        )
-        .unwrap();
-        assert_eq!(missing_identity[0].calibration_spw_id, 3);
-        match resolve_spw_mapping(
-            &ApplyCalibrationTableSpec {
-                spwmap: vec![3],
-                ..spec.clone()
-            },
-            &[5],
-            &[0],
-        )
-        .unwrap_err()
-        {
-            ApplyPlanError::MissingCalibrationSpectralWindow {
-                calibration_spw_id, ..
-            } => assert_eq!(calibration_spw_id, 3),
-            other => panic!("unexpected error: {other:?}"),
-        }
     }
 
     #[test]

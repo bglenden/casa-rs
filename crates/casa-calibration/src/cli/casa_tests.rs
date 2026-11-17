@@ -306,13 +306,9 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         // CASA's default: a solve with no reference antenna.
         ("refant", json!("")),
         ("smodel", json!([1, 0.1, 0, 0])),
-        ("interp", json!(["cubic"])),
     ] {
         let mut values = base.clone();
         values[name] = value.clone();
-        if name == "interp" {
-            values["gaintable"] = json!(["prior.gcal"]);
-        }
         let message = refused(casa("gaincal", values), name);
         assert!(message.contains("#979"), "{name}={value}: {message}");
     }
