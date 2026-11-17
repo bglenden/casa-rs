@@ -179,6 +179,33 @@ def multi_window(vis, gain, root, windows=3, name='multi'):
     return multi_vis, multi_gain
 
 
+def stale_control(source, destination, swap_fields=False):
+    """Retain published payload/sync rows with the prior control-file count."""
+    shutil.copytree(source, destination)
+    for path in destination.iterdir():
+        if path.is_file():
+            path.chmod(0o600)
+    tool = table()
+    tool.open(str(destination), nomodify=False)
+    if swap_fields:
+        tool.putcol('FIELD_ID', 1-tool.getcol('FIELD_ID'))
+    count = tool.nrows()
+    tool.close()
+    main = {path.name: path.read_bytes() for path in destination.iterdir() if path.is_file()}
+    tool.open(str(destination), nomodify=False)
+    tool.removerows([count-1])
+    tool.close()
+    assert (destination/'table.dat').read_bytes() != main['table.dat']
+    # All metadata is produced by C++; restore the complete storage and
+    # published sync data while retaining the earlier table.dat counts.
+    for name, value in main.items():
+        if name != 'table.dat':
+            (destination/name).write_bytes(value)
+    tool.open(str(destination))
+    assert tool.nrows() == count
+    tool.close()
+
+
 def run(root, native_bin):
     from casars import tasks as native
     assert casa.version_string() == '6.7.6.14'
@@ -232,7 +259,7 @@ def run(root, native_bin):
                 metadata(*paths)
                 if records[0].get('listing') is not None:
                     compare_listing(records[0]['listing'], records[1]['listing'])
-            except AssertionError as error:
+            except (AssertionError, RuntimeError, OSError) as error:
                 results['comparison_failures'].append(dict(case=name, message=str(error)))
         try:
             compare_history(records[0]['history'], records[1]['history'], paths, name)
@@ -257,7 +284,7 @@ def run(root, native_bin):
     readonly_gain = root/'big-endian-readonly.gcal'
     tool = table()
     tool.open(str(selected))
-    ordered = tool.query(sortlist='SPECTRAL_WINDOW_ID,TIME,ANTENNA1,ANTENNA2')
+    ordered = tool.query(query='True', sortlist='SPECTRAL_WINDOW_ID,TIME,ANTENNA1,ANTENNA2')
     copied = ordered.copy(str(readonly_gain), deep=True, valuecopy=True, endian='big')
     copied.close()
     ordered.close()
@@ -266,6 +293,10 @@ def run(root, native_bin):
         if path.is_file():
             path.chmod(0o444)
     case('big-endian-readonly', source=readonly_gain)
+    for suffix, swap in [('transfer', False), ('reference', True)]:
+        stale = root/f'stale-control-{suffix}.gcal'
+        stale_control(readonly_gain, stale, swap_fields=swap)
+        case(f'stale-control-{suffix}', source=stale)
     qa = quanta()
     stamp = lambda time: qa.time(qa.quantity(float(time), 's'), form='ymd', prec=10)[0]
     unique = sorted(set(times))

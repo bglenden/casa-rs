@@ -155,6 +155,11 @@ fn copy_and_scale(
         }
     }
     let mut output = Table::open(TableOptions::new(stage)).map_err(failed)?;
+    // CASA may publish appended rows only in the source's sync data. That
+    // lock file is not copied; rebuild columns if table.dat trails it.
+    if output.row_count() != rows.len() {
+        return Ok(false);
+    }
     let mut changed = Vec::new();
     output.reserve_array_cell_updates("CPARAM", rows.len());
     {
