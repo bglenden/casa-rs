@@ -23,7 +23,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
 | flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
-| fluxscale | fluxscale | yes | 15 | 15 | 0 | 6 | 3 | 0 |
+| fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
 | gaincal | gaincal | yes | 38 | 38 | 0 | 11 | 4 | 0 |
 | gencal | gencal | yes | 14 | 14 | 0 | 8 | 4 | 0 |
 | imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
@@ -148,10 +148,133 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #979: `listfile`, `antenna`, `timerange`, `scan`, `fitorder`, `display`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`
 - Shared parameters: 15, in CASA's order: yes
 - Defaults that differ: none
+
+#### fluxscale parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `50182477cabf77d75728015a6d40bdb2559eebd5`. Status counts: Default only: 0, Implemented: 15, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Scalar MS path; FIELD grammar and ANTENNA metadata resolve against the MS, and successful calls append HISTORY. [products](#fluxscale-behavior-products)<br>Catalog domain: `path` (measurement_set) | [oracle](#fluxscale-evidence-oracle) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | G/T Jones complex, single-channel gains; flagged samples and unequal intervals, undefined/type errors and duplicate timestamps. [estimate](#fluxscale-behavior-estimate)<br>Catalog domain: `path` (calibration_table) | [oracle](#fluxscale-evidence-oracle) |
+| `fluxtable` | `''` | `''`; `fluxtable` → `fluxtable` | Implemented | Full gains or incremental corrections with all scientific columns, owning subtables and atomic publication. [products](#fluxscale-behavior-products)<br>Catalog domain: `path` (calibration_table) | [oracle](#fluxscale-evidence-oracle) |
+| `reference` | `[]` | `[]`; `reference` → `reference` | Implemented | Scalar/vector FIELD grammar, numeric IDs, names, regex and quoted punctuation; equal reference-field means and missing solutions. [selection](#fluxscale-behavior-selection)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [oracle](#fluxscale-evidence-oracle) |
+| `transfer` | `[]` | `[]`; `transfer` → `transfer` | Implemented | Scalar/vector FIELD grammar; empty selects non-reference solved fields; unselected fields remain in full products. [selection](#fluxscale-behavior-selection)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [oracle](#fluxscale-evidence-oracle) |
+| `listfile` | `''` | `''`; `listfile` → `listfile` | Implemented | Fluxes, errors, counts and fitted spectra written to the requested text file; overlapping scientific input/output paths are refused. [products](#fluxscale-behavior-products)<br>Catalog domain: `string` | [oracle](#fluxscale-evidence-oracle) |
+| `append` | `False` | `False`; `append` → `append` | Implemented | Creates a new table or appends sorted full/incremental products, preserves metadata, and supports cross-engine append. [products](#fluxscale-behavior-products)<br>Catalog domain: `bool` | [oracle](#fluxscale-evidence-oracle) |
+| `refspwmap` | `[-1]` | `[-1]`; `refspwmap` → `refspwmap` | Implemented | Singleton broadcast, per-window mapping, negative sentinel and Python bool-to-int coercion; empty vector safely means identity. [estimate](#fluxscale-behavior-estimate)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [oracle](#fluxscale-evidence-oracle) |
+| `gainthreshold` | `-1.0` | `-1.0`; `gainthreshold` → `gainthreshold` | Implemented | Disabled negative/default threshold, Float32 median boundaries and CASA antenna/time/scan threshold-population semantics. [estimate](#fluxscale-behavior-estimate)<br>Catalog domain: `float` | [oracle](#fluxscale-evidence-oracle) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Names, IDs, ranges, baseline expressions and partial !antenna restrictions combined with time/scan. [selection](#fluxscale-behavior-selection)<br>Catalog domain: `string` | [oracle](#fluxscale-evidence-oracle) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | Shared CASA time grammar including partial dates and ranges, evaluated against the selected logical rows. [selection](#fluxscale-behavior-selection)<br>Catalog domain: `string` | [oracle](#fluxscale-evidence-oracle) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Numeric ranges, unions and comparisons, including partial antenna/time combinations. [selection](#fluxscale-behavior-selection)<br>Catalog domain: `string` | [oracle](#fluxscale-evidence-oracle) |
+| `incremental` | `False` | `False`; `incremental` → `incremental` | Implemented | One correction per field/window/antenna with CASA time/grid, metadata, reference identity and PARAMERR/SNR conventions. [products](#fluxscale-behavior-products)<br>Catalog domain: `bool` | [oracle](#fluxscale-evidence-oracle) |
+| `fitorder` | `1` | `1`; `fitorder` → `fitorder` | Implemented | Constant, linear and higher determined polynomial fits with covariance and errors; negative fallback, bounded degree and padded results. [fits](#fluxscale-behavior-fits)<br>Catalog domain: `integer` | [oracle](#fluxscale-evidence-oracle) |
+| `display` | `False` | `False`; `display` → `display` | Implemented | CASA 6.7.6.14 plotting hooks are empty; True is verified to produce the same scientific output without a plot. [products](#fluxscale-behavior-products)<br>Catalog domain: `bool` | [oracle](#fluxscale-evidence-oracle) |
+
+#### fluxscale interacting modes and task behavior
+
+<a id="fluxscale-behavior-estimate"></a>
+##### Transfer flux and uncertainties
+
+**Implemented** — Unit time weights, per-antenna/polarization means, equal reference-field weighting, median ratios, CASA flux error and solution count.
+
+The original 4.8% discrepancy is corrected. CASA and native return 1.014581621096799 Jy, 0.03767496546937333 Jy error and 10 solutions.
+
+Evidence: [oracle](#fluxscale-evidence-oracle).
+
+<a id="fluxscale-behavior-selection"></a>
+##### Selections and reference populations
+
+**Implemented** — Reference/transfer FIELD grammar and antenna/time/scan combinations change estimation while preserving unselected full-product rows.
+
+Fourteen captured same-input selector fixtures and the public-Python oracle cover the independent source-derived populations.
+
+Evidence: [oracle](#fluxscale-evidence-oracle).
+
+<a id="fluxscale-behavior-products"></a>
+##### Products, public Python state and exchange
+
+**Implemented** — All 15 names/order/defaults, positional/keyword calls, return/error policy, full/incremental/append tables, listing and successful/failed MS HISTORY.
+
+CASA reads native products and both engines append each other's products. Native computation does not require CASA.
+
+Evidence: [oracle](#fluxscale-evidence-oracle).
+
+<a id="fluxscale-behavior-fits"></a>
+##### Multi-window spectral fits
+
+**Implemented** — Fitted reference frequency, flux/errors, coefficient/errors and covariance for orders 0 through 4, retaining stricter existing linear tests.
+
+CASA crashes and underdetermined/zero-degree-of-freedom defects are corrected under the standing CASA-bug policy.
+
+Evidence: [oracle](#fluxscale-evidence-oracle).
+
+#### fluxscale deviations and unfinished work
+
+##### safe-spectral-orders: Previously agreed
+
+- Record: [Fluxscale negative and underdetermined spectral-fit orders](https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/docs/CASA%20%28C%2B%2B%29%20bugs.md#fluxscale-negative-and-underdetermined-spectral-fit-orders)
+- Inputs: Negative order, too few valid windows for requested degree, or an exactly determined fit.
+- CASA: Can segfault, fit the wrong degree, return unstable coefficients/negative covariance, or invent roundoff uncertainty.
+- casa-rs: Use advertised negative-order fallback; cap degree at nvalid-1, pad requested vectors and retain zero residual uncertainty at zero residual degrees of freedom.
+- Rationale: Implement identifiable fits and CASA's advertised fallback while retaining existing strict linear-fit behavior.
+- User impact: Determined fits agree; invalid memory access and unstable underdetermined artifacts are corrected.
+- Owner decision: Standing owner rule in AGENTS.md: correct CASA crashes, out-of-bounds writes, corrupt data or behavior contradicting evident intent.
+- Evidence: [oracle](#fluxscale-evidence-oracle).
+
+##### initialized-history-and-empty-map: Previously agreed
+
+- Record: [Fluxscale history can contain uninitialized object identifiers](https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/docs/CASA%20%28C%2B%2B%29%20bugs.md#fluxscale-history-can-contain-uninitialized-object-identifiers)
+- Inputs: Successful MS HISTORY writes or refspwmap=[].
+- CASA: Does not initialize OBJECT_ID; indexes an empty map and segfaults.
+- casa-rs: Initialize OBJECT_ID=0 and treat the empty map as identity.
+- Rationale: Avoid uninitialized scientific provenance and invalid memory access.
+- User impact: Stable provenance; empty mapping is safe.
+- Owner decision: Standing owner rule in AGENTS.md: correct CASA crashes, out-of-bounds writes, corrupt data or behavior contradicting evident intent.
+- Evidence: [oracle](#fluxscale-evidence-oracle).
+
+##### preserve-scientific-files: Previously agreed
+
+- Record: [Fluxscale listfile can overwrite scientific table files](https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/docs/CASA%20%28C%2B%2B%29%20bugs.md#fluxscale-listfile-can-overwrite-scientific-table-files)
+- Inputs: A listing path inside the input MS, input caltable or output product, or a failed listing stream.
+- CASA: Can truncate a scientific table file or report success despite an unchecked stream failure.
+- casa-rs: Refuse overlapping paths before mutation and report listing write failures.
+- Rationale: Preserve scientific data and fulfill the requested text output.
+- User impact: Potentially destructive paths are refused; ordinary listing paths work.
+- Owner decision: Standing owner rule in AGENTS.md: correct CASA crashes, out-of-bounds writes, corrupt data or behavior contradicting evident intent.
+- Evidence: [oracle](#fluxscale-evidence-oracle).
+
+#### fluxscale evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="fluxscale-evidence-oracle"></a>
+##### oracle
+
+**Scientific, Python API/state and interchange comparison — passed.** 70 cases passed, zero comparison failures; all 15 owned parameters have implemented behavior. 67 same-argument public-Python cases on the same CASA-made G/T gains, plus 3 documented spectral-order corrections checked against identifiable CASA fits; captured original/selector fixtures and independent C++ readback.
+
+- [tools/casa-compat/fluxscale_oracle.py](https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/tools/casa-compat/fluxscale_oracle.py)
+- [crates/casa-calibration/tests/fluxscale_casa_fixture.rs](https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/crates/casa-calibration/tests/fluxscale_casa_fixture.rs)
+- Revision: `8d4d6a51316d7566b5ab4c4758f615363424ee19`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/final-orders --native-bin target/calibration-990/build/release/calibrate`.
+- Receipt: `resources/casa-compat/evidence/fluxscale-20261117.json`.
+
+<a id="fluxscale-evidence-performance"></a>
+##### performance
+
+**Matched public-Python performance — measured.** Full output is 6.3–6.5× faster and incremental output 25.2–27.0× faster than CASA across warm/cold policies. Estimation takes about 7 ms; table I/O dominates, with CPU decoding/serialization and the native reader/rewrite references reported explicitly. Alternating same-host, one-worker warm/cold full and incremental calls, equal validated products; separate fresh imports and peak memory, estimator phases and native table-reader floor.
+
+- [tools/perf/calibrate/fluxscale.py](https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/tools/perf/calibrate/fluxscale.py)
+- Revision: `e7f859f76413872af29fb54a28149e81bcab65e6`; CASA: `6.7.6.14`.
+- Command: `python tools/perf/calibrate/fluxscale.py --vis <oracle-ms> --gain <oracle-gain> --native-bin <release-calibrate> --repeat-input 1000 --repeats 5 --cache warm|cold --out <receipt>`.
+- Receipt: `resources/casa-compat/evidence/fluxscale-performance-20261117.json`.
 
 ### gaincal
 

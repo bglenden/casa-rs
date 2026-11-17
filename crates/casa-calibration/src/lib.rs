@@ -68,8 +68,8 @@ pub use execute::{
     execute_apply, execute_apply_from_path, execute_apply_from_path_with_options,
 };
 pub use fluxscale::{
-    FluxScaleError, FluxScaleFieldResult, FluxScaleReport, FluxScaleRequest, FluxScaleSpwResult,
-    fluxscale,
+    FluxScaleError, FluxScaleFieldResult, FluxScaleOptions, FluxScaleReport, FluxScaleRequest,
+    FluxScaleSpwResult, fluxscale,
 };
 pub use gencal::{GencalError, GencalReport, GencalRequest, GencalType, gencal};
 pub use lookup::{

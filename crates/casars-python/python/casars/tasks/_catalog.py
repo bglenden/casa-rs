@@ -685,7 +685,7 @@ def bandpass(
     return _call_casa(bandpass, locals())
 
 def fluxscale(
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    vis: StrPath = '',
     caltable: StrPath = '',
     fluxtable: StrPath = '',
     reference: str | list[str] | tuple[str, ...] = [],
@@ -708,9 +708,6 @@ def fluxscale(
     """Scale gain solutions using reference calibrator fields.
 
     CASA's ``fluxscale``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #979:
-    ``listfile``, ``antenna``, ``timerange``, ``scan``, ``fitorder``,
-    ``display``.
     """
     return _call_casa(fluxscale, locals())
 

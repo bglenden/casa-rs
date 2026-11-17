@@ -295,8 +295,16 @@ impl StManArrayFileReader {
         let target = u64::try_from(offset).map_err(|_| {
             StorageError::FormatMismatch("negative indirect array offset".to_string())
         })?;
-        if self.pos != target {
-            self.file.seek(SeekFrom::Start(target))?;
+        // Any failed seek/header read leaves the physical cursor uncertain.
+        let previous = std::mem::replace(&mut self.pos, u64::MAX);
+        if previous != target {
+            if let Some(gap) = target.checked_sub(previous).filter(|gap| *gap < 8) {
+                // Aligned records commonly leave only a few padding bytes.
+                // Preserve the buffered payload rather than seeking the file.
+                self.file.seek_relative(gap as i64)?;
+            } else {
+                self.file.seek(SeekFrom::Start(target))?;
+            }
         }
         if self.version > 0 {
             let _ref_count = read_u32(&mut self.file, self.bo)?;
@@ -333,7 +341,9 @@ impl StManArrayFileReader {
         if total == 0 {
             return Ok(Some(make_empty_array(dt, &shape)));
         }
-        let data_position = self.pos;
+        // Typed reads can fail after consuming part of a cell, including
+        // strings that seek internally. Restore knowledge only on success.
+        let data_position = std::mem::replace(&mut self.pos, u64::MAX);
         let array_value = self.read_typed_data(dt, total, &shape)?;
         // String payloads seek internally; other cells have a known length.
         self.pos = if dt == CasacoreDataType::TpString {
@@ -500,6 +510,9 @@ pub(crate) struct StManArrayFileWriter {
     bo: ArrayFileByteOrder,
     version: u32,
     file_length: i64,
+    /// Known logical EOF after numeric payloads; string indirection and
+    /// finishing the file can leave its cursor elsewhere.
+    sequential_end: Option<i64>,
 }
 
 impl StManArrayFileWriter {
@@ -528,6 +541,7 @@ impl StManArrayFileWriter {
             bo,
             version,
             file_length,
+            sequential_end: Some(file_length),
         })
     }
 
@@ -549,6 +563,7 @@ impl StManArrayFileWriter {
             bo,
             version,
             file_length,
+            sequential_end: Some(file_length),
         })
     }
 
@@ -577,7 +592,16 @@ impl StManArrayFileWriter {
         // Align to 8 bytes.
         self.file_length = (self.file_length + 7) / 8 * 8;
         let offset = self.file_length;
-        self.file.seek(SeekFrom::Start(offset as u64))?;
+        let padding = self
+            .sequential_end
+            .take()
+            .and_then(|end| offset.checked_sub(end))
+            .filter(|padding| (0..8).contains(padding));
+        if let Some(padding) = padding {
+            self.file.write_all(&[0; 7][..padding as usize])?;
+        } else {
+            self.file.seek(SeekFrom::Start(offset as u64))?;
+        }
 
         // Write refcount for version > 0.
         let mut header_bytes: i64 = 0;
@@ -602,6 +626,9 @@ impl StManArrayFileWriter {
 
         // Write the actual array data.
         self.write_typed_data(value, dt)?;
+        if dt != CasacoreDataType::TpString {
+            self.sequential_end = Some(self.file_length);
+        }
 
         Ok(offset)
     }
@@ -712,6 +739,7 @@ impl StManArrayFileWriter {
     }
 
     fn flush_header(&mut self) -> Result<(), StorageError> {
+        self.sequential_end = None;
         self.file.seek(SeekFrom::Start(0))?;
         write_u32(&mut self.file, self.version, self.bo)?;
         write_i64(&mut self.file, self.file_length, self.bo)?;
@@ -722,6 +750,7 @@ impl StManArrayFileWriter {
     ///
     /// Must be called after all arrays have been written.
     pub(crate) fn finish(&mut self) -> Result<(), StorageError> {
+        self.sequential_end = None;
         self.flush_header()?;
         self.file.flush()?;
         Ok(())
@@ -1256,3 +1285,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod buffer_tests;

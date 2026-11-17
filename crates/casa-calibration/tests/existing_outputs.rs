@@ -110,6 +110,7 @@ fn gaincal_replaces_and_fluxscale_refuses_an_existing_product() {
     let scaled = dir.path().join("scaled.gcal");
     let scale = || {
         fluxscale(&FluxScaleRequest {
+            options: Default::default(),
             append: false,
             input_table: input.clone(),
             output_table: scaled.clone(),

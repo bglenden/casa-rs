@@ -11,18 +11,24 @@ use casa_provider_contracts::{
 use casa_types::quanta::{Quantity, Unit};
 use thiserror::Error;
 
+mod casa_numeric;
+
 /// Normalize a value according to the concept's invariant domain and rule.
 pub fn normalize_value(
     value: &ParameterValue,
     concept: &ParameterConcept,
 ) -> Result<ParameterValue, NormalizationError> {
     validate_wrapped_values(value)?;
-    reject_forbidden_strings(
-        value,
-        names_project(&concept.normalization),
-        matches!(concept.normalization, NormalizationRule::TcleanField),
-    )?;
-    let value = if reads_numbers_as_text(&concept.normalization) {
+    if !matches!(concept.normalization, NormalizationRule::CasaField) {
+        reject_forbidden_strings(
+            value,
+            names_project(&concept.normalization),
+            matches!(concept.normalization, NormalizationRule::TcleanField),
+        )?;
+    }
+    let value = if matches!(concept.normalization, NormalizationRule::BooleanAsInteger) {
+        casa_numeric::boolean_as_integer(value)
+    } else if reads_numbers_as_text(&concept.normalization) {
         number_as_text(value)
     } else {
         value.clone()
@@ -389,6 +395,7 @@ fn apply_rule(
         NormalizationRule::Quantity { canonical_unit } => {
             map_strings(value, |value| normalize_quantity(value, canonical_unit))
         }
+        NormalizationRule::BooleanAsInteger | NormalizationRule::CasaField => Ok(value),
         NormalizationRule::NumberAsText => map_strings(value, |value| Ok(value.trim().to_string())),
         NormalizationRule::Sequence { rules } => {
             let mut value = value;

@@ -1,0 +1,7453 @@
+{
+  "casa_version": "6.7.6.14",
+  "native_revision": "8d4d6a51316d7566b5ab4c4758f615363424ee19",
+  "harness_revision": "50182477cabf77d75728015a6d40bdb2559eebd5",
+  "signature": "(vis='', caltable='', fluxtable='', reference=[], transfer=[], listfile='', append=False, refspwmap=[-1], gainthreshold=-1.0, antenna='', timerange='', scan='', incremental=False, fitorder=1, display=False)",
+  "comparison_failures": [],
+  "cases": {
+    "original": {
+      "arguments": {},
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "t-jones": {
+      "arguments": {},
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9624320886597723,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0742531537365242,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                5.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9624320886597723,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9624320886597723,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0742531537365242,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                5.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9624320886597723,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "t-incremental": {
+      "arguments": {
+        "incremental": true
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9624320886597723,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0742531537365242,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                5.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9624320886597723,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9624320886597723,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0742531537365242,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                5.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9624320886597723,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "partial-sparse-time": {
+      "arguments": {
+        "antenna": "!0",
+        "scan": "2",
+        "incremental": true
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9619003233275294,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.09875438651843277,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9619003233275294,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9619003233275294,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.09875438651843278,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9619003233275294,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "partial-suppressed-duplicate": {
+      "arguments": {
+        "antenna": "!0",
+        "scan": "2"
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Error in Calibrater::fluxscale.",
+        "history_rows": 1
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "fluxscale failed: unsupported input calibration table fluxscale input: multiple gain solutions in one timestamp for field=1 spw=0 antenna=0",
+        "history_rows": 1
+      }
+    },
+    "antenna-id": {
+      "arguments": {
+        "antenna": "0"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.024951459067888,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.009424421220529833,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                8.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.024951459067888,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.024951459067888,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.009424421220529833,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                8.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.024951459067888,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "antenna-name": {
+      "arguments": {
+        "antenna": "A0"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.024951459067888,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.009424421220529833,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                8.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.024951459067888,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.024951459067888,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.009424421220529833,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                8.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.024951459067888,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "antenna-range": {
+      "arguments": {
+        "antenna": "0~2"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.024951459067888,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.011869609856780214,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                8.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.024951459067888,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.024951459067888,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.011869609856780214,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                8.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.024951459067888,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "antenna-negated": {
+      "arguments": {
+        "antenna": "!0"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.8133643726034571,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                2.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.8133643726034571,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.8133643726034571,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                2.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.8133643726034571,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "antenna-auto": {
+      "arguments": {
+        "antenna": "0&&"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.8133643726034571,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                2.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.8133643726034571,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.8133643726034571,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                2.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.8133643726034571,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "baseline": {
+      "arguments": {
+        "antenna": "0&1"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.03725689894537,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                2.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.03725689894537,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.03725689894537,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                2.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.03725689894537,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "time": {
+      "arguments": {
+        "timerange": "2019/12/31/21:52:25.2960~2019/12/31/21:53:55.2960"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9994181696622568,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03842342058943386,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9994181696622568,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9994181696622568,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03842342058943386,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9994181696622568,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "scan-list": {
+      "arguments": {
+        "scan": "1,3"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.0777608183405514,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.09640491203159791,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.0777608183405514,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.0777608183405514,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.09640491203159791,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.0777608183405514,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "scan-comparison": {
+      "arguments": {
+        "scan": ">1"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9935350295640997,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.053894911561419574,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9935350295640997,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9935350295640997,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.05389491156141959,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9935350295640997,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "partial-time": {
+      "arguments": {
+        "antenna": "!0",
+        "timerange": "2019/12/31/21:52:25.2960~2019/12/31/21:53:55.2960"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9994181696622568,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03842342058943386,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9994181696622568,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9994181696622568,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03842342058943386,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9994181696622568,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "partial-scan": {
+      "arguments": {
+        "antenna": "!0",
+        "scan": "1"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.0227437319263277,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1505303453095989,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.0227437319263277,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.0227437319263277,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1505303453095989,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.0227437319263277,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "reference-regex": {
+      "arguments": {
+        "reference": [
+          "/FL.*/"
+        ]
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "reference-part-missing": {
+      "arguments": {
+        "reference": "0,999"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "transfer-default": {
+      "arguments": {
+        "transfer": []
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "threshold": {
+      "arguments": {
+        "gainthreshold": 0.1
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9551087599586223,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.036725000209956726,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9551087599586223,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9551087599586223,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03672500020995672,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9551087599586223,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "threshold-large": {
+      "arguments": {
+        "gainthreshold": 2
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "threshold-negative": {
+      "arguments": {
+        "gainthreshold": -2
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "numeric-bool": {
+      "arguments": {
+        "refspwmap": false,
+        "gainthreshold": true,
+        "fitorder": true
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "fit-zero-single": {
+      "arguments": {
+        "fitorder": 0
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0
+            ],
+            "spidxerr": [
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0
+            ],
+            "spidxerr": [
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "display": {
+      "arguments": {
+        "display": true
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "incremental": {
+      "arguments": {
+        "incremental": true
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "positional": {
+      "arguments": {},
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "listfile": {
+      "arguments": {
+        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/final-orders/flux.txt"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "listing": "# Flux density for PHASE in SpW=0 (freq=1.00004e+11 Hz) is: 1.01458 +/- 0.037675 (SNR = 26.9299, N = 10)\n",
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "listing": "# Flux density for PHASE in SpW=0 (freq=1.00004e11 Hz) is: 1.01458e0 +/- 3.76750e-2 (SNR = 2.69299e1, N = 10)\n",
+        "history_rows": 22
+      }
+    },
+    "unequal-flagged": {
+      "arguments": {},
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.037714406583515,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                9.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.037714406583515,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                9.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "quoted-fields": {
+      "arguments": {
+        "reference": "\"FLUX, field\"",
+        "transfer": "\"PHASE$dollar\""
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE$dollar",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE$dollar",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "unavailable-reference": {
+      "arguments": {
+        "reference": [
+          "FLUX",
+          "REF2"
+        ]
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "multiple-references": {
+      "arguments": {
+        "reference": [
+          "FLUX",
+          "REF2"
+        ]
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.2536454002304864,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.018837481488761236,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.2536454002304864,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.2536454002304864,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.018837481488761236,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.2536454002304864,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "output-field-subset": {
+      "arguments": {},
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "unmatched-transfer": {
+      "arguments": {
+        "transfer": [
+          "PHASE",
+          "REF2"
+        ]
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9106350711033749,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                2.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9106350711033749,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9106350711033749,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                2.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9106350711033749,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "blank-reference-token": {
+      "arguments": {
+        "reference": [
+          "",
+          "FLUX"
+        ]
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Field Expression: Parse error at or near ','\n(near char. 1 in string \",FLUX\")",
+        "history_rows": 0
+      },
+      "native": {
+        "error": "ValueError",
+        "message": "reason='validate provider invocation parameters: profile diagnostics: [Diagnostic { level: Error, code: MissingRequired, message: \"required parameter \\\\\"reference\\\\\" is missing or empty\", parameter: Some(\"reference\"), location: None, suggestions: [] }]'",
+        "history_rows": 0
+      }
+    },
+    "listfile-mapped": {
+      "arguments": {
+        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/final-orders/mapped.txt",
+        "refspwmap": [
+          0
+        ]
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                1.625712369547564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.06097466834385031,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                3.5185188203919564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.11436552094525977,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.00042541969979589356,
+                -0.001202926870844297
+              ],
+              [
+                -0.001202926870844297,
+                0.2533820421090598
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.7999505057811982,
+            "fitFluxdErr": 0.04891635383025902,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.25526056323572843,
+              5.617254717139121
+            ],
+            "spidxerr": [
+              0.011802603724422031,
+              0.28804274658256873
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "listing": "# Flux density for PHASE in SpW=0 (freq=1.00004e+11 Hz) is: 1.01458 +/- 0.037675 (SNR = 26.9299, N = 10)\n# Flux density for PHASE in SpW=1 (freq=1.10004e+11 Hz) (ref SpW=0) is: 1.62571 +/- 0.0609747 (SNR = 26.6621, N = 10)\n# Flux density for PHASE in SpW=2 (freq=1.25004e+11 Hz) (ref SpW=0) is: 3.51852 +/- 0.114366 (SNR = 30.7656, N = 10)\n# Fitted spectrum for PHASE with fitorder=1: Flux density = 1.79995 +/- 0.0489164 (freq=111.203 GHz) spidx: a_1 (spectral index) =5.61725 +/- 0.288043 covariance matrix for the fit:  covar(0,0)=0.00042542 covar(0,1)=-0.00120293 covar(1,0)=-0.00120293 covar(1,1)=0.253382\n",
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                1.625712369547564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.06097466834385031,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                3.5185188203919564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.11436552094525977,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.00042541969979589345,
+                -0.0012029268708442958
+              ],
+              [
+                -0.0012029268708442958,
+                0.2533820421090598
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.799950505781198,
+            "fitFluxdErr": 0.048916353830254805,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.2552605632357284,
+              5.617254717139122
+            ],
+            "spidxerr": [
+              0.011802603724421015,
+              0.288042746582544
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "listing": "# Flux density for PHASE in SpW=0 (freq=1.00004e11 Hz) is: 1.01458e0 +/- 3.76750e-2 (SNR = 2.69299e1, N = 10)\n# Flux density for PHASE in SpW=1 (freq=1.10004e11 Hz) (ref SpW=0) is: 1.62571e0 +/- 6.09747e-2 (SNR = 2.66621e1, N = 10)\n# Flux density for PHASE in SpW=2 (freq=1.25004e11 Hz) (ref SpW=0) is: 3.51852e0 +/- 1.14366e-1 (SNR = 3.07656e1, N = 10)\n# Fitted spectrum for PHASE with fitorder=1: Flux density = 1.79995e0 +/- 4.89164e-2 (freq=1.11203e2 GHz) spidx: a_1 (spectral index) =5.61725e0 +/- 2.88043e-1 covariance matrix for the fit: covar(0,0)=4.25420e-4 covar(0,1)=-1.20293e-3 covar(1,0)=-1.20293e-3 covar(1,1)=2.53382e-1\n",
+        "history_rows": 26
+      }
+    },
+    "partial-frequency": {
+      "arguments": {
+        "antenna": "!0",
+        "scan": "2"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9619003233275294,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.09875438651843277,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.7494457976057836,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.07861139993156378,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "fluxdErr": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "numSol": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.005385693140942071,
+                0.0055831561920977255
+              ],
+              [
+                0.0055831561920977255,
+                12.574287690568148
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.8490536820681417,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 104884388791.89766,
+            "spidx": [
+              -0.07106485028733314,
+              -2.618662211919721
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9619003233275294,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.09875438651843278,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.7494457976057836,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.0786113999315638,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "fluxdErr": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "numSol": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.005385693140942073,
+                0.0055831561920977575
+              ],
+              [
+                0.0055831561920977575,
+                12.57428769056815
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.8490536820681417,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 104884388791.89766,
+            "spidx": [
+              -0.07106485028733316,
+              -2.61866221191972
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      }
+    },
+    "fit-zero": {
+      "arguments": {
+        "fitorder": 0
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0003895838592379322
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 2.610781920010732,
+            "fitFluxdErr": 1.6069476635378446,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.41677059649109083
+            ],
+            "spidxerr": [
+              0.26731014859293206
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0003895838592379323
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 2.610781920010731,
+            "fitFluxdErr": 1.6069476635378444,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.4167705964910907
+            ],
+            "spidxerr": [
+              0.2673101485929321
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      }
+    },
+    "fit-one": {
+      "arguments": {
+        "fitorder": 1
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0004407810143502466,
+                -0.003285254115256887
+              ],
+              [
+                -0.003285254115256887,
+                0.2108104362075443
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.945612114251325,
+            "fitFluxdErr": 0.6532268094688831,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.28905626171277027,
+              8.195260908293193
+            ],
+            "spidxerr": [
+              0.1458115914809506,
+              3.188795464205207
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0004407810143502467,
+                -0.0032852541152568865
+              ],
+              [
+                -0.0032852541152568865,
+                0.21081043620754433
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.9456121142513252,
+            "fitFluxdErr": 0.6532268094688829,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.2890562617127703,
+              8.195260908293193
+            ],
+            "spidxerr": [
+              0.14581159148095052,
+              3.1887954642052057
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      }
+    },
+    "fit-two": {
+      "arguments": {
+        "fitorder": 2
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0028706169645386108,
+                0.006960955525774406,
+                -1.238474800838843
+              ],
+              [
+                0.006960955525774406,
+                0.2540169794310998,
+                -5.222439993755769
+              ],
+              [
+                -1.238474800838843,
+                -5.222439993755769,
+                631.2441925118064
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.8845191572126603,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              -0.05329275655680296,
+              6.751632661983245,
+              174.49352174821297
+            ],
+            "spidxerr": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.002870616964538612,
+                0.006960955525774407,
+                -1.2384748008388433
+              ],
+              [
+                0.0069609555257744045,
+                0.25401697943109985,
+                -5.222439993755767
+              ],
+              [
+                -1.238474800838843,
+                -5.222439993755767,
+                631.2441925118063
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.8845191572126617,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              -0.05329275655680221,
+              6.751632661983247,
+              174.4935217482126
+            ],
+            "spidxerr": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      }
+    },
+    "map-broadcast": {
+      "arguments": {
+        "refspwmap": [
+          0
+        ]
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                1.625712369547564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.06097466834385031,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                3.5185188203919564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.11436552094525977,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.00042541969979589356,
+                -0.001202926870844297
+              ],
+              [
+                -0.001202926870844297,
+                0.2533820421090598
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.7999505057811982,
+            "fitFluxdErr": 0.04891635383025902,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.25526056323572843,
+              5.617254717139121
+            ],
+            "spidxerr": [
+              0.011802603724422031,
+              0.28804274658256873
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                1.625712369547564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.06097466834385031,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                3.5185188203919564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.11436552094525977,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.00042541969979589345,
+                -0.0012029268708442958
+              ],
+              [
+                -0.0012029268708442958,
+                0.2533820421090598
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.799950505781198,
+            "fitFluxdErr": 0.048916353830254805,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.2552605632357284,
+              5.617254717139122
+            ],
+            "spidxerr": [
+              0.011802603724421015,
+              0.288042746582544
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      }
+    },
+    "map-vector": {
+      "arguments": {
+        "refspwmap": [
+          0,
+          0,
+          1
+        ]
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                1.625712369547564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.06097466834385031,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                1.7951626190007992,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.08168967379540705,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.000536038561533012,
+                0.0023408639879435532
+              ],
+              [
+                0.0023408639879435532,
+                0.3669110863752449
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.4490712114086766,
+            "fitFluxdErr": 0.1615468062510019,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.16108972844005767,
+              2.600393593523552
+            ],
+            "spidxerr": [
+              0.04841645184276399,
+              1.2667046359718164
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                1.625712369547564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.06097466834385031,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                1.7951626190007992,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.08168967379540705,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.000536038561533012,
+                0.0023408639879435537
+              ],
+              [
+                0.0023408639879435537,
+                0.36691108637524483
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.4490712114086766,
+            "fitFluxdErr": 0.1615468062510021,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.16108972844005764,
+              2.6003935935235525
+            ],
+            "spidxerr": [
+              0.048416451842764045,
+              1.2667046359718177
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      }
+    },
+    "map-disabled": {
+      "arguments": {
+        "refspwmap": [
+          -1,
+          0,
+          0
+        ]
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0004407810143502466,
+                -0.003285254115256887
+              ],
+              [
+                -0.003285254115256887,
+                0.2108104362075443
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.945612114251325,
+            "fitFluxdErr": 0.6532268094688831,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.28905626171277027,
+              8.195260908293193
+            ],
+            "spidxerr": [
+              0.1458115914809506,
+              3.188795464205207
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0004407810143502467,
+                -0.0032852541152568865
+              ],
+              [
+                -0.0032852541152568865,
+                0.21081043620754433
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.9456121142513252,
+            "fitFluxdErr": 0.6532268094688829,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.2890562617127703,
+              8.195260908293193
+            ],
+            "spidxerr": [
+              0.14581159148095052,
+              3.1887954642052057
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      }
+    },
+    "map-bool-list": {
+      "arguments": {
+        "refspwmap": [
+          false
+        ]
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                1.625712369547564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.06097466834385031,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                3.5185188203919564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.11436552094525977,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.00042541969979589356,
+                -0.001202926870844297
+              ],
+              [
+                -0.001202926870844297,
+                0.2533820421090598
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.7999505057811982,
+            "fitFluxdErr": 0.04891635383025902,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.25526056323572843,
+              5.617254717139121
+            ],
+            "spidxerr": [
+              0.011802603724422031,
+              0.28804274658256873
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                1.625712369547564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.06097466834385031,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                3.5185188203919564,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.11436552094525977,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.00042541969979589345,
+                -0.0012029268708442958
+              ],
+              [
+                -0.0012029268708442958,
+                0.2533820421090598
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.799950505781198,
+            "fitFluxdErr": 0.048916353830254805,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.2552605632357284,
+              5.617254717139122
+            ],
+            "spidxerr": [
+              0.011802603724421015,
+              0.288042746582544
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      }
+    },
+    "multi-incremental": {
+      "arguments": {
+        "incremental": true
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0004407810143502466,
+                -0.003285254115256887
+              ],
+              [
+                -0.003285254115256887,
+                0.2108104362075443
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.945612114251325,
+            "fitFluxdErr": 0.6532268094688831,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.28905626171277027,
+              8.195260908293193
+            ],
+            "spidxerr": [
+              0.1458115914809506,
+              3.188795464205207
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0004407810143502467,
+                -0.0032852541152568865
+              ],
+              [
+                -0.0032852541152568865,
+                0.21081043620754433
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.9456121142513252,
+            "fitFluxdErr": 0.6532268094688829,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.2890562617127703,
+              8.195260908293193
+            ],
+            "spidxerr": [
+              0.14581159148095052,
+              3.1887954642052057
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      }
+    },
+    "corrected-order--1": {
+      "arguments": {
+        "fitorder": -1
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0004407810143502467,
+                -0.0032852541152568865
+              ],
+              [
+                -0.0032852541152568865,
+                0.21081043620754433
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.9456121142513252,
+            "fitFluxdErr": 0.6532268094688829,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              0.2890562617127703,
+              8.195260908293193
+            ],
+            "spidxerr": [
+              0.14581159148095052,
+              3.1887954642052057
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        }
+      },
+      "independent_reference_case": "fit-one",
+      "scope": "Documented CASA order correction; same-input reference uses the identifiable degree"
+    },
+    "corrected-order-3": {
+      "arguments": {
+        "fitorder": 3
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.002870616964538612,
+                0.006960955525774407,
+                -1.2384748008388433
+              ],
+              [
+                0.0069609555257744045,
+                0.25401697943109985,
+                -5.222439993755767
+              ],
+              [
+                -1.238474800838843,
+                -5.222439993755767,
+                631.2441925118063
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.8845191572126617,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              -0.05329275655680221,
+              6.751632661983247,
+              174.4935217482126,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        }
+      },
+      "independent_reference_case": "fit-two",
+      "scope": "Documented CASA order correction; same-input reference uses the identifiable degree"
+    },
+    "corrected-order-5": {
+      "arguments": {
+        "fitorder": 5
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.002870616964538612,
+                0.006960955525774407,
+                -1.2384748008388433
+              ],
+              [
+                0.0069609555257744045,
+                0.25401697943109985,
+                -5.222439993755767
+              ],
+              [
+                -1.238474800838843,
+                -5.222439993755767,
+                631.2441925118063
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.8845191572126617,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 111202519090.48654,
+            "spidx": [
+              -0.05329275655680221,
+              6.751632661983247,
+              174.4935217482126,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        }
+      },
+      "independent_reference_case": "fit-two",
+      "scope": "Documented CASA order correction; same-input reference uses the identifiable degree"
+    },
+    "fit-3": {
+      "arguments": {
+        "fitorder": 3
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "3": {
+              "fluxd": [
+                1.7821495219436163,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.09934538121389225,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "4": {
+              "fluxd": [
+                2.902326149687485,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.14909702856505516,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0005474084195783179,
+                5.106932584042185e-05,
+                -0.05924319635661757,
+                0.038660468261569964
+              ],
+              [
+                5.106932584042185e-05,
+                1.0285888535394865,
+                0.92220728740723,
+                -102.1208210609753
+              ],
+              [
+                -0.05924319635661757,
+                0.92220728740723,
+                15.692072509603124,
+                -86.354787822218
+              ],
+              [
+                0.038660468261569964,
+                -102.1208210609753,
+                -86.354787822218,
+                10989.610874252347
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 4.0701616393058355,
+            "fitFluxdErr": 2.5746977881611834,
+            "fitRefFreq": 125234057146.17786,
+            "spidx": [
+              0.6096116568086718,
+              2.9754548130111096,
+              -43.19471014014112,
+              -37.97469117811559
+            ],
+            "spidxerr": [
+              0.27472546327610076,
+              11.90869259686904,
+              46.513961715151126,
+              1230.9327750417178
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0,
+            140003500000.0,
+            160003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2",
+            "SPW3",
+            "SPW4"
+          ]
+        },
+        "history_rows": 28
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "3": {
+              "fluxd": [
+                1.7821495219436163,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.09934538121389225,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "4": {
+              "fluxd": [
+                2.902326149687485,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.14909702856505516,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0005474084195783179,
+                5.106932584042131e-05,
+                -0.059243196356617574,
+                0.03866046826157002
+              ],
+              [
+                5.106932584042134e-05,
+                1.028588853539484,
+                0.9222072874072276,
+                -102.12082106097505
+              ],
+              [
+                -0.05924319635661757,
+                0.9222072874072277,
+                15.69207250960312,
+                -86.35478782221777
+              ],
+              [
+                0.03866046826157007,
+                -102.12082106097505,
+                -86.35478782221776,
+                10989.610874252321
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 4.070161639305832,
+            "fitFluxdErr": 2.574697788161179,
+            "fitRefFreq": 125234057146.17786,
+            "spidx": [
+              0.6096116568086714,
+              2.9754548130111234,
+              -43.194710140141055,
+              -37.97469117811686
+            ],
+            "spidxerr": [
+              0.27472546327610053,
+              11.908692596869015,
+              46.51396171515109,
+              1230.9327750417156
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0,
+            140003500000.0,
+            160003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2",
+            "SPW3",
+            "SPW4"
+          ]
+        },
+        "history_rows": 28
+      }
+    },
+    "fit-4": {
+      "arguments": {
+        "fitorder": 4
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "3": {
+              "fluxd": [
+                1.7821495219436163,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.09934538121389225,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "4": {
+              "fluxd": [
+                2.902326149687485,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.14909702856505516,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0006749956634438836,
+                -0.0005671599654297958,
+                -0.3128473804043035,
+                -0.10036447447400697,
+                23.75815314748599
+              ],
+              [
+                -0.0005671599654297958,
+                1.0315845092571316,
+                2.1510568982050144,
+                -101.44716992460573,
+                -115.12111820313132
+              ],
+              [
+                -0.3128473804043035,
+                2.1510568982050144,
+                519.7791600421075,
+                189.98402236386593,
+                -47223.89841571187
+              ],
+              [
+                -0.10036447447400697,
+                -101.44716992460573,
+                189.98402236386593,
+                11141.098860958882,
+                -25887.978929245714
+              ],
+              [
+                23.75815314748599,
+                -115.12111820313132,
+                -47223.89841571187,
+                -25887.978929245714,
+                4424030.364462914
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 5.523866764468856,
+            "fitFluxdErr": 6.102743200186791e-07,
+            "fitRefFreq": 125234057146.17786,
+            "spidx": [
+              0.7422431948606494,
+              2.3327831846753666,
+              -306.8253989737539,
+              -182.49612940305465,
+              24697.456405169072
+            ],
+            "spidxerr": [
+              4.7980659370023046e-08,
+              1.8757205071655673e-06,
+              4.210417402780334e-05,
+              0.00019493047208527816,
+              0.003884407376113622
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0,
+            140003500000.0,
+            160003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2",
+            "SPW3",
+            "SPW4"
+          ]
+        },
+        "history_rows": 28
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                5.497685861121169,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.1429568986065414,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "3": {
+              "fluxd": [
+                1.7821495219436163,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.09934538121389225,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "4": {
+              "fluxd": [
+                2.902326149687485,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.14909702856505516,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0006749956634438902,
+                -0.0005671599654298451,
+                -0.31284738040431587,
+                -0.10036447447401176,
+                23.75815314748714
+              ],
+              [
+                -0.0005671599654298442,
+                1.0315845092571299,
+                2.1510568982051064,
+                -101.44716992460546,
+                -115.12111820314004
+              ],
+              [
+                -0.31284738040431603,
+                2.151056898205107,
+                519.7791600421309,
+                189.984022363875,
+                -47223.898415714015
+              ],
+              [
+                -0.10036447447401195,
+                -101.44716992460546,
+                189.984022363875,
+                11141.09886095886,
+                -25887.97892924652
+              ],
+              [
+                23.75815314748712,
+                -115.12111820314001,
+                -47223.898415714015,
+                -25887.97892924652,
+                4424030.364463111
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 5.523866764468895,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 125234057146.17786,
+            "spidx": [
+              0.7422431948606525,
+              2.3327831846753844,
+              -306.8253989737616,
+              -182.49612940306642,
+              24697.45640516979
+            ],
+            "spidxerr": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            125003500000.0,
+            140003500000.0,
+            160003500000.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2",
+            "SPW3",
+            "SPW4"
+          ]
+        },
+        "history_rows": 28
+      }
+    },
+    "missing-window": {
+      "arguments": {},
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "fluxdErr": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "numSol": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0010340233531874862,
+                0.016649631998704662
+              ],
+              [
+                0.016649631998704662,
+                2.414193824542966
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9173547403440625,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 104884388791.89766,
+            "spidx": [
+              -0.037462690521568795,
+              -2.1139552458593935
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            -1.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "fluxdErr": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "numSol": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0010340233531874864,
+                0.01664963199870467
+              ],
+              [
+                0.01664963199870467,
+                2.414193824542966
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9173547403440625,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 104884388791.89766,
+            "spidx": [
+              -0.037462690521568795,
+              -2.113955245859393
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            -1.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "history_rows": 26
+      }
+    },
+    "listfile-missing": {
+      "arguments": {
+        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/final-orders/missing.txt"
+      },
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "fluxdErr": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "numSol": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0010340233531874862,
+                0.016649631998704662
+              ],
+              [
+                0.016649631998704662,
+                2.414193824542966
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9173547403440625,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 104884388791.89766,
+            "spidx": [
+              -0.037462690521568795,
+              -2.1139552458593935
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            -1.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "listing": "# Flux density for PHASE in SpW=0 (freq=1.00004e+11 Hz) is: 1.01458 +/- 0.037675 (SNR = 26.9299, N = 10)\n# Flux density for PHASE in SpW=1 (freq=1.10004e+11 Hz) is: 0.829445 +/- 0.0435533 (SNR = 19.0443, N = 10)\n# Flux density for PHASE in SpW=2 is:  INSUFFICIENT DATA \n# Fitted spectrum for PHASE with fitorder=1: Flux density = 0.917355 +/- 0 (freq=104.884 GHz) spidx: a_1 (spectral index) =-2.11396 +/- 0 covariance matrix for the fit:  covar(0,0)=0.00103402 covar(0,1)=0.0166496 covar(1,0)=0.0166496 covar(1,1)=2.41419\n",
+        "history_rows": 26
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "1": {
+              "fluxd": [
+                0.8294450659592872,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04355334355994008,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "2": {
+              "fluxd": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "fluxdErr": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ],
+              "numSol": [
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0
+              ]
+            },
+            "covarMat": [
+              [
+                0.0010340233531874864,
+                0.01664963199870467
+              ],
+              [
+                0.01664963199870467,
+                2.414193824542966
+              ]
+            ],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9173547403440625,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 104884388791.89766,
+            "spidx": [
+              -0.037462690521568795,
+              -2.113955245859393
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0,
+            110003500000.0,
+            -1.0
+          ],
+          "spwID": [
+            0,
+            1,
+            2
+          ],
+          "spwName": [
+            "SPW0",
+            "SPW1",
+            "SPW2"
+          ]
+        },
+        "listing": "# Flux density for PHASE in SpW=0 (freq=1.00004e11 Hz) is: 1.01458e0 +/- 3.76750e-2 (SNR = 2.69299e1, N = 10)\n# Flux density for PHASE in SpW=1 (freq=1.10004e11 Hz) is: 8.29445e-1 +/- 4.35533e-2 (SNR = 1.90443e1, N = 10)\n# Flux density for PHASE in SpW=2 is: INSUFFICIENT DATA\n# Fitted spectrum for PHASE with fitorder=1: Flux density = 9.17355e-1 +/- 0.00000e0 (freq=1.04884e2 GHz) spidx: a_1 (spectral index) =-2.11396e0 +/- 0.00000e0 covariance matrix for the fit: covar(0,0)=1.03402e-3 covar(0,1)=1.66496e-2 covar(1,0)=1.66496e-2 covar(1,1)=2.41419e0\n",
+        "history_rows": 26
+      }
+    },
+    "vis-list": {
+      "arguments": {
+        "vis": [
+          "/workspace/casa-rs-cal990/target/calibration-990/final-orders/original.ms"
+        ]
+      },
+      "casa": {
+        "error": "AssertionError",
+        "message": "the vis parameter must be a path that exists ('['/workspace/casa-rs-cal990/target/calibration-990/final-orders/original.ms']' does not exist)",
+        "history_rows": 0
+      },
+      "native": {
+        "error": "TypeError",
+        "message": "invalid value for vis: invalid parameter type: value Array([String(\"/workspace/casa-rs-cal990/target/calibration-990/final-orders/original.ms\")]) does not match Path { resource_kind: Some(MeasurementSet) }",
+        "history_rows": 0
+      }
+    },
+    "bad-reference": {
+      "arguments": {
+        "reference": "999"
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Field Expression: Partial or no match for Field ID list [999]\n(near char. 3 in string \"999\")",
+        "history_rows": 0
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "fluxscale failed: unsupported input calibration table reference/transfer: invalid input: field selector \"999\" did not match any existing fields",
+        "history_rows": 0
+      }
+    },
+    "empty-reference": {
+      "arguments": {
+        "reference": []
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "A reference field must be specified!",
+        "history_rows": 0
+      },
+      "native": {
+        "error": "ValueError",
+        "message": "reason='validate provider invocation parameters: profile diagnostics: [Diagnostic { level: Error, code: MissingRequired, message: \"required parameter \\\\\"reference\\\\\" is missing or empty\", parameter: Some(\"reference\"), location: None, suggestions: [] }]'",
+        "history_rows": 0
+      }
+    },
+    "no-transfer": {
+      "arguments": {
+        "reference": "0~1"
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Error in Calibrater::fluxscale.",
+        "history_rows": 1
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "fluxscale failed: fluxscale transfer field selection produced no solved non-reference fields",
+        "history_rows": 1
+      }
+    },
+    "bad-transfer": {
+      "arguments": {
+        "transfer": "999"
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Field Expression: Partial or no match for Field ID list [999]\n(near char. 3 in string \"999\")",
+        "history_rows": 0
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "fluxscale failed: unsupported input calibration table reference/transfer: invalid input: field selector \"999\" did not match any existing fields",
+        "history_rows": 0
+      }
+    },
+    "bad-antenna": {
+      "arguments": {
+        "antenna": "999"
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Error in Calibrater::fluxscale.",
+        "history_rows": 1
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "fluxscale failed: unsupported input calibration table fluxscale selection: invalid input: antenna selection \"999\": No match found for the antenna specificion [ID(s): [999]]",
+        "history_rows": 1
+      }
+    },
+    "bad-time": {
+      "arguments": {
+        "timerange": "garbage"
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Error in Calibrater::fluxscale.",
+        "history_rows": 1
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "fluxscale failed: unsupported input calibration table fluxscale selection: invalid input: MSSelection time error: Parse error at or near token 'g' (near char. 1 in string \"garbage\")",
+        "history_rows": 1
+      }
+    },
+    "bad-scan": {
+      "arguments": {
+        "scan": "garbage"
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Error in Calibrater::fluxscale.",
+        "history_rows": 1
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "fluxscale failed: unsupported input calibration table fluxscale selection: invalid input: invalid scan selector term \"garbage\"",
+        "history_rows": 1
+      }
+    },
+    "empty-scan": {
+      "arguments": {
+        "scan": "999"
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Error in Calibrater::fluxscale.",
+        "history_rows": 1
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "fluxscale failed: no usable gain samples for field=1 spw=0",
+        "history_rows": 1
+      }
+    },
+    "zero-threshold": {
+      "arguments": {
+        "gainthreshold": 0
+      },
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Error in Calibrater::fluxscale.",
+        "history_rows": 1
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "fluxscale failed: no usable gain samples for field=1 spw=0",
+        "history_rows": 1
+      }
+    },
+    "string-threshold": {
+      "arguments": {
+        "gainthreshold": ".1"
+      },
+      "casa": {
+        "error": "AssertionError",
+        "message": "{'gainthreshold': ['must be of cFloat type']}",
+        "history_rows": 0
+      },
+      "native": {
+        "error": "TypeError",
+        "message": "{'gainthreshold': ['must be of cFloat type']}",
+        "history_rows": 0
+      }
+    },
+    "float-map": {
+      "arguments": {
+        "refspwmap": [
+          0.0
+        ]
+      },
+      "casa": {
+        "error": "AssertionError",
+        "message": "{'refspwmap': ['must be of cIntVec type']}",
+        "history_rows": 0
+      },
+      "native": {
+        "error": "TypeError",
+        "message": "invalid value for refspwmap: invalid parameter type: value Float(0.0) does not match Integer",
+        "history_rows": 0
+      }
+    },
+    "float-order": {
+      "arguments": {
+        "fitorder": 1.0
+      },
+      "casa": {
+        "error": "AssertionError",
+        "message": "{'fitorder': ['must be of cInt type']}",
+        "history_rows": 0
+      },
+      "native": {
+        "error": "TypeError",
+        "message": "{'fitorder': ['must be of cInt type']}",
+        "history_rows": 0
+      }
+    },
+    "integer-bool": {
+      "arguments": {
+        "incremental": 1
+      },
+      "casa": {
+        "error": "AssertionError",
+        "message": "{'incremental': ['must be of cBool type']}",
+        "history_rows": 0
+      },
+      "native": {
+        "error": "TypeError",
+        "message": "{'incremental': ['must be of cBool type']}",
+        "history_rows": 0
+      }
+    },
+    "numeric-reference": {
+      "arguments": {
+        "reference": 0
+      },
+      "casa": {
+        "error": "AssertionError",
+        "message": "{'reference': ['must be of cStrVec type']}",
+        "history_rows": 0
+      },
+      "native": {
+        "error": "TypeError",
+        "message": "{'reference': ['must be of cStrVec type']}",
+        "history_rows": 0
+      }
+    },
+    "append-seed": {
+      "arguments": {},
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "append-exchange": {
+      "arguments": {},
+      "status": "passed",
+      "rows": 180
+    },
+    "duplicate-timestamp": {
+      "arguments": {},
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Error in Calibrater::fluxscale.",
+        "history_rows": 1
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "fluxscale failed: unsupported input calibration table fluxscale input: multiple gain solutions in one timestamp for field=0 spw=0 antenna=0",
+        "history_rows": 1
+      }
+    }
+  },
+  "comparators": {
+    "returns": "rtol=1e-6, atol=1e-7; existing linear-fit regressions retain 1e-9",
+    "products": "All defined MAIN columns, standard subtables and table references; input gain byte snapshot unchanged",
+    "history": "All non-clock/version fields; initialized native OBJECT_ID=0; effective numeric bool spellings compare semantically",
+    "documented_corrections": "Exact-fit CASA roundoff bounded at 1e-3 of fitted scale, native zero error; crash/underdetermined behavior documented",
+    "exchange": "CASA-made inputs read natively, both engines read/append each other's products; no skipped cases"
+  }
+}

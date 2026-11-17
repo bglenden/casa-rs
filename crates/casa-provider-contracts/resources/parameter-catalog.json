@@ -12084,6 +12084,157 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.fitorder",
+      "semantic_revision": 2,
+      "casa_name": "fitorder",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Polynomial order of the spectral-index fit across spectral windows.",
+        "details": null,
+        "examples": [
+          "1"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.gainthreshold",
+      "semantic_revision": 2,
+      "casa_name": "gainthreshold",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Fraction from the median outside which gain amplitudes are excluded; -1 for none.",
+        "details": null,
+        "examples": [
+          "-1.0"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.refspwmap",
+      "semantic_revision": 2,
+      "casa_name": "refspwmap",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Reference window for each spectral window; [-1] for none.",
+        "details": null,
+        "examples": [
+          "[-1]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.reference",
+      "semantic_revision": 2,
+      "casa_name": "reference",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "casa_field"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Fields whose flux densities are known.",
+        "details": null,
+        "examples": [
+          "['3C286']"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "scaling.transfer",
+      "semantic_revision": 2,
+      "casa_name": "transfer",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "casa_field"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Fields whose flux densities are derived; empty for all the others.",
+        "details": null,
+        "examples": [
+          "[]"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "data.input.vis",
+      "semantic_revision": 2,
+      "casa_name": "vis",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "measurement_set"
+      },
+      "normalization": {
+        "kind": "path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "One input MeasurementSet path.",
+        "details": "CASA fluxscale opens one MeasurementSet; a sequence is not a scalar path.",
+        "examples": [
+          "'observation.ms'"
+        ]
+      },
+      "persistence_class": "profile"
     }
   ]
 }

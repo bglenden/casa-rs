@@ -35,6 +35,7 @@ fn fluxscale_scales_transfer_gains_and_reports_flux_density() {
     let output_table = dir.path().join("scaled.gcal");
 
     let report = fluxscale(&FluxScaleRequest {
+        options: Default::default(),
         append: false,
         input_table: input_table.clone(),
         output_table: output_table.clone(),
@@ -105,6 +106,7 @@ fn fluxscale_incremental_writes_correction_factors_and_honors_gainthreshold() {
     let output_table = dir.path().join("incremental.gcal");
 
     let report = fluxscale(&FluxScaleRequest {
+        options: Default::default(),
         append: false,
         input_table: input_table.clone(),
         output_table: output_table.clone(),

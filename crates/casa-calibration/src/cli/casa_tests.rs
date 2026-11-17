@@ -482,11 +482,15 @@ fn fluxscale_reads_casas_values() {
             "incremental": true,
         })),
         FluxScaleRequest {
+            options: crate::FluxScaleOptions {
+                measurement_set: Some(PathBuf::from(vis)),
+                ..Default::default()
+            },
             append: false,
             input_table: PathBuf::from("gain.gcal"),
             output_table: PathBuf::from("flux.gcal"),
             reference_fields: vec!["1331+305".into()],
-            transfer_fields: vec!["1445+099".into(), "0137+331".into(), "2253+161".into()],
+            transfer_fields: vec!["1445+099".into(), "0137+331,2253+161".into()],
             refspwmap: vec![0, 0],
             gainthreshold: Some(0.2),
             incremental: true,

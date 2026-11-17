@@ -187,6 +187,20 @@ fn fluxscale(task: &TaskInvocation<'_>) -> Result<FluxScaleRequest, TaskFailure>
         .collect::<Result<Vec<_>, _>>()?;
     let gainthreshold = task.number("gainthreshold")?;
     Ok(FluxScaleRequest {
+        options: crate::FluxScaleOptions {
+            measurement_set: Some(vis),
+            antenna: task.text("antenna")?.unwrap_or_default(),
+            timerange: task.text("timerange")?.unwrap_or_default(),
+            scan: task.text("scan")?.unwrap_or_default(),
+            fitorder: i32::try_from(task.integer("fitorder")?).map_err(|_| {
+                TaskFailure::validation("fitorder exceeds CASA's integer range").at("fitorder")
+            })?,
+            listfile: task
+                .text("listfile")?
+                .filter(|text| !text.is_empty())
+                .map(PathBuf::from),
+            display: task.flag("display")?,
+        },
         append: task.flag("append")?,
         input_table: PathBuf::from(task.required_text("caltable")?),
         output_table: PathBuf::from(task.required_text("fluxtable")?),
@@ -501,14 +515,7 @@ fn refant(task: &TaskInvocation<'_>) -> Result<RefAntSelector, TaskFailure> {
 
 /// The fields `name` lists; an item may itself list them, `','`-separated.
 fn fields(task: &TaskInvocation<'_>, name: &str) -> Result<Vec<String>, TaskFailure> {
-    Ok(task
-        .texts(name)?
-        .iter()
-        .flat_map(|item| item.split(','))
-        .map(str::trim)
-        .filter(|field| !field.is_empty())
-        .map(str::to_string)
-        .collect())
+    task.texts(name)
 }
 
 /// The refusal of a CASA value casa-rs does not implement yet.

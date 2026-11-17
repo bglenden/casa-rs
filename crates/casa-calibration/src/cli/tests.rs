@@ -577,6 +577,7 @@ fn calibrate_fluxscale_reads_every_parameter_it_emits() {
     assert_eq!(
         request("calibrate", &args).expect("fluxscale"),
         CalibrationTaskRequest::FluxScale(FluxScaleRequest {
+            options: Default::default(),
             append: false,
             input_table: PathBuf::from("gain.gcal"),
             output_table: PathBuf::from("flux.gcal"),
