@@ -172,13 +172,19 @@ fn docallib_chooses_the_calibration_library() {
     assert_eq!(request.calibration_tables.len(), 1);
     assert_eq!(
         request.calibration_tables[0].path,
-        dir.path().join("phase.gcal")
+        std::env::current_dir().unwrap().join("phase.gcal")
     );
-    let message = refused(
-        casa("applycal", json!({"vis": "d.ms", "docallib": true})),
-        "callib",
+    // Public CASA opens the MS and selects/backs up before a missing library
+    // raises RuntimeError. Preserve the diagnostic until the execution stage.
+    let request = apply(json!({"vis": "d.ms", "docallib": true}));
+    assert!(request.calibration_tables.is_empty());
+    assert!(
+        request
+            .callibrary_error
+            .as_deref()
+            .unwrap()
+            .contains("failed to read callibrary")
     );
-    assert!(message.contains("docallib requires callib"), "{message}");
 }
 
 #[test]

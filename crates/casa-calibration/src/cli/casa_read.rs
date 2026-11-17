@@ -52,8 +52,16 @@ pub(super) fn task_request(
 }
 
 fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFailure> {
-    let calibration_tables = chain(task, Chain::Apply)?;
-    if calibration_tables.is_empty() && !task.flag("parang")? {
+    let (calibration_tables, callibrary_error) = if task.flag("docallib")? {
+        let source = task.text("callib")?.unwrap_or_default();
+        match load_apply_specs_from_callib(Path::new(&source)) {
+            Ok(tables) => (tables, None),
+            Err(error) => (Vec::new(), Some(error.to_string())),
+        }
+    } else {
+        (chain(task, Chain::Apply)?, None)
+    };
+    if calibration_tables.is_empty() && callibrary_error.is_none() && !task.flag("parang")? {
         return Err(TaskFailure::validation(
             "applycal has nothing to apply; set gaintable, or docallib and callib",
         )
@@ -76,6 +84,7 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
         measurement_set: task.path("vis")?,
         selection,
         calibration_tables,
+        callibrary_error,
         apply_mode: applymode(task)?,
         parang: task.flag("parang")?,
         flagbackup: task.flag("flagbackup")?,

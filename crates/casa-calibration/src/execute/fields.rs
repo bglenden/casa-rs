@@ -10,12 +10,23 @@ pub(super) fn load(
     ms: &MeasurementSet,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
     let mut table = load_calibration_table(plan, engine)?;
+    table.callibrary = plan.spec.callibrary.clone();
     if !plan.resolved_gainfields.is_empty() {
         table.solutions.retain(|(field, _, _), _| {
             plan.resolved_gainfields
                 .iter()
                 .any(|selected| selected.field_id == *field)
         });
+    }
+    if let Some(library) = plan
+        .spec
+        .callibrary
+        .as_ref()
+        .filter(|library| !library.field_map.is_empty())
+    {
+        table
+            .solutions
+            .retain(|(field, _, _), _| library.field_map.contains(field));
     }
     // One flagged template per window handles missing antenna/context slices
     // without copying a full parameter grid for each baseline.
@@ -26,7 +37,12 @@ pub(super) fn load(
             entry.insert(flagged(&row.grid));
         }
     }
-    let nearest_field = matches!(plan.spec.gainfield, Some(crate::GainFieldSelector::Nearest));
+    let nearest_field = matches!(plan.spec.gainfield, Some(crate::GainFieldSelector::Nearest))
+        || plan
+            .spec
+            .callibrary
+            .as_ref()
+            .is_some_and(|library| !library.field_map.is_empty());
     let sample = table
         .solutions
         .values()
@@ -47,6 +63,20 @@ pub(super) fn load(
             })?
             .row_count();
         let mut options = plan.interp.time_options(observation_count);
+        // CLPatchPanel partitions through explicit maps, not these traditional
+        // interpolation-string modifiers. Library maps are handled separately.
+        if plan.spec.callibrary.is_some() {
+            options.per_observation = plan
+                .spec
+                .callibrary
+                .as_ref()
+                .is_some_and(|library| library.observation_map.active());
+            options.per_scan = plan
+                .spec
+                .callibrary
+                .as_ref()
+                .is_some_and(|library| library.scan_map.active());
+        }
         // CASA's legacy BPOLY conversion emits unpartitioned modern headers.
         if plan.summary.table_subtype == "BPOLY" {
             options.per_scan = false;
@@ -56,7 +86,10 @@ pub(super) fn load(
         // CASA dispatches scalar PD by Jones family, even for a one-channel B table.
         options.phase_delay &= matches!(plan.summary.table_subtype.as_str(), "G Jones" | "T Jones");
         table.phase_delay = options.phase_delay;
-        let context = TimePlan::apply_context(&table, options)?;
+        let mut context = TimePlan::apply_context(&table, options)?;
+        if let Some(library) = &plan.spec.callibrary {
+            context.mapped_contexts(library.observation_map.active(), library.scan_map.active());
+        }
         let mut groups = HashMap::<_, HashMap<_, _>>::new();
         for (key, mut rows) in std::mem::take(&mut table.solutions) {
             if table.time_is_delay {
@@ -84,6 +117,7 @@ pub(super) fn load(
                 supports_calwt: false,
                 engine: None,
                 solutions,
+                callibrary: None,
                 time_plans: HashMap::new(),
                 missing_grids: HashMap::new(),
                 time_is_delay: false,
@@ -111,6 +145,18 @@ pub(super) fn lookup(
     row: &ApplyRowPlan,
     data_window: &crate::plan::SpectralWindowPlan,
 ) -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError> {
+    let antenna = table
+        .callibrary
+        .as_ref()
+        .and_then(|library| {
+            library
+                .antenna_map
+                .get(antenna as usize)
+                .or_else(|| library.antenna_map.last())
+        })
+        .copied()
+        .filter(|id| *id >= 0)
+        .unwrap_or(antenna);
     let Some(plan) = table.time_plans.get(&field) else {
         if !table.time_plans.is_empty() {
             return Ok(table.missing_grids.get(&window).cloned());
@@ -124,8 +170,18 @@ pub(super) fn lookup(
         .phase_delay
         .then(|| frequencies.iter().sum::<f64>() / frequencies.len() as f64);
     let query = TimeQuery {
-        observation: row.observation_id,
-        scan: row.scan_number,
+        observation: table
+            .callibrary
+            .as_ref()
+            .map_or(row.calibration_observation_id, |library| {
+                library.observation_map.map(row.calibration_observation_id)
+            }),
+        scan: table
+            .callibrary
+            .as_ref()
+            .map_or(row.scan_number, |library| {
+                library.scan_map.map(row.scan_number)
+            }),
         window,
         antenna,
         time: row.time_seconds,

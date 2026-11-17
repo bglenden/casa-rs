@@ -72,6 +72,18 @@ pub(super) enum TimeScope {
     All,
     Observation,
     Scan,
+    ObservationScan,
+}
+
+impl TimeScope {
+    pub(super) fn coordinates(self, observation: i32, scan: i32) -> (i32, i32) {
+        match self {
+            Self::All => (-1, -1),
+            Self::Observation => (observation, -1),
+            Self::Scan => (-1, scan),
+            Self::ObservationScan => (observation, scan),
+        }
+    }
 }
 
 pub(crate) struct TimeQuery {
@@ -97,15 +109,11 @@ impl CalibrationTableLookup {
             .advanced_time
             .as_ref()
             .ok_or_else(|| invalid(&self.path, "fringe requires real time curves"))?;
-        let segment = match plan.scope {
-            TimeScope::All => -1,
-            TimeScope::Observation => observation,
-            TimeScope::Scan => scan,
-        };
+        let (observation, scan) = plan.scope.coordinates(observation, scan);
         let rows = plan
             .series
-            .get(&(segment, window, antenna))
-            .or_else(|| plan.series.get(&(segment, window, -1)))
+            .get(&(observation, scan, window, antenna))
+            .or_else(|| plan.series.get(&(observation, scan, window, -1)))
             .filter(|rows| !rows.is_empty())
             .ok_or_else(|| invalid(&self.path, "fringe time series is missing"))?;
         let reference = (rows[0].time_seconds - 1.).floor();
@@ -398,7 +406,7 @@ impl TimePlan {
             across
                 .expect("all fields")
                 .into_iter()
-                .map(|((spw, antenna), rows)| ((-1, spw, antenna), rows))
+                .map(|((spw, antenna), rows)| ((-1, -1, spw, antenna), rows))
                 .collect()
         };
         let mut plan = Self {
@@ -449,6 +457,18 @@ impl TimePlan {
 pub(crate) struct ApplyTimeContext {
     rows: Option<Vec<[i32; 5]>>,
     scope: TimeScope,
+}
+
+impl ApplyTimeContext {
+    /// Explicit library maps partition partial observation and scan sets independently.
+    pub(crate) fn mapped_contexts(&mut self, observation: bool, scan: bool) {
+        self.scope = match (observation, scan) {
+            (false, false) => TimeScope::All,
+            (true, false) => TimeScope::Observation,
+            (false, true) => TimeScope::Scan,
+            (true, true) => TimeScope::ObservationScan,
+        };
+    }
 }
 
 fn selected_scope(
@@ -555,13 +575,9 @@ fn segmented(
                 )
             })?;
         *position += 1;
-        let segment = match scope {
-            TimeScope::All => -1,
-            TimeScope::Observation => observation,
-            TimeScope::Scan => scan,
-        };
+        let (observation, scan) = scope.coordinates(observation, scan);
         grouped
-            .entry((segment, window, antenna))
+            .entry((observation, scan, window, antenna))
             .or_default()
             .push((field, row));
     }

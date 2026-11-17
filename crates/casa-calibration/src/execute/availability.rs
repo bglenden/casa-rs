@@ -6,8 +6,15 @@ use super::*;
 pub(super) fn available(row: &ApplyRowPlan, plan: &ApplyPlan) -> bool {
     plan.calibration_tables
         .iter()
-        .filter(|table| table.spec.apply_to.matches(row))
+        .filter(|table| table.applies_to(row))
         .all(|table| {
+            if table
+                .unavailable_row_indices
+                .binary_search(&row.row_index)
+                .is_ok()
+            {
+                return false;
+            }
             table
                 .spw_mapping
                 .iter()

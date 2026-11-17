@@ -101,6 +101,23 @@ impl ApplyInterpolationMode {
         })
     }
 
+    /// CLPatchPanel obtains time partitions from maps and uses absolute
+    /// frequencies; these traditional modifiers have no effect in a library.
+    pub(crate) fn for_callibrary(mut self) -> Self {
+        if let Self::Casa {
+            per_observation,
+            per_scan,
+            relative_frequency,
+            ..
+        } = &mut self
+        {
+            *per_observation = false;
+            *per_scan = false;
+            *relative_frequency = false;
+        }
+        self
+    }
+
     /// Returns `true` when the mode depends on frequency-grid metadata.
     pub fn uses_frequency_axis(self) -> bool {
         matches!(self, Self::NearestLinear | Self::Casa { .. })

@@ -34,6 +34,13 @@ use crate::summary::{CalibrationTableError, summarize_table};
 mod fields;
 use fields::resolve_gainfield;
 
+#[path = "plan_callibrary.rs"]
+mod library;
+
+#[path = "plan_spw.rs"]
+mod windows;
+use windows::resolve_spw_mapping;
+
 /// Calibration-application mode planned for the executor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ApplyMode {
@@ -130,7 +137,10 @@ pub struct ApplyCalibrationTableSpec {
     pub path: PathBuf,
     /// Optional per-table MS applicability selection.
     pub apply_to: ApplyTableSelection,
-    /// Explicit gainfield override; absent means "use the MS field id".
+    /// Callibrary slice controls; absent uses traditional setapply semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callibrary: Option<crate::CallibraryOptions>,
+    /// Optional calibration-field selection; absent merges selected fields in time.
     pub gainfield: Option<GainFieldSelector>,
     /// Optional CASA-style data-SPW to caltable-SPW mapping.
     pub spwmap: Vec<i32>,
@@ -145,6 +155,7 @@ impl ApplyCalibrationTableSpec {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
+            callibrary: None,
             apply_to: ApplyTableSelection::default(),
             gainfield: None,
             spwmap: Vec::new(),
@@ -176,6 +187,8 @@ pub struct ApplyRowPlan {
     pub field_id: i32,
     /// OBSERVATION_ID from MAIN.
     pub observation_id: i32,
+    /// First selected OBSERVATION_ID in CASA's ARRAY/SCAN/FIELD/DDID/TIME buffer.
+    pub calibration_observation_id: i32,
     /// SCAN_NUMBER from MAIN.
     pub scan_number: i32,
     /// DATA_DESC_ID from MAIN.
@@ -251,6 +264,12 @@ pub struct ApplySpwMapping {
 pub struct ApplyCalibrationTablePlan {
     /// Original request spec.
     pub spec: ApplyCalibrationTableSpec,
+    /// Physical MS rows selected by a callibrary slice; None means no extra mask.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applicable_row_indices: Option<Vec<usize>>,
+    /// Rows whose library mapping requests an absent calibration context.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unavailable_row_indices: Vec<usize>,
     /// Number of selected rows to which this table can apply.
     pub applicable_selected_row_count: usize,
     /// Normalized summary for the table.
@@ -267,6 +286,26 @@ pub struct ApplyCalibrationTablePlan {
     pub interp: ApplyInterpolationMode,
     /// Whether the table will participate in weight updates.
     pub calwt: bool,
+}
+
+impl ApplyCalibrationTablePlan {
+    /// Whether this table contributes to the selected physical MS row.
+    pub fn applies_to(&self, row: &ApplyRowPlan) -> bool {
+        self.spec.apply_to.matches(row)
+            && self.spec.callibrary.as_ref().is_none_or(|library| {
+                library
+                    .observation_map
+                    .covers(row.calibration_observation_id)
+                    && library.scan_map.covers(row.scan_number)
+                    && (library.field_map.is_empty()
+                        || usize::try_from(row.field_id)
+                            .is_ok_and(|id| id < library.field_map.len()))
+            })
+            && self
+                .applicable_row_indices
+                .as_ref()
+                .is_none_or(|rows| rows.binary_search(&row.row_index).is_ok())
+    }
 }
 
 /// Full apply plan for one MeasurementSet selection and table chain.
@@ -377,6 +416,13 @@ pub enum ApplyPlanError {
         reason: String,
     },
 
+    /// A callibrary could not be parsed after the task selected its data.
+    #[error("failed to parse callibrary: {message}")]
+    Callibrary {
+        /// Preserved parser or file-read diagnostic.
+        message: String,
+    },
+
     /// A requested gainfield could not be resolved.
     #[error("failed to resolve gainfield {selector} for {path}: {reason}")]
     ResolveGainField {
@@ -456,7 +502,15 @@ pub fn plan_apply_with_timings(
     ms: &MeasurementSet,
     request: &ApplyPlanRequest,
 ) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
-    if request.calibration_tables.is_empty() && !request.parang {
+    plan_apply_with_preparation_error(ms, request, None)
+}
+
+pub(crate) fn plan_apply_with_preparation_error(
+    ms: &MeasurementSet,
+    request: &ApplyPlanRequest,
+    preparation_error: Option<&str>,
+) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
+    if request.calibration_tables.is_empty() && !request.parang && preparation_error.is_none() {
         return Err(ApplyPlanError::MissingCalibrationTables);
     }
 
@@ -535,12 +589,22 @@ pub fn plan_apply_with_timings(
     }
     let measurement_set_spectral_windows_ns = ms_spw_started_at.elapsed().as_nanos() as u64;
 
+    if let Some(message) = preparation_error {
+        return Err(ApplyPlanError::Callibrary {
+            message: message.to_string(),
+        });
+    }
     let calibration_tables_started_at = Instant::now();
     let calibration_tables = request
         .calibration_tables
         .iter()
         .map(|spec| build_table_plan(ms, spec, &selected_rows))
         .collect::<Result<Vec<_>, _>>()?;
+    library::validate_overlaps(&calibration_tables)?;
+    let calibration_tables = calibration_tables
+        .into_iter()
+        .map(|(table, _)| table)
+        .collect();
     let calibration_table_plans_ns = calibration_tables_started_at.elapsed().as_nanos() as u64;
 
     Ok((
@@ -586,7 +650,7 @@ fn build_selected_rows(
     let times = load_f64_column_rows(table, "TIME", row_indices)?;
     let intervals = load_f64_column_rows(table, "INTERVAL", row_indices)?;
 
-    row_indices
+    let mut rows = row_indices
         .iter()
         .enumerate()
         .map(|(selected_idx, &row_index)| {
@@ -608,6 +672,11 @@ fn build_selected_rows(
                 row_index,
                 field_id: value_at_i32(&field_ids, selected_idx, "FIELD_ID")?,
                 observation_id: value_at_i32(&observation_ids, selected_idx, "OBSERVATION_ID")?,
+                calibration_observation_id: value_at_i32(
+                    &observation_ids,
+                    selected_idx,
+                    "OBSERVATION_ID",
+                )?,
                 scan_number: value_at_i32(&scan_numbers, selected_idx, "SCAN_NUMBER")?,
                 data_desc_id,
                 data_spw_id: dd
@@ -624,7 +693,9 @@ fn build_selected_rows(
                 interval_seconds: value_at_f64(&intervals, selected_idx, "INTERVAL")?,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, ApplyPlanError>>()?;
+    library::buffer_observations(ms, &mut rows)?;
+    Ok(rows)
 }
 
 fn load_i32_column_rows(
@@ -726,8 +797,8 @@ fn build_table_plan(
     ms: &MeasurementSet,
     spec: &ApplyCalibrationTableSpec,
     selected_rows: &[ApplyRowPlan],
-) -> Result<ApplyCalibrationTablePlan, ApplyPlanError> {
-    if spec.interp == ApplyInterpolationMode::Invalid {
+) -> Result<library::PlannedTable, ApplyPlanError> {
+    if spec.interp == ApplyInterpolationMode::Invalid && spec.callibrary.is_none() {
         return Err(ApplyPlanError::UnsupportedCalibrationTable {
             path: spec.path.display().to_string(),
             reason: "unknown or deprecated CASA interpolation type".to_string(),
@@ -743,7 +814,7 @@ fn build_table_plan(
         .spectral_window()
         .map_err(|source| ApplyPlanError::Selection { source })?
         .row_count();
-    if spec.spwmap.len() > windows {
+    if spec.spwmap.len() > windows && spec.callibrary.is_none() {
         return Err(ApplyPlanError::UnsupportedCalibrationTable {
             path: spec.path.display().to_string(),
             reason: format!(
@@ -765,10 +836,30 @@ fn build_table_plan(
         });
     }
 
+    let applicable_row_indices = library::selected_rows(ms, spec, selected_rows)?;
     let applicable_rows = selected_rows
         .iter()
-        .filter(|row| spec.apply_to.matches(row))
+        .filter(|row| {
+            spec.apply_to.matches(row)
+                && spec.callibrary.as_ref().is_none_or(|library| {
+                    library
+                        .observation_map
+                        .covers(row.calibration_observation_id)
+                        && library.scan_map.covers(row.scan_number)
+                        && (library.field_map.is_empty()
+                            || usize::try_from(row.field_id)
+                                .is_ok_and(|id| id < library.field_map.len()))
+                })
+                && applicable_row_indices
+                    .as_ref()
+                    .is_none_or(|indices| indices.binary_search(&row.row_index).is_ok())
+        })
         .collect::<Vec<_>>();
+    if !applicable_rows.is_empty() && spec.interp == ApplyInterpolationMode::Invalid {
+        return Err(ApplyPlanError::Callibrary {
+            message: "unknown library time interpolation".into(),
+        });
+    }
     let applicable_field_ids = unique_i32(applicable_rows.iter().map(|row| row.field_id));
     let applicable_data_spw_ids = unique_i32(applicable_rows.iter().map(|row| row.data_spw_id));
 
@@ -783,7 +874,20 @@ fn build_table_plan(
         }
         (Vec::new(), Vec::new())
     } else {
-        resolve_gainfield(ms, spec, &summary, &applicable_field_ids)?
+        let all_fields;
+        let fields = if spec.callibrary.is_some()
+            && matches!(spec.gainfield, Some(GainFieldSelector::Nearest))
+        {
+            all_fields = (0..ms
+                .field()
+                .map_err(|source| ApplyPlanError::Selection { source })?
+                .row_count() as i32)
+                .collect::<Vec<_>>();
+            &all_fields
+        } else {
+            &applicable_field_ids
+        };
+        resolve_gainfield(ms, spec, &summary, fields)?
     };
     let available_calibration_spw_ids = if is_bpoly {
         load_bpoly_spectral_window_ids(&summary.path)?
@@ -825,17 +929,27 @@ fn build_table_plan(
         load_caltable_spectral_windows(&summary, &available_mappings)?
     };
 
-    Ok(ApplyCalibrationTablePlan {
+    let mut plan = ApplyCalibrationTablePlan {
         spec: spec.clone(),
+        unavailable_row_indices: Vec::new(),
+        applicable_row_indices,
         applicable_selected_row_count: applicable_rows.len(),
         summary,
         resolved_gainfields,
         resolved_nearest_gainfields,
         spw_mapping,
         calibration_spectral_windows,
-        interp: spec.interp,
+        interp: if applicable_rows.is_empty() && spec.callibrary.is_some() {
+            ApplyInterpolationMode::Linear
+        } else if spec.callibrary.is_some() {
+            spec.interp.for_callibrary()
+        } else {
+            spec.interp
+        },
         calwt: spec.calwt,
-    })
+    };
+    let keys = library::arrange_contexts(ms, &mut plan, selected_rows)?;
+    Ok((plan, keys))
 }
 
 fn k_antpos_default_spwmap_spec(
@@ -851,63 +965,6 @@ fn k_antpos_default_spwmap_spec(
         .unwrap_or_default();
     spec.spwmap = vec![0; len];
     spec
-}
-
-fn resolve_spw_mapping(
-    spec: &ApplyCalibrationTableSpec,
-    available: &[i32],
-    calibration_window_count: usize,
-    selected: &[i32],
-) -> Result<Vec<ApplySpwMapping>, ApplyPlanError> {
-    let automatic = spec.spwmap.first() == Some(&-999);
-    let identity = spec.spwmap.is_empty() || spec.spwmap == [-1];
-    if !automatic
-        && !identity
-        && let Some(&invalid) = spec
-            .spwmap
-            .iter()
-            .find(|&&window| window < 0 || window as usize >= calibration_window_count)
-    {
-        return Err(ApplyPlanError::MissingCalibrationSpectralWindow {
-            path: spec.path.display().to_string(),
-            calibration_spw_id: invalid,
-        });
-    }
-    let first = if automatic {
-        Some(
-            *available
-                .first()
-                .ok_or_else(|| ApplyPlanError::UnsupportedCalibrationTable {
-                    path: spec.path.display().to_string(),
-                    reason: "no calibration window is available for automatic fanout".to_string(),
-                })?,
-        )
-    } else {
-        None
-    };
-    Ok(selected
-        .iter()
-        .map(|&data_spw_id| {
-            let calibration_spw_id = if let Some(first) = first {
-                first
-            } else if identity {
-                data_spw_id
-            } else {
-                spec.spwmap
-                    .get(if spec.spwmap.len() == 1 {
-                        0
-                    } else {
-                        data_spw_id as usize
-                    })
-                    .copied()
-                    .unwrap_or(data_spw_id)
-            };
-            ApplySpwMapping {
-                data_spw_id,
-                calibration_spw_id,
-            }
-        })
-        .collect())
 }
 
 fn load_bpoly_spectral_window_ids(path: &Path) -> Result<Vec<i32>, ApplyPlanError> {
@@ -1048,7 +1105,6 @@ fn get_string(table: &Table, row_index: usize, column: &str) -> Result<String, A
     }
 }
 
-#[cfg(test)]
 fn get_i32(table: &Table, row_index: usize, column: &str) -> Result<i32, ApplyPlanError> {
     match table
         .cell_accessor(row_index, column)

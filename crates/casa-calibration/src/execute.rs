@@ -697,7 +697,16 @@ pub fn execute_apply_from_path_with_options(
     request: &ApplyPlanRequest,
     options: ApplyExecutionOptions,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
-    let path = path.as_ref().to_path_buf();
+    execute_apply_with_preparation_error(path.as_ref(), request, options, None)
+}
+
+pub(crate) fn execute_apply_with_preparation_error(
+    path: &Path,
+    request: &ApplyPlanRequest,
+    options: ApplyExecutionOptions,
+    preparation_error: Option<&str>,
+) -> Result<ApplyExecutionReport, ApplyExecutionError> {
+    let path = path.to_path_buf();
     let total_started_at = Instant::now();
     let mut perf_tracer = CalibrationPerfTracer::from_env();
     let (mut report, plan_trace_summary, pre_drop_total_ns) = {
@@ -711,18 +720,19 @@ pub fn execute_apply_from_path_with_options(
         let open_measurement_set_ns = open_started_at.elapsed().as_nanos() as u64;
         let flag_backup_version = save_apply_flag_backup(&ms, request.apply_mode, options)?;
         let planning_started_at = Instant::now();
-        let (plan, plan_timings) = match plan_apply_with_timings(&ms, request) {
-            Ok(planned) => planned,
-            Err(error) => {
-                // CASA opens with addcorr=True before selectvis/setapply. Keep
-                // successful application on the existing single-write path;
-                // reproduce that initialization if planning rejects a request.
-                if request.apply_mode.writes_corrected_data() {
-                    initialization::corrected_data(&mut ms)?;
+        let (plan, plan_timings) =
+            match crate::plan::plan_apply_with_preparation_error(&ms, request, preparation_error) {
+                Ok(planned) => planned,
+                Err(error) => {
+                    // CASA opens with addcorr=True before selectvis/setapply. Keep
+                    // successful application on the existing single-write path;
+                    // reproduce that initialization if planning rejects a request.
+                    if request.apply_mode.writes_corrected_data() {
+                        initialization::corrected_data(&mut ms)?;
+                    }
+                    return Err(error.into());
                 }
-                return Err(error.into());
-            }
-        };
+            };
         let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
         if plan.apply_mode == ApplyMode::Trial {
             // Calibrater::correct2 still runs the calibration operators in
@@ -1995,7 +2005,7 @@ fn apply_row_all_channels(
         .zip(loaded_tables)
         .enumerate()
     {
-        if !table_plan.spec.apply_to.matches(row) {
+        if !table_plan.applies_to(row) {
             continue;
         }
         let calibrate_weights = plan.apply_mode.writes_corrected_data()
@@ -2017,12 +2027,25 @@ fn apply_row_all_channels(
             .find(|spw| spw.spw_id == cal_spw_id)
             .expect("planner guarantees mapped caltable spectral windows");
 
-        let field_id = table_plan
+        let mut field_id = table_plan
             .resolved_nearest_gainfields
             .iter()
             .find(|mapping| mapping.measurement_set_field_id == row.field_id)
             .map(|mapping| mapping.calibration_field_id)
             .unwrap_or(-1);
+
+        if let Some(library) = table_plan
+            .spec
+            .callibrary
+            .as_ref()
+            .filter(|library| !library.field_map.is_empty())
+        {
+            field_id = usize::try_from(row.field_id)
+                .ok()
+                .and_then(|id| library.field_map.get(id))
+                .copied()
+                .unwrap_or(-1);
+        }
 
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
             let mut key = calibration_lookup_key(
@@ -3401,6 +3424,7 @@ fn pol_id_of_ddid(ddid_row: usize) -> i32 {
 
 pub(crate) struct LoadedCalibrationTable {
     pub(crate) path: PathBuf,
+    callibrary: Option<crate::CallibraryOptions>,
     time_plans: HashMap<i32, crate::lookup::TimePlan>,
     missing_grids: HashMap<i32, Arc<CalibrationGrid>>,
     time_is_delay: bool,
@@ -4260,6 +4284,7 @@ fn load_parameters(
         supports_calwt,
         engine: geometry_engine.cloned(),
         solutions,
+        callibrary: None,
         time_plans: HashMap::new(),
         missing_grids: HashMap::new(),
         time_is_delay: false,
@@ -4332,6 +4357,7 @@ fn load_bpoly_calibration_table(
         supports_calwt: false,
         engine: None,
         solutions,
+        callibrary: None,
         time_plans: HashMap::new(),
         missing_grids: HashMap::new(),
         time_is_delay: false,
@@ -5029,6 +5055,7 @@ mod tests {
                 row_index: 4,
                 field_id: 5,
                 observation_id: 6,
+                calibration_observation_id: 6,
                 scan_number: 1,
                 data_desc_id: 7,
                 data_spw_id: 2,
@@ -5047,7 +5074,10 @@ mod tests {
             selected_data_spw_ids: vec![2],
             measurement_set_spectral_windows: vec![spw_plan.clone()],
             calibration_tables: vec![ApplyCalibrationTablePlan {
+                applicable_row_indices: None,
+                unavailable_row_indices: Vec::new(),
                 spec: crate::plan::ApplyCalibrationTableSpec {
+                    callibrary: None,
                     path: cal_path.clone(),
                     apply_to: Default::default(),
                     gainfield: None,

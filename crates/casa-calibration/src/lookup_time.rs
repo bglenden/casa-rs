@@ -82,7 +82,7 @@ impl CalibrationTableLookup {
     }
 }
 
-type TimeKey = (i32, i32, i32);
+type TimeKey = (i32, i32, i32, i32);
 type TimeSeries = HashMap<TimeKey, Vec<CalibrationSolution>>;
 type SelectedSeries<'a> = (&'a TimeKey, &'a [CalibrationSolution]);
 
@@ -91,8 +91,8 @@ pub(crate) struct TimePlan {
     real: bool,
     scope: TimeScope,
     series: TimeSeries,
-    splines: HashMap<(i32, i32, i32), Spline>,
-    cycles: HashMap<(i32, i32, i32), Vec<f32>>,
+    splines: HashMap<TimeKey, Spline>,
+    cycles: HashMap<TimeKey, Vec<f32>>,
     reference_hz: Vec<f64>,
 }
 
@@ -170,14 +170,13 @@ impl Registration {
 
 impl TimePlan {
     fn candidates(&self, query: &TimeQuery) -> Option<SelectedSeries<'_>> {
-        let segment = match self.scope {
-            TimeScope::All => -1,
-            TimeScope::Observation => query.observation,
-            TimeScope::Scan => query.scan,
-        };
+        let (observation, scan) = self.scope.coordinates(query.observation, query.scan);
         self.series
-            .get_key_value(&(segment, query.window, query.antenna))
-            .or_else(|| self.series.get_key_value(&(segment, query.window, -1)))
+            .get_key_value(&(observation, scan, query.window, query.antenna))
+            .or_else(|| {
+                self.series
+                    .get_key_value(&(observation, scan, query.window, -1))
+            })
             .filter(|(_, rows)| !rows.is_empty())
             .map(|(key, rows)| (key, rows.as_slice()))
     }

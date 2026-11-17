@@ -139,6 +139,7 @@ mod tests {
             engine: None,
             time_is_delay: false,
             phase_delay: false,
+            callibrary: None,
             time_plans: HashMap::new(),
             missing_grids: HashMap::new(),
             solutions: HashMap::from([(

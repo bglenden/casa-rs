@@ -67,6 +67,7 @@ fn calibrate_defaults_to_apply_and_backs_up_flags_as_casa_does() {
     assert_eq!(
         request.expect("apply"),
         CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
+            callibrary_error: None,
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection::new(),
             calibration_tables: vec![table("phase.gcal", false)],
@@ -101,6 +102,7 @@ fn calibrate_apply_reads_its_chain_and_selection() {
     assert_eq!(
         request.expect("apply"),
         CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
+            callibrary_error: None,
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection {
                 field: Some("0".into()),
@@ -279,7 +281,7 @@ fn a_callibrary_names_the_chain_alone() {
     assert_eq!(apply.calibration_tables.len(), 1);
     assert_eq!(
         apply.calibration_tables[0].path,
-        dir.path().join("phase.gcal")
+        std::env::current_dir().unwrap().join("phase.gcal")
     );
 
     let both = refusal(request(
@@ -832,6 +834,8 @@ fn sample_apply_plan() -> ApplyPlan {
         selected_data_spw_ids: vec![3],
         measurement_set_spectral_windows: Vec::new(),
         calibration_tables: vec![ApplyCalibrationTablePlan {
+            applicable_row_indices: None,
+            unavailable_row_indices: Vec::new(),
             spec,
             applicable_selected_row_count: 9,
             summary: sample_summary("phase.gcal"),

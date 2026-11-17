@@ -339,7 +339,10 @@ impl CalibrationTableLookup {
         }
         let subtype = summary.table_subtype.clone();
         let plan = ApplyCalibrationTablePlan {
+            applicable_row_indices: None,
+            unavailable_row_indices: Vec::new(),
             spec: ApplyCalibrationTableSpec {
+                callibrary: None,
                 interp,
                 ..ApplyCalibrationTableSpec::new(path)
             },

@@ -30,8 +30,8 @@ pub fn project_provider_invocation(
 }
 
 /// Project a session whose caller also retains original explicit values.
-/// Only proven scalar required-path spellings use these originals; all other
-/// parameters follow the normal projection.
+/// Proven required-path spellings and inactive applycal spwmap shapes retain
+/// their originals when they normalize to the resolved value.
 pub fn project_provider_invocation_with_originals(
     session: &ParameterSession,
     originals: &BTreeMap<String, ParameterValue>,
@@ -43,35 +43,29 @@ pub fn project_provider_invocation_with_originals(
         .filter_map(|(name, state)| {
             let value = state.value.as_ref()?;
             let given = session.given(name);
-            let path_original = originals.get(name).or(given).filter(|given| {
-                matches!(given, ParameterValue::String(path)
-                    if std::path::Path::new(path).is_absolute()
-                        || path.starts_with("./") || path.starts_with("../"))
-                    && matches!(value, ParameterValue::Array(_))
-                    && crate::casa_type_diagnostics::single_required_path(
-                        session.bundle().surface.id(),
-                        name,
-                    )
-                    && session
-                        .bundle()
-                        .surface
-                        .bindings()
-                        .iter()
-                        .find(|binding| &binding.name == name)
-                        .and_then(|binding| session.bundle().catalog.concept(&binding.concept))
-                        .and_then(|concept| crate::normalize::normalize_value(given, concept).ok())
-                        .as_ref()
-                        == Some(value)
+            let original = originals.get(name).or(given).filter(|original| {
+                session.bundle().surface.bindings().iter()
+                    .find(|binding| &binding.name == name)
+                    .and_then(|binding| session.bundle().catalog.concept(&binding.concept))
+                    .and_then(|concept| crate::normalize::normalize_value(original, concept).ok())
+                    .as_ref() == Some(value)
             });
-            let sent = given
-                .filter(|_| is_quantity(session, name))
+            let path_original = original.filter(|given| {
+                matches!(given, ParameterValue::String(path)
+                    if std::path::Path::new(path).is_absolute() || path.starts_with("./") || path.starts_with("../"))
+                    && matches!(value, ParameterValue::Array(_))
+                    && crate::casa_type_diagnostics::single_required_path(session.bundle().surface.id(), name)
+            });
+            let inactive_map = original.filter(|_| {
+                session.bundle().surface.id() == "applycal" && name == "spwmap"
+                    && session.states().get("docallib").and_then(|state| state.value.as_ref()) == Some(&ParameterValue::Bool(true))
+            });
+            let sent = given.filter(|_| is_quantity(session, name))
                 .map(|given| match given {
-                    ParameterValue::ScalarArray(value)
-                    | ParameterValue::NumpyScalar { value, .. } => value.as_ref(),
+                    ParameterValue::ScalarArray(value) | ParameterValue::NumpyScalar { value, .. } => value.as_ref(),
                     other => other,
                 })
-                .or(path_original)
-                .unwrap_or(value);
+                .or(path_original).or(inactive_map).unwrap_or(value);
             Some((name.clone(), sent.clone()))
         })
         .collect::<BTreeMap<_, _>>();
@@ -552,5 +546,57 @@ mod tests {
             &ParameterValue::Array(vec![auto(), ParameterValue::String("1arcsec".into())]),
             omit
         ));
+    }
+    #[test]
+    fn inactive_applycal_spwmap_keeps_its_flat_form_across_processes() {
+        let mut session =
+            ParameterSession::defaults(builtin_surface_bundle("applycal").unwrap()).unwrap();
+        session
+            .set("vis", ParameterValue::String("data.ms".into()))
+            .unwrap();
+        session.set("docallib", ParameterValue::Bool(true)).unwrap();
+        session
+            .set("callib", ParameterValue::String("apply.callib".into()))
+            .unwrap();
+        session
+            .set(
+                "spwmap",
+                ParameterValue::Array(vec![ParameterValue::Integer(999)]),
+            )
+            .unwrap();
+        assert_eq!(request(&session).values["spwmap"], serde_json::json!([999]));
+        // Python supplies a normalized session plus the original collection;
+        // test that actual two-stage projection, including a mismatching original.
+        session
+            .set(
+                "spwmap",
+                ParameterValue::Array(vec![ParameterValue::Array(vec![ParameterValue::Integer(
+                    999,
+                )])]),
+            )
+            .unwrap();
+        let originals = BTreeMap::from([(
+            "spwmap".into(),
+            ParameterValue::Array(vec![ParameterValue::Integer(999)]),
+        )]);
+        let projected = project_provider_invocation_with_originals(&session, &originals).unwrap();
+        let projected: TaskRunRequest =
+            serde_json::from_str(projected.stdin.as_ref().unwrap()).unwrap();
+        assert_eq!(projected.values["spwmap"], serde_json::json!([999]));
+        let wrong = BTreeMap::from([(
+            "spwmap".into(),
+            ParameterValue::Array(vec![ParameterValue::Integer(998)]),
+        )]);
+        let projected = project_provider_invocation_with_originals(&session, &wrong).unwrap();
+        let projected: TaskRunRequest =
+            serde_json::from_str(projected.stdin.as_ref().unwrap()).unwrap();
+        assert_eq!(projected.values["spwmap"], serde_json::json!([[999]]));
+        session
+            .set("docallib", ParameterValue::Bool(false))
+            .unwrap();
+        assert_eq!(
+            request(&session).values["spwmap"],
+            serde_json::json!([[999]])
+        );
     }
 }

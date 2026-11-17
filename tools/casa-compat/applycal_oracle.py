@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import resource
+import shutil
 import re
 import subprocess
 import sys
@@ -295,7 +296,7 @@ def run(root, native_bin, only=None):
     result = dict(casa_version=casa.version_string(), signature=str(reference), case_filter=only, cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
-    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None):
+    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None, casa_control_callib=None):
         if only is not None and re.search(only, name) is None:
             return
         records, paths = {}, {}
@@ -384,6 +385,16 @@ def run(root, native_bin, only=None):
                     np.testing.assert_array_equal(b[column], original[column], err_msg=column)
                 np.testing.assert_array_equal(b['CORRECTED_DATA'], b['DATA'])
                 return
+            if casa_control_callib is not None:
+                # The raw joint-map task skipped every valid buffer. Keep that
+                # result, and use explicitly constrained CASA slices as the
+                # independent reference for the intended joint partition.
+                np.testing.assert_allclose(a['CORRECTED_DATA'], a['DATA']*(7.+2.j), rtol=1e-6)
+                control = root/(name+'.casa-control.ms')
+                copy_ms(paths['casa'], control)
+                casa.applycal(vis=str(control), docallib=True, callib=str(casa_control_callib), flagbackup=False)
+                equal(control, paths['native'])
+                return
             equal(paths['casa'], paths['native'])
             for column in ['TIME', 'INTERVAL', 'TIME_CENTROID']:
                 np.testing.assert_allclose(a[column], b[column], rtol=0, atol=1e-4, err_msg=column)
@@ -430,6 +441,9 @@ def run(root, native_bin, only=None):
                                     weight_seed=weight_seed, spectral_sigma=spectral_sigma, endian=endian, descending_ms=descending_ms, records=records)
         if name == 'review-nearest-field-tie':
             result['cases'][name]['casa_bug_correction'] = 'Restore the explicit nearest-field ambiguity guard disabled by Sort::Ascending (-1) in genSort options; native rejects without applying an arbitrary tied gain.'
+        if casa_control_callib is not None:
+            result['cases'][name]['casa_bug_correction'] = 'CLPatchPanel records an absent scan for all requested observations rather than its current observation. Native retains valid joint contexts; explicit obs/scan CASA slices give an independent reference.'
+            result['cases'][name]['casa_control_callib'] = str(casa_control_callib)
         (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
         print(name, 'FAILED' if any(item['case'] == name for item in result['failures']) else 'passed', flush=True)
 
@@ -570,6 +584,128 @@ def run(root, native_bin, only=None):
         case('review-missing-antenna-'+mode, dict(interp=['linearperobs'], applymode=mode), gain=missing_antenna_gain, input_vis=observation_source, precorrected=True)
     for method in ['cubic', 'cubicflag']:
         case('review-compressed-grid-'+method, dict(interp=['linear,'+method]), gain=compressed_bandpass, input_vis=compressed_source, precorrected=True)
+    # Callibrary task parsing uses CalLibraryGram/CLPatchPanel, distinct from
+    # the private Python helper's read/eval implementation.
+    mixed_observations = root/'source-mixed-observations.ms'
+    copy_ms(observation_source, mixed_observations)
+    tool.open(str(mixed_observations), nomodify=False)
+    tool.putcol('OBSERVATION_ID', (np.arange(tool.nrows()) % 2).astype(np.int32))
+    tool.close()
+    quoted_gain = root/"O'Brien.gcal"
+    shutil.copytree(time_gain, quoted_gain)
+    callib_cases = [
+        ('default', '', chain_source, time_gain),
+        ('review-observation-buffer', " obsmap='self'", mixed_observations, observation_gain),
+        ('review-observation-buffer-short', ' obsmap=[0]', mixed_observations, observation_gain),
+        ('review-empty-invalid-time', " field='FLUX' tinterp='invalid'", chain_source, time_gain),
+        ('review-active-invalid-time', " field='PHASE' tinterp='invalid'", chain_source, time_gain),
+        ('review-frequency-aipslin', " finterp='aipslin'", shifted_source, curved_bandpass),
+        ('T-default', '', chain_source, scalar_time_gain),
+        ('B-default', " tinterp='linear' finterp='cubicflag'", shifted_source, flagged_curved_bandpass),
+        ('empty-slice', " field='FLUX'", chain_source, time_gain),
+        ('unknown-field', " field='NO_SUCH_FIELD'", source, time_gain),
+        ('unknown-spw', " spw='999'", source, time_gain),
+        ('unknown-scan', " scan='999'", source, time_gain),
+        ('unknown-obs', " obs='999'", source, time_gain),
+        ('unknown-intent', " intent='NO_SUCH_INTENT'", selection_source, time_gain),
+        ('string-spwmap', " spwmap='[0]'", multi_source, multi_gain),
+        ('calwt-true', ' calwt=True', chain_source, time_gain),
+        ('calwt-false', ' calwt=False', chain_source, time_gain),
+        ('field-name', " field='PHASE'", source, time_gain),
+        ('field-pattern', " field='PH*'", source, time_gain),
+        ('field-spw', " field='PHASE' spw='0:2~5'", source, time_gain),
+        ('observation', " obs='1'", observation_source, observation_gain),
+        ('intent', " intent='CALIBRATE_PHASE*'", selection_source, time_gain),
+        ('reach', " reach='10s'", chain_source, time_gain),
+        ('fldmap-name', " fldmap='PHASE'", chain_source, time_gain),
+        ('fldmap-selected', " fldmap='0,1'", chain_source, time_gain),
+        ('fldmap-nearest', " fldmap='nearest'", chain_source, time_gain),
+        ('fldmap-array', ' fldmap=[1,0]', source, time_gain),
+        ('obsmap-array', ' obsmap=[1,0]', observation_source, observation_gain),
+        ('obsmap-self', " obsmap='self'", observation_source, observation_gain),
+        ('obsmap-short', ' obsmap=[1]', observation_source, observation_gain),
+        ('obsmap-missing', ' obsmap=[999,0]', observation_source, observation_gain),
+        ('scan', " scan='2'", observation_source, observation_gain),
+        ('scanmap-self', " scanmap='self'", observation_source, observation_gain),
+        ('scanmap-array', ' scanmap=[0,2,1]', observation_source, observation_gain),
+        ('scanmap-short', ' scanmap=[1]', observation_source, observation_gain),
+        ('scanmap-missing', ' scanmap=[0,999,1]', observation_source, observation_gain),
+        ('scanmap-invalid', " scanmap='perobs'", observation_source, observation_gain),
+        ('obs-scan-self', " obsmap='self' scanmap='self'", observation_source, observation_gain),
+        ('obs-scan-crossed', " obsmap=[1,0] scanmap='self'", observation_source, observation_gain),
+        ('fldmap-short', ' fldmap=[0]', source, time_gain),
+        ('fldmap-missing', ' fldmap=[999,0]', source, time_gain),
+        ('antmap-missing', ' antmap=[999]', chain_source, time_gain),
+        ('spwmap-missing', ' spwmap=[999]', chain_source, time_gain),
+        ('obsmap-perobs', " obsmap='perobs'", observation_source, observation_gain),
+        ('antmap-array', ' antmap=[1,0,2,3,4]', chain_source, time_gain),
+        ('antmap-broadcast', ' antmap=[0]', chain_source, time_gain),
+        ('spwmap-broadcast', ' spwmap=[0]', multi_source, multi_gain),
+        ('spwmap-prefix', ' spwmap=[1,0]', multi_source, multi_gain),
+        ('tinterp-cubic', " tinterp='cubic'", chain_source, time_gain),
+        ('finterp-cubic', " finterp='cubic'", shifted_source, curved_bandpass),
+        ('unknown-string', " unrecognized='text'", chain_source, time_gain),
+        ('empty-map', ' antmap=[]', chain_source, time_gain),
+    ]
+    for name, directives, input_vis, gain in callib_cases:
+        path = root/('library-'+name+'.txt')
+        path.write_text(f"caltable='{gain}'{directives}\n")
+        control = None
+        if name == 'obs-scan-self':
+            control = root/'library-joint-control.txt'
+            control.write_text(f"caltable='{gain}' obs='0' scan='1' obsmap='self' scanmap='self'\ncaltable='{gain}' obs='1' scan='2' obsmap='self' scanmap='self'\n")
+        case('callib-'+name, dict(docallib=True, callib=str(path)), gain=gain, input_vis=input_vis, precorrected=True, casa_control_callib=control)
+    case('review-buffer-traditional-perobs', dict(interp=['linearperobs']), gain=observation_gain, input_vis=mixed_observations, precorrected=True)
+    grammar_cases = [
+        ('review-array-reach', "caltable='{table}' reach=[1]\n"),
+        ('review-array-finterp', "caltable='{table}' finterp=[1]\n"),
+        ('review-array-after-string', "caltable='{table}' antmap='unused' antmap=[0]\n"),
+        ('review-empty-caltable', "caltable='' field='PHASE'\ncaltable='{table}'\n"),
+        ('review-alias-entries', "caltable='{table}'\ncaltable='{table_alias}'\n"),
+        ('review-apostrophe-path', 'caltable="{quoted_table}"\n'),
+        ('review-wildcard-overlap', "caltable='{table}' field='FLUX'\ncaltable='{table}' scan='2'\n"),
+        ('empty-file', ''),
+        ('comments-only', '# an empty library\n'),
+        ('quoted-calwt', "caltable='{table}' calwt='False'\n"),
+        ('string-calwt', "caltable='{table}' calwt=yes\n"),
+        ('numeric-calwt', "caltable='{table}' calwt=1\n"),
+        ('key-case', "caltable='{table}' CALWT=False FIELD='PHASE'\n"),
+        ('bool-selector', "caltable='{table}' field=True\n"),
+        ('quoted-key', "'caltable'='{table}' 'calwt'=False\n"),
+        ('space-equals', "caltable = '{table}' calwt = False\n"),
+        ('orphan-selector', "field='PHASE'\ncaltable='{table}'\n"),
+        ('orphan-calwt', "calwt=False\ncaltable='{table}'\n"),
+        ('array-spaces', "caltable='{table}' antmap=[1 0 2 3 4]\n"),
+        ('array-multiline', "caltable='{table}' antmap=[1,\n0,2,3,4]\n"),
+        ('array-negative', "caltable='{table}' antmap=[-1]\n"),
+        ('fldmap-empty', "caltable='{table}' fldmap=''\n"),
+        ('inline-comment', "caltable='{table}' # comment\n"),
+        ('comma-entries', "caltable='{table}' field='FLUX',caltable='{table}' field='PHASE'\n"),
+        ('overlap', "caltable='{table}'\ncaltable='{table}'\n"),
+    ]
+    for name, text in grammar_cases:
+        path = root/('library-grammar-'+name+'.txt')
+        path.write_text(text.format(table=time_gain, table_alias=str(time_gain.parent)+'/./'+time_gain.name, quoted_table=quoted_gain))
+        case('callib-grammar-'+name, dict(docallib=True, callib=str(path)), gain=time_gain, input_vis=source, precorrected=True)
+    for directive in ['obsmap=[999,0]', 'scanmap=[0,999,1]', 'fldmap=[999,0]', 'antmap=[999]']:
+        path = root/('library-missing-'+directive.split('=')[0]+'.txt')
+        path.write_text(f"caltable='{observation_gain}' {directive}\n")
+        for mode in ['calflagstrict', 'calonly', 'flagonly', 'trial']:
+            case('callib-missing-'+directive.split('=')[0]+'-'+mode,
+                 dict(docallib=True, callib=str(path), applymode=mode), gain=observation_gain,
+                 input_vis=observation_source, precorrected=True, spectral_sigma=True)
+    active = root/'library-default.txt'
+    case('callib-inactive-traditional', dict(docallib=True, callib=str(active), gaintable=[str(root/'absent.gcal')],
+         gainfield=['NO_SUCH_FIELD'], interp=['invalid'], spwmap=[999], calwt=[False]), gain=time_gain, input_vis=chain_source, precorrected=True)
+    case('callib-empty-path', dict(docallib=True), gain=time_gain, input_vis=chain_source)
+    duplicate = root/'library-repeat.txt'
+    duplicate.write_text(f"caltable='{time_gain}' field='FLUX' fldmap='FLUX' calwt=False\ncaltable='{time_gain}' field='PHASE' fldmap='PHASE' calwt=True\n")
+    case('callib-repeated-calwt-first', dict(docallib=True, callib=str(duplicate)), gain=time_gain, input_vis=source, precorrected=True)
+    case('callib-inline', dict(docallib=True, callib=f"caltable='{time_gain}' calwt=True"), gain=time_gain, input_vis=chain_source, precorrected=True)
+    nested = root/'library-nested'; nested.mkdir()
+    relative = nested/'relative.txt'; relative.write_text("caltable='time-fields.gcal'\n")
+    case('callib-relative-cwd', dict(docallib=True, callib=str(relative)), gain=time_gain, input_vis=chain_source, precorrected=True)
+    case('callib-missing-file', dict(docallib=True, callib=str(root/'no-library.txt')), gain=time_gain, input_vis=chain_source)
     if only is not None:
         return result
     # CASA crashes when perscan is combined with multiple observation IDs.

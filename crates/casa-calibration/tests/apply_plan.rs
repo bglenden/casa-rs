@@ -56,6 +56,7 @@ fn plan_apply_resolves_spwmap_for_selected_rows() {
             apply_mode: ApplyMode::Trial,
             parang: false,
             calibration_tables: vec![ApplyCalibrationTableSpec {
+                callibrary: None,
                 path: caltable_path.clone(),
                 apply_to: Default::default(),
                 gainfield: None,
@@ -97,6 +98,7 @@ fn plan_apply_resolves_gainfield_by_exact_name() {
             apply_mode: ApplyMode::CalOnly,
             parang: false,
             calibration_tables: vec![ApplyCalibrationTableSpec {
+                callibrary: None,
                 path: caltable_path,
                 apply_to: Default::default(),
                 gainfield: Some(GainFieldSelector::Expression("CALIBRATOR".to_string())),
@@ -138,6 +140,7 @@ fn plan_apply_resolves_gainfield_nearest_by_field_direction() {
             apply_mode: ApplyMode::Trial,
             parang: false,
             calibration_tables: vec![ApplyCalibrationTableSpec {
+                callibrary: None,
                 path: caltable_path,
                 apply_to: Default::default(),
                 gainfield: Some(GainFieldSelector::Nearest),
@@ -263,6 +266,7 @@ fn plan_apply_rejects_explicit_gainfield_for_bpoly_tables() {
             apply_mode: ApplyMode::Trial,
             parang: false,
             calibration_tables: vec![ApplyCalibrationTableSpec {
+                callibrary: None,
                 path: bpoly_path,
                 apply_to: Default::default(),
                 gainfield: Some(GainFieldSelector::FieldId(0)),
@@ -299,6 +303,7 @@ fn plan_apply_tracks_per_table_applicability_selection() {
             apply_mode: ApplyMode::Trial,
             parang: false,
             calibration_tables: vec![ApplyCalibrationTableSpec {
+                callibrary: None,
                 path: caltable_path,
                 apply_to: ApplyTableSelection {
                     field_ids: vec![1],
