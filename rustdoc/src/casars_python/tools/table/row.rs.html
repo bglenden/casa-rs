@@ -365,9 +365,9 @@
 <a href=#365 id=365 data-nosnippet>365</a>        .table
 <a href=#366 id=366 data-nosnippet>366</a>        .schema()
 <a href=#367 id=367 data-nosnippet>367</a>        .ok_or_else(|| runtime_err(<span class="string">"table has no schema"</span>))<span class="question-mark">?</span>;
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">let </span>schema_cols: Vec&lt;String&gt; = schema
-<a href=#369 id=369 data-nosnippet>369</a>        .columns()
-<a href=#370 id=370 data-nosnippet>370</a>        .iter()
+<a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">let </span>schema_cols: Vec&lt;String&gt; = open
+<a href=#369 id=369 data-nosnippet>369</a>        .visible_columns(<span class="kw-2">&amp;</span>root.table)
+<a href=#370 id=370 data-nosnippet>370</a>        .into_iter()
 <a href=#371 id=371 data-nosnippet>371</a>        .map(|col| col.name().to_string())
 <a href=#372 id=372 data-nosnippet>372</a>        .collect();
 <a href=#373 id=373 data-nosnippet>373</a>    <span class="kw">let </span>selected = <span class="kw">if </span>exclude {
@@ -381,7 +381,7 @@
 <a href=#381 id=381 data-nosnippet>381</a>    } <span class="kw">else </span>{
 <a href=#382 id=382 data-nosnippet>382</a>        <span class="kw">let </span><span class="kw-2">mut </span>seen = HashSet::with_capacity(columnnames.len());
 <a href=#383 id=383 data-nosnippet>383</a>        <span class="kw">for </span>name <span class="kw">in </span><span class="kw-2">&amp;</span>columnnames {
-<a href=#384 id=384 data-nosnippet>384</a>            <span class="kw">if </span>schema.column(name).is_none() {
+<a href=#384 id=384 data-nosnippet>384</a>            <span class="kw">if </span>!open.column_allowed(name) || schema.column(name).is_none() {
 <a href=#385 id=385 data-nosnippet>385</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(runtime_err(<span class="macro">format!</span>(<span class="string">"Table column {name} is unknown"</span>)));
 <a href=#386 id=386 data-nosnippet>386</a>            }
 <a href=#387 id=387 data-nosnippet>387</a>            <span class="kw">if </span>!seen.insert(name.as_str()) {

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["TaqlResult"],"fn":["execute","execute_readonly"]};
+window.SIDEBAR_ITEMS = {"enum":["TaqlResult"],"fn":["execute","execute_for_tool","execute_readonly","execute_readonly_for_tool","execute_with_rows"],"struct":["TaqlExecution"]};

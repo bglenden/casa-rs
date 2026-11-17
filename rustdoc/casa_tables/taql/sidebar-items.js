@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["execute","parse"],"mod":["aggregate","ast","error","eval","exec","format","functions","token"]};
+window.SIDEBAR_ITEMS = {"fn":["execute","parse"],"mod":["aggregate","ast","calc","error","eval","exec","format","functions","token"]};
