@@ -919,12 +919,26 @@ meant: <code>out_table</code> becomes <code>caltable</code>, <code>gain_type='g'
 lists, and so on. Where CASA's default differs (<code>applycal</code>'s <code>calwt</code>,
 <code>gaincal</code>'s <code>calmode</code> and <code>smodel</code>, <code>bandpass</code>'s <code>combine</code> and <code>smodel</code>), a
 profile that left the value out adopts CASA's default with a warning.</p>
-<p><code>overwrite=True</code> replaces only the <code>-o</code> report today. A run that would write
-a calibration table or MeasurementSet that already exists is refused whatever
-<code>overwrite</code> says: gaincal, bandpass and gencal caltables, the fluxscale
-table, and the corrected-data export. Choose a new name, or remove the old
-product first. Bringing these in line with CASA, whose gaincal replaces an
-existing caltable, is <a href="https://github.com/bglenden/casa-rs/issues/945">#945</a>.</p>
+<p>Scientific products follow each CASA task's lifecycle: <code>gaincal</code> and
+<code>bandpass</code> replace an existing calibration table unless <code>append=True</code>;
+<code>fluxscale</code> refuses an existing flux table unless <code>append=True</code>; <code>gencal</code>
+adds specified real corrections to its existing table; gain-curve generation
+replaces its absolute coefficients. Append requires a
+compatible calibration type, MeasurementSet identity and spectral metadata.
+A solve with no successful solutions returns its statistics without writing
+or replacing a table. New products are staged before publication so a failed
+run preserves the prior product.</p>
+<p>On these CASA-named tasks, <code>overwrite=True</code> controls only the <code>output</code> report.
+On the native <code>calibrate</code> workflow, it also permits replacing its scientific
+output (including corrected-data exports); without it an existing output is
+refused. Report collisions are checked before the scientific operation runs.</p>
+<p>Reports cannot overlap scientific inputs or outputs, including prior calibration
+tables and gain-curve sources. Append retains additional local keyword subtables.</p>
+<p>Scientific publication reserves the destination across processes. An interrupted
+writer leaves its reservation and staging or backup directories beside the
+product; a later writer refuses them. Inspect those directories and recover the
+prior product before removing the reservation and retrying. Append refuses
+symbolic-link subtables rather than risking their loss during replacement.</p>
 <h2 id="current-limitations">Current limitations<a class="headerlink" href="#current-limitations" title="Permanent link">&para;</a></h2>
 <ul>
 <li>there is not yet a dedicated <code>setjy</code> task</li>

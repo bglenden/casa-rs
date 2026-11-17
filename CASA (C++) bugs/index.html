@@ -3696,6 +3696,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#bandpass-suppresses-its-runtime-exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bandpass suppresses its runtime exceptions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gaincal-can-append-rows-without-storing-their-gain-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gaincal can append rows without storing their gain parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appending-a-first-gain-or-b-table-tries-to-open-nonexistent-spectral-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appending a first gain or B table tries to open nonexistent spectral metadata
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tablesummaryrecursetrue-use-after-free-and-statistics-nan-ordering" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6734,6 +6767,11 @@ interoperability contract outranks the correction.</p>
 <code>slow-tests</code>) appends CASA's solutions to a casa-rs table. With
 <code>gain_table_windows_match_casa_on_ngc5921</code> and its two-sideband companion,
 it asserts that every column of every window row equals CASA's exactly.</p>
+<p>The same defect is present for channelized <code>bandpass(bandtype='B')</code> in
+CASA 6.7.6.14: <code>RESOLUTION</code> is each channel's frequency and
+<code>TOTAL_BANDWIDTH</code> is their sum. CAL-06 preserves those values for the same
+append-interoperability reason. <code>calibration_lifecycle_oracle.py</code> exchanges
+B tables in both directions and compares every SPW column.</p>
 <h2 id="imregrid-refuses-a-one-channel-template-in-another-spectral-frame"><code>imregrid</code> refuses a one-channel template in another spectral frame<a class="headerlink" href="#imregrid-refuses-a-one-channel-template-in-another-spectral-frame" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-27</li>
@@ -9490,6 +9528,47 @@ pixel in the same constant example it wrote 3 and 0.25.</p>
 <p>casa-rs uses both masks for both contributions. A pixel masked in either
 input contributes neither signal nor coverage, and valid pointings still
 contribute there. <a href="https://github.com/bglenden/casa-rs/issues/1515">Imaging issue #1515</a></p>
+<h2 id="bandpass-suppresses-its-runtime-exceptions"><code>bandpass</code> suppresses its runtime exceptions<a class="headerlink" href="#bandpass-suppresses-its-runtime-exceptions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-16</li>
+<li>CASA version: 6.7.6.14</li>
+<li>Affected code: <code>casatasks/private/task_bandpass.py</code>, <code>bandpass</code></li>
+</ul>
+<p>Calling <code>bandpass</code> with <code>field='missing-field'</code> on an otherwise valid MS
+logs the C++ selection exception but returns a dictionary with an empty
+<code>solve_tables</code> instead of raising it.
+The task's <code>finally</code> block returns <code>mycb.returndict()</code>, suppressing any
+exception from selection, solving or writing. The existing caltable survives
+this selection failure. casa-rs preserves that product and raises its existing
+execution error so a failed calibration is visible to a calling script.
+<code>tools/casa-compat/calibration_lifecycle_oracle.py</code> exercises both outcomes.</p>
+<h2 id="gaincal-can-append-rows-without-storing-their-gain-parameters"><code>gaincal</code> can append rows without storing their gain parameters<a class="headerlink" href="#gaincal-can-append-rows-without-storing-their-gain-parameters" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-16</li>
+<li>CASA version: 6.7.6.14</li>
+<li>Affected code: <code>SolvableVisCal::storeNCT</code>, <code>TableCopy::copyRows</code></li>
+</ul>
+<p>Create a G table with ten rows, remove <code>CPARAM</code> with the table tool, then
+run <code>gaincal(append=True)</code> on the same input. CASA succeeds and leaves twenty
+rows without a <code>CPARAM</code> column: copying common columns silently discards the
+new gain solutions. casa-rs refuses this incompatible append schema and
+preserves the previous product. Losing scientific values is not a useful
+compatibility behavior. <code>calibration_lifecycle_oracle.py</code> reproduces both
+outcomes; <code>output_lifecycle</code> checks the native refusal and preservation.</p>
+<h2 id="appending-a-first-gain-or-b-table-tries-to-open-nonexistent-spectral-metadata">Appending a first gain or B table tries to open nonexistent spectral metadata<a class="headerlink" href="#appending-a-first-gain-or-b-table-tries-to-open-nonexistent-spectral-metadata" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-16</li>
+<li>CASA version: 6.7.6.14</li>
+<li>Affected code: <code>SolvableVisCal::discernAndSetSolnFrequencies</code></li>
+</ul>
+<p>With <code>append=True</code> and an absent caltable, the frequency precheck opens
+<code>caltable/SPECTRAL_WINDOW</code> unconditionally and fails. This precedes
+<code>storeNCT</code>, whose append logic checks whether the destination is readable
+and otherwise writes a new table. casa-rs follows that latter intent:
+append creates a first table, then requires compatible metadata for later
+appends. A solve without successful solutions still creates nothing.
+<code>calibration_lifecycle_oracle.py</code> records CASA's failure (suppressed by the
+bandpass wrapper) and native creation on otherwise identical valid inputs.</p>
 <h2 id="tablesummaryrecursetrue-use-after-free-and-statistics-nan-ordering"><code>table.summary(recurse=True)</code> use-after-free and <code>statistics</code> <code>NaN</code> ordering<a class="headerlink" href="#tablesummaryrecursetrue-use-after-free-and-statistics-nan-ordering" title="Permanent link">&para;</a></h2>
 <p>In CASA 6.7.6.14, calling <code>tb.summary(recurse=True)</code> on a table with a <code>Table:</code>
 subtable keyword passes a destroyed <code>String</code> buffer when recursing into subtable

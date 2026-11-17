@@ -720,6 +720,12 @@ calibration-table paths: a list, or one comma-separated string. Its per-table
 controls (<code>gainfield</code>, <code>interp</code>, <code>spwmap</code>, <code>calwt</code>) are <code>;</code>-separated strings
 aligned to <code>gaintables</code>, one value for every table or one per table.</p>
 <p>The <code>calibrate</code> binary takes the same parameters on its own command line.</p>
+<p><code>gaincal</code> and <code>bandpass</code> replace their caltable by default; <code>append=True</code>
+adds compatible solutions. <code>fluxscale</code> requires <code>append=True</code> when its output
+already exists. <code>gencal</code> accumulates specified corrections. A solve with no
+successful solutions returns statistics and leaves the destination alone.
+The keyword-only <code>overwrite</code> controls the report on CASA-named tasks; on
+native <code>calibrate</code> it also permits scientific-product replacement.</p>
 
 
 
