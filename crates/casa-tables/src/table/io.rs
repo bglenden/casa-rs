@@ -735,6 +735,30 @@ impl Table {
                                 rows,
                                 table_dat.big_endian,
                             )?
+                        } else if let Some(columns) =
+                            collect_sparse_array_group_values_from_current_cells(
+                                self,
+                                rows,
+                                &group_col_descs,
+                                &group_changed_columns,
+                                true,
+                            )?
+                        {
+                            let dm_data = table_dat
+                                .column_set
+                                .data_managers
+                                .iter()
+                                .find(|entry| entry.seq_nr == group.seq_nr)
+                                .ok_or_else(|| {
+                                    TableError::Storage("SSM group metadata missing".into())
+                                })?;
+                            crate::storage::standard_stman::save_ssm_array_rows_in_place(
+                                &data_path,
+                                &dm_data.data,
+                                &group_col_descs,
+                                columns,
+                                table_dat.big_endian,
+                            )?
                         } else {
                             false
                         }

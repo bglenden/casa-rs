@@ -9,6 +9,21 @@ use tempfile::TempDir;
 
 #[test]
 fn fluxscale_scales_transfer_gains_and_reports_flux_density() {
+    check_scaled_product(None);
+}
+
+#[cfg(unix)]
+#[test]
+fn fluxscale_copies_readonly_standard_tables_in_both_byte_orders() {
+    for endian in [
+        casa_tables::EndianFormat::BigEndian,
+        casa_tables::EndianFormat::LittleEndian,
+    ] {
+        check_scaled_product(Some(endian));
+    }
+}
+
+fn check_scaled_product(endian: Option<casa_tables::EndianFormat>) {
     let dir = TempDir::new().expect("tempdir");
     let input_table = common::create_apply_gain_caltable(
         &dir.path().join("input.gcal"),
@@ -32,6 +47,29 @@ fn fluxscale_scales_transfer_gains_and_reports_flux_density() {
             },
         ],
     );
+    if let Some(endian) = endian {
+        Table::open(TableOptions::new(&input_table))
+            .unwrap()
+            .save(
+                TableOptions::new(&input_table)
+                    .with_data_manager(casa_tables::DataManagerKind::StandardStMan)
+                    .with_endian_format(endian),
+            )
+            .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for file in ["table.f0", "table.f0i"] {
+                std::fs::set_permissions(
+                    input_table.join(file),
+                    std::fs::Permissions::from_mode(0o444),
+                )
+                .unwrap();
+            }
+        }
+    }
+    let main_files =
+        ["table.f0", "table.f0i"].map(|name| std::fs::read(input_table.join(name)).unwrap());
     let output_table = dir.path().join("scaled.gcal");
 
     let report = fluxscale(&FluxScaleRequest {
@@ -46,6 +84,13 @@ fn fluxscale_scales_transfer_gains_and_reports_flux_density() {
         incremental: false,
     })
     .expect("run fluxscale");
+    for (name, expected) in ["table.f0", "table.f0i"].into_iter().zip(main_files) {
+        assert_eq!(
+            std::fs::read(input_table.join(name)).unwrap(),
+            expected,
+            "source {name} changed"
+        );
+    }
 
     let field = report.fields.get(&1).expect("transfer field");
     assert_eq!(field.field_name, "TARGET0");
