@@ -184,29 +184,8 @@ pub(super) fn read<R: ReadCell>(
     } else {
         return Ok(None);
     };
-    let mut array_reader = if indirect {
-        let mut array_path = file_path.as_os_str().to_os_string();
-        array_path.push("i");
-        let array_path = std::path::PathBuf::from(array_path);
-        array_path
-            .exists()
-            .then(|| StManArrayFileReader::open(&array_path, header.big_endian))
-            .transpose()?
-    } else {
-        None
-    };
-    let indirect_type = if indirect {
-        Some(CasacoreDataType::from_primitive_type(
-            col_desc.require_primitive_type()?,
-            false,
-        ))
-    } else {
-        None
-    };
-
-    // Read bucket by bucket: each touched bucket once, keeping only the
-    // selected rows' cells, so a strided selection never stages the rows
-    // between them.
+    // Decode only selected rows. Read-ahead retains at most 64 KiB of encoded
+    // source bytes plus one bucket, independently of gaps in the selection.
     let mut requests = selected_rows
         .iter()
         .copied()
@@ -214,6 +193,28 @@ pub(super) fn read<R: ReadCell>(
         .map(|(slot, row)| (row, slot))
         .collect::<Vec<_>>();
     requests.sort_unstable();
+    if indirect {
+        let mut array_path = file_path.as_os_str().to_os_string();
+        array_path.push("i");
+        let array_path = std::path::PathBuf::from(array_path);
+        let array_file = array_path
+            .exists()
+            .then(|| StManArrayFileReader::open(&array_path, header.big_endian))
+            .transpose()?;
+        return IndirectColumn {
+            header: &header,
+            index,
+            desc: col_desc,
+            column_offset,
+            array_file,
+            data_type: CasacoreDataType::from_primitive_type(
+                col_desc.require_primitive_type()?,
+                false,
+            ),
+        }
+        .read(file, &requests, cells)
+        .map(Some);
+    }
     let mut values = vec![None; selected_rows.len()];
     let mut start = 0;
     while start < requests.len() {
@@ -230,36 +231,78 @@ pub(super) fn read<R: ReadCell>(
             &header,
             index,
             column_offset,
-            if indirect {
-                CasacoreDataType::TpInt64
-            } else {
-                col_desc.data_type
-            },
-            if indirect { 0 } else { col_desc.max_length },
+            col_desc.data_type,
+            col_desc.max_length,
             nrelem,
             first_row,
             nrrow,
         )?;
         for &(row, slot) in group {
-            values[slot] = match indirect_type {
-                Some(data_type) => {
-                    let ColumnRawData::Int64(offsets) = &raw else {
-                        return Err(StorageError::FormatMismatch(
-                            "SSM indirect array: expected Int64 offsets".to_string(),
-                        ));
-                    };
-                    cells.indirect(
-                        array_reader.as_mut(),
-                        offsets[row - first_row],
-                        data_type,
-                        col_desc,
-                        (row, slot),
-                    )?
-                }
-                None => cells.direct(&raw, col_desc, (row - first_row, slot), nrrow)?,
-            };
+            values[slot] = cells.direct(&raw, col_desc, (row - first_row, slot), nrrow)?;
         }
         start = end;
     }
     Ok(Some(values))
+}
+
+struct IndirectColumn<'a> {
+    header: &'a SsmHeader,
+    index: &'a SsmIndex,
+    desc: &'a ColumnDescContents,
+    column_offset: usize,
+    array_file: Option<StManArrayFileReader>,
+    data_type: CasacoreDataType,
+}
+
+impl IndirectColumn<'_> {
+    fn read<R: ReadCell>(
+        mut self,
+        file: File,
+        requests: &[(usize, usize)],
+        cells: &mut R,
+    ) -> Result<Vec<Option<R::Cell>>, StorageError> {
+        let mut buckets = ReadBuckets::new(file)?;
+        let mut values = vec![None; requests.len()];
+        let mut start = 0;
+        while start < requests.len() {
+            let first_row = requests[start].0;
+            let (number, bucket_start, bucket_end) =
+                self.index.find_bucket(first_row as u64).ok_or_else(|| {
+                    StorageError::FormatMismatch(format!(
+                        "SSM index has no bucket for row {first_row}"
+                    ))
+                })?;
+            let end =
+                start + requests[start..].partition_point(|(row, _)| *row as u64 <= bucket_end);
+            let bucket = buckets.read(self.header, number)?;
+            for &(row, slot) in &requests[start..end] {
+                let at = (row - bucket_start as usize)
+                    .checked_mul(8)
+                    .and_then(|at| self.column_offset.checked_add(at))
+                    .and_then(|at| at.checked_add(8).map(|end| (at, end)))
+                    .and_then(|(at, end)| bucket.get(at..end))
+                    .ok_or_else(|| {
+                        StorageError::FormatMismatch(format!(
+                            "SSM indirect column {} row {row} offset outside bucket",
+                            self.desc.col_name
+                        ))
+                    })?;
+                let bytes = at.try_into().expect("checked eight-byte offset");
+                let offset = if self.header.big_endian {
+                    i64::from_be_bytes(bytes)
+                } else {
+                    i64::from_le_bytes(bytes)
+                };
+                values[slot] = cells.indirect(
+                    self.array_file.as_mut(),
+                    offset,
+                    self.data_type,
+                    self.desc,
+                    (row, slot),
+                )?;
+            }
+            start = end;
+        }
+        Ok(values)
+    }
 }
