@@ -377,6 +377,13 @@ pub enum ApplyPlanError {
         reason: String,
     },
 
+    /// A callibrary could not be parsed after the task selected its data.
+    #[error("failed to parse callibrary: {message}")]
+    Callibrary {
+        /// Preserved parser or file-read diagnostic.
+        message: String,
+    },
+
     /// A requested gainfield could not be resolved.
     #[error("failed to resolve gainfield {selector} for {path}: {reason}")]
     ResolveGainField {
@@ -456,7 +463,15 @@ pub fn plan_apply_with_timings(
     ms: &MeasurementSet,
     request: &ApplyPlanRequest,
 ) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
-    if request.calibration_tables.is_empty() && !request.parang {
+    plan_apply_with_preparation_error(ms, request, None)
+}
+
+pub(crate) fn plan_apply_with_preparation_error(
+    ms: &MeasurementSet,
+    request: &ApplyPlanRequest,
+    preparation_error: Option<&str>,
+) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
+    if request.calibration_tables.is_empty() && !request.parang && preparation_error.is_none() {
         return Err(ApplyPlanError::MissingCalibrationTables);
     }
 
@@ -535,6 +550,11 @@ pub fn plan_apply_with_timings(
     }
     let measurement_set_spectral_windows_ns = ms_spw_started_at.elapsed().as_nanos() as u64;
 
+    if let Some(message) = preparation_error {
+        return Err(ApplyPlanError::Callibrary {
+            message: message.to_string(),
+        });
+    }
     let calibration_tables_started_at = Instant::now();
     let calibration_tables = request
         .calibration_tables

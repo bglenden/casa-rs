@@ -570,6 +570,45 @@ def run(root, native_bin, only=None):
         case('review-missing-antenna-'+mode, dict(interp=['linearperobs'], applymode=mode), gain=missing_antenna_gain, input_vis=observation_source, precorrected=True)
     for method in ['cubic', 'cubicflag']:
         case('review-compressed-grid-'+method, dict(interp=['linear,'+method]), gain=compressed_bandpass, input_vis=compressed_source, precorrected=True)
+    # Callibrary task parsing uses CalLibraryGram/CLPatchPanel, distinct from
+    # the private Python helper's read/eval implementation.
+    callib_cases = [
+        ('default', '', chain_source, time_gain),
+        ('calwt-true', ' calwt=True', chain_source, time_gain),
+        ('calwt-false', ' calwt=False', chain_source, time_gain),
+        ('field-name', " field='PHASE'", source, time_gain),
+        ('field-pattern', " field='PH*'", source, time_gain),
+        ('field-spw', " field='PHASE' spw='0:2~5'", source, time_gain),
+        ('observation', " obs='1'", observation_source, observation_gain),
+        ('intent', " intent='CALIBRATE_PHASE*'", selection_source, time_gain),
+        ('reach', " reach='10s'", chain_source, time_gain),
+        ('fldmap-name', " fldmap='PHASE'", chain_source, time_gain),
+        ('fldmap-selected', " fldmap='0,1'", chain_source, time_gain),
+        ('fldmap-nearest', " fldmap='nearest'", chain_source, time_gain),
+        ('fldmap-array', ' fldmap=[1,0]', source, time_gain),
+        ('obsmap-array', ' obsmap=[1,0]', observation_source, observation_gain),
+        ('obsmap-perobs', " obsmap='perobs'", observation_source, observation_gain),
+        ('antmap-array', ' antmap=[1,0,2,3,4]', chain_source, time_gain),
+        ('antmap-broadcast', ' antmap=[0]', chain_source, time_gain),
+        ('spwmap-broadcast', ' spwmap=[0]', multi_source, multi_gain),
+        ('spwmap-prefix', ' spwmap=[1,0]', multi_source, multi_gain),
+        ('tinterp-cubic', " tinterp='cubic'", chain_source, time_gain),
+        ('finterp-cubic', " finterp='cubic'", shifted_source, curved_bandpass),
+        ('unknown-string', " unrecognized='text'", chain_source, time_gain),
+        ('empty-map', ' antmap=[]', chain_source, time_gain),
+    ]
+    for name, directives, input_vis, gain in callib_cases:
+        path = root/('library-'+name+'.txt')
+        path.write_text(f"caltable='{gain}'{directives}\n")
+        case('callib-'+name, dict(docallib=True, callib=str(path)), gain=gain, input_vis=input_vis, precorrected=True)
+    duplicate = root/'library-repeat.txt'
+    duplicate.write_text(f"caltable='{time_gain}' field='FLUX' fldmap='FLUX' calwt=False\ncaltable='{time_gain}' field='PHASE' fldmap='PHASE' calwt=True\n")
+    case('callib-repeated-calwt-first', dict(docallib=True, callib=str(duplicate)), gain=time_gain, input_vis=source, precorrected=True)
+    case('callib-inline', dict(docallib=True, callib=f"caltable='{time_gain}' calwt=True"), gain=time_gain, input_vis=chain_source, precorrected=True)
+    nested = root/'library-nested'; nested.mkdir()
+    relative = nested/'relative.txt'; relative.write_text("caltable='time-fields.gcal'\n")
+    case('callib-relative-cwd', dict(docallib=True, callib=str(relative)), gain=time_gain, input_vis=chain_source, precorrected=True)
+    case('callib-missing-file', dict(docallib=True, callib=str(root/'no-library.txt')), gain=time_gain, input_vis=chain_source)
     if only is not None:
         return result
     # CASA crashes when perscan is combined with multiple observation IDs.

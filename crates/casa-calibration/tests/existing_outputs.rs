@@ -226,6 +226,7 @@ fn overwrite_replaces_the_report_and_gaincal_replaces_its_table() {
 
 fn applycal(ms: &Path, table: &Path, selection: MsSelection, apply_mode: ApplyMode) {
     CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
+        callibrary_error: None,
         measurement_set: ms.to_path_buf(),
         selection,
         calibration_tables: vec![ApplyCalibrationTableSpec::new(table)],

@@ -67,6 +67,7 @@ fn calibrate_defaults_to_apply_and_backs_up_flags_as_casa_does() {
     assert_eq!(
         request.expect("apply"),
         CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
+            callibrary_error: None,
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection::new(),
             calibration_tables: vec![table("phase.gcal", false)],
@@ -101,6 +102,7 @@ fn calibrate_apply_reads_its_chain_and_selection() {
     assert_eq!(
         request.expect("apply"),
         CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
+            callibrary_error: None,
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection {
                 field: Some("0".into()),

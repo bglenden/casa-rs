@@ -20,8 +20,7 @@ use crate::{
     CalibrationDataset, CalibrationSolveRequest, CalibrationSolveResult, CalibrationStatsAxis,
     CalibrationStatsRequest, FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode,
     GainSolveModelSource, GainSolveRequest, GainType, GencalRequest, RefAntSelector,
-    calibration_stats, execute_apply_from_path_with_options, plan_apply_from_path,
-    summarize_tables,
+    calibration_stats, plan_apply_from_path, summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -184,6 +183,9 @@ pub struct ExecuteApplyTaskRequest {
     pub selection: MsSelection,
     /// Ordered calibration-table inputs.
     pub calibration_tables: Vec<ApplyCalibrationTableSpec>,
+    /// Callibrary parse failure raised after CASA-compatible MS setup/selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callibrary_error: Option<String>,
     /// Apply/execution mode.
     pub apply_mode: ApplyMode,
     /// Whether to apply parallactic-angle correction.
@@ -371,7 +373,7 @@ impl CalibrationTaskRequest {
             )
             .map(CalibrationTaskResult::PlanApply)
             .map_err(|error| error.to_string()),
-            Self::ExecuteApply(request) => execute_apply_from_path_with_options(
+            Self::ExecuteApply(request) => crate::execute::execute_apply_with_preparation_error(
                 &request.measurement_set,
                 &ApplyPlanRequest {
                     selection: request.selection.clone(),
@@ -382,6 +384,7 @@ impl CalibrationTaskRequest {
                 ApplyExecutionOptions {
                     flag_backup: request.flagbackup,
                 },
+                request.callibrary_error.as_deref(),
             )
             .map(CalibrationTaskResult::Apply)
             .map_err(|error| error.to_string()),

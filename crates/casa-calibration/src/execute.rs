@@ -697,7 +697,16 @@ pub fn execute_apply_from_path_with_options(
     request: &ApplyPlanRequest,
     options: ApplyExecutionOptions,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
-    let path = path.as_ref().to_path_buf();
+    execute_apply_with_preparation_error(path.as_ref(), request, options, None)
+}
+
+pub(crate) fn execute_apply_with_preparation_error(
+    path: &Path,
+    request: &ApplyPlanRequest,
+    options: ApplyExecutionOptions,
+    preparation_error: Option<&str>,
+) -> Result<ApplyExecutionReport, ApplyExecutionError> {
+    let path = path.to_path_buf();
     let total_started_at = Instant::now();
     let mut perf_tracer = CalibrationPerfTracer::from_env();
     let (mut report, plan_trace_summary, pre_drop_total_ns) = {
@@ -711,18 +720,19 @@ pub fn execute_apply_from_path_with_options(
         let open_measurement_set_ns = open_started_at.elapsed().as_nanos() as u64;
         let flag_backup_version = save_apply_flag_backup(&ms, request.apply_mode, options)?;
         let planning_started_at = Instant::now();
-        let (plan, plan_timings) = match plan_apply_with_timings(&ms, request) {
-            Ok(planned) => planned,
-            Err(error) => {
-                // CASA opens with addcorr=True before selectvis/setapply. Keep
-                // successful application on the existing single-write path;
-                // reproduce that initialization if planning rejects a request.
-                if request.apply_mode.writes_corrected_data() {
-                    initialization::corrected_data(&mut ms)?;
+        let (plan, plan_timings) =
+            match crate::plan::plan_apply_with_preparation_error(&ms, request, preparation_error) {
+                Ok(planned) => planned,
+                Err(error) => {
+                    // CASA opens with addcorr=True before selectvis/setapply. Keep
+                    // successful application on the existing single-write path;
+                    // reproduce that initialization if planning rejects a request.
+                    if request.apply_mode.writes_corrected_data() {
+                        initialization::corrected_data(&mut ms)?;
+                    }
+                    return Err(error.into());
                 }
-                return Err(error.into());
-            }
-        };
+            };
         let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
         if plan.apply_mode == ApplyMode::Trial {
             // Calibrater::correct2 still runs the calibration operators in

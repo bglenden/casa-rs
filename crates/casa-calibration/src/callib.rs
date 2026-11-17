@@ -70,7 +70,12 @@ pub fn load_apply_specs_from_callib(
         path: path.display().to_string(),
         source,
     })?;
-    let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    // Calibrater::parsecallibfile preserves relative table names; Table
+    // resolves them against the process working directory, not the file's.
+    let base_dir = std::env::current_dir().map_err(|source| CallibError::ReadFile {
+        path: path.display().to_string(),
+        source,
+    })?;
     let mut specs = Vec::new();
     let mut calwt_by_table = BTreeMap::<PathBuf, bool>::new();
 
@@ -80,24 +85,17 @@ pub fn load_apply_specs_from_callib(
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let spec = parse_callib_line(line, base_dir).map_err(|reason| CallibError::ParseLine {
-            path: path.display().to_string(),
-            line_number,
-            line: raw_line.to_string(),
-            reason,
-        })?;
+        let mut spec =
+            parse_callib_line(line, &base_dir).map_err(|reason| CallibError::ParseLine {
+                path: path.display().to_string(),
+                line_number,
+                line: raw_line.to_string(),
+                reason,
+            })?;
         if let Some(existing) = calwt_by_table.get(&spec.path) {
-            if *existing != spec.calwt {
-                return Err(CallibError::ParseLine {
-                    path: path.display().to_string(),
-                    line_number,
-                    line: raw_line.to_string(),
-                    reason: format!(
-                        "conflicting calwt values for repeated caltable {}",
-                        spec.path.display()
-                    ),
-                });
-            }
+            // CalLibraryParse retains the first table-level calwt when
+            // subsequent lines add slices of the same physical table.
+            spec.calwt = *existing;
         } else {
             calwt_by_table.insert(spec.path.clone(), spec.calwt);
         }
@@ -156,7 +154,7 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
         .remove("calwt")
         .map(|value| parse_bool(&value))
         .transpose()?
-        .unwrap_or(false);
+        .unwrap_or(true);
     let apply_to = ApplyTableSelection {
         field_ids: values
             .remove("field")
@@ -179,11 +177,9 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
     {
         return Err("intent= is not supported in this callibrary slice".to_string());
     }
-    if let Some(reach) = values.remove("reach")
-        && !strip_quotes(&reach).is_empty()
-    {
-        return Err("reach= is not supported in this callibrary slice".to_string());
-    }
+    // The C++ parser records reach, but 6.7.6 CLPatchPanel never consumes it.
+    // Preserve its supported no-op rather than inventing a reach restriction.
+    values.remove("reach");
     if let Some(obsmap) = values.remove("obsmap")
         && !strip_quotes(&obsmap).is_empty()
         && strip_quotes(&obsmap) != "[]"
@@ -213,8 +209,11 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
         values.remove("finterp").as_deref(),
     )?;
 
-    if let Some((key, _)) = values.into_iter().next() {
-        return Err(format!("unsupported callibrary directive {key}="));
+    for (key, _) in values {
+        tracing::warn!(
+            keyword = key,
+            "Cal Library: undefined keyword will be ignored"
+        );
     }
 
     Ok(ApplyCalibrationTableSpec {
@@ -309,11 +308,9 @@ fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> Stri
     parts.join(" ")
 }
 
-fn format_callib_path(base_dir: &Path, path: &Path) -> String {
-    path.strip_prefix(base_dir)
-        .unwrap_or(path)
-        .display()
-        .to_string()
+fn format_callib_path(_base_dir: &Path, path: &Path) -> String {
+    // Keep absolute inputs absolute so CASA can read the output from any cwd.
+    path.display().to_string()
 }
 
 fn join_numeric_selector(values: &[i32]) -> String {
@@ -425,14 +422,14 @@ fn parse_gainfield_selector(value: &str) -> Result<Option<GainFieldSelector>, St
     if value.is_empty() {
         return Ok(None);
     }
-    if value.eq_ignore_ascii_case("nearest") {
+    if value == "nearest" {
         return Ok(Some(GainFieldSelector::Nearest));
     }
     if let Ok(ids) = parse_numeric_selector(&value, "fldmap") {
         return match ids.as_slice() {
             [] => Ok(None),
             [field_id] => Ok(Some(GainFieldSelector::FieldId(*field_id))),
-            _ => Err("fldmap supports only one numeric FIELD_ID in this wave".to_string()),
+            _ => Ok(Some(GainFieldSelector::Expression(value))),
         };
     }
     Ok(Some(GainFieldSelector::Expression(value)))

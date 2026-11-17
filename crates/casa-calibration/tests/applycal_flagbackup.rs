@@ -47,6 +47,7 @@ fn applycal(
     flagbackup: bool,
 ) -> Result<CalibrationTaskResult, String> {
     CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
+        callibrary_error: None,
         measurement_set: ms_path.to_path_buf(),
         selection: MsSelection::new().spw(&[0]),
         calibration_tables: vec![ApplyCalibrationTableSpec::new(caltable_path)],
