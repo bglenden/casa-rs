@@ -285,3 +285,16 @@ fn unmatched_transfer_field_does_not_discard_another_fields_valid_flux() {
         &casa_types::ArrayValue::from_complex32_vec(vec![Complex32::new(3., 0.); 2])
     );
 }
+
+#[test]
+fn listing_cannot_truncate_an_input_scientific_table_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let gain = fixture(&dir.path().join("protected.gcal"));
+    let path = gain.join("table.dat");
+    let before = std::fs::read(&path).unwrap();
+    let mut request = request(&gain, &dir.path().join("protected.fluxcal"));
+    request.options.listfile = Some(path.clone());
+    assert!(fluxscale(&request).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(!request.output_table.exists());
+}

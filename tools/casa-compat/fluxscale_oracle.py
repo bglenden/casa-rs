@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import inspect
 import json
 import os
@@ -373,6 +374,29 @@ def run(root, native_bin):
         ('map-disabled', dict(refspwmap=[-1, 0, 0])), ('map-bool-list', dict(refspwmap=[False])),
         ('multi-incremental', dict(incremental=True))]:
         case(name, extra, source=multi_gain, dataset=multi_vis)
+    # Documented CASA bugs: compare the corrected public call against the
+    # determined CASA fit implementing the advertised/identifiable degree.
+    for requested, reference_case in [(-1, 'fit-one'), (3, 'fit-two'), (5, 'fit-two')]:
+        expected = copy.deepcopy(results['cases'][reference_case]['casa']['value'])
+        if requested > 1:
+            for field in expected.values():
+                if isinstance(field, dict) and 'spidx' in field:
+                    for key in ['spidx', 'spidxerr']:
+                        field[key] += [0.] * (requested + 1 - len(field[key]))
+        path = root/f'corrected-order-{requested}.fluxcal'
+        args = dict(vis=str(multi_vis), caltable=str(multi_gain), fluxtable=str(path),
+                    reference=['FLUX'], transfer=['PHASE'], fitorder=requested)
+        before = snapshot(multi_gain)
+        value = plain(invoke(native, args))
+        compare(expected, value, f'corrected-order-{requested}')
+        reference_path = root/f'{reference_case}.casa.fluxcal'
+        equal(reference_path, path)
+        metadata(reference_path, path)
+        assert before == snapshot(multi_gain)
+        results['cases'][f'corrected-order-{requested}'] = dict(
+            arguments=dict(fitorder=requested), native=dict(value=value),
+            independent_reference_case=reference_case,
+            scope='Documented CASA order correction; same-input reference uses the identifiable degree')
     higher_vis, higher_gain = multi_window(vis, selected, root, windows=5, name='higher')
     for order in [3, 4]:
         case(f'fit-{order}', dict(fitorder=order), source=higher_gain, dataset=higher_vis)
