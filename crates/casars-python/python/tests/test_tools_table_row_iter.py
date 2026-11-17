@@ -1,4 +1,10 @@
-"""Behavior and CASA-parity tests for TB-07: tablerow, getcoliter, #870, and #1038."""
+"""Tests for tablerow, getcoliter, #870, and #1038.
+
+The 11 getcoliter and row cases from CASA's test_tool_table.py at
+cee5117dce use a small table in place of n08c1_swap1.ms. It preserves
+strided reads, variable channel counts, and four complex polarizations.
+The two slice cases are in test_tools_table_slices.py.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +27,36 @@ TILED_MULTI_FIXTURE = (
     / "multi"
     / "big"
 )
+
+
+@pytest.fixture
+def visibility_table(tmp_path: Path):
+    path = str(tmp_path / "visibility.table")
+    tb = tools.table()
+    description = {
+        "ANTENNA1": {"valueType": "int"},
+        "DATA": {"valueType": "complex", "ndim": 2},
+        "FLAG_ROW": {"valueType": "boolean"},
+        "TIME": {"valueType": "double"},
+    }
+    assert tb.create(path, description, nrow=24)
+    assert tb.putcol("TIME", np.arange(1, 25, dtype=np.float64) * 10)
+    polarizations = np.arange(1, 5, dtype=np.float32)[:, None]
+    for row in range(24):
+        channels = 32 if row % 2 == 0 else 2
+        visibility = np.full((4, channels), (row + 1) * (3 + 4j), dtype=np.complex64)
+        assert tb.putcell("DATA", row, visibility * polarizations)
+    tb.close()
+    assert tb.open(path, nomodify=False)
+    yield tb
+    tb.done()
+
+
+@pytest.fixture
+def visibility_rows(visibility_table: tools.table):
+    rows = visibility_table.row()
+    yield rows
+    rows.done()
 
 
 def _create_sample_table(path: Path, nrow: int = 4) -> tools.table:
@@ -118,10 +154,6 @@ def test_undefined_array_cells_parity_issue_870(tmp_path: Path) -> None:
 
 
 def test_getcoliter_semantics_and_edges(tmp_path: Path) -> None:
-    closed = tools.table()
-    with pytest.raises(RuntimeError, match="no opened table available"):
-        closed.getcoliter("si")
-
     empty = _create_sample_table(tmp_path / "empty.table", nrow=0)
     assert list(empty.getcoliter("si")) == []
     empty.close()
@@ -147,8 +179,6 @@ def test_getcoliter_semantics_and_edges(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="column containing records"):
         tb.getcoliter("sr")
-    with pytest.raises(RuntimeError, match='column "missing" does not exist'):
-        tb.getcoliter("missing")
 
     assert list(tb.getcoliter("si", 0, 0, 1)) == []
     assert [int(x[0]) for x in tb.getcoliter("si", -2, 2, 1)] == [10, 20]
@@ -176,18 +206,111 @@ def test_getcoliter_semantics_and_edges(tmp_path: Path) -> None:
     assert [int(x[0]) for x in held] == [10, 999, 30]
 
 
-def test_getcoliter_comparison_advances_the_iterator(tmp_path: Path) -> None:
-    tb = _create_sample_table(tmp_path / "compare.table", nrow=5)
-    values = tb.getcol("si", 0, 3, 2)
-    iterator = tb.getcoliter("si", 0, 3, 2)
+def test_getcoliter_consistency(visibility_table: tools.table) -> None:
+    tb = visibility_table
+    values = tb.getcol("TIME", 0, 7, 3)
+    iterator = tb.getcoliter("TIME", 0, 7, 3)
     assert all(values == iterator)
     with pytest.raises(StopIteration):
         next(iterator)
 
-    iterator = tb.getcoliter("si")
+    iterator = tb.getcoliter("TIME")
     assert (iterator < 15).tolist() == [True]
     np.testing.assert_array_equal(next(iterator), [20])
-    tb.done()
+
+    for row, chunk in zip(range(10), tb.getcoliter("DATA", 0, 10), strict=True):
+        np.testing.assert_array_equal(chunk, tb.getcol("DATA", row, 1))
+
+    columns = ["TIME", "DATA"]
+    tuples = list(tb.getcoliter(columns, 0, 7, 3))
+    records = list(tb.getcoliter(columns, 0, 7, 3, torecord=True))
+    assert len(tuples) == len(records) == 7
+    for values, record in zip(tuples, records, strict=True):
+        assert type(values) is tuple and type(record) is dict
+        assert set(record) == set(columns)
+        for value, column in zip(values, columns, strict=True):
+            np.testing.assert_array_equal(value, record[column])
+
+
+def test_getcoliter_values(visibility_table: tools.table) -> None:
+    magnitudes = [
+        np.abs(chunk[:, :, 0]).sum(axis=1)
+        for chunk in visibility_table.getcoliter("DATA", 0, 7, 3)
+    ]
+    # Each row has magnitudes 5 * row number (one-based) in the first
+    # polarization, summed over its 32 or 2 channels.
+    first_polarization = [160, 40, 1120, 100, 2080, 160, 3040]
+    np.testing.assert_allclose(magnitudes, np.outer(first_polarization, [1, 2, 3, 4]))
+
+
+def test_getcoliter_errors(visibility_table: tools.table) -> None:
+    with pytest.raises(RuntimeError, match='column "data" does not exist'):
+        visibility_table.getcoliter("data")
+    with pytest.raises(RuntimeError, match="no opened table available"):
+        tools.table().getcoliter("TIME")
+
+
+def test_getcoliter_element_match(visibility_table: tools.table) -> None:
+    tb = visibility_table
+    values = tb.getcol(columnname="TIME", startrow=0, nrow=18, rowincr=3)
+    iterator = tb.getcoliter(columnname="TIME", startrow=0, nrow=8, rowincr=3)
+    assert values.shape == (8,)
+    np.testing.assert_array_equal(np.concatenate(list(iterator)), values)
+    with pytest.raises(StopIteration):
+        next(iterator)
+
+
+def test_tablerow_get(visibility_rows) -> None:
+    assert abs(visibility_rows.get(20)["DATA"].sum()) == pytest.approx(33600)
+
+
+def test_tablerow_shape(visibility_rows) -> None:
+    assert visibility_rows.get(20)["DATA"].shape == (4, 32)
+
+
+def test_tablerow_put(visibility_table: tools.table) -> None:
+    tb = visibility_table
+    rows = tb.row()
+    original = rows.get(22)
+    updated = np.full_like(original["DATA"], 1.0 / original["DATA"].size)
+    assert rows.put(22, {"DATA": updated})
+    rows.done()
+    path = tb.name()
+    tb.close()
+
+    reader = tools.table()
+    assert reader.open(path)
+    rows = reader.row()
+    stored = rows.get(22)
+    np.testing.assert_array_equal(stored["DATA"], updated)
+    assert abs(stored["DATA"].sum()) == pytest.approx(1)
+    assert stored["TIME"] == original["TIME"]
+    rows.done()
+    reader.done()
+
+
+def test_tablerow_all_rows(visibility_rows) -> None:
+    rows = visibility_rows[:]
+    assert len(rows) == 24
+    assert sum(abs(row["DATA"].sum()) for row in rows) == pytest.approx(246000)
+
+
+def test_tablerow_some_rows(visibility_rows) -> None:
+    rows = visibility_rows[:15]
+    assert len(rows) == 15
+    assert sum(abs(row["DATA"].sum()) for row in rows) == pytest.approx(108000)
+
+
+def test_tablerow_columnnames_include(visibility_table: tools.table) -> None:
+    rows = visibility_table.row(columnnames=["DATA"])
+    assert [list(row) for row in rows[:5]] == [["DATA"]] * 5
+    rows.done()
+
+
+def test_tablerow_columnnames_exclude(visibility_table: tools.table) -> None:
+    rows = visibility_table.row(columnnames=["DATA"], exclude=True)
+    assert set(rows.get(0)) == {"ANTENNA1", "FLAG_ROW", "TIME"}
+    rows.done()
 
 
 def test_tablerow_get_put_and_lifecycle(
