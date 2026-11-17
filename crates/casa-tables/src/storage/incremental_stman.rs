@@ -277,6 +277,34 @@ fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, Stor
     })
 }
 
+/// Append inherited values without touching the buckets or the indirect array file.
+pub(super) fn appended_ism_index(
+    path: &Path,
+    old_rows: u64,
+    new_rows: u64,
+) -> Result<(u64, Vec<u8>), StorageError> {
+    let mut file = File::open(path)?;
+    let header = parse_ism_header(&mut file)?;
+    let mut index = parse_ism_index(&mut file, &header)?;
+    if index.used == 0
+        || index.rows.get(index.used).copied() != Some(old_rows)
+        || index.bucket_nrs.len() < index.used
+    {
+        return Err(StorageError::FormatMismatch(format!(
+            "IncrementalStMan {} index does not cover {old_rows} rows",
+            path.display()
+        )));
+    }
+    index.rows[index.used] = new_rows;
+    let bytes = serialize_ism_index(
+        &index.rows[..=index.used],
+        &index.bucket_nrs[..index.used],
+        header.big_endian,
+    )?;
+    let offset = ISM_HEADER_SIZE + u64::from(header.nr_buckets) * u64::from(header.bucket_size);
+    Ok((offset, bytes))
+}
+
 // ---------------------------------------------------------------------------
 // Bucket parsing
 // ---------------------------------------------------------------------------
@@ -1506,6 +1534,37 @@ pub(crate) fn write_ism_file(
     write_ism_file_impl(file_path, col_descs, rows, None, big_endian)
 }
 
+pub(super) fn ism_layout(path: &Path) -> Result<(bool, u32, u32), StorageError> {
+    let header = parse_ism_header(&mut File::open(path)?)?;
+    Ok((
+        header.big_endian,
+        header.bucket_size,
+        header.pers_cache_size,
+    ))
+}
+
+pub(super) fn write_ism_with_layout(
+    path: &Path,
+    columns: &[ColumnDescContents],
+    rows: &[casa_types::RecordValue],
+    big_endian: bool,
+    bucket_size: Option<u32>,
+    cache_size: u32,
+) -> Result<Vec<u8>, StorageError> {
+    let sources = columns
+        .iter()
+        .map(|desc| ColumnSource::RowFields(RowFields::new(rows, None, &desc.col_name)))
+        .collect();
+    write_columns::write_ism_column_sources_with_layout(
+        path,
+        columns,
+        &ColumnSources::new(rows.len(), sources),
+        big_endian,
+        bucket_size,
+        cache_size,
+    )
+}
+
 pub(crate) fn write_ism_file_indexed(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
@@ -1572,6 +1631,7 @@ fn write_ism_file_scalar_run_columns(
     scalar_runs: &[&[GeneratedScalarValueRun]],
     bucket_size: u32,
     big_endian: bool,
+    cache_size: u32,
 ) -> Result<Vec<u8>, StorageError> {
     let ncol = col_info.len();
     if scalar_runs.len() != ncol {
@@ -1754,7 +1814,7 @@ fn write_ism_file_scalar_run_columns(
     ism_rows.push(nrrow as u64);
 
     let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian)?;
-    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian)?;
+    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian, cache_size)?;
 
     let mut file = File::create(file_path)?;
     file.write_all(&header_buf)?;
@@ -2269,6 +2329,7 @@ fn serialize_ism_header(
     bucket_size: u32,
     nr_buckets: u32,
     big_endian: bool,
+    cache_size: u32,
 ) -> Result<Vec<u8>, StorageError> {
     let io_order = if big_endian {
         ByteOrder::BigEndian
@@ -2287,7 +2348,7 @@ fn serialize_ism_header(
 
     buf.put_u32(bucket_size); // bucketSize
     buf.put_u32(nr_buckets); // nbucketInit
-    buf.put_u32(1); // persCacheSize
+    buf.put_u32(cache_size); // persCacheSize
     buf.put_u32(0); // uniqnr
     buf.put_u32(0); // nFreeBucket
     buf.put_i32(-1); // firstFreeBucket
@@ -2335,7 +2396,7 @@ fn serialize_ism_index(
     Ok(buf.into_bytes())
 }
 
-fn serialize_ism_dm_blob(name: &str) -> Result<Vec<u8>, StorageError> {
+pub(super) fn serialize_ism_dm_blob(name: &str) -> Result<Vec<u8>, StorageError> {
     let mut io = AipsIo::new_write_only(std::io::Cursor::new(Vec::new()));
     io.putstart("ISM", 3)?;
     io.put_string(name)?;
@@ -2407,7 +2468,7 @@ mod tests {
         buf.putstart("IncrementalStMan", 4).unwrap();
         buf.put_u32(32768); // bucket_size
         buf.put_u32(10); // nr_buckets
-        buf.put_u32(1); // persCacheSize
+        buf.put_u32(cache_size); // persCacheSize
         buf.put_u32(0); // uniqnr
         buf.put_u32(0); // nFreeBucket
         buf.put_i32(-1); // firstFreeBucket
@@ -2431,7 +2492,7 @@ mod tests {
         buf.put_bool(false); // LE
         buf.put_u32(16384); // bucket_size
         buf.put_u32(5); // nr_buckets
-        buf.put_u32(1); // persCacheSize
+        buf.put_u32(cache_size); // persCacheSize
         buf.put_u32(0); // uniqnr
         buf.put_u32(0); // nFreeBucket
         buf.put_i32(-1); // firstFreeBucket

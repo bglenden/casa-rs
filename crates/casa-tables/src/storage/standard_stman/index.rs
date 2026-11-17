@@ -53,6 +53,7 @@ pub(super) struct IndexLayout {
     pub(super) bucket_size: u32,
     pub(super) nr_data_buckets: usize,
     pub(super) nr_string_buckets: usize,
+    pub(super) cache_size: u32,
 }
 
 /// Write the index buckets after the data and string buckets, then the
@@ -69,22 +70,55 @@ pub(super) fn write_index_and_header(
         bucket_size,
         nr_data_buckets,
         nr_string_buckets,
+        cache_size,
     } = layout;
+    write_group_indexes(
+        file,
+        nrrow,
+        bucket_size,
+        nr_string_buckets,
+        cache_size,
+        &[StreamIndex {
+            columns: ncol,
+            rows_per_bucket,
+            buckets: 0..nr_data_buckets,
+        }],
+        big_endian,
+    )
+}
+
+pub(super) struct StreamIndex {
+    pub(super) columns: usize,
+    pub(super) rows_per_bucket: u32,
+    pub(super) buckets: std::ops::Range<usize>,
+}
+
+pub(super) fn write_group_indexes(
+    file: &mut File,
+    nrrow: usize,
+    bucket_size: u32,
+    nr_string_buckets: usize,
+    cache_size: u32,
+    streams: &[StreamIndex],
+    big_endian: bool,
+) -> Result<(), StorageError> {
     let bucket_bytes = bucket_size as usize;
+    let nr_data_buckets = streams.last().map_or(0, |stream| stream.buckets.end);
     let first_idx_bucket = nr_data_buckets + nr_string_buckets;
-    let bucket_rows = rows_per_bucket as usize;
-    let (nr_idx_buckets, index_length) =
-        IndexBucketSink::new(file.try_clone()?, first_idx_bucket, bucket_bytes)
-            .write_index(
-                nr_data_buckets as u32,
-                rows_per_bucket,
-                ncol as i32,
-                (0..nr_data_buckets)
-                    .map(|bucket| (((bucket + 1) * bucket_rows - 1).min(nrrow - 1)) as u64),
-                0..nr_data_buckets as u32,
-                big_endian,
-            )?
-            .finish()?;
+    let mut sink = IndexBucketSink::new(file.try_clone()?, first_idx_bucket, bucket_bytes);
+    for stream in streams {
+        let rows = stream.rows_per_bucket as usize;
+        sink = sink.write_index(
+            stream.buckets.len() as u32,
+            stream.rows_per_bucket,
+            stream.columns as i32,
+            (0..stream.buckets.len())
+                .map(|bucket| (((bucket + 1) * rows - 1).min(nrrow - 1)) as u64),
+            stream.buckets.start as u32..stream.buckets.end as u32,
+            big_endian,
+        )?;
+    }
+    let (nr_idx_buckets, index_length) = sink.finish()?;
     let nr_buckets = first_idx_bucket + nr_idx_buckets;
     let header = serialize_ssm_header(
         bucket_size,
@@ -96,7 +130,8 @@ pub(super) fn write_index_and_header(
         index_bucket_offset(index_length, bucket_bytes),
         last_string_bucket(nr_data_buckets, nr_string_buckets),
         index_length as u32,
-        1,
+        streams.len() as u32,
+        cache_size,
         big_endian,
     )?;
     file.seek(SeekFrom::Start(0))?;

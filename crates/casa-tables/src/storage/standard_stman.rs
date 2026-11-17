@@ -1929,6 +1929,45 @@ pub(crate) fn write_ssm_file_with_options(
     )
 }
 
+/// Rebuild a single manager's rows using the original bucket and cache sizes.
+pub(crate) fn rewrite_ssm_rows(
+    original: &Path,
+    destination: &Path,
+    columns: &[ColumnDescContents],
+    rows: &[casa_types::RecordValue],
+    name: &str,
+) -> Result<Vec<u8>, StorageError> {
+    let header = parse_ssm_header(&mut File::open(original)?)?;
+    column_writer::write_ssm_file_columns_with_layout(
+        destination,
+        columns,
+        &column_writer::RowCells::new(rows, None, columns),
+        header.big_endian,
+        false,
+        name,
+        Some((header.bucket_size, header.pers_cache_size)),
+    )
+}
+
+pub(super) fn write_ssm_with_bucket(
+    destination: &Path,
+    columns: &[ColumnDescContents],
+    rows: &[casa_types::RecordValue],
+    big_endian: bool,
+    name: &str,
+    bucket_and_cache: Option<(u32, u32)>,
+) -> Result<Vec<u8>, StorageError> {
+    column_writer::write_ssm_file_columns_with_layout(
+        destination,
+        columns,
+        &column_writer::RowCells::new(rows, None, columns),
+        big_endian,
+        true,
+        name,
+        bucket_and_cache,
+    )
+}
+
 pub(crate) fn write_ssm_file_indexed(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
@@ -2313,6 +2352,7 @@ fn write_ssm_file_in_memory(
         last_string_bucket(nr_data_buckets, nr_string_buckets),
         index_data.len() as u32,
         1, // nr_indices (single index for all columns)
+        2, // persistent cache size
         big_endian,
     )?;
 
@@ -2465,6 +2505,7 @@ fn write_ssm_fixed_scalar_sources_streaming(
             bucket_size,
             nr_data_buckets,
             nr_string_buckets: 0,
+            cache_size: 2,
         },
         big_endian,
     )?;
@@ -2813,6 +2854,7 @@ fn serialize_ssm_header(
     last_string_bucket: i32,
     index_length: u32,
     nr_indices: u32,
+    cache_size: u32,
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
     // AipsIO framing uses the table's byte order (C++ creates CanonicalIO or
@@ -2827,7 +2869,7 @@ fn serialize_ssm_header(
     buf.put_bool(big_endian);
     buf.put_u32(bucket_size);
     buf.put_u32(nr_buckets);
-    buf.put_u32(2); // persCacheSize (casacore default cache size is 2)
+    buf.put_u32(cache_size);
     buf.put_u32(nr_free_buckets);
     buf.put_i32(first_free_bucket);
     buf.put_u32(nr_idx_buckets);
@@ -2897,14 +2939,20 @@ fn serialize_ssm_dm_blob(
     column_offsets: &[u32],
     ncol: usize,
 ) -> Result<Vec<u8>, StorageError> {
+    serialize_ssm_dm_blob_mapped(name, column_offsets, &vec![0u32; ncol])
+}
+
+fn serialize_ssm_dm_blob_mapped(
+    name: &str,
+    column_offsets: &[u32],
+    column_indexes: &[u32],
+) -> Result<Vec<u8>, StorageError> {
     let mut io = AipsIo::new_write_only(std::io::Cursor::new(Vec::new()));
     io.putstart("SSM", 2)?;
     io.put_string(name)?;
     // putBlock for column_offsets
     write_block_u32(&mut io, column_offsets)?;
-    // putBlock for col_index_map (all zeros → single index for all columns)
-    let col_index_map = vec![0u32; ncol];
-    write_block_u32(&mut io, &col_index_map)?;
+    write_block_u32(&mut io, column_indexes)?;
     io.putend()?;
     let cursor: std::io::Cursor<Vec<u8>> = io.into_inner_typed()?;
     Ok(cursor.into_inner())

@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
+
+use super::{Extension, StagedEdit, StorageError, TABLE_CONTROL_FILE, tiled_stman};
+
+enum Update {
+    Index {
+        file: File,
+        offset: u64,
+        original: Vec<u8>,
+        updated: Vec<u8>,
+    },
+    Extend {
+        file: File,
+        old_len: u64,
+        new_len: u64,
+    },
+    Replace {
+        staged: PathBuf,
+        target: PathBuf,
+        original: Option<PathBuf>,
+    },
+}
+
+impl Update {
+    fn apply(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Index {
+                file,
+                offset,
+                updated,
+                ..
+            } => write_index(file, *offset, updated),
+            Self::Extend {
+                file,
+                old_len,
+                new_len,
+            } => file.set_len((*new_len).max(*old_len)),
+            Self::Replace { staged, target, .. } => fs::rename(staged, target),
+        }
+    }
+
+    fn undo(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Index {
+                file,
+                offset,
+                original,
+                ..
+            } => write_index(file, *offset, original),
+            Self::Extend { file, old_len, .. } => file.set_len(*old_len),
+            Self::Replace {
+                target,
+                original: Some(original),
+                ..
+            } => fs::rename(original, target),
+            Self::Replace {
+                target,
+                original: None,
+                ..
+            } => match fs::remove_file(target) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                result => result,
+            },
+        }
+    }
+}
+
+fn write_index(file: &mut File, offset: u64, data: &[u8]) -> std::io::Result<()> {
+    file.seek(SeekFrom::Start(offset))?;
+    file.write_all(data)?;
+    file.set_len(offset + data.len() as u64)
+}
+
+impl StagedEdit<'_> {
+    /// Publish under a write lock, with the control file last. Preflight
+    /// every target before changing any and restore the previous files if
+    /// an ordinary I/O failure interrupts the update.
+    pub(crate) fn publish(self) -> Result<(), StorageError> {
+        let staged = self.staged.path();
+        let mut files = fs::read_dir(staged)?.collect::<Result<Vec<_>, _>>()?;
+        files.sort_by_key(|file| file.file_name() == TABLE_CONTROL_FILE);
+        let backups = staged.join("originals");
+        fs::create_dir(&backups)?;
+        let mut changes = Vec::with_capacity(self.extensions.len() + files.len());
+        for extension in self.extensions {
+            match extension {
+                Extension::Index {
+                    path,
+                    offset,
+                    bytes,
+                } => {
+                    let mut file = File::options().read(true).write(true).open(path)?;
+                    file.seek(SeekFrom::Start(offset))?;
+                    let mut original = Vec::new();
+                    file.read_to_end(&mut original)?;
+                    changes.push(Update::Index {
+                        file,
+                        offset,
+                        original,
+                        updated: bytes,
+                    });
+                }
+                Extension::Payload { path, len } => {
+                    let file = File::options().write(true).open(path)?;
+                    let old_len = file.metadata()?.len();
+                    changes.push(Update::Extend {
+                        file,
+                        old_len,
+                        new_len: len,
+                    });
+                }
+            }
+        }
+        for entry in files {
+            let name = entry.file_name();
+            let staged = entry.path();
+            let target = self.table.join(&name);
+            let original = match File::options().write(true).open(&target) {
+                Ok(file) => {
+                    let backup = backups.join(name);
+                    fs::set_permissions(&staged, file.metadata()?.permissions())?;
+                    fs::hard_link(&target, &backup)?;
+                    Some(backup)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            changes.push(Update::Replace {
+                staged,
+                target,
+                original,
+            });
+        }
+        for i in 0..changes.len() {
+            if let Err(error) = changes[i].apply() {
+                let mut recovery_error = None;
+                for change in changes[..=i].iter_mut().rev() {
+                    if let Err(error) = change.undo() {
+                        recovery_error = Some(error);
+                    }
+                }
+                return if let Some(recovery_error) = recovery_error {
+                    let path = self.staged.keep();
+                    Err(StorageError::FormatMismatch(format!(
+                        "table update failed: {error}; recovery failed: {recovery_error};                          remaining original files at {}",
+                        path.display()
+                    )))
+                } else {
+                    Err(error.into())
+                };
+            }
+        }
+        tiled_stman::invalidate_shared_tile_cache_for_table(self.table);
+        Ok(())
+    }
+}

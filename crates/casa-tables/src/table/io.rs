@@ -802,15 +802,11 @@ impl Table {
                             } else {
                                 group.name.as_str()
                             });
-                        let casacore_default_small =
-                            crate::storage::standard_stman::ssm_has_small_buckets(&data_path)
-                                .unwrap_or(false);
-                        let dm_data = crate::storage::standard_stman::write_ssm_file_with_options(
+                        let dm_data = crate::storage::standard_stman::rewrite_ssm_rows(
+                            &data_path,
                             &data_path,
                             &group_col_descs,
                             &rows,
-                            table_dat.big_endian,
-                            casacore_default_small,
                             dm_name,
                         )?;
                         if let Some(entry) = table_dat

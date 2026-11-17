@@ -38,6 +38,8 @@ pub(super) struct NewColumn {
     pub(super) keywords: Option<RecordValue>,
     /// Whether the description names a storage manager for the column.
     pub(super) names_manager: bool,
+    pub(super) manager_type: Option<String>,
+    pub(super) manager_group: Option<String>,
 }
 
 /// casacore's data type for a `valueType`, lower-cased: `Some(None)` is a
@@ -233,12 +235,41 @@ pub(super) fn parse(name: &str, description: &Incoming) -> Result<Option<NewColu
         },
         Some(other) => return Err(wrong_type("Record  ", "keywords", other.type_label())),
     };
-    let names_manager = [manager_type, manager_group]
-        .iter()
-        .any(|text| text.as_deref().is_some_and(|text| !text.is_empty()));
+    let manager_type = manager_type.filter(|text| !text.is_empty());
+    let manager_group = manager_group.filter(|text| !text.is_empty());
+    let names_manager = manager_type.is_some() || manager_group.is_some();
     Ok(Some(NewColumn {
         schema,
         keywords,
         names_manager,
+        manager_type,
+        manager_group,
     }))
+}
+
+/// A single casacore manager record, which may be wrapped in a one-field
+/// dminfo dictionary as returned by the toolbox.
+pub(super) fn add_manager(
+    dminfo: Vec<(String, Incoming)>,
+) -> Result<Option<casa_tables::ManagerAddition>, Fail> {
+    if dminfo.is_empty() {
+        return Ok(None);
+    }
+    let record = if dminfo.len() == 1 {
+        dminfo[0].1.fields().unwrap_or(&dminfo)
+    } else {
+        &dminfo
+    };
+    let record = Fields(record);
+    let invalid = || failure("Invalid dmInfo record given in Table::addColumn".into());
+    let kind = record.string("TYPE")?.ok_or_else(invalid)?;
+    let name = record.string("NAME")?.ok_or_else(invalid)?;
+    let spec = match record.get("SPEC") {
+        Some(spec) => match spec.clone().natural()? {
+            Value::Record(spec) => spec,
+            _ => return Err(invalid()),
+        },
+        None => RecordValue::default(),
+    };
+    Ok(Some(casa_tables::ManagerAddition { kind, name, spec }))
 }

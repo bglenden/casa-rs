@@ -69,6 +69,17 @@ pub(crate) fn write_ism_file_column_sources(
     scalar_columns: &ColumnSources<'_>,
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
+    write_ism_column_sources_with_layout(file_path, col_descs, scalar_columns, big_endian, None, 1)
+}
+
+pub(super) fn write_ism_column_sources_with_layout(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &ColumnSources<'_>,
+    big_endian: bool,
+    bucket: Option<u32>,
+    cache_size: u32,
+) -> Result<Vec<u8>, StorageError> {
     if scalar_columns.column_count() != col_descs.len() {
         return Err(StorageError::FormatMismatch(format!(
             "ISM column source count mismatch: expected {}, got {}",
@@ -76,7 +87,8 @@ pub(crate) fn write_ism_file_column_sources(
             scalar_columns.column_count()
         )));
     }
-    let (col_info, bucket_size) = ism_source_layout(col_descs)?;
+    let (col_info, default_bucket) = ism_source_layout(col_descs)?;
+    let bucket_size = bucket.unwrap_or(default_bucket);
     let nrrow = scalar_columns.row_count();
     let ncol = col_descs.len();
 
@@ -91,6 +103,7 @@ pub(crate) fn write_ism_file_column_sources(
             &scalar_runs,
             bucket_size,
             big_endian,
+            cache_size,
         );
     }
 
@@ -223,7 +236,7 @@ pub(crate) fn write_ism_file_column_sources(
         arrays.finish()?;
     }
     let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian)?;
-    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian)?;
+    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian, cache_size)?;
 
     file.write_all(&index_data)?;
     file.seek(SeekFrom::Start(0))?;
