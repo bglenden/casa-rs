@@ -367,7 +367,7 @@ def run(root, native_bin, only=None):
     result = dict(casa_version=casa.version_string(), signature=str(reference), case_filter=only, cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
-    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None, casa_control_callib=None, positional=False):
+    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None, casa_control_callib=None, positional=False, vis_as_list=False):
         if only is not None and re.search(only, name) is None:
             return
         records, paths = {}, {}
@@ -412,7 +412,7 @@ def run(root, native_bin, only=None):
                     tool.putcol(column, values)
                 tool.close()
             before = history(path)['TIME'].size
-            arguments = dict(vis=str(path), gaintable=[str(gain)], flagbackup=False)
+            arguments = dict(vis=[str(path)] if vis_as_list else str(path), gaintable=[str(gain)], flagbackup=False)
             arguments.update(deepcopy(extra or {}))
             captured = io.StringIO()
             preload = os.environ.pop('LD_PRELOAD', None) if engine == 'native' else None
@@ -664,8 +664,13 @@ def run(root, native_bin, only=None):
     for label, arguments in [
         ('scalar-map', dict(spwmap=0, flagbackup=True)),
         ('empty-text-map', dict(spwmap='')),
+        ('empty-record-map', dict(spwmap={})),
+        ('record-map', dict(spwmap={'0': [0]}, flagbackup=True)),
         ('unused-malformed-map', dict(spwmap=[[0], 'unused'])),
         ('invalid-observation-type', dict(observation=1.5, flagbackup=True)),
+        ('invalid-observation-int16', dict(observation=np.int16(0), flagbackup=True)),
+        ('invalid-tuple-spwmap', dict(spwmap=(0,), flagbackup=True)),
+        ('invalid-tuple-uvrange', dict(uvrange=(), flagbackup=True)),
         ('observation-bool', dict(observation=True, flagbackup=True)),
         ('uvrange-list', dict(uvrange=['<50m', '>60m'])),
         ('uvrange-empty-list', dict(uvrange=[])),
@@ -688,6 +693,7 @@ def run(root, native_bin, only=None):
         ('variant-uvrange', dict(uvrange=50)),
     ]:
         case(f'api-{label}', arguments, input_vis=chain_source)
+    case('api-vis-list', dict(flagbackup=True), vis_as_list=True)
     case('api-positional', dict(field='PHASE', interp='nearest'), gain=time_gain, positional=True)
 
     case('chain-default-fields', gain=time_gain, input_vis=chain_source, precorrected=True)
@@ -757,6 +763,27 @@ def run(root, native_bin, only=None):
              input_vis=input_vis, precorrected=True, spectral_sigma=True)
         case('family-'+label+'-time-cubic', dict(interp=['cubic']), gain=gain,
              input_vis=input_vis, precorrected=True)
+    for label, input_vis in [('opacity', source), ('gaincurve', vla_source)]:
+        if only is not None and re.search(only, f'family-{label}-same-time-windows') is None:
+            continue
+        vis, gain = multi_window(input_vis, family_tables[label], root, windows=2,
+                                 name=f'family-{label}-multi')
+        tool.open(str(vis/'DATA_DESCRIPTION'), nomodify=False)
+        row = {column: tool.getcell(column, 0) for column in tool.colnames()}
+        tool.addrows(1)
+        for column, value in row.items():
+            tool.putcell(column, 1, 1 if column == 'SPECTRAL_WINDOW_ID' else value)
+        tool.close()
+        tool.open(str(vis), nomodify=False)
+        tool.putcol('DATA_DESC_ID', np.arange(tool.nrows(), dtype=np.int32) % 2)
+        tool.close()
+        tool.open(str(gain), nomodify=False)
+        parameters = tool.getcol('FPARAM')
+        parameters[:, :, tool.getcol('SPECTRAL_WINDOW_ID') == 1] *= 2
+        tool.putcol('FPARAM', parameters)
+        tool.close()
+        case(f'family-{label}-same-time-windows', dict(calwt=False), gain=gain, input_vis=vis)
+
     for selector in ['0', '1', 'PHASE', 'NO_SUCH_FIELD']:
         case('family-BPOLY-gainfield-'+selector, dict(gainfield=[selector]), gain=poly, precorrected=True)
 

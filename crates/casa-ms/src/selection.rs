@@ -966,13 +966,33 @@ impl MeasurementSet {
         request: &MsSelection,
         io: MsSelectionIoBudget,
     ) -> Result<ResolvedMsSelection, MsSelectionError> {
+        self.resolve_rows(request, io, false)
+    }
+
+    /// Resolve CASA's full row and channel selection grammars.
+    ///
+    /// Consumers use the returned channel selections for array-cell access.
+    pub fn resolve_casa_selection(
+        &self,
+        request: &MsSelection,
+        io: MsSelectionIoBudget,
+    ) -> Result<ResolvedMsSelection, MsSelectionError> {
+        self.resolve_rows(request, io, true)
+    }
+
+    fn resolve_rows(
+        &self,
+        request: &MsSelection,
+        io: MsSelectionIoBudget,
+        full: bool,
+    ) -> Result<ResolvedMsSelection, MsSelectionError> {
         if io.requested_bytes_per_row < std::mem::size_of::<ResolvedMsSelectionRow>() {
             return Err(MsSelectionError::InvalidBudget(format!(
                 "requested_bytes_per_row must include the {}-byte resolved row contract",
                 std::mem::size_of::<ResolvedMsSelectionRow>()
             )));
         }
-        let compiled = request.compile_with_row_grammar(self, true)?;
+        let compiled = request.compile_with_row_grammar(self, full)?;
         let taql_predicate = compiled.resolved_to_taql(self)?;
         let selected_row_indices = compiled.apply_with_budget(self, io)?;
         let row_blocks = plan_selected_row_blocks(&selected_row_indices, io)?;

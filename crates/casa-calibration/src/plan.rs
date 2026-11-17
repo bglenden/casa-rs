@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::model::CalibrationTableSummary;
-use crate::session::resolve_calibration_selection;
+use crate::session::resolve_apply_selection;
 use crate::summary::{CalibrationTableError, summarize_table};
 
 #[path = "plan_fields.rs"]
@@ -534,15 +534,14 @@ pub(crate) fn plan_apply_with_preparation_error(
         };
 
     let selection_started_at = Instant::now();
-    let resolved_selection =
-        resolve_calibration_selection(ms, &request.selection).map_err(|error| {
-            ApplyPlanError::Selection {
-                source: match error {
-                    casa_ms::MsSelectionError::Domain(source) => source,
-                    other => MsError::InvalidInput(other.to_string()),
-                },
-            }
-        })?;
+    let resolved_selection = resolve_apply_selection(ms, &request.selection).map_err(|error| {
+        ApplyPlanError::Selection {
+            source: match error {
+                casa_ms::MsSelectionError::Domain(source) => source,
+                other => MsError::InvalidInput(other.to_string()),
+            },
+        }
+    })?;
     let requested_channels = resolved_selection.channel_selections.clone();
     let selected_row_indices = resolved_selection.row_indices().collect::<Vec<_>>();
     if selected_row_indices.is_empty() {

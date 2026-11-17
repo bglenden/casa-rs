@@ -66,6 +66,26 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
     let mut selection = selection(task)?;
     selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
     selection.uvrange = uv_selector_text(task.value("uvrange"));
+    // calibrater.selectvis converts these variants with toCasaString, which
+    // removes one outer bracket pair even when the input was a string.
+    for selector in [
+        &mut selection.field,
+        &mut selection.spw,
+        &mut selection.intent,
+        &mut selection.timerange,
+        &mut selection.uvrange,
+        &mut selection.antenna,
+        &mut selection.scan,
+        &mut selection.observation,
+    ] {
+        if let Some(text) = selector
+            && let Some(inner) = text
+                .strip_prefix('[')
+                .and_then(|text| text.strip_suffix(']'))
+        {
+            *selector = (!inner.is_empty()).then(|| inner.to_string());
+        }
+    }
     // CASA accepts these parameters even when disabled, retaining their input
     // values for HISTORY while passing empty selectors to calibrater.selectvis.
     if !task.flag("selectdata")? {
@@ -410,6 +430,8 @@ fn apply_spw_maps(
         }
         Some(ParameterValue::Array(items)) => items.clone(),
         Some(ParameterValue::String(text)) if text.is_empty() => Vec::new(),
+        Some(ParameterValue::Table(entries)) if entries.is_empty() => Vec::new(),
+        Some(ParameterValue::Table(_)) => return Err(ApplyArgumentError::SpwMap("0".into())),
         Some(ParameterValue::EmptyArray { .. }) | None => Vec::new(),
         Some(value) => {
             let ty = match value {

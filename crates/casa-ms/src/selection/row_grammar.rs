@@ -19,7 +19,21 @@ pub(super) fn apply(
         compiled.spw_data_desc_ids = spw
             .row_data_descriptions()
             .map(|ids| ids.iter().map(|&id| id as i32).collect());
+        let windows = ms.spectral_window()?;
+        let mut full_windows = std::collections::BTreeSet::new();
         for range in spw.channel_list() {
+            if range.start == 0
+                && range.step <= 1
+                && range.stop == windows.num_chan(range.spw_id)? - 1
+            {
+                full_windows.insert(range.spw_id);
+                compiled
+                    .spw_channel_selections
+                    .remove(&(range.spw_id as i32));
+            }
+            if full_windows.contains(&range.spw_id) {
+                continue;
+            }
             compiled
                 .spw_channel_selections
                 .entry(range.spw_id as i32)

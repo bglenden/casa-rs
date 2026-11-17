@@ -14324,7 +14324,7 @@
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
             "provider": {"field": "uvrange", "adapter": "identity"},
-            "python": {"name": "uvrange", "type_hint": "str | int | float"},
+            "python": {"name": "uvrange", "type_hint": "str | int | float | list[str]"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
           }
         },
@@ -14467,7 +14467,7 @@
           "projections": {
             "cli": {"flags": ["--spwmap"], "metavar": "TABLE_SPWMAP"},
             "provider": {"field": "spwmap", "adapter": "identity"},
-            "python": {"name": "spwmap", "type_hint": "list[int] | list[list[int]] | tuple[int, ...] | tuple[list[int] | tuple[int, ...], ...]"},
+            "python": {"name": "spwmap", "type_hint": "list[int] | list[list[int]]"},
             "presentation": {"label": "SPW Map", "group": "Apply"}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "CASA's spwmap is a list of window maps, one per gain table; calibrate's is casa-rs's ;-separated text."}

@@ -183,12 +183,16 @@ pub(crate) fn resolve_calibration_selection(
     measurement_set: &MeasurementSet,
     selection: &MsSelection,
 ) -> Result<ResolvedMsSelection, MsSelectionError> {
-    measurement_set.resolve_selection(
-        selection,
-        MsSelectionIoBudget::from_system_memory(
-            2,
-            std::mem::size_of::<ResolvedMsSelectionRow>(),
-            None,
-        )?,
-    )
+    measurement_set.resolve_selection(selection, calibration_selection_budget()?)
+}
+
+pub(crate) fn resolve_apply_selection(
+    measurement_set: &MeasurementSet,
+    selection: &MsSelection,
+) -> Result<ResolvedMsSelection, MsSelectionError> {
+    measurement_set.resolve_casa_selection(selection, calibration_selection_budget()?)
+}
+
+fn calibration_selection_budget() -> Result<MsSelectionIoBudget, MsSelectionError> {
+    MsSelectionIoBudget::from_system_memory(2, std::mem::size_of::<ResolvedMsSelectionRow>(), None)
 }
