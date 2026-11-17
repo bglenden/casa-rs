@@ -38,7 +38,7 @@ pub fn save_next_partition_flag_backup(
     task: &str,
 ) -> Result<String, FlaggingError> {
     let name = next_version(path, task)?;
-    let comment = format!("{task} auto-backup");
+    let comment = autosave_comment();
     let failure = |reason| FlaggingError::FlagVersion {
         path: path.display().to_string(),
         reason,
@@ -83,4 +83,39 @@ pub fn save_next_partition_flag_backup(
         .map_err(|error| failure(error.to_string()))?;
     append_flag_version_entry(path, &name, &comment)?;
     Ok(name)
+}
+
+fn autosave_comment() -> String {
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    #[cfg(unix)]
+    if let Ok(seconds) = libc::time_t::try_from(unix) {
+        let mut local = std::mem::MaybeUninit::<libc::tm>::uninit();
+        // SAFETY: Both pointers reference live storage of the expected
+        // types. localtime_r initializes local before returning success.
+        let result = unsafe { libc::localtime_r(&seconds, local.as_mut_ptr()) };
+        if !result.is_null() {
+            // SAFETY: localtime_r reported successful initialization.
+            let date = unsafe { local.assume_init() };
+            return format!(
+                "Flags autosave on {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                date.tm_year + 1900,
+                date.tm_mon + 1,
+                date.tm_mday,
+                date.tm_hour,
+                date.tm_min,
+                date.tm_sec,
+            );
+        }
+    }
+    let date = casa_types::quanta::MvTime::from_mjd_seconds(unix as f64 + 40_587.0 * 86_400.0);
+    format!(
+        "Flags autosave on {:04}-{:02}-{:02} {}",
+        date.year(),
+        date.month(),
+        date.month_day(),
+        date.format_time(0)
+    )
 }

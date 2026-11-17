@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_ms::save_next_partition_flag_backup;
+use casa_ms::{MeasurementSet, save_next_partition_flag_backup};
 use casa_provider_contracts::ParameterValue;
 use casa_tables::{Table, TableInfo, table_cache_name};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
@@ -27,6 +27,16 @@ pub(super) fn execute(
     let parts = Table::concatenated_source_paths(path)
         .map_err(|error| TaskFailure::execution(error.to_string()))?
         .ok_or_else(|| TaskFailure::execution("Multi-MS has no concatenation"))?;
+    // CASA opens the aggregate before dispatch. A broken reference must
+    // fail before any partition receives CORRECTED_DATA or HISTORY.
+    for part in &parts {
+        MeasurementSet::open(part).map_err(|error| {
+            TaskFailure::execution(format!(
+                "open Multi-MS partition {}: {error}",
+                part.display()
+            ))
+        })?;
+    }
     let backup = if request.flagbackup && request.apply_mode.writes_flags() {
         Some(
             save_next_partition_flag_backup(path, &parts, "applycal")

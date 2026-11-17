@@ -2,16 +2,18 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Compare CASA and native applycal on the same partitioned MeasurementSet."""
 import argparse
+from datetime import datetime
 import json
 import os
 from pathlib import Path
+import shutil
 
 import casatasks
 from casatools import ms, table
 import numpy as np
 
 from applycal_oracle import history
-from calibration_lifecycle_oracle import contents, equal
+from calibration_lifecycle_oracle import contents, equal, snapshot
 from record_casa_returns import make_cal_ms
 
 
@@ -53,6 +55,13 @@ def compare_case(root, name, source, gain, arguments, native):
 
         backup = Path(str(path) + '.flagversions')
         parts = referenced_tables(path)
+        for entry in backup.glob('flags.applycal_*'):
+            version_list = (backup/'FLAG_VERSION_LIST').read_text()
+            comment = next(line for line in version_list.splitlines()
+                           if line.startswith(entry.name.removeprefix('flags.') + ' : '))
+            timestamp = datetime.strptime(comment.split(' : Flags autosave on ')[1],
+                                          '%Y-%m-%d %H:%M:%S')
+            assert abs((datetime.now()-timestamp).total_seconds()) < 60, comment
         records[label] = {
             'backups': sorted(item.name for item in backup.glob('flags.*')),
             'partitions': [{'path': str(part),
@@ -79,6 +88,11 @@ def compare_case(root, name, source, gain, arguments, native):
             assert a[a.index('taskname=applycal'):] == b[b.index('taskname=applycal'):], (a, b)
         assert Path(str(left)+'.flagversions').exists() == Path(str(right)+'.flagversions').exists()
     if name == 'default':
+        for label in paths:
+            flags = contents(Path(str(paths[label])+'.flagversions')/'flags.applycal_1')
+            midpoint = len(flags['FLAG_ROW'])//2
+            assert not np.array_equal(flags['FLAG'][..., :midpoint], flags['FLAG'][..., midpoint:])
+            assert not np.array_equal(flags['FLAG_ROW'][:midpoint], flags['FLAG_ROW'][midpoint:])
         native_ms = paths['native']
         backup = Path(str(native_ms)+'.flagversions')/'flags.applycal_1'
         flags_before = contents(backup)
@@ -90,6 +104,31 @@ def compare_case(root, name, source, gain, arguments, native):
         for column in ['FLAG', 'FLAG_ROW']:
             np.testing.assert_array_equal(restored[column], flags_before[column])
         records['native']['restored_with_casa'] = changed
+    return records
+
+
+def compare_missing_partition(root, source, gain, native):
+    records = {}
+    for label, apply in [('casa', casatasks.applycal), ('native', native.applycal)]:
+        path = root/f'missing-partition-{label}.mms'
+        casatasks.partition(vis=str(source), outputvis=str(path), separationaxis='scan',
+                            numsubms=2, disableparallel=True, flagbackup=False)
+        first, missing = referenced_tables(path)
+        shutil.rmtree(missing)
+        before = snapshot(first)
+        preload = os.environ.pop('LD_PRELOAD', None) if label == 'native' else None
+        try:
+            apply(vis=str(path), gaintable=[str(gain)], flagbackup=False, applymode='calonly')
+        except RuntimeError as error:
+            record = dict(error=type(error).__name__, message=str(error))
+        else:
+            raise AssertionError(f'{label} accepted a missing Multi-MS partition')
+        finally:
+            if preload is not None:
+                os.environ['LD_PRELOAD'] = preload
+        assert snapshot(first) == before, f'{label} changed the first partition'
+        assert not Path(str(path)+'.flagversions').exists()
+        records[label] = dict(record, first_partition_unchanged=True)
     return records
 
 
@@ -113,6 +152,18 @@ def main():
     tool.open(str(source), nomodify=False)
     if 'CORRECTED_DATA' in tool.colnames():
         tool.removecols(['CORRECTED_DATA'])
+    # Make backup row order observable. The first scan has a marked full row
+    # and the other scan has a different subset of flagged channel samples.
+    scans = tool.getcol('SCAN_NUMBER')
+    first = np.flatnonzero(scans == scans.min())
+    second = np.flatnonzero(scans != scans.min())
+    flags = tool.getcol('FLAG')
+    flags[..., first[0]] = True
+    flags[0, 1, second[::3]] = True
+    flag_rows = tool.getcol('FLAG_ROW')
+    flag_rows[first[0]] = True
+    tool.putcol('FLAG', flags)
+    tool.putcol('FLAG_ROW', flag_rows)
     tool.close()
     casatasks.gencal(vis=str(source), caltable=str(gain), caltype='amp', parameter=[2.])
     tool = table()
@@ -140,6 +191,9 @@ def main():
         result[label] = compare_case(root, label, source, gain, arguments, native)
         (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
         print(label, 'passed', flush=True)
+    result['missing-partition'] = compare_missing_partition(root, source, gain, native)
+    (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
+    print('missing-partition passed', flush=True)
 
 
 if __name__ == '__main__':
