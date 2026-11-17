@@ -7402,7 +7402,10 @@ the Python value, has a <code>TpInt64</code> case for a scalar but none for <cod
 (the converter for records in the same file has both). The recording is
 <code>crates/casars-python/python/tests/data/casa_table_tool.json</code> (<code>cells</code>,
 <code>getcol('id')</code>; the fixture's <code>id</code> column is <code>Int64</code>). casa-rs returns the
-<code>int64</code> array, as it does for every other integer column.</p>
+<code>int64</code> array, as it does for every other integer column. This also
+affects the <code>_COUNT_</code> column of a result from TaQL <code>COUNT</code>:
+<code>getcol("_COUNT_")</code> raises the same error; <code>getcell("_COUNT_", row)</code>
+returns the count. See <code>taql_count_int64</code> in that recording (#1028).</p>
 <h2 id="tbputkeyword-stores-an-int-beyond-32-bits-as-0"><code>tb.putkeyword</code> stores an int beyond 32 bits as 0<a class="headerlink" href="#tbputkeyword-stores-an-int-beyond-32-bits-as-0" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-30</li>

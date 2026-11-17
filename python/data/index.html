@@ -831,7 +831,7 @@
 Rust:</p>
 <ul>
 <li><code>protocol_info()</code> returns the stable object protocol descriptor</li>
-<li><code>schema_bundle()</code> returns the canonical schema bundle for <code>Image</code>, <code>Table</code>
+<li><code>schema_bundle()</code> returns the canonical schema bundle for <code>Image</code>
   and the <code>casars.tools</code> classes</li>
 </ul>
 <h2 id="images">Images<a class="headerlink" href="#images" title="Permanent link">&para;</a></h2>
@@ -888,21 +888,20 @@ Both outputs are CASA images, and both paths must be new.
 When a projected footprint edge falls exactly halfway between output pixels,
 coordinate rounding can move the edge by a pixel compared with CASA.</p>
 <h2 id="tables">Tables<a class="headerlink" href="#tables" title="Permanent link">&para;</a></h2>
-<p>Use <code>Table.open(path, writable=False)</code> to open an existing table. The v1 table surface focuses on cell/column access instead of browser-style row dictionaries:</p>
-<ul>
-<li>table metadata through <code>row_count</code>, <code>column_names</code>, <code>keywords</code>, and <code>column_keywords(name)</code></li>
-<li>cell access through <code>get_cell</code> and <code>set_cell</code></li>
-<li>column access through <code>get_column</code> and <code>put_column</code></li>
-<li>column keyword updates through <code>set_column_keywords</code></li>
-</ul>
-<p>Returned values follow the documented type mapping:</p>
-<ul>
-<li>scalar numeric, bool, and complex values become Python scalars</li>
-<li>numeric scalar columns become NumPy arrays</li>
-<li>fixed-shape numeric array cells and columns become NumPy arrays</li>
-<li>variable-shape array columns fall back to Python lists of per-row NumPy arrays</li>
-<li>record values become nested Python dictionaries</li>
-</ul>
+<p>Use the CASA-style <code>casars.tools.table</code> tool for in-process table access:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">table</span>
+
+<span class="n">tb</span> <span class="o">=</span> <span class="n">table</span><span class="p">()</span>
+<span class="n">tb</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"observation.ms"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">tb</span><span class="o">.</span><span class="n">nrows</span><span class="p">(),</span> <span class="n">tb</span><span class="o">.</span><span class="n">colnames</span><span class="p">())</span>
+<span class="n">first_baseline</span> <span class="o">=</span> <span class="n">tb</span><span class="o">.</span><span class="n">getcell</span><span class="p">(</span><span class="s2">"ANTENNA1"</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+<span class="n">tb</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+
+<p><code>getcol</code> returns fixed-shape arrays with rows on the last axis.
+Use <code>getvarcol</code> for variable-shape cells. To write, open with
+<code>nomodify=False</code>; the write methods are <code>putcell</code>, <code>putcol</code>,
+and <code>putcolkeywords</code>, among others.</p>
 
 
 

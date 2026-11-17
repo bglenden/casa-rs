@@ -116,22 +116,19 @@
 <a href=#116 id=116 data-nosnippet>116</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#117 id=117 data-nosnippet>117</a>        }
 <a href=#118 id=118 data-nosnippet>118</a>        <span class="self">self</span>.inner.note_rows_persisted();
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="attr">#[cfg(unix)]
-<a href=#120 id=120 data-nosnippet>120</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.lock_state.as_ref() {
-<a href=#121 id=121 data-nosnippet>121</a>            state.flushed_generation.store(
-<a href=#122 id=122 data-nosnippet>122</a>                <span class="self">self</span>.inner.generation(),
-<a href=#123 id=123 data-nosnippet>123</a>                std::sync::atomic::Ordering::Relaxed,
-<a href=#124 id=124 data-nosnippet>124</a>            );
-<a href=#125 id=125 data-nosnippet>125</a>            <span class="kw">if </span>state.lock_file.has_lock(LockType::Write) {
-<a href=#126 id=126 data-nosnippet>126</a>                <span class="kw">crate</span>::lock::publish_persisted_rows(<span class="kw-2">&amp;</span>state.lock_file, <span class="kw-2">&amp;</span>state.path).map_err(
-<a href=#127 id=127 data-nosnippet>127</a>                    |e| TableError::LockIo {
-<a href=#128 id=128 data-nosnippet>128</a>                        path: state.path.display().to_string(),
-<a href=#129 id=129 data-nosnippet>129</a>                        message: e.to_string(),
-<a href=#130 id=130 data-nosnippet>130</a>                    },
-<a href=#131 id=131 data-nosnippet>131</a>                )<span class="question-mark">?</span>;
-<a href=#132 id=132 data-nosnippet>132</a>            }
-<a href=#133 id=133 data-nosnippet>133</a>        }
-<a href=#134 id=134 data-nosnippet>134</a>        <span class="prelude-val">Ok</span>(())
-<a href=#135 id=135 data-nosnippet>135</a>    }
-<a href=#136 id=136 data-nosnippet>136</a>}
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="self">self</span>.mark_flushed();
+<a href=#120 id=120 data-nosnippet>120</a>        <span class="attr">#[cfg(unix)]
+<a href=#121 id=121 data-nosnippet>121</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.lock_state.as_ref()
+<a href=#122 id=122 data-nosnippet>122</a>            &amp;&amp; state.lock_file.has_lock(LockType::Write)
+<a href=#123 id=123 data-nosnippet>123</a>        {
+<a href=#124 id=124 data-nosnippet>124</a>            <span class="kw">crate</span>::lock::publish_persisted_rows(<span class="kw-2">&amp;</span>state.lock_file, <span class="kw-2">&amp;</span>state.path).map_err(|e| {
+<a href=#125 id=125 data-nosnippet>125</a>                TableError::LockIo {
+<a href=#126 id=126 data-nosnippet>126</a>                    path: state.path.display().to_string(),
+<a href=#127 id=127 data-nosnippet>127</a>                    message: e.to_string(),
+<a href=#128 id=128 data-nosnippet>128</a>                }
+<a href=#129 id=129 data-nosnippet>129</a>            })<span class="question-mark">?</span>;
+<a href=#130 id=130 data-nosnippet>130</a>        }
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="prelude-val">Ok</span>(())
+<a href=#132 id=132 data-nosnippet>132</a>    }
+<a href=#133 id=133 data-nosnippet>133</a>}
 </code></pre></div></section></main></body></html>

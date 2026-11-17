@@ -919,11 +919,11 @@ idiomatic Rust request.</p>
 <h3 id="object-surfaces">Object Surfaces<a class="headerlink" href="#object-surfaces" title="Permanent link">&para;</a></h3>
 <p>Object surfaces expose stateful handles with constructors, properties, methods,
 and lifecycle operations.</p>
-<p>The object surfaces are <code>casars.data.Image</code> and <code>casars.data.Table</code>, and the
+<p>The object surfaces are <code>casars.data.Image</code> and the
 CASA tool classes of <code>casars.tools</code> (ADR-0017): <code>simulator</code> (CASA's <code>sm</code>),
 <code>measures</code> (<code>me</code>), <code>quanta</code> (<code>qa</code>), <code>componentlist</code> (<code>cl</code>), <code>image</code> (<code>ia</code>),
 <code>coordsys</code> (<code>cs</code>), <code>table</code> (<code>tb</code>), <code>msmetadata</code> (<code>msmd</code>) and <code>ms</code>.</p>
-<p>The <code>casars.data</code> classes are persistent data access APIs; the <code>casars.tools</code>
+<p><code>casars.data.Image</code> is a persistent image access API; the <code>casars.tools</code>
 classes are CASA tools with CASA's method names, parameter order and
 effective defaults. All are used in-process from Python, are not forced into
 the task-binary model and have no standalone executable. One bundle,
