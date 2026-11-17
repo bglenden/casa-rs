@@ -257,9 +257,10 @@ pub(super) fn write_root(
         change(&mut root.table, row_map)?;
         return Ok(CasaValue::Bool(true));
     }
-    if root.table.is_reference_table()? {
+    let is_reference = root.table.is_reference_table()?;
+    if is_reference && matches!(target, Target::Structure(_)) {
         return Err(Fail::Unsupported(
-            "writing through an opened reference table is not yet implemented in casa-rs (#1028)"
+            "structural edits of an opened reference table require a reference descriptor write"
                 .to_string(),
         ));
     }
@@ -329,7 +330,8 @@ pub(super) fn write_root(
         root.table
             .finish_memory_manager_write(false)
             .map_err(Fail::from)
-    } else if saved.is_err() {
+    } else if saved.is_err() || is_reference {
+        // Repeated reference rows can alias the very same cell.
         root.table.resync_or_discard().map_err(Fail::from)
     } else {
         Ok(())

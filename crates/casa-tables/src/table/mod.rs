@@ -34,6 +34,7 @@ mod memory_manager;
 mod mutation;
 mod persisted_rows;
 mod query;
+mod reference_writes;
 mod root_rows;
 mod row_changes;
 pub use row_changes::{ColumnAddition, ManagerAddition};

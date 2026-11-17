@@ -295,6 +295,9 @@ impl Table {
     /// This is a Rust-specific optimization and currently supports only plain
     /// tables on disk.
     pub fn save_metadata_only(&self, options: TableOptions) -> Result<(), TableError> {
+        if self.try_save_reference_metadata(&options.path)? {
+            return Ok(());
+        }
         let snapshot = StorageSnapshot {
             // The rows the sync data at the target publishes, which its
             // `table.dat` can trail (#880). This save writes no rows, so this
@@ -572,6 +575,9 @@ impl Table {
         changed_rows: &[usize],
     ) -> Result<(), TableError> {
         if changed_columns.is_empty() {
+            return Ok(());
+        }
+        if self.try_save_reference_cells(changed_columns, changed_rows)? {
             return Ok(());
         }
         if self.kind != TableKind::Plain {
@@ -1741,10 +1747,9 @@ impl Table {
             return Ok(false);
         };
         let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
-        Ok(matches!(
-            crate::storage::table_control::read_table_dat_dispatch(&control_path)?,
-            crate::storage::table_control::TableDatResult::Ref(_)
-        ))
+        Ok(crate::storage::table_control::is_reference_descriptor(
+            &control_path,
+        )?)
     }
 
     /// The options that write this table in full as it is laid out on disk,

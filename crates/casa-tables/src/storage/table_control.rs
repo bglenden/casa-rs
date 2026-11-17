@@ -180,11 +180,7 @@ thread_local! {
     pub(crate) static CONTROL_FILE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Read table.dat and dispatch based on the table type marker.
-pub(crate) fn read_table_dat_dispatch(path: &Path) -> Result<TableDatResult, StorageError> {
-    #[cfg(test)]
-    CONTROL_FILE_READS.with(|reads| reads.set(reads.get() + 1));
-    let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
+fn read_table_header(io: &mut AipsIo) -> Result<(u32, u64, bool, String), StorageError> {
     let table_version = io.getstart("Table")?;
 
     let nrrow = if table_version >= 3 {
@@ -197,7 +193,22 @@ pub(crate) fn read_table_dat_dispatch(path: &Path) -> Result<TableDatResult, Sto
     let big_endian = format == 0;
 
     let table_type = io.get_string()?;
+    Ok((table_version, nrrow, big_endian, table_type))
+}
 
+/// Read just the common header to identify a saved reference without
+/// parsing the full descriptor for every plain table.
+pub(crate) fn is_reference_descriptor(path: &Path) -> Result<bool, StorageError> {
+    let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
+    Ok(read_table_header(&mut io)?.3 == "RefTable")
+}
+
+/// Read table.dat and dispatch based on the table type marker.
+pub(crate) fn read_table_dat_dispatch(path: &Path) -> Result<TableDatResult, StorageError> {
+    #[cfg(test)]
+    CONTROL_FILE_READS.with(|reads| reads.set(reads.get() + 1));
+    let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
+    let (table_version, nrrow, big_endian, table_type) = read_table_header(&mut io)?;
     match table_type.as_str() {
         "PlainTable" => {
             let table_desc = read_table_desc(&mut io)?;

@@ -49,8 +49,9 @@ impl Table {
             lock_opts.mode,
             LockMode::PermanentLocking | LockMode::PermanentLockingWait
         );
+        let lock_path = super::reference_writes::reference_lock_path(&options.path)?;
         let mut lock_file =
-            LockFile::create_or_open(&options.path, false, lock_opts.inspection_interval, perm)
+            LockFile::create_or_open(&lock_path, false, lock_opts.inspection_interval, perm)
                 .map_err(|e| TableError::LockIo {
                     path: options.path.display().to_string(),
                     message: e.to_string(),
@@ -108,7 +109,7 @@ impl Table {
             .unwrap_or_else(SyncData::new);
 
         table.lock_state = Some(LockState {
-            path: options.path.clone(),
+            path: lock_path,
             lock_file,
             sync_data,
             options: lock_opts,
@@ -217,7 +218,10 @@ impl Table {
         }
         // Reopen the descriptor just as a fresh reader would. This drops
         // any stale cells and keeps unread cells on disk.
-        let path = state.path.clone();
+        let path = self
+            .source_path
+            .clone()
+            .unwrap_or_else(|| state.path.clone());
         self.reload_disk_state_at(&path)
             .map_err(|error| TableError::LockIo {
                 path: path.display().to_string(),
@@ -530,7 +534,10 @@ impl Table {
         let Some(state) = &self.lock_state else {
             return Ok(());
         };
-        let path = state.path.clone();
+        let path = self
+            .source_path
+            .clone()
+            .unwrap_or_else(|| state.path.clone());
         let Some(dirty) = self.inner.dirty_changes() else {
             return self.flush_full_locked_layout();
         };

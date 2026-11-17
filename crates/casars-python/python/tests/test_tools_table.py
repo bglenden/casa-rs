@@ -1278,11 +1278,10 @@ def test_selectrows_persistent_errors_and_view_guardrails(
     assert reopened.open(str(sel_path), nomodify=False)
     assert reopened.nrows() == 3
     assert reopened.getdminfo()["*1"]["TYPE"] == "StManAipsIO"
-    with pytest.raises(NotImplementedError, match="reference table"):
-        reopened.putcell("id", 0, 123)
+    assert reopened.putcell("id", 0, 123)
+    assert reopened.getcol("id").tolist() == [123, 20, 123]
     with pytest.raises(RuntimeError, match="still open"):
         reopened.copy(str(parent))
-    assert reopened.getcell("id", 0) == 30
     reopened.done()
 
     # Root shrinking makes a stale view row index fail cleanly rather than panic.
