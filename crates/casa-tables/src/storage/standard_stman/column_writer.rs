@@ -492,7 +492,39 @@ mod tests {
                 "SSM",
             )
             .expect("column writer");
+            let mut overrides = crate::table::ColumnOverrides::for_row_count(rows);
+            for desc in &col_descs {
+                overrides.insert_values(
+                    &desc.col_name,
+                    records
+                        .iter()
+                        .map(|record| record.get(&desc.col_name).cloned())
+                        .collect(),
+                );
+            }
+            let sources = crate::storage::scalar_sources::override_columns_for_group(
+                crate::table::DataManagerKind::StandardStMan,
+                &col_descs,
+                &overrides,
+                rows,
+                &[],
+            )
+            .expect("override sources")
+            .expect("mixed materialized columns use sources");
+            let overridden = root.path().join(format!("overridden-{rows}-{big_endian}"));
+            std::fs::create_dir_all(&overridden).expect("mkdir");
+            let overridden_blob = write_ssm_file_columns(
+                &overridden.join("table.f0"),
+                &col_descs,
+                &sources,
+                big_endian,
+                false,
+                "SSM",
+            )
+            .expect("override writer");
             assert_eq!(reference_blob, streamed_blob, "DM blob, {rows} rows");
+            assert_eq!(reference_blob, overridden_blob, "override DM blob");
+            assert_eq!(files(&reference), files(&overridden), "override bytes");
             let (reference, streamed) = (files(&reference), files(&streamed));
             assert_eq!(reference.len(), streamed.len(), "{rows} rows");
             for ((name, expected), (_, found)) in reference.iter().zip(&streamed) {
@@ -502,6 +534,55 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn missing_mixed_override_cells_keep_existing_row_values() {
+        use crate::{ColumnOverrides, DataManagerKind, Table, TableOptions, TableSchema};
+        let root = tempfile::tempdir().unwrap();
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("ID", PrimitiveType::Int32),
+            ColumnSchema::array_variable("DATA", PrimitiveType::Int32, Some(1)),
+        ])
+        .unwrap();
+        let original = ArrayValue::from_i32_vec(vec![3, 5]);
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("ID", Value::Scalar(ScalarValue::Int32(11))),
+                RecordField::new("DATA", Value::Array(original.clone())),
+            ]))
+            .unwrap();
+        let mut overrides = ColumnOverrides::for_row_count(1);
+        // Hold the scalar unchanged to isolate the missing array cell's
+        // fallback to the existing row.
+        overrides.insert_values("ID", vec![Some(Value::Scalar(ScalarValue::Int32(11)))]);
+        overrides.insert_values("DATA", vec![None]);
+        table
+            .prepare_write()
+            .save_with_column_overrides(
+                TableOptions::new(root.path()).with_data_manager(DataManagerKind::StandardStMan),
+                &std::collections::HashMap::new(),
+                &overrides,
+            )
+            .unwrap();
+        let result = Table::open(TableOptions::new(root.path())).unwrap();
+        assert_eq!(
+            result
+                .column_accessor("DATA")
+                .unwrap()
+                .array_cell(0)
+                .unwrap(),
+            &original
+        );
+        assert_eq!(
+            result
+                .column_accessor("ID")
+                .unwrap()
+                .scalar_cell(0)
+                .unwrap(),
+            &ScalarValue::Int32(11)
+        );
     }
 
     /// The string buckets lie between the data and index buckets; one that

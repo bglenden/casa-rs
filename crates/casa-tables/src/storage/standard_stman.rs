@@ -38,7 +38,9 @@ use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter, stored
 use super::table_control::ColumnDescContents;
 use super::{ColumnSources, RequiredScalarColumnData, StorageError};
 
+mod array_updates;
 mod column_writer;
+pub(crate) use array_updates::save_ssm_array_rows_in_place;
 mod index;
 mod string_arrays;
 mod string_buckets;

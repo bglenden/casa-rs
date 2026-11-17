@@ -458,19 +458,38 @@ impl EncodedCells {
     }
 }
 
-pub(super) fn scalar_override_columns_for_group<'a>(
+/// Borrow materialized array/record overrides for StandardStMan instead of
+/// cloning them into row records. Other managers retain their existing
+/// projection path for those columns. Existing rows retain projection's
+/// fallback from a missing override cell to the original row value.
+pub(super) fn override_columns_for_group<'a>(
+    dm_kind: crate::table::DataManagerKind,
     group_col_descs: &[ColumnDescContents],
     column_overrides: &'a ColumnOverrides,
     row_count: usize,
+    base_rows: &[RecordValue],
 ) -> Result<Option<ColumnSources<'a>>, StorageError> {
+    if !base_rows.is_empty()
+        && group_col_descs
+            .iter()
+            .any(|desc| desc.is_array || desc.is_record())
+    {
+        return Ok(None);
+    }
     let mut columns = Vec::with_capacity(group_col_descs.len());
     for desc in group_col_descs {
-        if desc.is_array || desc.is_record() {
-            return Ok(None);
-        }
         let Some(override_value) = column_overrides.get(&desc.col_name) else {
             return Ok(None);
         };
+        if desc.is_array || desc.is_record() {
+            if dm_kind == crate::table::DataManagerKind::StandardStMan
+                && let ColumnOverride::Values(values) = override_value
+            {
+                columns.push(ColumnSource::Cells(values));
+                continue;
+            }
+            return Ok(None);
+        }
         let Some(source) = scalar_column_source(desc, override_value)? else {
             return Ok(None);
         };
