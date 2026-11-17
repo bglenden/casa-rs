@@ -8,6 +8,16 @@ use casa_types::ArrayValue;
 
 use super::{FluxScaleError, GainCell, GainSampleRow};
 
+const SCALARS: [&str; 7] = [
+    "FIELD_ID",
+    "SPECTRAL_WINDOW_ID",
+    "ANTENNA1",
+    "ANTENNA2",
+    "TIME",
+    "INTERVAL",
+    "SCAN_NUMBER",
+];
+
 pub(super) fn read(table: &Table, root: &Path) -> Result<Vec<GainSampleRow>, FluxScaleError> {
     let failed = |error: casa_tables::TableError| FluxScaleError::UnsupportedInput {
         path: root.display().to_string(),
@@ -17,17 +27,22 @@ pub(super) fn read(table: &Table, root: &Path) -> Result<Vec<GainSampleRow>, Flu
         path: root.display().to_string(),
         reason: format!("missing or wrong-typed {column}"),
     };
-    let columns = table
-        .required_scalar_columns_owned(&[
-            "FIELD_ID",
-            "SPECTRAL_WINDOW_ID",
-            "ANTENNA1",
-            "ANTENNA2",
-            "TIME",
-            "INTERVAL",
-            "SCAN_NUMBER",
-        ])
-        .map_err(failed)?;
+    let indices = (0..table.row_count()).collect::<Vec<_>>();
+    // The selected-row SSM reader coalesces scalar columns per bucket; the
+    // all-row API otherwise decodes each column in a separate file pass.
+    // Keep the established all-row route for other storage managers.
+    let coalesced = SCALARS.iter().all(|column| {
+        table
+            .data_manager_info()
+            .iter()
+            .any(|dm| dm.dm_type == "StandardStMan" && dm.columns.iter().any(|name| name == column))
+    });
+    let columns = if coalesced {
+        table.required_scalar_columns_owned_for_rows(&SCALARS, &indices)
+    } else {
+        table.required_scalar_columns_owned(&SCALARS)
+    }
+    .map_err(failed)?;
     let integers = |name: &str| match columns.get(name) {
         Some(RequiredScalarColumnValues::Int32(values)) => Ok(values.as_slice()),
         _ => Err(invalid(name)),
@@ -43,7 +58,6 @@ pub(super) fn read(table: &Table, root: &Path) -> Result<Vec<GainSampleRow>, Flu
     let times = doubles("TIME")?;
     let intervals = doubles("INTERVAL")?;
     let scans = integers("SCAN_NUMBER")?;
-    let indices = (0..table.row_count()).collect::<Vec<_>>();
     if let Some((gains, flags, width)) = packed(table, &indices).map_err(failed)? {
         return Ok((0..indices.len())
             .map(|row_index| {
