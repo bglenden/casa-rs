@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 614
+- Concepts: 617
 - Surfaces: 31 (31 task, 0 session)
 - Surface bindings: 896
 
@@ -617,17 +617,17 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Applycal accepts a CASA variant and converts it to selector text during MS selection. |
 | <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
 | <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
-| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
+| <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Applycal accepts selector text or an observation ID. Preserve the input type for HISTORY. |
 | <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
 | <code>docallib</code> | <code>mstransform.docallib@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibration | Apply calibration from callib on the fly. |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Input | CASA callibrary file describing the calibration-table chain |
 | <code>gaintable</code> | <code>setapply.gaintable@r1</code> | <code>array&lt;path (calibration_table)&gt;</code> | <code>[]</code>; optional | Input | Calibration tables to apply. |
 | <code>gainfield</code> | <code>setapply.gainfield@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Field selection of the solutions to apply from each gain table; empty for all. |
 | <code>interp</code> | <code>setapply.interp@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Apply | Interpolation in time (and frequency) for each gain table; empty for 'linear'. |
-| <code>spwmap</code> | <code>setapply.spwmap@r1</code> | <code>array&lt;array&lt;integer&gt;&gt;</code> | <code>[]</code>; optional | Apply | Spectral-window map for each gain table: the window whose solutions each data window takes. |
+| <code>spwmap</code> | <code>setapply.spwmap@r2</code> | <code>variant</code> | <code>[]</code>; optional | Apply | Spectral-window maps per table, read only in traditional applycal. |
 | <code>calwt</code> | <code>setapply.calwt@r1</code> | <code>array&lt;bool&gt;</code> | <code>[true]</code>; optional | Apply | Calibrate the weights as well, one flag per gain table or one for all. |
 | <code>parang</code> | <code>parameter.parang@r1</code> | <code>bool</code> | <code>false</code>; optional | Apply | Apply the parallactic-angle P Jones term during calibration |
 | <code>applymode</code> | <code>setapply.applymode@r1</code> | <code>choice (7 values)</code> | <code>""</code>; optional | Apply | How the calibration applies to data and flags; empty for 'calflag'. |
