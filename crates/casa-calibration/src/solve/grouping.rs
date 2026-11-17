@@ -97,11 +97,14 @@ pub(crate) fn build_solve_groups(
     let mut consume = |batch: &[BucketedRow<'_>], inputs: SolveInputBatch| {
         let _accumulate_phase = crate::timing::Phase::start("solve_accumulate");
         for (index, &(row, base_key, bucket_key)) in batch.iter().enumerate() {
-            // A group takes its field from its earliest row, as CASA's
-            // `SDBList::aggregateFld` takes the first buffer's.
             let group = groups.entry((base_key, bucket_key)).or_insert_with(|| {
                 SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id)
             });
+            if options.combine.fields {
+                // CalSolVi2Organizer orders the buffers of a grouped time
+                // interval by FIELD_ID. SDBList::aggregateFld uses the first.
+                group.field_id = group.field_id.min(row.field_id);
+            }
             let preapplied = preapplied_rows.and_then(|rows| rows.get(&row.row_index));
             group.observe(
                 ms,
