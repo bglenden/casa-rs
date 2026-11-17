@@ -262,17 +262,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 - [tools/casa-compat/fluxscale_oracle.py](https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/tools/casa-compat/fluxscale_oracle.py)
 - [crates/casa-calibration/tests/fluxscale_casa_fixture.rs](https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/crates/casa-calibration/tests/fluxscale_casa_fixture.rs)
-- Revision: `872a540581271d3fd58105928b2e8a3b7461ca0b`; CASA: `6.7.6.14`.
-- Command: `python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/bucket-final-oracle --native-bin target/calibration-990/calibrate-bucket-872a54058`.
+- Revision: `3968a2bcb6e86252da9ce8899cf59d8d7d466e03`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/copy-final-oracle --native-bin target/calibration-990/calibrate-copy-3968a2bcb`.
 - Receipt: `resources/casa-compat/evidence/fluxscale-20261117.json`.
 
 <a id="fluxscale-evidence-performance"></a>
 ##### performance
 
-**Matched public-Python performance — measured.** Full native 0.110–0.114 s versus CASA 5.482–5.704 s; source MAIN reads 5,655→471, seeks 5,655→33. Controlled 300k read phase 0.122→0.088 s; full-workflow speedup not established. Full-output allocation/serialization remains materially CPU-bound; #990 remains open. Alternating same-host one-worker warm/cold public-Python calls with identical HISTORY input, validated equal products, fresh imports, RSS, phases and user/system CPU; native paired source-read diagnostic and raw data-I/O reference separately attributed.
+**Matched public-Python performance — measured.** 60k full native 0.099–0.120 s versus CASA 5.190–5.616 s; 300k 0.539–0.603 s versus 27.113–27.436 s. Output bucket I/O and temporary allocations are reduced, but CPU remains material: #990 stays open pending correction or an explicit measured owner tradeoff. Five alternating public-Python/CASA full/incremental runs, warm/cold, 60k and 300k equal-product inputs, fixed HISTORY; phases, user/system CPU, throughput, memory and fresh imports. Controlled native before/after and raw data-I/O reference separately attributed.
 
 - [tools/perf/calibrate/fluxscale.py](https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/tools/perf/calibrate/fluxscale.py)
-- Revision: `872a540581271d3fd58105928b2e8a3b7461ca0b`; CASA: `6.7.6.14`.
+- Revision: `3968a2bcb6e86252da9ce8899cf59d8d7d466e03`; CASA: `6.7.6.14`.
 - Command: `python tools/perf/calibrate/fluxscale.py --vis <oracle-ms> --gain <oracle-gain> --native-bin <release-calibrate> --repeat-input 1000 --repeats 5 --cache warm|cold --out <receipt>`.
 - Receipt: `resources/casa-compat/evidence/fluxscale-performance-20261117.json`.
 
