@@ -60,7 +60,9 @@ use crate::plan::{
 
 mod gain_validity;
 use gain_validity::correcting_gain;
+mod channels;
 mod weights;
+use channels::{DataChannelGrid, apply_row};
 
 const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
 const PERF_DIR_ENV: &str = "CASA_RS_CALIBRATION_PERF_DIR";
@@ -553,7 +555,11 @@ pub(crate) fn evaluate_apply_rows(
         None
     };
 
-    let any_calwt = plan.calibration_tables.iter().any(|table| table.calwt);
+    let any_calwt = plan
+        .calibration_tables
+        .iter()
+        .zip(&loaded_tables)
+        .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
     let mut evaluated_rows = HashMap::new();
     let mut main_rows = ms
         .main_table()
@@ -609,6 +615,9 @@ pub(crate) fn evaluate_apply_rows(
                 original_weight: unit_weight.as_ref(),
                 original_weight_spectrum: None,
                 has_weight_spectrum: any_calwt,
+                preserved_corrected_data: None,
+                preserved_weight_spectrum: None,
+                channel_grid: None,
             },
             plan,
             &loaded_tables,
@@ -1028,12 +1037,43 @@ fn execute_apply_plan(
         } else {
             None
         };
+        let partial_channels = planned_rows
+            .iter()
+            .any(|row| plan.channel_selections.contains_key(&row.data_spw_id));
+        let preserved_corrected_values = if partial_channels && !created_corrected_data_column {
+            Some(
+                ms.main_table()
+                    .column_accessor("CORRECTED_DATA")
+                    .and_then(|column| column.array_cells_owned(&selected_row_indices))
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })?,
+            )
+        } else {
+            None
+        };
+        let preserved_spectrum_values = if partial_channels && has_weight_spectrum {
+            Some(
+                ms.main_table()
+                    .column_accessor("WEIGHT_SPECTRUM")
+                    .and_then(|column| column.array_cells_owned(&selected_row_indices))
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })?,
+            )
+        } else {
+            None
+        };
         row_fetch_ns += row_fetch_started_at.elapsed().as_nanos() as u64;
         row_read_total_ns += row_read_started_at.elapsed().as_nanos() as u64;
         let mut data_values = data_values.into_iter();
         let mut flag_values = flag_values.map(Vec::into_iter);
         let mut weight_values = weight_values.map(Vec::into_iter);
         let mut weight_spectrum_values = weight_spectrum_values.map(Vec::into_iter);
+        let mut preserved_corrected_values = preserved_corrected_values.map(Vec::into_iter);
+        let mut preserved_spectrum_values = preserved_spectrum_values.map(Vec::into_iter);
         let mut corrected_batch = Vec::with_capacity(planned_rows.len());
         let mut flag_batch = Vec::with_capacity(planned_rows.len());
         let mut weight_batch = Vec::with_capacity(planned_rows.len());
@@ -1041,6 +1081,12 @@ fn execute_apply_plan(
 
         for row in planned_rows {
             let prefetched = PrefetchedExecutionRowInputs {
+                preserved_corrected_data: preserved_corrected_values
+                    .as_mut()
+                    .and_then(|values| values.next().flatten()),
+                preserved_weight_spectrum: preserved_spectrum_values
+                    .as_mut()
+                    .and_then(|values| values.next().flatten()),
                 data: required_prefetched_array(
                     data_values.next().flatten(),
                     row.row_index,
@@ -1291,6 +1337,7 @@ struct ExecutionRowResult {
     row_became_fully_flagged: bool,
 }
 
+#[derive(Clone, Copy)]
 struct ExecutionRowInputs<'a> {
     correlation_types: &'a [i32],
     data: &'a ArrayValue,
@@ -1298,6 +1345,9 @@ struct ExecutionRowInputs<'a> {
     original_weight: Option<&'a ArrayValue>,
     original_weight_spectrum: Option<&'a ArrayValue>,
     has_weight_spectrum: bool,
+    preserved_corrected_data: Option<&'a ArrayValue>,
+    preserved_weight_spectrum: Option<&'a ArrayValue>,
+    channel_grid: Option<DataChannelGrid<'a>>,
 }
 
 struct PrefetchedExecutionRowInputs {
@@ -1305,6 +1355,8 @@ struct PrefetchedExecutionRowInputs {
     original_flags: Option<ArrayValue>,
     original_weight: Option<ArrayValue>,
     original_weight_spectrum: Option<ArrayValue>,
+    preserved_corrected_data: Option<ArrayValue>,
+    preserved_weight_spectrum: Option<ArrayValue>,
 }
 
 fn required_prefetched_array(
@@ -1726,7 +1778,7 @@ struct FeedAngleRow {
     clippy::too_many_lines,
     reason = "predates the function-length limit; #705"
 )]
-fn apply_row(
+fn apply_row_all_channels(
     row: &ApplyRowPlan,
     inputs: ExecutionRowInputs<'_>,
     plan: &ApplyPlan,
@@ -1744,6 +1796,8 @@ fn apply_row(
         original_weight,
         original_weight_spectrum,
         has_weight_spectrum,
+        channel_grid,
+        ..
     } = inputs;
     let ArrayValue::Complex32(data) = data else {
         return Err(ApplyExecutionError::UnsupportedParameterShape {
@@ -1795,7 +1849,11 @@ fn apply_row(
         ArrayD::from_elem(IxDyn(&[0]).f(), false)
     };
     let mut newly_flagged_samples = 0;
-    let any_calwt = plan.calibration_tables.iter().any(|table| table.calwt);
+    let any_calwt = plan
+        .calibration_tables
+        .iter()
+        .zip(loaded_tables)
+        .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
     let mut weight = match original_weight {
         Some(ArrayValue::Float32(weight)) => Some(weight.clone()),
         Some(other) => {
@@ -1814,6 +1872,8 @@ fn apply_row(
         .iter()
         .find(|spw| spw.spw_id == row.data_spw_id)
         .expect("planner guarantees selected MS spectral windows");
+    let data_channels =
+        channel_grid.unwrap_or_else(|| DataChannelGrid::all(&data_spw.channel_frequencies_hz));
     let mut geometry_cache = geometry_cache;
     let mut fast_gain_pairs: Vec<FastGainPair> = Vec::new();
 
@@ -1955,7 +2015,7 @@ fn apply_row(
                         FastGainApply {
                             data_desc_id: row.data_desc_id,
                             correlation_types,
-                            data_frequencies_hz: &data_spw.channel_frequencies_hz,
+                            data_channels,
                             corrected: &mut corrected,
                             flags: &mut flags,
                             apply_mode: plan.apply_mode,
@@ -1983,7 +2043,7 @@ fn apply_row(
         };
 
         let sampling_context = CalibrationSamplingContext {
-            data_frequencies_hz: &data_spw.channel_frequencies_hz,
+            data_channels,
             cal_frequencies_hz: &cal_spw.channel_frequencies_hz,
             cal_ref_frequency_hz: cal_spw_reference_frequency_hz(cal_spw),
             interp: table_plan.interp,
@@ -2061,7 +2121,7 @@ fn apply_row(
                 FastGainApply {
                     data_desc_id: row.data_desc_id,
                     correlation_types,
-                    data_frequencies_hz: &data_spw.channel_frequencies_hz,
+                    data_channels,
                     corrected: &mut corrected,
                     flags: &mut flags,
                     apply_mode: plan.apply_mode,
@@ -2146,7 +2206,7 @@ fn apply_row(
             FastGainApply {
                 data_desc_id: row.data_desc_id,
                 correlation_types,
-                data_frequencies_hz: &data_spw.channel_frequencies_hz,
+                data_channels,
                 corrected: &mut corrected,
                 flags: &mut flags,
                 apply_mode: plan.apply_mode,
@@ -2244,7 +2304,7 @@ const FAST_GAIN_RECEPTOR_LIMIT: usize = 4;
 struct FastGainApply<'a> {
     data_desc_id: i32,
     correlation_types: &'a [i32],
-    data_frequencies_hz: &'a [f64],
+    data_channels: DataChannelGrid<'a>,
     corrected: &'a mut ArrayD<Complex32>,
     flags: &'a mut ArrayD<bool>,
     apply_mode: ApplyMode,
@@ -2338,7 +2398,7 @@ impl FastGainPair {
         &self,
         receptors: (usize, usize),
         chan_index: usize,
-        data_frequencies_hz: &[f64],
+        data_channels: DataChannelGrid<'_>,
     ) -> Option<FastGainSample> {
         match self {
             Self::Complex(ant1, ant2) => {
@@ -2355,12 +2415,16 @@ impl FastGainPair {
                 let ant1_chan = if ant1.channel_count <= 1 {
                     0
                 } else {
-                    chan_index.min(ant1.channel_count.saturating_sub(1))
+                    data_channels
+                        .original_index(chan_index)
+                        .min(ant1.channel_count.saturating_sub(1))
                 };
                 let ant2_chan = if ant2.channel_count <= 1 {
                     0
                 } else {
-                    chan_index.min(ant2.channel_count.saturating_sub(1))
+                    data_channels
+                        .original_index(chan_index)
+                        .min(ant2.channel_count.saturating_sub(1))
                 };
                 let (gain1, flag1) = correcting_gain(
                     ant1.value_at(receptor1, ant1_chan),
@@ -2379,7 +2443,7 @@ impl FastGainPair {
                 delay_delta_ns,
                 flagged,
             } => {
-                let frequency_hz = data_frequencies_hz[chan_index];
+                let frequency_hz = data_channels.frequencies_hz[chan_index];
                 let phase_rad =
                     2.0 * std::f64::consts::PI * *delay_delta_ns * (frequency_hz / 1.0e9);
                 Some(FastGainSample {
@@ -2402,7 +2466,7 @@ fn apply_complex_gain_pairs_fast(
     let shape = ctx.corrected.shape();
     let corr_count = shape[0];
     let channel_count = shape[1];
-    ensure_fast_pair_frequency_coverage(pairs, ctx.data_frequencies_hz, channel_count)?;
+    ensure_fast_pair_frequency_coverage(pairs, ctx.data_channels.frequencies_hz, channel_count)?;
     let corrected_is_fortran = ctx.corrected.ndim() == 2 && ctx.corrected.strides()[0] == 1;
     let flags_are_fortran = ctx.apply_mode != ApplyMode::CalFlag
         || (ctx.flags.ndim() == 2 && ctx.flags.strides()[0] == 1);
@@ -2417,7 +2481,7 @@ fn apply_complex_gain_pairs_fast(
             pairs,
             ctx.data_desc_id,
             ctx.correlation_types,
-            ctx.data_frequencies_hz,
+            ctx.data_channels,
             corr_count,
             channel_count,
             corrected,
@@ -2451,8 +2515,7 @@ fn apply_complex_gain_pairs_fast(
         for chan_index in 0..channel_count {
             let mut denom = scalar_denom;
             for pair in pairs {
-                let Some(sample) =
-                    pair.channel_sample(receptors, chan_index, ctx.data_frequencies_hz)
+                let Some(sample) = pair.channel_sample(receptors, chan_index, ctx.data_channels)
                 else {
                     continue;
                 };
@@ -2479,7 +2542,7 @@ fn apply_complex_gain_pairs_fast_fortran(
     pairs: &[FastGainPair],
     data_desc_id: i32,
     correlation_types: &[i32],
-    data_frequencies_hz: &[f64],
+    data_channels: DataChannelGrid<'_>,
     corr_count: usize,
     channel_count: usize,
     corrected: &mut [Complex32],
@@ -2514,8 +2577,7 @@ fn apply_complex_gain_pairs_fast_fortran(
             let offset = corr_index + chan_index * corr_count;
             let mut denom = scalar_denom;
             for pair in pairs {
-                let Some(sample) = pair.channel_sample(receptors, chan_index, data_frequencies_hz)
-                else {
+                let Some(sample) = pair.channel_sample(receptors, chan_index, data_channels) else {
                     continue;
                 };
                 if fast_gain_sample_invalid(sample)
@@ -2923,6 +2985,9 @@ fn apply_row_prefetched(
             original_weight: inputs.original_weight.as_ref(),
             original_weight_spectrum: inputs.original_weight_spectrum.as_ref(),
             has_weight_spectrum,
+            preserved_corrected_data: inputs.preserved_corrected_data.as_ref(),
+            preserved_weight_spectrum: inputs.preserved_weight_spectrum.as_ref(),
+            channel_grid: None,
         },
         plan,
         loaded_tables,
@@ -3287,7 +3352,7 @@ struct GainSample {
 }
 
 struct CalibrationSamplingContext<'a> {
-    data_frequencies_hz: &'a [f64],
+    data_channels: DataChannelGrid<'a>,
     cal_frequencies_hz: &'a [f64],
     cal_ref_frequency_hz: f64,
     interp: ApplyInterpolationMode,
@@ -3337,7 +3402,7 @@ impl CalibrationGrid {
             Self::Complex(grid) => grid.sample(
                 receptor,
                 data_chan_index,
-                context.data_frequencies_hz,
+                context.data_channels,
                 context.cal_frequencies_hz,
                 context.interp,
                 context.path,
@@ -3345,7 +3410,7 @@ impl CalibrationGrid {
             Self::Delay(grid) => grid.sample(
                 receptor,
                 data_chan_index,
-                context.data_frequencies_hz,
+                context.data_channels.frequencies_hz,
                 context.cal_ref_frequency_hz,
                 context.path,
             ),
@@ -3354,7 +3419,7 @@ impl CalibrationGrid {
                 field_id,
                 antenna_id,
                 time_seconds,
-                context.data_frequencies_hz,
+                context.data_channels.frequencies_hz,
                 context.engine,
                 context.path,
             ),
@@ -3416,7 +3481,7 @@ impl GainGrid {
         &self,
         receptor: usize,
         data_chan_index: usize,
-        data_frequencies_hz: &[f64],
+        data_channels: DataChannelGrid<'_>,
         cal_frequencies_hz: &[f64],
         interp: ApplyInterpolationMode,
         path: &Path,
@@ -3431,7 +3496,9 @@ impl GainGrid {
 
         match interp {
             ApplyInterpolationMode::Nearest | ApplyInterpolationMode::Linear => {
-                let chan = data_chan_index.min(self.channel_count.saturating_sub(1));
+                let chan = data_channels
+                    .original_index(data_chan_index)
+                    .min(self.channel_count.saturating_sub(1));
                 Ok(GainSample {
                     value: self.value_at(receptor, chan),
                     flagged: self.flag_at(receptor, chan),
@@ -3446,14 +3513,14 @@ impl GainGrid {
                             .to_string(),
                     });
                 }
-                let target_frequency =
-                    *data_frequencies_hz.get(data_chan_index).ok_or_else(|| {
-                        ApplyExecutionError::UnsupportedInterpolation {
-                            path: path.display().to_string(),
-                            interp,
-                            reason: "data channel index is outside the MeasurementSet SPW grid"
-                                .to_string(),
-                        }
+                let target_frequency = *data_channels
+                    .frequencies_hz
+                    .get(data_chan_index)
+                    .ok_or_else(|| ApplyExecutionError::UnsupportedInterpolation {
+                        path: path.display().to_string(),
+                        interp,
+                        reason: "data channel index is outside the MeasurementSet SPW grid"
+                            .to_string(),
                     })?;
                 Ok(self.sample_frequency_linear(receptor, target_frequency, cal_frequencies_hz))
             }
@@ -4850,6 +4917,7 @@ mod tests {
             measurement_set_path: Some(tempdir.path().join("input.ms")),
             apply_mode: ApplyMode::CalFlag,
             requires_corrected_data_column: true,
+            channel_selections: Default::default(),
             selected_rows: vec![ApplyRowPlan {
                 row_index: 4,
                 field_id: 5,
@@ -5463,7 +5531,7 @@ mod tests {
             FastGainApply {
                 data_desc_id: 0,
                 correlation_types: &[5, 8],
-                data_frequencies_hz: &[1.0e9, 1.1e9],
+                data_channels: DataChannelGrid::all(&[1.0e9, 1.1e9]),
                 corrected: &mut corrected,
                 flags: &mut flags,
                 apply_mode: ApplyMode::CalFlag,
@@ -5504,7 +5572,7 @@ mod tests {
             FastGainApply {
                 data_desc_id: 0,
                 correlation_types: &[5, 8],
-                data_frequencies_hz: &[1.0e9, 1.1e9],
+                data_channels: DataChannelGrid::all(&[1.0e9, 1.1e9]),
                 corrected: &mut fortran_corrected,
                 flags: &mut fortran_flags,
                 apply_mode: ApplyMode::CalFlag,
@@ -5533,7 +5601,7 @@ mod tests {
                 FastGainApply {
                     data_desc_id: 0,
                     correlation_types: &[5],
-                    data_frequencies_hz: &[1.0e9],
+                    data_channels: DataChannelGrid::all(&[1.0e9]),
                     corrected: &mut antpos_corrected,
                     flags: &mut antpos_flags,
                     apply_mode: ApplyMode::Trial,

@@ -62,10 +62,21 @@ def run(root, native_bin):
     os.environ['CASA_RS_CALIBRATION_TIMING'] = '1'
     (root/'profiles').mkdir()
     source, constant, solved = root/'source.ms', root/'constant.gcal', root/'solved.gcal'
+    channelized = root/'channelized.bcal'
     make_cal_ms(str(source))
     casa.gencal(vis=str(source), caltable=str(constant), caltype='amp', parameter=[2.])
     casa.gaincal(vis=str(source), caltable=str(solved), refant='A0', solint='int')
+    casa.bandpass(vis=str(source), caltable=str(channelized), refant='A0', solint='inf', minsnr=0.)
     tool = table()
+    tool.open(str(channelized), nomodify=False)
+    gains = tool.getcol('CPARAM')
+    gains[:] = np.arange(1, gains.shape[1]+1)[None, :, None]
+    tool.putcol('CPARAM', gains)
+    flags = tool.getcol('FLAG')
+    flags[:] = False
+    flags[:, 4, :] = True
+    tool.putcol('FLAG', flags)
+    tool.close()
     tool.open(str(source), nomodify=False)
     if 'CORRECTED_DATA' in tool.colnames():
         tool.removecols(['CORRECTED_DATA'])
@@ -169,6 +180,16 @@ def run(root, native_bin):
     case('field', dict(field='PHASE'))
     case('preserve-unselected', dict(field='PHASE'), precorrected=True)
     case('channels', dict(spw='0:2~5'))
+    case('channels-field', dict(field='PHASE', spw='0:2~5'), precorrected=True)
+    case('channels-overlap', dict(spw='0:0~2;2~4'), precorrected=True, spectral_sigma=True)
+    case('channels-existing', dict(spw='0:0~2'), precorrected=True)
+    case('channels-spectral', dict(spw='0:0~2'), precorrected=True, spectral_sigma=True)
+    case('channels-stride', dict(spw='0:0~6^2'), precorrected=True, spectral_sigma=True)
+    case('channels-calonly', dict(spw='0:0~6^2', applymode='calonly'), precorrected=True)
+    case('channels-no-calwt', dict(spw='0:0~6^2', calwt=False), precorrected=True, spectral_sigma=True)
+    case('channels-trial', dict(spw='0:0~6^2', applymode='trial'), precorrected=True, spectral_sigma=True)
+    case('channels-bandpass', dict(spw='0:2~6^2'), gain=channelized, precorrected=True)
+    case('channels-bandpass-no-calwt', dict(spw='0:2~6^2', calwt=False), gain=channelized, precorrected=True)
     case('flagbackup', dict(flagbackup=True))
     case('solved-gains', gain=solved)
     for mode in ['calflagstrict', 'flagonly', 'flagonlystrict']:
