@@ -111,7 +111,8 @@ impl SampleAccumulation<'_> {
 }
 
 impl SolveEdgeAccumulation {
-    /// Model division and weighting follow the original ordered arithmetic.
+    /// Accumulate w |M|² (D/M) = w D conj(M), with power w |D|².
+    /// Cancelling the model division avoids two scalar divides per sample.
     fn add_sample(&mut self, attempted: &mut bool, sample: Sample) -> f32 {
         if sample.weight <= 0.0 || sample.flagged {
             return 0.0;
@@ -121,15 +122,15 @@ impl SolveEdgeAccumulation {
             return 0.0;
         }
         *attempted = true;
-        let value = sample.data / sample.model;
-        let power = value.norm_sqr();
-        if power <= f32::EPSILON * f32::EPSILON {
+        let power = sample.data.norm_sqr();
+        if power <= f32::EPSILON * f32::EPSILON * model_norm_sqr {
             return 0.0;
         }
         let weight = sample.weight * model_norm_sqr;
-        self.weighted_sum += value * Complex32::new(weight, 0.0);
+        self.weighted_sum +=
+            (sample.data * sample.model.conj()) * Complex32::new(sample.weight, 0.0);
         self.weight += weight;
-        self.weighted_sample_power += f64::from(weight) * f64::from(power);
+        self.weighted_sample_power += f64::from(sample.weight) * f64::from(power);
         self.sample_count += 1;
         weight
     }
