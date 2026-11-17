@@ -102,29 +102,66 @@ pub(crate) fn save_ssm_array_rows_in_place(
             ));
         }
     }
+    let file_length = file.metadata()?.len();
+    for &number in buckets.keys() {
+        let end = SSM_HEADER_SIZE + (u64::from(number) + 1) * u64::from(header.bucket_size);
+        if end > file_length {
+            return Err(StorageError::FormatMismatch(format!(
+                "SSM array bucket {number} is outside the data file"
+            )));
+        }
+    }
     let mut writer = if array_path.exists() {
         StManArrayFileWriter::open_append(&array_path, big_endian)?
     } else {
         StManArrayFileWriter::create(&array_path, big_endian, 0)?
     };
-    for (number, mutations) in buckets {
-        let mut bucket = read_bucket(&mut file, &header, number)?;
-        for (at, data_type, value) in mutations {
-            let offset = match value {
-                Some(value) => writer.write_array(&value, data_type)?,
-                None => 0,
-            };
-            if big_endian {
-                write_i64_be(&mut bucket[at..], offset);
-            } else {
-                write_i64_le(&mut bucket[at..], offset);
+    // Patch adjacent touched buckets together, without rewriting a bucket
+    // outside the selection. The buffer never grows beyond 64 KiB or one
+    // stored bucket, whichever is larger.
+    let bucket_size = header.bucket_size as usize;
+    let maximum = (64 * 1024 / bucket_size.max(1)).max(1);
+    let mut pending = buckets.into_iter().peekable();
+    let mut batch = Vec::new();
+    let mut buffer = Vec::new();
+    while let Some((first, mutations)) = pending.next() {
+        batch.push((first, mutations));
+        while batch.len() < maximum
+            && pending
+                .peek()
+                .is_some_and(|(number, _)| first.checked_add(batch.len() as u32) == Some(*number))
+        {
+            batch.push(pending.next().expect("peeked adjacent bucket"));
+        }
+        let bytes = batch
+            .len()
+            .checked_mul(bucket_size)
+            .ok_or_else(|| StorageError::FormatMismatch("SSM bucket batch size overflow".into()))?;
+        buffer
+            .try_reserve_exact(bytes.saturating_sub(buffer.len()))
+            .map_err(|error| {
+                StorageError::FormatMismatch(format!("cannot allocate SSM bucket batch: {error}"))
+            })?;
+        buffer.resize(bytes, 0);
+        let start = SSM_HEADER_SIZE + u64::from(first) * u64::from(header.bucket_size);
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut buffer)?;
+        for (slot, (_, mutations)) in batch.drain(..).enumerate() {
+            let bucket = &mut buffer[slot * bucket_size..(slot + 1) * bucket_size];
+            for (at, data_type, value) in mutations {
+                let offset = match value {
+                    Some(value) => writer.write_array(&value, data_type)?,
+                    None => 0,
+                };
+                if big_endian {
+                    write_i64_be(&mut bucket[at..], offset);
+                } else {
+                    write_i64_le(&mut bucket[at..], offset);
+                }
             }
         }
-        file.seek(SeekFrom::Start(bucket_offset(
-            number as usize,
-            header.bucket_size as usize,
-        )))?;
-        file.write_all(&bucket)?;
+        file.seek(SeekFrom::Start(start))?;
+        file.write_all(&buffer)?;
     }
     writer.finish()?;
     Ok(true)
