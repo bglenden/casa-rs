@@ -296,7 +296,15 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
 /// CASA's selection: `field`, `spw` and `intent` always; the others are inactive,
 /// and so unset, while `selectdata` is not.
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
-    let text = |name: &str| task.text(name);
+    let text = |name: &str| {
+        task.text(name).map(|value| {
+            if task.surface() == "applycal" {
+                value.filter(|text| !text.is_empty())
+            } else {
+                value
+            }
+        })
+    };
     Ok(MsSelection {
         selectdata: true,
         field: text("field")?,

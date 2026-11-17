@@ -473,7 +473,7 @@ def split(
     ...
 
 def applycal(
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    vis: StrPath = ...,
     field: str = ...,
     spw: str = ...,
     intent: str = ...,
@@ -485,7 +485,7 @@ def applycal(
     observation: str | int = ...,
     msselect: str = ...,
     docallib: bool = ...,
-    callib: StrPath = ...,
+    callib: str = ...,
     gaintable: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     gainfield: str | list[str] | tuple[str, ...] = ...,
     interp: str | list[str] | tuple[str, ...] = ...,

@@ -632,6 +632,20 @@ def run(root, native_bin, only=None):
             ('empty-intent-bound-union', dict(intent=f'>{state_start}&<{state_start+1},{state_start}')),
             ('trial-error', dict(uvrange='invalid', applymode='trial'))]:
         case('selection-'+name, arguments, input_vis=selection_source)
+    if only is None or 'literal' in only:
+        literal_source = root/'literal-selectors.ms'
+        copy_ms(source, literal_source)
+        for subtable, row in [('FIELD', 1), ('ANTENNA', 0), ('SPECTRAL_WINDOW', 0)]:
+            tool.open(str(literal_source/subtable), nomodify=False)
+            tool.putcell('NAME', row, 'none')
+            tool.close()
+        for name in ['field', 'spw', 'antenna', 'scan', 'timerange', 'msselect']:
+            case(f'api-literal-{name}', {name: 'none', 'flagbackup': True},
+                 input_vis=literal_source, precorrected=True)
+        library = root/'none'
+        library.write_text(f"caltable='{constant}'\n")
+        case('api-literal-callib', dict(docallib=True, callib='none'), precorrected=True)
+
     for label, arguments in [
         ('field-wildcard', dict(field='PH*')),
         ('field-id-range', dict(field='0~1')),

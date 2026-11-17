@@ -23,6 +23,7 @@
 
 mod casa_read;
 mod history;
+mod multi_ms;
 mod read;
 mod render;
 
@@ -90,7 +91,15 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     } else {
         None
     };
-    let result = if let CalibrationTaskRequest::ExecuteApply(request) = &request {
+    let multi = match &request {
+        CalibrationTaskRequest::ExecuteApply(request) if task.surface() == "applycal" => {
+            multi_ms::execute(task, request)?
+        }
+        _ => None,
+    };
+    let result = if let Some(report) = multi {
+        CalibrationTaskResult::ApplyMultiMs(report)
+    } else if let CalibrationTaskRequest::ExecuteApply(request) = &request {
         request
             .execute_apply()
             .map(CalibrationTaskResult::Apply)
@@ -123,6 +132,7 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         crate::fluxscale::history::record(task, request, report);
     }
     if task.surface() == "applycal"
+        && matches!(&result, CalibrationTaskResult::Apply(_))
         && let CalibrationTaskRequest::ExecuteApply(request) = &request
     {
         history::record_applycal(task, &request.measurement_set);
