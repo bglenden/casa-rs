@@ -1988,38 +1988,6 @@ impl TableImpl {
         Ok(())
     }
 
-    /// Replace all inner state from a storage snapshot.
-    ///
-    /// Used by `Table::lock()` when sync data indicates another process
-    /// modified the table and a full reload is needed.
-    pub(crate) fn replace_from_snapshot(
-        &mut self,
-        rows: Vec<RecordValue>,
-        undefined_cells: Vec<HashSet<String>>,
-        keywords: RecordValue,
-        column_keywords: HashMap<String, RecordValue>,
-        schema: Option<TableSchema>,
-    ) {
-        self.loaded_rows = {
-            let loaded_rows = OnceLock::new();
-            loaded_rows
-                .set(eager_loaded_rows(rows, undefined_cells))
-                .expect("replace eager row store");
-            loaded_rows
-        };
-        self.loaded_scalar_columns = lazy_scalar_column_store(schema.as_ref());
-        self.pending_scalar_cells = PendingScalarCells::default();
-        self.loaded_array_columns = lazy_array_column_store(schema.as_ref());
-        self.buffered_array_cells = lazy_buffered_array_cell_store(schema.as_ref());
-        self.pending_array_cells = PendingArrayCells::default();
-        self.persisted_row_count = self.loaded_rows.get().map_or(0, |loaded| loaded.rows.len());
-        self.lazy_rows = None;
-        *self.rows_reshaped.get_mut() = false;
-        self.keywords = keywords;
-        self.column_keywords = column_keywords;
-        self.schema = schema;
-    }
-
     pub(crate) fn rows_are_loaded(&self) -> bool {
         self.loaded_rows.get().is_some()
     }

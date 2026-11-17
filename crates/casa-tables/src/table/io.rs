@@ -1689,23 +1689,19 @@ impl Table {
             .as_ref()
             .ok_or_else(|| TableError::Storage("cannot resync: table has no source path".into()))?
             .clone();
-        let opts = TableOptions::new(&path);
-        let mut reloaded = Table::open(opts)?;
+        self.reload_disk_state_at(&path)
+    }
+
+    pub(super) fn reload_disk_state_at(&mut self, path: &Path) -> Result<(), TableError> {
+        let mut reloaded = Table::open(TableOptions::new(path))?;
         self.inner = std::mem::take(&mut reloaded.inner);
         self.virtual_columns = std::mem::take(&mut reloaded.virtual_columns);
         self.virtual_bindings = std::mem::take(&mut reloaded.virtual_bindings);
         self.table_info = std::mem::take(&mut reloaded.table_info);
         self.dm_info = std::mem::take(&mut reloaded.dm_info);
-        // Preserve source_path, kind, marked_for_delete, and lock_state. The
-        // reloaded state is what is on disk, so a lock has nothing to flush;
-        // a write already persisted under it stays to be published.
-        #[cfg(unix)]
-        if let Some(state) = self.lock_state.as_mut() {
-            state.flushed_generation.store(
-                self.inner.generation(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-        }
+        // Keep this handle's locks and unpublished writes. The reloaded
+        // state is already backed by disk.
+        self.mark_flushed();
         Ok(())
     }
 

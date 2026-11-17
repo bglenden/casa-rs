@@ -139,3 +139,75 @@ fn a_write_locked_handle_is_not_resynced() {
     assert!(!writer.resync_locked().expect("write-locked"));
     assert!(writer.keywords().get("UNSAVED").is_some());
 }
+
+/// Both lock acquisition and explicit refresh must reload the disk
+/// descriptor without retaining data rows. A previously read column must
+/// give the new cell and retain the unchanged cell's value.
+#[test]
+fn published_cell_changes_keep_cold_readers_lazy_and_discard_stale_cells() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let options = TableOptions::new(temp.path().join("lazy.table"))
+        .with_data_manager(DataManagerKind::StandardStMan);
+    let schema =
+        TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).expect("schema");
+    let rows = [10, 11].map(|value| {
+        RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(value)),
+        )])
+    });
+    Table::from_rows_with_schema(rows.to_vec(), schema)
+        .expect("table")
+        .save(options.clone())
+        .expect("save");
+
+    let mut cold = handle(&options);
+    let mut warm = handle(&options);
+    assert!(!cold.inner.has_loaded_rows());
+    assert!(warm.lock(LockType::Read, 1).expect("warm read lock"));
+    let read = |table: &Table| {
+        table
+            .column_accessor("id")
+            .expect("id column")
+            .scalar_cells_owned()
+            .expect("read cells")
+    };
+    assert_eq!(
+        read(&warm),
+        vec![Some(ScalarValue::Int32(10)), Some(ScalarValue::Int32(11))]
+    );
+    assert!(warm.inner.has_loaded_scalar_column("id"));
+
+    let mut writer = handle(&options);
+    assert!(writer.lock(LockType::Write, 1).expect("write lock"));
+    writer
+        .cell_accessor_mut(0, "id")
+        .expect("cell")
+        .set(Value::Scalar(ScalarValue::Int32(90)))
+        .expect("set id");
+    writer
+        .prepare_write()
+        .save_selected_rows(&["id"], &[0])
+        .expect("persist selected row");
+    // Discard the writer's cached data; this test exercises the readers.
+    writer.resync().expect("reload writer");
+    writer.unlock().expect("publish");
+
+    assert!(cold.lock(LockType::Read, 1).expect("cold read lock"));
+    assert!(warm.resync_locked().expect("read-lock refresh"));
+    for table in [&cold, &warm] {
+        assert!(
+            !table.inner.has_loaded_rows(),
+            "reload materialized the table"
+        );
+        assert!(
+            !table.inner.has_loaded_scalar_column("id"),
+            "reload retained stale cells"
+        );
+        assert_eq!(
+            read(table),
+            vec![Some(ScalarValue::Int32(90)), Some(ScalarValue::Int32(11))]
+        );
+        assert!(table.has_lock(LockType::Read));
+    }
+}

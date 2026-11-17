@@ -214,32 +214,15 @@ impl Table {
         if !state.sync_data.needs_reload(&new_sync) {
             return Ok(false);
         }
-        // Another handle or process modified the table — reload.
-        let storage = CompositeStorage;
-        let snapshot = storage
-            .load_with_row_hint(&state.path, Some(new_sync.nrrow))
-            .map_err(|e| lock_io(e.to_string()))?;
-        self.virtual_columns = snapshot.virtual_columns;
-        // The storage managers and the table info are what another
-        // process may have changed too (a renamed or removed column).
-        self.dm_info = snapshot.dm_info;
-        self.table_info = snapshot.table_info;
-        self.inner.replace_from_snapshot(
-            snapshot.rows,
-            snapshot.undefined_cells,
-            snapshot.keywords,
-            snapshot.column_keywords,
-            snapshot.schema,
-        );
-        // Update our stored sync data. The reloaded table is what is
-        // on disk, so there is nothing to flush.
-        if let Some(s) = self.lock_state.as_mut() {
-            s.sync_data = new_sync;
-            s.flushed_generation.store(
-                self.inner.generation(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-        }
+        // Reopen the descriptor just as a fresh reader would. This drops
+        // any stale cells and keeps unread cells on disk.
+        let path = state.path.clone();
+        self.reload_disk_state_at(&path)
+            .map_err(|error| TableError::LockIo {
+                path: path.display().to_string(),
+                message: error.to_string(),
+            })?;
+        self.lock_state.as_mut().expect("open lock state").sync_data = new_sync;
         Ok(true)
     }
 
