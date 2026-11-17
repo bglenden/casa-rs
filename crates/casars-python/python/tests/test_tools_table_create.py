@@ -346,6 +346,7 @@ def test_remove_rows_from_standard_and_aipsio(tmp_path: Path) -> None:
     assert tool.open(str(path))
     assert tool.nrows() == 3
     assert {dm["TYPE"] for dm in tool.getdminfo().values()} == {"StandardStMan", "StManAipsIO"}
+    assert next(dm["NAME"] for dm in tool.getdminfo().values() if dm["TYPE"] == "StManAipsIO") == "secondary"
     np.testing.assert_array_equal(tool.getcol("id"), [1, 3, 4])
     np.testing.assert_array_equal(tool.getcol("mark"), [11, 13, 14])
     tool.done()
@@ -430,4 +431,25 @@ def test_bucket_settings_are_checked_and_cache_setting_stands_alone(tmp_path: Pa
     )
     manager = next(dm for dm in tool.getdminfo().values() if dm["NAME"] == "Cached")
     assert manager["SPEC"]["PERSCACHESIZE"] == 7
+    tool.done()
+
+
+def test_append_to_casa_tiled_column_extends_row_coordinate(tmp_path: Path) -> None:
+    """CASA 6.7.6.14 created this tiled VALUE column and its TIME coordinate."""
+    fixture = Path(__file__).with_name("data") / "tiled_column_coords.tgz"
+    with tarfile.open(fixture, "r:gz") as archive:
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(tmp_path, **extract)
+    path = tmp_path / "coord.table"
+    tool = tools.table()
+    assert tool.open(str(path), nomodify=False)
+    assert tool.addrows(1)
+    assert tool.close()
+    assert tool.open(str(path))
+    assert tool.nrows() == 3
+    assert tool.getdminfo()["*1"]["NAME"] == "WithTime"
+    cube = tool.getdminfo()["*1"]["SPEC"]["HYPERCUBES"]["*1"]
+    np.testing.assert_array_equal(cube["ID"]["TIME"], [10.5, 21.5, 0.0])
+    np.testing.assert_array_equal(tool.getcell("VALUE", 1), [2.0, 3.0])
+    np.testing.assert_array_equal(tool.getcell("VALUE", 2), [0.0, 0.0])
     tool.done()

@@ -174,7 +174,7 @@ impl<'a> StagedEdit<'a> {
                     manager.seq_nr,
                     old_rows,
                     new_rows,
-                    fixed,
+                    (columns, private_keywords),
                 )? {
                     self.extensions.push(Extension::Payload { path, len });
                 }
@@ -203,12 +203,14 @@ impl<'a> StagedEdit<'a> {
                         &name,
                     )?;
                 } else {
-                    stman_aipsio::write_stman_file(
+                    let name = stman_aipsio::name_from_file(&original).unwrap_or_default();
+                    stman_aipsio::write_named_stman_file(
                         &destination,
                         manager.seq_nr,
                         columns,
                         &values,
                         ByteOrder::BigEndian,
+                        &name,
                     )?;
                 }
             }

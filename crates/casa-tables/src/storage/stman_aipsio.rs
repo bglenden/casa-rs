@@ -1683,6 +1683,17 @@ pub(crate) fn write_stman_file(
     rows: &[casa_types::RecordValue],
     byte_order: ByteOrder,
 ) -> Result<(), StorageError> {
+    write_named_stman_file(path, seq_nr, columns, rows, byte_order, "")
+}
+
+pub(super) fn write_named_stman_file(
+    path: &Path,
+    seq_nr: u32,
+    columns: &[ColumnDescContents],
+    rows: &[casa_types::RecordValue],
+    byte_order: ByteOrder,
+    manager_name: &str,
+) -> Result<(), StorageError> {
     let nrrow = rows.len() as u32;
     let ncol = columns.len() as u32;
     let big_endian = byte_order == ByteOrder::BigEndian;
@@ -1710,8 +1721,7 @@ pub(crate) fn write_stman_file(
     let mut io = AipsIo::open_with_order(path, AipsOpenOption::New, byte_order)?;
     io.putstart("StManAipsIO", 2)?;
 
-    // C++ casacore writes an empty stmanName for StManAipsIO v2
-    io.put_string("")?; // stmanName
+    io.put_string(manager_name)?; // stmanName (introduced by version 2)
     io.put_u32(seq_nr)?;
     io.put_u32(0)?; // uniqNr
     io.put_u32(nrrow)?;

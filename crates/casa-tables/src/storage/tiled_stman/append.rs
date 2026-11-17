@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::path::{Path, PathBuf};
 
+use casa_types::{ArrayValue, PrimitiveType, RecordValue, Value};
+
+use crate::storage::table_control::ColumnDescContents;
+
 use super::{
     StorageError, TiledVariant, TsmCubeInfo, compute_tile_layout, read_tiled_header, tsm_data_path,
     write_tiled_header,
@@ -15,8 +19,12 @@ pub(in crate::storage) fn stage_append(
     seq: u32,
     old_rows: u64,
     new_rows: u64,
-    fixed_shape: bool,
+    metadata: (&[ColumnDescContents], &RecordValue),
 ) -> Result<Option<(PathBuf, u64)>, StorageError> {
+    let (columns, private_keywords) = metadata;
+    let fixed_shape = columns
+        .iter()
+        .any(|column| column.is_array && !column.shape.is_empty());
     let name = format!("table.f{seq}");
     let (variant, mut header) = read_tiled_header(&path.join(&name))?;
     let invalid = || {
@@ -49,7 +57,6 @@ pub(in crate::storage) fn stage_append(
             };
             if !cube.extensible
                 || cube.file_seq_nr < 0
-                || !cube.values.fields().is_empty()
                 || cube.cube_shape.len() != cube.tile_shape.len()
                 || cube.tile_shape.contains(&0)
             {
@@ -69,6 +76,18 @@ pub(in crate::storage) fn stage_append(
                 return Err(invalid());
             }
             *last = usize::try_from(new_rows).map_err(|_| invalid())?;
+            if let Some(coordinate) = row_coordinate(private_keywords, &header.hypercolumn_name) {
+                let column = columns
+                    .iter()
+                    .find(|column| column.col_name == coordinate)
+                    .ok_or_else(invalid)?;
+                let values = extend_coordinate(
+                    cube.values.get(coordinate),
+                    column.require_primitive_type()?,
+                    *last,
+                )?;
+                cube.values.upsert(coordinate, values);
+            }
             let new_tiles = tiles(&cube.cube_shape).ok_or_else(invalid)?;
             if new_tiles == old_tiles {
                 None
@@ -104,6 +123,59 @@ pub(in crate::storage) fn stage_append(
     header.nrrow = new_rows;
     write_tiled_header(&destination.join(name), &variant, &header)?;
     Ok(extension)
+}
+
+fn row_coordinate<'a>(keywords: &'a RecordValue, group: &str) -> Option<&'a str> {
+    let Value::Record(hypercolumn) = keywords.get(format!("Hypercolumn_{group}").as_str())? else {
+        return None;
+    };
+    match hypercolumn.get("coord")? {
+        Value::Array(ArrayValue::String(columns)) => columns
+            .iter()
+            .last()
+            .map(String::as_str)
+            .filter(|name| !name.is_empty()),
+        _ => None,
+    }
+}
+
+/// TSMCube::extendCoordinates with no explicitly supplied new coordinates.
+fn extend_coordinate(
+    value: Option<&Value>,
+    kind: PrimitiveType,
+    count: usize,
+) -> Result<Value, StorageError> {
+    let invalid = || {
+        StorageError::FormatMismatch(format!(
+            "invalid row coordinate in TiledColumnStMan for {kind:?}"
+        ))
+    };
+    macro_rules! extend {
+        ($kind:ident) => {{
+            let mut cells = match value {
+                Some(Value::Array(ArrayValue::$kind(array)))
+                    if array.ndim() == 1 && array.len() <= count =>
+                {
+                    array.iter().cloned().collect::<Vec<_>>()
+                }
+                None => Vec::new(),
+                _ => return Err(invalid()),
+            };
+            cells.resize_with(count, Default::default);
+            ArrayValue::$kind(ndarray::Array1::from_vec(cells).into_dyn())
+        }};
+    }
+    Ok(Value::Array(match kind {
+        PrimitiveType::Bool => extend!(Bool),
+        PrimitiveType::Int32 => extend!(Int32),
+        PrimitiveType::UInt32 => extend!(UInt32),
+        PrimitiveType::Float32 => extend!(Float32),
+        PrimitiveType::Float64 => extend!(Float64),
+        PrimitiveType::Complex32 => extend!(Complex32),
+        PrimitiveType::Complex64 => extend!(Complex64),
+        PrimitiveType::String => extend!(String),
+        _ => return Err(invalid()),
+    }))
 }
 
 /// Keep the source manager's cache in its replacement header, or apply a

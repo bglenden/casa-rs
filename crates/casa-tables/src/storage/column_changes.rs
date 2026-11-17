@@ -196,7 +196,14 @@ impl<'a> StagedEdit<'a> {
                 )?))
             }
             "StManAipsIO" => {
-                stman_aipsio::write_stman_file(&dst, seq, columns, &rows, ByteOrder::BigEndian)?;
+                stman_aipsio::write_named_stman_file(
+                    &dst,
+                    seq,
+                    columns,
+                    &rows,
+                    ByteOrder::BigEndian,
+                    name,
+                )?;
                 Ok(None)
             }
             "IncrementalStMan" => {
