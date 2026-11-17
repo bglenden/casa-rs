@@ -1,0 +1,59 @@
+# Ordered column names and types from CASA asdmCasaSaxHandler::setDescriptor.
+# CASA 61020062cee290f5466cffed5ec5032e0c7a3434, casatools/src/tools/table/asdmCasaSaxHandler.cc.
+# Only roots that also appear in the SAX dispatch are supported. Lowercase means array.
+ScanTable execBlockId:A scanNumber:I startTime:A endTime:A numSubScan:I numIntent:I scanIntent:a flagRow:B numField:I sourceName:A fieldName:a
+MainTable configDesciptionId:A fieldId:A time:A execBlockId:A stateId:a scanNumber:I subscanNumber:I integrationNumber:I uvw:d exposure:a timeCentroid:a dataOid:A flagAnt:i flagPol:i flagBaseband:i flagRow:B interval:A subintegrationNumber:I
+AlmaCorrelatorModeTable AlmaCorrelatorModeId:A numBaseband:I basebandIndex:i accumMode:A basebandConfig:i binMode:I quantization:B windowFunction:A axesOrderArray:i
+AntennaTable antennaId:A stationId:A name:A type:A xPosition:D yPosition:D zPosition:D time:A xOffset:D yOffset:D zOffset:D dishDiameter:D flagRow:B assocAntennaId:A
+ConfigDescriptionTable configDescriptionId:A antennaId:a dataDescriptionId:a feedId:i processorId:A switchCycleId:a numAntenna:I numFeed:I numSubBand:i correlationMode:I atmPhaseCode:I phasedArrayList:i flagAnt:b
+DataDescriptionTable dataDescriptionId:A polOrHoloId:A spectralWindowId:A flagRow:B
+ExecBlockTable execBlockId:A antennaId:a telescopeName:A configName:A numAntenna:I baseRangeMin:D baseRangeMax:D baseRangeMinor:D baseRangeMajor:D basePa:D timeInterval:A observerName:A observingLog:a schedulerMode:a projectId:A siteLongitude:D siteLatitude:D siteAltitude:D flagRow:B execBlockUID:A aborted:B
+FeedTable feedId:I timeInterval:a spectralWindowId:A antennaId:A receiverId:i numReceptors:I beamOffset:d focusReference:d polarizationType:a polResponse:x receptorAngle:d beamId:a feedNum:I illumOffset:R illumOffsetPa:R xPosition:D yPosition:D zPosition:D
+FieldTable fieldId:A fieldName:A code:A time:A numPoly:I delayDir:d phaseDir:d referenceDir:d flagRow:B assocFieldId:a ephemerisId:A sourceId:I assocNature:A
+PolarizationTable polarizationId:A numCorr:I corrType:i corrProduct:i flagRow:B
+ProcessorTable processorId:A almaCorrelatorModeId:A type:A subType:A flagRow:B
+ReceiverTable receiverId:I spectralWindowId:A timeInterval:A numLo:I name:A frequencyBand:A freqLo:d stability:D sidebandLo:i tDewar:D stabilityDuration:A dewarName:A stabilityflag:B
+SBSummaryTable sbId:A projectId:A obsUnitSetId:A sbIntent:A sbType:A sbDuration:A numScan:I scanIntent:a numberRepeats:I weatherConstraint:a scienceGoal:a raCenter:D decCenter:D frequency:D frequencyBand:A observingMode:a
+SourceTable sourceId:I spectralWindowId:A timeInterval:A numLines:I sourceName:A code:A direction:d properMotion:d sourceParameterId:I catalog:A calibrationGroup:I position:d transition:a restFrequency:d sysVel:d sourceModel:A deltaVel:D rangeVel:d
+SpectralWindowTable spectralWindowId:A numChan:I refFreq:D chanFreq:d chanWidth:d effectiveBw:d resolution:d totBandwidth:D netSideband:I flagRow:B assocSpectralWindowId:a dopplerId:I name:A measFreqRef:I bbcNo:I bbcSideband:I ifConvChain:I freqGroup:I freqGroupName:A assocNature:a
+StateTable stateId:A sig:B ref:B calloadNum:I obsMode:A obsIntent:A flagRow:B weight:R
+StationTable stationId:A name:A position:d type:A
+SubscanTable execBlockId:A scanNumber:I subscanNumber:I startTime:A endTime:A subscanIntent:A numberIntegration:I numberSubintegration:i flagRow:B fieldName:A subscanMode:A
+SwitchCycleTable switchCycleId:A numStep:I weightArray:d offsetArray:d freqOffsetArray:d
+CalCurveTable calDataId:A calReductionId:A antennaName:A numPoly:I numReceptors:I startValidTime:A endValidTime:A typeCurve:A curve:d frequencyRange:d refAntennaName:A polarizationType:a receiverBand:A timeOrigin:A
+CalDataTable calDataId:A numScan:I scanSet:i calType:A startTimeObserved:A endTimeObserved:A calDataType:A frequencyGroup:I freqGroupName:A fieldName:A fieldCode:a sourceName:a sourceCode:a scanIntent:a assocCalDataId:A assocCalNature:A
+CalPhaseTable calDataId:A calReductionId:A basebandName:A numReceptors:I numBaseline:I startValidTime:A endValidTime:A frequencyRange:d antennaNames:a polarizationType:a decorrelationFactor:d uncorrPhaseRms:d corrPhaseRms:d statPhaseRms:d corrValidity:b
+CalReductionTable calReductionId:A numApplied:I numParam:I timeReduced:A calAppliedArray:a paramSet:a messages:A software:A softwareVersion:A invalidConditions:A
+CalSeeingTable calDataId:A calReductionId:A numBaseLength:I startValidTime:A endValidTime:A frequencyRange:d baseLength:d uncorrPhaseRms:d corrPhaseRms:d seeing:D seeingFrequency:D seeingFreqBandwidth:D exponent:D
+BeamTable beamId:A
+CalBandpassTable calDataId:A calReductionId:A antennaName:A basebandName:A startValidTime:A endValidTime:A polarizationType:a freqLimits:d numReceptors:I numPhasePoly:I numAmpliPoly:I receiverBand:A refAntennaName:A phaseCurve:d ampliCurve:d
+AlmaRadiometerTable modeId:A numBand:I
+CalDelayTable calDataId:A calReductionId:A antennaName:A basebandName:A numReceptors:I startValidTime:A endValidTime:A delayOffset:d delayError:d crossDelayOffset:D crossDelayOffsetError:D receiverBand:A refAntennaName:A polarizationType:a
+CalDeviceTable antennaId:A feedId:I spectralWindowId:A timeInterval:A numCalload:I noiseCal:d temperatureLoad:d calEff:d
+CalFluxTable calDataId:A calReductionId:A sourceName:A numFreq:I numStokes:I startValidTime:A endValidTime:A Stokes:i frequency:d frequencyWidth:d flux:d fluxError:d fluxMethod:A size:d sizeError:d PA:d PAError:d direction:d
+CalFocusTable calDataId:A calReductionId:A antennaName:A frequencyRange:d startValidTime:A endValidTime:A offset:d error:d method:A pointingDirection:d wasFixed:b receiverBand:A
+CalFocusModelTable calDataId:A calReductionId:A antennaName:A numCoeff:I startValidTime:A endValidTime:A focusRMS:d coeffName:a coeffFormula:a coeffValue:d coeffError:d coeffFixed:b focusModel:A numSourceObs:I receiverBand:A
+CalGainTable calDataId:A calReductionId:A startValidTime:A endValidTime:A gain:d gainValid:b fit:d fitWeight:d totalGainValid:B totalFit:D totalFitWeight:D
+CalHolographyTable calDataId:A calReductionId:A antennaName:A numScrew:I numReceptors:I startValidTime:A endValidTime:A focusPosition:d rawRms:D weightedRms:D screwName:a screwMotion:d screwMotionError:d panelModes:I frequency:D beamMapUID:A surfaceMapUID:A polarizationType:a
+CalPointingTable calDataId:A calReductionId:A antennaName:A startValidTime:A endValidTime:A receiverBand:A frequencyRange:d direction:d collOffset:d collError:d pointingMethod:A mode:A beamWidth:d beamWidthError:d beamPA:D beamPAError:D peakIntensity:D peakIntensityError:D
+CalPointingModelTable calDataId:A calReductionId:A antennaName:A numObs:I numCoeff:I startValidTime:A endValidTime:A numFormula:I azimuthRms:D elevationRms:D skyRms:D coeffName:a coeffVal:d coeffError:d coeffFixed:b coeffFormula:a pointingModel:A receiverBand:A
+CalPositionTable calDataId:A calReductionId:A antennaName:A numAntenna:I startValidTime:A endValidTime:A positionOffset:d positionErr:d delayRms:A phaseRms:D axesOffset:D axesOffsetFixed:B axesOffsetErr:D positionMethod:A refAntennaNames:a
+CalWVRTable calDataId:A calReductionId:A antennaName:A numPoly:I numChan:I startValidTime:A endValidTime:A WVRMethod:A freqLimits:d pathCoeff:d chanFreq:d chanWidth:d
+DopplerTable dopplerId:I sourceId:I transitionIndex:I velDef:D
+EphemerisTable ephemerisId:A
+ObservationTable observationId:A
+FlagCmdTable timeInterval:A type:A reason:A level:I severity:I applied:B command:A
+FocusModelTable focusModelId:A
+FreqOffsetTable antennaId:A feedId:I spectralWindowId:A timeInterval:A offset:D
+GainTrackingTable antennaId:A feedId:I spectralWindowId:A timeInterval:A attenuator:D delayoff1:A delayoff2:A phaseoff1:D phaseoff2:D rateoff1:D rateoff2:D samplingLevel:D phaseRefOffset:D
+HistoryTable ExecBlockId:A time:A message:A priority:A origin:A objectId:A application:A cliCommand:A appParms:A
+HolographyTable holographyId:A numCorr:I type:a distance:D focus:D flagRow:B
+PointingModelTable antennaId:A pointingModelId:I numCoeff:I coeffName:a coeffVal:d numFormula:I coeffFormula:a
+SeeingTable timeInterval:A numBaseLength:I baseLength:i phaseRms:i seeing:D exponent:D
+SourceParameterTable sourceParameterId:I sourceId:I timeInterval:A numFreq:I numStokes:I numDep:I stokeParameter:i flux:d frequency:d frequencyInterval:d fluxErr:d size:d positionAngle:d sizeErr:d positionAngleErr:d depSourceParameterId:i
+SquareLawDetectorTable squareLawDetectorId:A numBand:I bandType:A
+SysCalTable antennaId:A feedId:I spectralWindowId:A timeInterval:A numLoad:I calLoad:i feff:d aeff:d phaseDiff:D sbgain:D tau:d tcal:d trx:d tsky:d tant:d tantTsys:d pwvPath:d dpwvPath:d feffSpectrum:d sbgainSpectrum:d tauSpectrum:d tcalSpectrum:d trxSpectrum:d tskySpectrum:d tsysSpectrum:d tantSpectrum:d tantTsysSpectrum:d pwvPathSpectrum:d dpwvPathSpectrum:d numPoly:I numPolyFreq:I timeOrigin:A freqOrigin:D phaseCurve:d delayCurve:d ampliCurve:d bandpassCurve:d phasediffFlag:B sbgainFlag:B tauFlag:B tcalFlag:B trxFlag:B tskyFlag:B tsysFlag:B tantFlag:B tantTsysFlag:B pwvPathFlag:B
+TotalPowerTable configDescriptionId:A fieldId:A time:A execBlockId:A stateId:a scanNumber:I subscanNumber:I integrationNumber:I uvw:d exposure:d timeCentroid:a floatData:d flagAnt:i flagPol:i flagRow:B interval:A subintegrationNumber:I
+WVMCalTable antennaId:A spectralWindowId:A timeInterval:A numPoly:I freqOrigin:D pathCoeff:d calibrationMode:A operationMode:A wvrefModel:D
+WeatherTable stationId:A timeInterval:A pressure:D relHumidity:D temperature:D windDirection:D windSpeed:D windMax:D pressureFlag:B relHumidityFlag:B temperatureFlag:B windDirectionFlag:B windSpeedFlag:B windMaxFlag:B dewPoint:D dewPointFlag:B
+ASDM Name:A NumberRows:I

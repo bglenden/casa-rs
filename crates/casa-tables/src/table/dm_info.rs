@@ -50,7 +50,11 @@ impl Table {
     /// `DataManager::dataManagerSpec()` exposed through `Table::dataManagerInfo()`.
     pub fn data_manager_spec(&self, seq_nr: u32) -> Result<Option<RecordValue>, TableError> {
         if self.is_memory() {
-            return Ok(None);
+            return Ok(self
+                .data_manager_info()
+                .iter()
+                .find(|manager| manager.seq_nr == seq_nr && manager.dm_type == "MemoryStMan")
+                .map(|_| RecordValue::default()));
         }
         let Some(source) = self.source_path.as_ref() else {
             return Ok(None);

@@ -93,6 +93,14 @@ impl Table {
             .unwrap_or(0);
         #[cfg(not(unix))]
         let row_hint = 0;
+        if Self::memory_manager_snapshot(&snapshot) {
+            let rows = snapshot.row_count.max(row_hint);
+            return Ok(Self::from_memory_manager_snapshot(
+                options.path.clone(),
+                snapshot,
+                rows,
+            ));
+        }
         let virtual_cols = snapshot.virtual_columns;
         let info = snapshot.table_info;
         let table = Self {

@@ -41,6 +41,7 @@
 //! assert_eq!(schema.columns().len(), 8);
 //! ```
 
+pub mod asdm_table;
 pub mod builder;
 mod casa_return;
 pub mod column_def;

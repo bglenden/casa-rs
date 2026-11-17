@@ -30,6 +30,7 @@ mod generated_array;
 mod incremental_check;
 mod io;
 mod locking;
+mod memory_manager;
 mod mutation;
 mod persisted_rows;
 mod query;

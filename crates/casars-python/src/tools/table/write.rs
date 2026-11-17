@@ -255,6 +255,9 @@ pub(super) fn write_root(
     // A memory table has no disk or lock file; changes stay in its handle.
     if root.table.is_memory() {
         change(&mut root.table, row_map)?;
+        if !matches!(target, Target::Cells | Target::RowProxy) {
+            root.table.flush_memory_manager_layout()?;
+        }
         return Ok(CasaValue::Bool(true));
     }
     if root.table.is_reference_table()? {

@@ -785,7 +785,7 @@ impl StManArrayFileWriter {
 // ---------------------------------------------------------------------------
 
 /// Create an empty array Value for the given data type and shape.
-fn make_empty_array(dt: CasacoreDataType, shape: &[usize]) -> Value {
+pub(crate) fn make_empty_array(dt: CasacoreDataType, shape: &[usize]) -> Value {
     let s = IxDyn(shape);
     let av = match dt {
         CasacoreDataType::TpBool => ArrayValue::Bool(ArrayD::default(s)),

@@ -67,6 +67,7 @@ pub mod error;
 pub mod expr_file;
 pub mod expr_parser;
 pub mod fits_read;
+pub mod fits_table;
 pub mod image;
 pub mod image_expr;
 mod image_expr_ops;

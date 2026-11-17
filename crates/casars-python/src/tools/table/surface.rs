@@ -151,7 +151,7 @@ const METHODS: &[Method] = &[
             param("xmlfile", K::Any, Required),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fromascii",
@@ -170,7 +170,7 @@ const METHODS: &[Method] = &[
             param("datatypes", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fromfits",
@@ -184,7 +184,7 @@ const METHODS: &[Method] = &[
             param("ack", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcell",
@@ -593,7 +593,7 @@ const METHODS: &[Method] = &[
             param("sep", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("unlock", &[], R::Any, Yes),
 ];

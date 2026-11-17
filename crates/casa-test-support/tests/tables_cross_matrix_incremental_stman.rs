@@ -684,7 +684,7 @@ fn ism_element_arrays_generated_save_reads_in_cpp() {
     }
 }
 
-// --- Arrays casacore keeps in table.f0i (ISMIndColumn): read, not written ---
+// --- Arrays casacore keeps in table.f0i (ISMIndColumn) ---
 
 /// The every-type columns casacore's IncrementalStMan keeps in its array
 /// file: fixed-shape arrays without the Direct option and variable-shape
@@ -718,25 +718,16 @@ fn ism_indirect_arrays_read_cross_matrix() {
     }
 }
 
-/// casa-rs refuses to write those columns, rather than write a table
-/// casacore cannot read.
+/// Rust writes both endian layouts, and both Rust and casacore reopen
+/// the array file, including rows with offset zero (undefined arrays).
 #[test]
-fn ism_indirect_arrays_are_refused_on_save() {
+fn ism_indirect_arrays_write_endian_cross_matrix() {
     let fixture =
         element_arrays_fixture(&ISM_INDIRECT_STORAGES, CppTableFixture::IsmIndirectArrays);
-    let dir = tempfile::tempdir().expect("tempdir");
-    let error = Table::from_rows_with_schema(fixture.rows, fixture.schema)
-        .expect("table")
-        .save(
-            TableOptions::new(dir.path().join("indirect"))
-                .with_data_manager(DataManagerKind::IncrementalStMan),
-        )
-        .expect_err("IncrementalStMan refuses indirect arrays");
-    let message = error.to_string();
-    assert!(
-        message.contains("as an ISMIndColumn in table.fNi"),
-        "{message}"
-    );
+    assert_matrix_results(&run_endian_cross_matrix(
+        &fixture,
+        ManagerKind::IncrementalStMan,
+    ));
 }
 
 // --- Values that change at a bucket's first row ---

@@ -6358,3 +6358,26 @@ casa-rs implements `tablerow.__getitem__` safely under the GIL-detached Rust
 table accessor, supporting negative indices, slices, and sequences of row
 indices, and raising `IndexError` cleanly on out-of-range indices.
 [Table tool issue #1028](https://github.com/bglenden/casa-rs/issues/1028)
+
+## `table.fromASDM` can report success after discarding XML values
+
+In CASA 6.7.6.14, call `table().fromASDM("out.table", "Scan.xml")` with
+`<ScanTable><row><scanNumber>12</scanNumber></row></ScanTable>`. The
+table contains one row but its `scanNumber` is 0. The legacy SAX code
+only enables its value callback for fields listed in a working directory
+file named `taglist.txt`; even with the tag in that file, this build
+did not store the value. With a nonexistent XML file CASA returns
+`True` and creates no table.
+
+casa-rs uses the same ordered column descriptions and converts the XML
+values directly. It reports invalid or unreadable input before replacing
+the destination. The ASDM XML converter reads one table at a time; it
+does not import ASDM datasets or their binary data. See #1028.
+
+## FITS `TNULL` cards can disappear from `table.fromfits` output
+
+CASA 6.7.6.14 preserved the integer -32768 in a FITS `1J` column but
+did not add a `NULL` column keyword for its `TNULL2 = -32768` card.
+`FITSTabular::nullsFromHDU` looks up each indexed card with a
+zero-based column index. casa-rs preserves both the unscaled integer
+cell and the matching null marker so readers can interpret it. See #1028.
