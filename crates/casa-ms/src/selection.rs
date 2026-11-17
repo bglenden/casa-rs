@@ -35,6 +35,7 @@ pub mod antenna_expr;
 mod edit;
 mod intent;
 pub(crate) mod parser;
+mod row_grammar;
 pub mod spw_expr;
 pub mod syntax;
 pub mod time_expr;
@@ -119,6 +120,7 @@ pub(crate) struct CompiledMsSelection {
     pub(crate) field_ids: Option<Vec<i32>>,
     pub(crate) spw_ids: Vec<i32>,
     spw_channel_selections: BTreeMap<i32, ChannelSelection>,
+    spw_data_desc_ids: Option<Vec<i32>>,
     data_desc_ids: Vec<i32>,
     antenna_ids: Vec<i32>,
     antenna_names: Vec<String>,
@@ -455,6 +457,14 @@ impl MsSelection {
     }
 
     pub(crate) fn compile(&self, ms: &MeasurementSet) -> MsResult<CompiledMsSelection> {
+        self.compile_with_row_grammar(ms, false)
+    }
+
+    fn compile_with_row_grammar(
+        &self,
+        ms: &MeasurementSet,
+        full: bool,
+    ) -> MsResult<CompiledMsSelection> {
         if !self.selectdata && !self.has_text_selection() {
             return Ok(CompiledMsSelection::default());
         }
@@ -463,7 +473,7 @@ impl MsSelection {
                 "selectdata=false cannot be combined with MeasurementSet selectors".to_string(),
             ));
         }
-        let mut compiled = parser::selection_from_options(ms, &self.to_summary_options())?;
+        let mut compiled = parser::selection_from_options(ms, &self.to_summary_options(), full)?;
         if let Some(value) = self.data_description.as_deref() {
             compiled = compiled.data_description(
                 &crate::selection::syntax::parse_numeric_id_selector(value, "data-description")?,
@@ -885,6 +895,14 @@ impl CompiledMsSelection {
             clauses.push(format!("DATA_DESC_ID IN [{}]", int_list(&self.spw_ids)));
         }
 
+        if let Some(ids) = &self.spw_data_desc_ids {
+            clauses.push(if ids.is_empty() {
+                "FALSE".to_string()
+            } else {
+                format!("DATA_DESC_ID IN [{}]", int_list(ids))
+            });
+        }
+
         if !self.data_desc_ids.is_empty() {
             clauses.push(format!(
                 "DATA_DESC_ID IN [{}]",
@@ -954,7 +972,7 @@ impl MeasurementSet {
                 std::mem::size_of::<ResolvedMsSelectionRow>()
             )));
         }
-        let compiled = request.compile(self)?;
+        let compiled = request.compile_with_row_grammar(self, true)?;
         let taql_predicate = compiled.resolved_to_taql(self)?;
         let selected_row_indices = compiled.apply_with_budget(self, io)?;
         let row_blocks = plan_selected_row_blocks(&selected_row_indices, io)?;
@@ -1153,7 +1171,13 @@ fn apply_structured_selection(
         return Ok(Vec::new());
     }
     let field_ids: HashSet<i32> = sel.field_ids.iter().flatten().copied().collect();
-    let spw_ddids: HashSet<i32> = effective_ddids.iter().copied().collect();
+    let spw_ddids: HashSet<i32> = sel
+        .spw_data_desc_ids
+        .as_deref()
+        .unwrap_or(effective_ddids)
+        .iter()
+        .copied()
+        .collect();
     let data_desc_ids: HashSet<i32> = sel.data_desc_ids.iter().copied().collect();
     let antenna_ids: HashSet<i32> = sel.antenna_ids.iter().copied().collect();
     let baselines: HashSet<(i32, i32)> = sel.baselines.iter().copied().collect();
@@ -1173,14 +1197,14 @@ fn apply_structured_selection(
         BTreeMap::new()
     };
 
-    if !sel.spw_ids.is_empty() && spw_ddids.is_empty() {
+    if (!sel.spw_ids.is_empty() || sel.spw_data_desc_ids.is_some()) && spw_ddids.is_empty() {
         return Ok(Vec::new());
     }
 
     let table = ms.main_table();
     let column_request = StructuredSelectionColumnRequest {
         field: !field_ids.is_empty(),
-        data_desc: !sel.spw_ids.is_empty()
+        data_desc: !spw_ddids.is_empty()
             || !data_desc_ids.is_empty()
             || !uv_lambda_by_ddid.is_empty(),
         antenna1: !antenna_ids.is_empty() || !baselines.is_empty(),

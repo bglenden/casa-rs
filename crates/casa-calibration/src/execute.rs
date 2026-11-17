@@ -704,7 +704,7 @@ pub(crate) fn execute_apply_with_preparation_error(
     path: &Path,
     request: &ApplyPlanRequest,
     options: ApplyExecutionOptions,
-    preparation_error: Option<&str>,
+    preparation_error: Option<crate::plan::ApplyPreparationError<'_>>,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
     let path = path.to_path_buf();
     let total_started_at = Instant::now();

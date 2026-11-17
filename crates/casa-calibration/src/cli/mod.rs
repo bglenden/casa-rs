@@ -90,9 +90,30 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     } else {
         None
     };
-    let result = request
-        .execute_with_output_mode(mode)
-        .map_err(TaskFailure::execution)?;
+    let result = if let CalibrationTaskRequest::ExecuteApply(request) = &request {
+        request
+            .execute_apply()
+            .map(CalibrationTaskResult::Apply)
+            .map_err(|error| {
+                let failure = TaskFailure::execution(error.to_string());
+                match error {
+                    crate::ApplyExecutionError::Plan(source) => match *source {
+                        crate::ApplyPlanError::Argument(
+                            crate::ApplyArgumentError::MissingCalwt,
+                        ) => failure.at("calwt"),
+                        crate::ApplyPlanError::Argument(crate::ApplyArgumentError::SpwMap(_)) => {
+                            failure.at("spwmap")
+                        }
+                        _ => failure,
+                    },
+                    _ => failure,
+                }
+            })?
+    } else {
+        request
+            .execute_with_output_mode(mode)
+            .map_err(TaskFailure::execution)?
+    };
     if task.surface() == "fluxscale"
         && let (
             CalibrationTaskRequest::FluxScale(request),

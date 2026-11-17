@@ -9986,6 +9986,18 @@
       "persistence_class": "profile"
     },
     {
+      "id": "setapply.spwmap",
+      "semantic_revision": 2,
+      "casa_name": "spwmap",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "apply_spw_map"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Spectral-window maps per table, read only in traditional applycal.", "details": null, "examples": ["[0]", "[[0], [1]]"]},
+      "persistence_class": "profile"
+    },
+    {
       "id": "setsolve.append",
       "semantic_revision": 1,
       "casa_name": "append",
@@ -12256,6 +12268,30 @@
           ""
         ]
       },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.uvrange",
+      "semantic_revision": 4,
+      "casa_name": "uvrange",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Applycal accepts a CASA variant and converts it to selector text during MS selection.", "details": null, "examples": ["", "0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.observation",
+      "semantic_revision": 4,
+      "casa_name": "observation",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Applycal accepts selector text or an observation ID. Preserve the input type for HISTORY.", "details": null, "examples": ["", "0"]},
       "persistence_class": "profile"
     },
     {

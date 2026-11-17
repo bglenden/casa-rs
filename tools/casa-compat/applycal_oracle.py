@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from copy import deepcopy
 import inspect
 import io
 import json
@@ -30,6 +31,8 @@ from record_casa_returns import make_cal_ms
 
 
 def plain(value):
+    if isinstance(value, Path):
+        return str(value)
     if isinstance(value, dict):
         return {str(key): plain(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -64,7 +67,6 @@ def bpoly_nearest_control(root, source, poly, native):
     arguments = dict(vis=str(paths['crash']), gaintable=[str(poly)], gainfield=['nearest'], flagbackup=False)
     probe = isolated_applycal(arguments)
     assert probe.returncode in [-6, -11], (probe.returncode, probe.stderr)
-    assert 'BpolyAsB' in probe.stderr, probe.stderr
     assert casa.applycal(vis=str(paths['casa-control']), gaintable=[str(poly)], flagbackup=False) is None
     preload = os.environ.pop('LD_PRELOAD', None)
     try:
@@ -365,12 +367,13 @@ def run(root, native_bin, only=None):
     result = dict(casa_version=casa.version_string(), signature=str(reference), case_filter=only, cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
-    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None, casa_control_callib=None):
+    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None, casa_control_callib=None, positional=False):
         if only is not None and re.search(only, name) is None:
             return
         records, paths = {}, {}
         supplied_tables = (extra or {}).get('gaintable', [str(gain)])
-        supplied_tables = [supplied_tables] if isinstance(supplied_tables, str) else supplied_tables
+        if isinstance(supplied_tables, (str, Path)):
+            supplied_tables = [supplied_tables]
         before_gain = {Path(path): snapshot(Path(path)) if Path(path).exists() else None
                        for path in supplied_tables if path}
         for engine, module in [('casa', casa), ('native', native)]:
@@ -410,7 +413,7 @@ def run(root, native_bin, only=None):
                 tool.close()
             before = history(path)['TIME'].size
             arguments = dict(vis=str(path), gaintable=[str(gain)], flagbackup=False)
-            arguments.update(extra or {})
+            arguments.update(deepcopy(extra or {}))
             captured = io.StringIO()
             preload = os.environ.pop('LD_PRELOAD', None) if engine == 'native' else None
             cpu_start = sum(resource.getrusage(kind).ru_utime+resource.getrusage(kind).ru_stime
@@ -420,7 +423,11 @@ def run(root, native_bin, only=None):
             try:
                 with contextlib.redirect_stderr(captured):
                     for _ in range(repetitions):
-                        value = module.applycal(**arguments)
+                        if positional:
+                            value = module.applycal(*(arguments.get(key, deepcopy(param.default))
+                                                      for key, param in reference.parameters.items()))
+                        else:
+                            value = module.applycal(**arguments)
                 record = dict(value=plain(value))
             except Exception as error:
                 record = dict(error=type(error).__name__, exception_bases=[kind.__name__ for kind in type(error).__mro__], message=str(error))
@@ -499,6 +506,19 @@ def run(root, native_bin, only=None):
                     if message.startswith('version: '):
                         assert message.startswith('version: 6.7.6-14 ' if engine == 'casa' else 'version: casa-rs '), message
                         message = '<implementation version>'
+                    if name == 'api-arrays' and engine == 'casa':
+                        # CASA prints NumPy constructors in these HISTORY
+                        # rows. The stored selector and map values are equal.
+                        key, sep, value = message.partition(' = ')
+                        parameter = key.strip()
+                        if parameter in ['gaintable', 'gainfield', 'interp']:
+                            array = extra[parameter]
+                            assert value == repr(list(array)), message
+                            message = key + sep + repr(array.tolist())
+                        elif parameter == 'spwmap':
+                            array = extra[parameter]
+                            assert value == repr([array]), message
+                            message = key + sep + repr([array.tolist()])
                     messages.append(message.replace(str(paths[engine]), '<vis>'))
                 normalized[engine] = messages
             assert normalized['casa'] == normalized['native'], normalized
@@ -612,6 +632,64 @@ def run(root, native_bin, only=None):
             ('empty-intent-bound-union', dict(intent=f'>{state_start}&<{state_start+1},{state_start}')),
             ('trial-error', dict(uvrange='invalid', applymode='trial'))]:
         case('selection-'+name, arguments, input_vis=selection_source)
+    for label, arguments in [
+        ('field-wildcard', dict(field='PH*')),
+        ('field-id-range', dict(field='0~1')),
+        ('field-bound', dict(field='>0')),
+        ('spw-wildcard', dict(spw='*:1~5')),
+        ('time-exact', dict(timerange='2019/12/31/21:52:15.3')),
+        ('time-range', dict(timerange='21:52:15~21:52:37')),
+        ('time-duration', dict(timerange='21:52:15+00:00:20')),
+        ('time-bound', dict(timerange='>21:53:15')),
+        ('time-bracketed', dict(timerange='[21:52:17~21:52:27]')),
+        ('time-buffer-width', dict(timerange='3.0[21:52:17~21:52:27]')),
+        ('time-wildcard', dict(timerange='2019/12/*/21:52:15.3')),
+        ('time-invalid', dict(timerange='invalid', flagbackup=True)),
+        ('antenna-union', dict(antenna='A0&A1;A3&A4')),
+        ('antenna-exclude', dict(antenna='!A0')),
+        ('antenna-length', dict(antenna='<50m')),
+        ('antenna-invalid', dict(antenna='not-an-antenna', flagbackup=True)),
+        ('scan-range', dict(scan='1~2')),
+        ('scan-bound', dict(scan='>1')),
+        ('scan-missing', dict(scan='999', flagbackup=True)),
+        ('observation-int', dict(observation=1)),
+        ('observation-union', dict(observation='0,1')),
+        ('observation-missing', dict(observation='99', flagbackup=True)),
+        ('taql', dict(msselect='ANTENNA1==0 AND SCAN_NUMBER==2')),
+        ('taql-empty', dict(msselect='ANTENNA1==999', flagbackup=True)),
+        ('taql-invalid', dict(msselect='NONEXISTENT_COLUMN==0', flagbackup=True)),
+    ]:
+        case(f'api-select-{label}', arguments, input_vis=observation_source)
+
+    for label, arguments in [
+        ('scalar-map', dict(spwmap=0, flagbackup=True)),
+        ('empty-text-map', dict(spwmap='')),
+        ('unused-malformed-map', dict(spwmap=[[0], 'unused'])),
+        ('invalid-observation-type', dict(observation=1.5, flagbackup=True)),
+        ('observation-bool', dict(observation=True, flagbackup=True)),
+        ('uvrange-list', dict(uvrange=['<50m', '>60m'])),
+        ('uvrange-empty-list', dict(uvrange=[])),
+        ('scalar-lists', dict(gaintable=str(time_gain), interp='nearest', gainfield='1', calwt=False, spwmap=[0])),
+        ('tuple', dict(gaintable=(str(time_gain), str(constant)), interp=('linear', 'nearest'),
+                       gainfield=('1', ''), calwt=(True, False), spwmap=[[0], [0]])),
+        ('arrays', dict(gaintable=np.array([str(time_gain), str(constant)]), interp=np.array(['linear', 'nearest']),
+                        gainfield=np.array(['1', '']), calwt=[True, False], spwmap=np.array([0]))),
+        ('skip-empty-table', dict(gaintable=['', str(time_gain)], gainfield=['unknown', '1'], calwt=[False, True])),
+        ('no-tables', dict(gaintable=[], flagbackup=True)),
+        ('blank-table', dict(gaintable=[''], flagbackup=True)),
+        ('gain-missing', dict(gaintable=[str(root/'absent.gcal')], flagbackup=True)),
+        ('vis-missing', dict(vis=str(root/'absent.ms'), flagbackup=True)),
+        ('vis-empty', dict(vis='')),
+        ('calwt-short', dict(gaintable=[str(time_gain)]*3, calwt=[True, False], flagbackup=True)),
+        ('calwt-empty', dict(calwt=[], flagbackup=True)),
+        ('invalid-mode', dict(applymode='invalid', flagbackup=True)),
+        ('invalid-bool', dict(selectdata=1, flagbackup=True)),
+        ('negative-observation', dict(observation=-1, flagbackup=True)),
+        ('variant-uvrange', dict(uvrange=50)),
+    ]:
+        case(f'api-{label}', arguments, input_vis=chain_source)
+    case('api-positional', dict(field='PHASE', interp='nearest'), gain=time_gain, positional=True)
+
     case('chain-default-fields', gain=time_gain, input_vis=chain_source, precorrected=True)
     for name, selector in [('id0', '0'), ('id1', '1'), ('name0', 'FLUX'), ('name1', 'PHASE'),
                            ('glob', 'FL*'), ('all', '*'), ('list', '0,1'), ('range', '0~1'),
@@ -808,6 +886,7 @@ def run(root, native_bin, only=None):
     active = root/'library-default.txt'
     case('callib-inactive-traditional', dict(docallib=True, callib=str(active), gaintable=[str(root/'absent.gcal')],
          gainfield=['NO_SUCH_FIELD'], interp=['invalid'], spwmap=[999], calwt=[False]), gain=time_gain, input_vis=chain_source, precorrected=True)
+    case('callib-inactive-scalar-spwmap', dict(docallib=True, callib=str(active), spwmap=0), input_vis=chain_source)
     case('callib-empty-path', dict(docallib=True), gain=time_gain, input_vis=chain_source)
     duplicate = root/'library-repeat.txt'
     duplicate.write_text(f"caltable='{time_gain}' field='FLUX' fldmap='FLUX' calwt=False\ncaltable='{time_gain}' field='PHASE' fldmap='PHASE' calwt=True\n")

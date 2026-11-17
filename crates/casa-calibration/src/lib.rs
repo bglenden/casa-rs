@@ -118,9 +118,10 @@ pub use stats::{
 };
 pub use summary::{CalibrationTableError, summarize_table, summarize_tables};
 pub use task_contract::{
-    CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationTaskRequest,
-    ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest, GencalTaskRequest,
-    PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest,
-    SummaryTaskRequest, calibration_protocol_descriptor, calibration_task_schema_bundle,
+    ApplyArgumentError, CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION,
+    CalibrationTaskRequest, ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest,
+    GencalTaskRequest, PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest,
+    StatsTaskRequest, SummaryTaskRequest, calibration_protocol_descriptor,
+    calibration_task_schema_bundle,
 };
 pub use writer::CalibrationTableWriteError;

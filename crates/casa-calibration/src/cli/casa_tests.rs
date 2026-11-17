@@ -90,21 +90,19 @@ fn applycal_lists_are_positional_and_short_lists_take_casas_defaults() {
 }
 
 #[test]
-fn applycal_takes_one_calwt_for_every_table_and_refuses_a_short_list() {
+fn applycal_broadcasts_one_calwt_and_defers_missing_entries_until_setup() {
     let tables = json!(["phase.gcal", "bandpass.bcal", "flux.gcal"]);
     let request = apply(json!({"vis": "d.ms", "gaintable": tables, "calwt": [false]}));
     assert!(request.calibration_tables.iter().all(|table| !table.calwt));
     // CASA's default is [True].
     let request = apply(json!({"vis": "d.ms", "gaintable": tables}));
     assert!(request.calibration_tables.iter().all(|table| table.calwt));
-    let message = refused(
-        casa(
-            "applycal",
-            json!({"vis": "d.ms", "gaintable": tables, "calwt": [true, false]}),
-        ),
-        "calwt",
+    let request = apply(json!({"vis": "d.ms", "gaintable": tables, "calwt": [true, false]}));
+    assert_eq!(
+        request.argument_error,
+        Some(crate::ApplyArgumentError::MissingCalwt)
     );
-    assert!(message.contains("2 values for 3 gain tables"), "{message}");
+    assert_eq!(request.calibration_tables.len(), 2);
 }
 
 #[test]
@@ -143,14 +141,12 @@ fn applymode_takes_casas_values() {
 }
 
 #[test]
-fn applycal_with_nothing_to_apply_is_refused() {
-    let message = refused(casa("applycal", json!({"vis": "d.ms"})), "gaintable");
-    assert!(message.contains("nothing to apply"), "{message}");
-    let message = refused(
-        casa("applycal", json!({"vis": "d.ms", "gaintable": [""]})),
-        "gaintable",
-    );
-    assert!(message.contains("nothing to apply"), "{message}");
+fn applycal_with_nothing_to_apply_still_reaches_ms_setup() {
+    for gaintable in [json!([]), json!([""])] {
+        let request = apply(json!({"vis": "d.ms", "gaintable": gaintable}));
+        assert!(request.calibration_tables.is_empty());
+        assert!(request.argument_error.is_none());
+    }
     // PJones is a complete apply term even without a supplied table.
     let request = apply(json!({"vis": "d.ms", "parang": true}));
     assert!(request.parang);

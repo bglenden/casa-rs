@@ -173,6 +173,17 @@ pub struct PlanApplyTaskRequest {
     pub parang: bool,
 }
 
+/// A traditional applycal argument whose error follows MS setup and selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, thiserror::Error)]
+pub enum ApplyArgumentError {
+    /// A table's positional calwt element was missing.
+    #[error("list index out of range")]
+    MissingCalwt,
+    /// A spwmap variant could not be read as a window map.
+    #[error("{0}")]
+    SpwMap(String),
+}
+
 /// Request for executing an `applycal`-class operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ExecuteApplyTaskRequest {
@@ -186,6 +197,9 @@ pub struct ExecuteApplyTaskRequest {
     /// Callibrary parse failure raised after CASA-compatible MS setup/selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callibrary_error: Option<String>,
+    /// A traditional argument error raised after CASA-compatible setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argument_error: Option<ApplyArgumentError>,
     /// Apply/execution mode.
     pub apply_mode: ApplyMode,
     /// Whether to apply parallactic-angle correction.
@@ -195,6 +209,34 @@ pub struct ExecuteApplyTaskRequest {
     /// a `calflag` run writes, as CASA does (default true).
     #[serde(default = "default_flagbackup")]
     pub flagbackup: bool,
+}
+
+impl ExecuteApplyTaskRequest {
+    pub(crate) fn execute_apply(
+        &self,
+    ) -> Result<crate::ApplyExecutionReport, crate::ApplyExecutionError> {
+        let error = self
+            .callibrary_error
+            .as_deref()
+            .map(crate::plan::ApplyPreparationError::Callibrary)
+            .or(self
+                .argument_error
+                .as_ref()
+                .map(crate::plan::ApplyPreparationError::Argument));
+        crate::execute::execute_apply_with_preparation_error(
+            &self.measurement_set,
+            &ApplyPlanRequest {
+                selection: self.selection.clone(),
+                apply_mode: self.apply_mode,
+                parang: self.parang,
+                calibration_tables: self.calibration_tables.clone(),
+            },
+            ApplyExecutionOptions {
+                flag_backup: self.flagbackup,
+            },
+            error,
+        )
+    }
 }
 
 fn default_flagbackup() -> bool {
@@ -373,21 +415,10 @@ impl CalibrationTaskRequest {
             )
             .map(CalibrationTaskResult::PlanApply)
             .map_err(|error| error.to_string()),
-            Self::ExecuteApply(request) => crate::execute::execute_apply_with_preparation_error(
-                &request.measurement_set,
-                &ApplyPlanRequest {
-                    selection: request.selection.clone(),
-                    apply_mode: request.apply_mode,
-                    parang: request.parang,
-                    calibration_tables: request.calibration_tables.clone(),
-                },
-                ApplyExecutionOptions {
-                    flag_backup: request.flagbackup,
-                },
-                request.callibrary_error.as_deref(),
-            )
-            .map(CalibrationTaskResult::Apply)
-            .map_err(|error| error.to_string()),
+            Self::ExecuteApply(request) => request
+                .execute_apply()
+                .map(CalibrationTaskResult::Apply)
+                .map_err(|error| error.to_string()),
             Self::ExportCorrectedData(request) => {
                 crate::corrected_export::export_corrected_data_with_overwrite(
                     &crate::ExportCorrectedDataRequest {

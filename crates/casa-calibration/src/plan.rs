@@ -386,6 +386,10 @@ pub enum ApplyPlanError {
     #[error("apply planning requires at least one calibration table unless parang=true")]
     MissingCalibrationTables,
 
+    /// One traditional argument failed after opening and selecting the MS.
+    #[error(transparent)]
+    Argument(crate::ApplyArgumentError),
+
     /// The MeasurementSet is outside the supported complex-DATA surface.
     #[error("MeasurementSet is missing required MAIN.DATA column")]
     MissingDataColumn,
@@ -505,15 +509,17 @@ pub fn plan_apply_with_timings(
     plan_apply_with_preparation_error(ms, request, None)
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ApplyPreparationError<'a> {
+    Callibrary(&'a str),
+    Argument(&'a crate::ApplyArgumentError),
+}
+
 pub(crate) fn plan_apply_with_preparation_error(
     ms: &MeasurementSet,
     request: &ApplyPlanRequest,
-    preparation_error: Option<&str>,
+    preparation_error: Option<ApplyPreparationError<'_>>,
 ) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
-    if request.calibration_tables.is_empty() && !request.parang && preparation_error.is_none() {
-        return Err(ApplyPlanError::MissingCalibrationTables);
-    }
-
     ms.data_column(VisibilityDataColumn::Data)
         .map_err(|error| match error {
             MsError::ColumnNotPresent(_) => ApplyPlanError::MissingDataColumn,
@@ -589,7 +595,7 @@ pub(crate) fn plan_apply_with_preparation_error(
     }
     let measurement_set_spectral_windows_ns = ms_spw_started_at.elapsed().as_nanos() as u64;
 
-    if let Some(message) = preparation_error {
+    if let Some(ApplyPreparationError::Callibrary(message)) = preparation_error {
         return Err(ApplyPlanError::Callibrary {
             message: message.to_string(),
         });
@@ -600,6 +606,12 @@ pub(crate) fn plan_apply_with_preparation_error(
         .iter()
         .map(|spec| build_table_plan(ms, spec, &selected_rows))
         .collect::<Result<Vec<_>, _>>()?;
+    if let Some(ApplyPreparationError::Argument(error)) = preparation_error {
+        return Err(ApplyPlanError::Argument(error.clone()));
+    }
+    if calibration_tables.is_empty() && !request.parang {
+        return Err(ApplyPlanError::MissingCalibrationTables);
+    }
     library::validate_overlaps(&calibration_tables)?;
     let calibration_tables = calibration_tables
         .into_iter()

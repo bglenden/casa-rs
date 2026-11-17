@@ -2752,7 +2752,7 @@ mod tests {
         options: ListObsOptions,
         expected: &str,
     ) {
-        let err = selection_from_options(ms, &options).expect_err("selector should fail");
+        let err = selection_from_options(ms, &options, false).expect_err("selector should fail");
         assert!(
             format!("{err}").contains(expected),
             "expected {expected:?} in {err}"

@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import functools
 import inspect
+from numbers import Integral
 import os
 from os import PathLike
 from pathlib import Path
@@ -206,7 +207,33 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         for name, value in arguments.items()
         if not _is_default(value, defaults.get(name, _MISSING))
     }
+    if wrapper.__name__ == "applycal":
+        return _call_applycal(values, arguments["vis"])
     return run(wrapper.__name__, **values).value
+
+
+def _call_applycal(values: dict[str, Any], vis: Any) -> Any:
+    # CASA's required-path validation runs before calibrater opens the MS.
+    # Keep PathLike as the native API's additional path form.
+    if isinstance(vis, (str, PathLike)):
+        path = os.path.expanduser(os.fspath(vis))
+        if not path or not os.path.exists(path):
+            raise AssertionError(f"the vis parameter must be a path that exists ('{path}' does not exist)")
+        if path != os.fspath(vis):
+            values["vis"] = path
+    if not isinstance(values.get("observation", ""), (str, Integral)):
+        raise AssertionError("{'observation': ['must be of cStr type', 'must be of cInt type']}")
+    try:
+        return run("applycal", **values).value
+    except TaskExecutionError as error:
+        if error.completion.parameter == "calwt":
+            raise IndexError(error.completion.message) from error
+        if error.completion.parameter == "spwmap":
+            raise TypeError(error.completion.message) from error
+        raise
+    except (TypeError, ValueError) as error:
+        # The generated CASA wrapper uses AssertionError for schema refusals.
+        raise AssertionError(str(error)) from error
 
 
 _MISSING = object()

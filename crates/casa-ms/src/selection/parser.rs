@@ -16,6 +16,7 @@ use crate::listobs::{ListObsOptions, format_float_compact};
 pub(crate) fn selection_from_options(
     ms: &MeasurementSet,
     options: &ListObsOptions,
+    full_row_grammar: bool,
 ) -> MsResult<CompiledMsSelection> {
     let mut selection = CompiledMsSelection::new();
 
@@ -23,20 +24,25 @@ pub(crate) fn selection_from_options(
         selection = selection.field(resolve_field_predicate(ms, field)?);
     }
 
-    if let Some(spw) = options.spw.as_deref() {
-        selection = selection.spw_selector(spw)?;
-    }
-    if let Some(scan) = options.scan.as_deref() {
-        selection = selection.scan(&parse_numeric_id_selector(scan, "scan")?);
-    }
-    if let Some(observation) = options.observation.as_deref() {
-        selection = selection.observation(&parse_numeric_id_selector(observation, "observation")?);
+    if full_row_grammar {
+        selection = super::row_grammar::apply(ms, selection, options)?;
+    } else {
+        if let Some(spw) = options.spw.as_deref() {
+            selection = selection.spw_selector(spw)?;
+        }
+        if let Some(scan) = options.scan.as_deref() {
+            selection = selection.scan(&parse_numeric_id_selector(scan, "scan")?);
+        }
+        if let Some(observation) = options.observation.as_deref() {
+            selection =
+                selection.observation(&parse_numeric_id_selector(observation, "observation")?);
+        }
+        if let Some(antenna) = options.antenna.as_deref() {
+            selection = apply_antenna_selector(ms, selection, antenna)?;
+        }
     }
     if let Some(array) = options.array.as_deref() {
         selection = selection.array(&parse_numeric_id_selector(array, "array")?);
-    }
-    if let Some(antenna) = options.antenna.as_deref() {
-        selection = apply_antenna_selector(ms, selection, antenna)?;
     }
     if let Some(intent) = options.intent.as_deref() {
         selection = apply_intent_selector(ms, selection, intent)?;
@@ -47,7 +53,7 @@ pub(crate) fn selection_from_options(
     if let Some(uvrange) = options.uvrange.as_deref() {
         selection = apply_uvrange_selector(ms, selection, uvrange)?;
     }
-    if let Some(timerange) = options.timerange.as_deref() {
+    if !full_row_grammar && let Some(timerange) = options.timerange.as_deref() {
         selection = apply_timerange_selector(ms, selection, timerange)?;
     }
     if let Some(msselect) = options.msselect.as_deref() {
@@ -55,6 +61,9 @@ pub(crate) fn selection_from_options(
         if !trimmed.is_empty() {
             selection = selection.taql(trimmed);
         }
+    }
+    if full_row_grammar && let Some(timerange) = options.timerange.as_deref() {
+        selection = super::row_grammar::with_time(ms, selection, timerange)?;
     }
 
     Ok(selection)

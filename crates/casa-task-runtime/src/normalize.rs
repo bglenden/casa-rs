@@ -396,6 +396,15 @@ fn apply_rule(
             map_strings(value, |value| normalize_quantity(value, canonical_unit))
         }
         NormalizationRule::BooleanAsInteger | NormalizationRule::CasaField => Ok(value),
+        NormalizationRule::ApplySpwMap => {
+            let vector = |element| ParameterType::Array {
+                element: Box::new(element),
+                min_items: 0,
+                max_items: None,
+                allow_scalar: false,
+            };
+            Ok(normalize_domain(&value, &vector(vector(ParameterType::Integer))).unwrap_or(value))
+        }
         NormalizationRule::NumberAsText => map_strings(value, |value| Ok(value.trim().to_string())),
         NormalizationRule::Sequence { rules } => {
             let mut value = value;
