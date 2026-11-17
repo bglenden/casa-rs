@@ -67,14 +67,18 @@ impl SampleAccumulation<'_> {
             // Scalar SIGMA broadcasts a single weight. Casacore's packed
             // channel cells avoid generic strided array iteration as well.
             let weight = weights[0];
-            return self.add::<true>(packed.chunks_exact(correlations).zip(flags).map(
-                |(channel, &flagged)| Sample {
-                    data: channel[correlation],
-                    model: point,
-                    weight,
-                    flagged,
-                },
-            ));
+            return self.add_uniform(
+                packed
+                    .chunks_exact(correlations)
+                    .zip(flags)
+                    .map(|(channel, &flagged)| Sample {
+                        data: channel[correlation],
+                        model: point,
+                        weight,
+                        flagged,
+                    }),
+                weight * point.norm_sqr(),
+            );
         }
         if all_channels {
             // Strided row iterators avoid repeated two-dimensional indexing;
@@ -112,6 +116,30 @@ impl SampleAccumulation<'_> {
             self.add_ordered::<true, POINT>(samples)
         } else {
             self.add_ordered::<false, POINT>(samples)
+        }
+    }
+
+    /// CASA's partialMedians for weights in {0, w}: count rejected channels
+    /// rather than constructing and selecting an array with two values.
+    fn add_uniform(&mut self, samples: impl Iterator<Item = Sample>, weight: f32) -> f64 {
+        if !self.channelized || !weight.is_finite() || weight <= 0.0 {
+            return self.add::<true>(samples);
+        }
+        let mut count = 0;
+        let mut rejected = 0;
+        for (channel, sample) in samples.enumerate() {
+            let actual_weight = self.values[channel].add_sample::<true>(self.attempted, sample);
+            rejected += usize::from(actual_weight == 0.0);
+            count = channel + 1;
+        }
+        let middle = count / 2;
+        if count == 0 || rejected > middle {
+            0.0
+        } else if count.is_multiple_of(2) {
+            let lower = if rejected == middle { 0.0 } else { weight };
+            f64::from((lower + weight) / 2.0)
+        } else {
+            f64::from(weight)
         }
     }
 
@@ -174,5 +202,46 @@ impl SolveEdgeAccumulation {
         self.weighted_sample_power += f64::from(sample.weight) * f64::from(power);
         self.sample_count += 1;
         weight
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scalar_weight_channel_median_matches_casas_partial_medians() {
+        // Eight channels with weights 0 or 2 have medians 2, 1, and 0
+        // when three, four, or five channels are rejected respectively.
+        for (channels, flagged, expected) in [
+            (8, 3, 2.0),
+            (8, 4, 1.0),
+            (8, 5, 0.0),
+            (7, 3, 2.0),
+            (7, 4, 0.0),
+        ] {
+            let mut values = vec![SolveEdgeAccumulation::default(); channels];
+            let mut attempted = false;
+            let median = SampleAccumulation {
+                values: &mut values,
+                attempted: &mut attempted,
+                channelized: true,
+            }
+            .add_uniform(
+                (0..channels).map(|channel| Sample {
+                    data: Complex32::new(4.0, 0.0),
+                    model: Complex32::new(2.0, 0.0),
+                    weight: 0.5,
+                    flagged: channel < flagged,
+                }),
+                2.0,
+            );
+            assert_eq!(median, expected);
+            assert!(attempted);
+            assert_eq!(
+                values.iter().map(|v| v.sample_count).sum::<usize>(),
+                channels - flagged
+            );
+        }
     }
 }

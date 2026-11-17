@@ -196,6 +196,25 @@ def run(root: Path, native_bin: Path) -> dict:
         equal(*paths,['CPARAM','FLAG','TIME','ANTENNA1','ANTENNA2'])
         evidence['cases'].append(f'{name} multi-batch non-unit point model agrees with CASA')
 
+    # Partial medians of scalar channel weights control the solve TIME even
+    # when some usable channels still contribute to the bandpass.
+    tool = table()
+    tool.open(str(batched_vis), nomodify=False)
+    flags = tool.getcol('FLAG')
+    for row in range(flags.shape[-1]):
+        integration = row // 10
+        rejected_channels = (np.arange(3 + integration % 3) + integration) % flags.shape[1]
+        flags[:, rejected_channels, row] = True
+    tool.putcol('FLAG', flags)
+    tool.close()
+    paths = [root/f'channel-weight-median.{engine}.cal' for engine in ['casa','native']]
+    for module,path in zip([casa,native],paths):
+        module.bandpass(vis=str(batched_vis),caltable=str(path),field='FLUX',refant='A0',
+                        smodel=[1.0],minsnr=0.0,minblperant=2)
+    equal(*paths,['CPARAM','FLAG','TIME','ANTENNA1','ANTENNA2'])
+    np.testing.assert_allclose(contents(paths[0])['TIME'],contents(paths[1])['TIME'],rtol=0,atol=1e-4)
+    evidence['cases'].append('partially flagged scalar weights retain CASA bandpass and weighted solve time')
+
     # MAIN may reference user-added local subtables. Both implementations
     # must keep them readable after appending and replacing the old directory.
     for function, engine in [(casa.gaincal, 'casa'), (native.gaincal, 'native')]:
