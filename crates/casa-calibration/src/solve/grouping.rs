@@ -75,7 +75,7 @@ pub(crate) fn build_solve_groups(
     options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
-    let mut correlations_by_ddid = HashMap::new();
+    let mut layouts_by_ddid = HashMap::new();
     let ordered = bucketed_rows(rows, options.solve_interval, options.combine);
     let pipelined = overlap_inputs(ordered.len());
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
@@ -108,7 +108,7 @@ pub(crate) fn build_solve_groups(
                 row,
                 preapplied,
                 &options,
-                &mut correlations_by_ddid,
+                &mut layouts_by_ddid,
                 (&inputs, index),
             )?;
         }
@@ -686,6 +686,16 @@ struct WeightedTime {
     weight: f64,
 }
 
+/// A data description's row-invariant layout; shape/selection changes refresh
+/// the plan, so variable-shaped cells keep the same validation.
+struct SolveRowLayout {
+    correlations: Vec<i32>,
+    channel_count: usize,
+    selection: Option<ChannelSelection>,
+    channels: Vec<usize>,
+    all_channels: bool,
+}
+
 /// One MAIN row's checked two-dimensional solve arrays. Scalar SIGMA weights
 /// have one channel, broadcast to the data's channel count without copying.
 struct SolveRowInputs<'a> {
@@ -747,30 +757,40 @@ impl SolveAccumulator {
     /// Add one MAIN row: its unflagged, positively weighted samples divided by
     /// the model, each weighted by its solve weight times |model|² as
     /// `VisEquation::divideCorrByModel` does, and its TIME_CENTROID.
-    pub(crate) fn observe(
+    fn observe(
         &mut self,
         ms: &MeasurementSet,
         row: &SelectedSolveRow,
         preapplied_row: Option<&EvaluatedApplyRow>,
         options: &SolveGroupOptions,
-        correlations_by_ddid: &mut HashMap<i32, Vec<i32>>,
+        layouts_by_ddid: &mut HashMap<i32, SolveRowLayout>,
         inputs: (&SolveInputBatch, usize),
     ) -> Result<(), GainSolveError> {
         let inputs = read_row_inputs(ms, row, preapplied_row, options.model_source, inputs)?;
-        let correlation_types = match correlations_by_ddid.entry(row.data_desc_id) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(correlation_types_for_ddid(ms, row.data_desc_id)?)
-            }
-        };
         let channel_count = inputs.data.shape()[1];
-        let channels = selected_channels(row.channel_selection.as_ref(), channel_count)?;
-        self.observe_samples(
+        let layout = match layouts_by_ddid.entry(row.data_desc_id) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => entry.insert(SolveRowLayout {
+                correlations: correlation_types_for_ddid(ms, row.data_desc_id)?,
+                channel_count: 0,
+                selection: None,
+                channels: vec![],
+                all_channels: false,
+            }),
+        };
+        if layout.channel_count != channel_count || layout.selection != row.channel_selection {
+            layout.channels = selected_channels(row.channel_selection.as_ref(), channel_count)?;
+            layout.all_channels = layout.channels.iter().copied().eq(0..channel_count);
+            layout.channel_count = channel_count;
+            layout.selection.clone_from(&row.channel_selection);
+        }
+        self.observe_selected_samples(
             &SolveSampleRow::of(row),
             &inputs.samples(),
-            correlation_types,
-            &channels,
+            &layout.correlations,
+            &layout.channels,
             options,
+            layout.all_channels,
         )
     }
 
@@ -778,6 +798,7 @@ impl SolveAccumulator {
     /// solve): the arithmetic of [`Self::observe`] on arrays from any source.
     /// The MSv2/MSv4 trial (`solve::batch_trial`) feeds it
     /// from `casa_observation::VisibilityBatch` views without copying them.
+    #[cfg(test)]
     pub(crate) fn observe_samples(
         &mut self,
         row: &SolveSampleRow,
@@ -785,6 +806,25 @@ impl SolveAccumulator {
         correlation_types: &[i32],
         channels: &[usize],
         options: &SolveGroupOptions,
+    ) -> Result<(), GainSolveError> {
+        self.observe_selected_samples(
+            row,
+            samples,
+            correlation_types,
+            channels,
+            options,
+            channels.iter().copied().eq(0..samples.data.ncols()),
+        )
+    }
+
+    fn observe_selected_samples(
+        &mut self,
+        row: &SolveSampleRow,
+        samples: &SolveSamples<'_>,
+        correlation_types: &[i32],
+        channels: &[usize],
+        options: &SolveGroupOptions,
+        all_channels: bool,
     ) -> Result<(), GainSolveError> {
         if options.channelized {
             let channel_count = channels.len();
@@ -841,7 +881,14 @@ impl SolveAccumulator {
                 attempted: &mut self.attempted,
                 channelized: options.channelized,
             }
-            .observe(samples, corr_index, &flags, channels, options.stokes_i);
+            .observe(
+                samples,
+                corr_index,
+                &flags,
+                channels,
+                options.stokes_i,
+                all_channels,
+            );
         }
         if row_weight > 0.0 {
             let centroid = self

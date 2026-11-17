@@ -47,6 +47,7 @@ impl SampleAccumulation<'_> {
         flags: &[bool],
         channels: &[usize],
         stokes_i: f32,
+        all_channels: bool,
     ) -> f64 {
         let data = samples.data.index_axis(Axis(0), correlation);
         let weights = samples.weights.index_axis(Axis(0), correlation);
@@ -54,7 +55,7 @@ impl SampleAccumulation<'_> {
             .model
             .map(|model| model.index_axis_move(Axis(0), correlation));
         let point = Complex32::new(stokes_i, 0.0);
-        if channels.iter().copied().eq(0..data.len()) {
+        if all_channels {
             // Strided row iterators avoid repeated two-dimensional indexing;
             // scalar weights retain their broadcast stride of zero.
             let values = data.iter().zip(weights.iter()).zip(flags);
