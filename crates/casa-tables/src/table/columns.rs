@@ -1959,6 +1959,30 @@ impl<'a> TableColumn<'a> {
             .get_array_cells_owned_uncached(&self.column, row_indices)
     }
 
+    /// Read whole 2-D cells of exactly `shape`, packed `[channel][row][axis0]`,
+    /// without populating the table cache. This never truncates extra channels.
+    ///
+    /// StandardStMan indirect arrays grow a flat block after validating each
+    /// stored shape; channel transposition or reordered rows require a second
+    /// block. Other managers hold the selected whole cells while packing.
+    /// Returns `None` for an unsupported layout, an
+    /// undefined/differently-shaped cell, an empty selection/shape, or a table
+    /// already materialized or holding pending writes. I/O errors propagate.
+    pub fn array_cells_fixed_2d_typed_uncached(
+        &self,
+        row_indices: &[usize],
+        shape: [usize; 2],
+    ) -> Result<Option<SelectedArray2DCells>, TableError> {
+        self.table.require_column(&self.column)?;
+        for &row_index in row_indices {
+            self.table
+                .require_row_index_without_loading_rows(row_index)?;
+        }
+        self.table
+            .inner
+            .fixed_2d_cells_uncached(&self.column, row_indices, shape)
+    }
+
     /// Returns typed 2-D array channel slices for selected rows without
     /// populating the table-level row cache.
     ///

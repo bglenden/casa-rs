@@ -1,7 +1,7 @@
 {
   "casa_version": "6.7.6.14",
-  "native_revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
-  "harness_revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
+  "native_revision": "03869e66e82c549c92c308b5d133619acd300454",
+  "harness_revision": "45df6a4b5c219f664579835dd28282470b199481",
   "signature": "(vis='', caltable='', fluxtable='', reference=[], transfer=[], listfile='', append=False, refspwmap=[-1], gainthreshold=-1.0, antenna='', timerange='', scan='', incremental=False, fitorder=1, display=False)",
   "comparison_failures": [],
   "cases": {
@@ -3002,7 +3002,7 @@
     },
     "listfile": {
       "arguments": {
-        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/io-final/flux.txt"
+        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/review-final-oracle/flux.txt"
       },
       "casa": {
         "value": {
@@ -3749,7 +3749,7 @@
     },
     "listfile-mapped": {
       "arguments": {
-        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/io-final/mapped.txt",
+        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/review-final-oracle/mapped.txt",
         "refspwmap": [
           0
         ]
@@ -7184,7 +7184,7 @@
     },
     "listfile-missing": {
       "arguments": {
-        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/io-final/missing.txt"
+        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/review-final-oracle/missing.txt"
       },
       "casa": {
         "value": {
@@ -7400,17 +7400,17 @@
     "vis-list": {
       "arguments": {
         "vis": [
-          "/workspace/casa-rs-cal990/target/calibration-990/io-final/original.ms"
+          "/workspace/casa-rs-cal990/target/calibration-990/review-final-oracle/original.ms"
         ]
       },
       "casa": {
         "error": "AssertionError",
-        "message": "the vis parameter must be a path that exists ('['/workspace/casa-rs-cal990/target/calibration-990/io-final/original.ms']' does not exist)",
+        "message": "the vis parameter must be a path that exists ('['/workspace/casa-rs-cal990/target/calibration-990/review-final-oracle/original.ms']' does not exist)",
         "history_rows": 0
       },
       "native": {
         "error": "TypeError",
-        "message": "invalid value for vis: invalid parameter type: value Array([String(\"/workspace/casa-rs-cal990/target/calibration-990/io-final/original.ms\")]) does not match Path { resource_kind: Some(MeasurementSet) }",
+        "message": "invalid value for vis: invalid parameter type: value Array([String(\"/workspace/casa-rs-cal990/target/calibration-990/review-final-oracle/original.ms\")]) does not match Path { resource_kind: Some(MeasurementSet) }",
         "history_rows": 0
       }
     },
@@ -7728,7 +7728,6 @@
       }
     },
     "append-exchange": {
-      "arguments": {},
       "status": "passed",
       "rows": 180
     },

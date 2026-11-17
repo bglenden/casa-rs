@@ -137,6 +137,7 @@ def main():
                     assert peaks, 'native memory/phase instrumentation missing'
                 values[name] = plain(value)
                 return dict(wall_seconds=wall, cpu_seconds=sum(after_cpu.values())-sum(before_cpu.values()),
+                            cpu_breakdown_seconds={key: after_cpu[key]-before_cpu[key] for key in before_cpu},
                             block_io={key: after_io[key]-before_io[key] for key in before_io},
                             phases_seconds=phases, native_peak_rss_kib=max(peaks, default=None), workers=1)
             # Independent numerical/table validation, outside measured repeats.

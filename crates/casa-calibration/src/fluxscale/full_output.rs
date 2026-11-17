@@ -65,7 +65,7 @@ pub(super) fn save(
             rows.iter()
                 .map(|row| {
                     let gains = estimates.get(&(row.field_id, row.spw_id)).map_or_else(
-                        || row.gains.clone(),
+                        || row.gains.to_array(),
                         |estimate| row.gains.mapv(|gain| gain * estimate.correction_factor),
                     );
                     Some(Value::Array(ArrayValue::Complex32(gains)))
@@ -73,7 +73,7 @@ pub(super) fn save(
                 .collect()
         } else if name == "FLAG" {
             rows.iter()
-                .map(|row| Some(Value::Array(ArrayValue::Bool(row.flags.clone()))))
+                .map(|row| Some(Value::Array(ArrayValue::Bool(row.flags.to_array()))))
                 .collect()
         } else {
             input

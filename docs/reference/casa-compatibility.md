@@ -262,17 +262,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 - [tools/casa-compat/fluxscale_oracle.py](https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/tools/casa-compat/fluxscale_oracle.py)
 - [crates/casa-calibration/tests/fluxscale_casa_fixture.rs](https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/crates/casa-calibration/tests/fluxscale_casa_fixture.rs)
-- Revision: `53a1ca6722ae5758f9598487be2395d8b6212205`; CASA: `6.7.6.14`.
-- Command: `python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/io-final --native-bin target/calibration-990/build/release/calibrate`.
+- Revision: `03869e66e82c549c92c308b5d133619acd300454`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/review-final-oracle --native-bin target/calibration-990/build/release/calibrate`.
 - Receipt: `resources/casa-compat/evidence/fluxscale-20261117.json`.
 
 <a id="fluxscale-evidence-performance"></a>
 ##### performance
 
-**Matched public-Python performance — measured.** Full output takes 0.206–0.230 s versus CASA 5.738–5.834 s (25.4–27.8× faster), with about 50 MB native peak RSS. Input decoding remains materially CPU-bound; performance acceptance stays open on #990. Alternating same-host, one-worker warm/cold full and incremental calls, equal validated products; separate fresh imports and peak memory, estimator phases and native table-reader floor.
+**Matched public-Python performance — measured.** Full native 0.115–0.141 s versus CASA 5.685–5.784 s, about 35 MB peak RSS; read phase 38–45 ms. CPU and thousands of source bucket reads/seeks remain material, so performance acceptance stays open on #990. Alternating same-host, one-worker warm/cold full and incremental public-Python calls, validated equal products; separate fresh imports, RSS, estimator phases, user/system CPU and native table-reader software baseline.
 
 - [tools/perf/calibrate/fluxscale.py](https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/tools/perf/calibrate/fluxscale.py)
-- Revision: `53a1ca6722ae5758f9598487be2395d8b6212205`; CASA: `6.7.6.14`.
+- Revision: `03869e66e82c549c92c308b5d133619acd300454`; CASA: `6.7.6.14`.
 - Command: `python tools/perf/calibrate/fluxscale.py --vis <oracle-ms> --gain <oracle-gain> --native-bin <release-calibrate> --repeat-input 1000 --repeats 5 --cache warm|cold --out <receipt>`.
 - Receipt: `resources/casa-compat/evidence/fluxscale-performance-20261117.json`.
 

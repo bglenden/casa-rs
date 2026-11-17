@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 mod array_shapes;
+mod fixed_arrays;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
