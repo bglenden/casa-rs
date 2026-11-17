@@ -252,6 +252,20 @@ def run(root, native_bin):
     selected = root/'selected.gcal'
     shutil.copytree(gain, selected)
     times = set_scans(selected)
+    # Exercise the sorted file-copy/selected-array path using C++-written
+    # big-endian data whose MAIN payload files cannot be modified in place.
+    readonly_gain = root/'big-endian-readonly.gcal'
+    tool = table()
+    tool.open(str(selected))
+    ordered = tool.query(sortlist='SPECTRAL_WINDOW_ID,TIME,ANTENNA1,ANTENNA2')
+    copied = ordered.copy(str(readonly_gain), deep=True, valuecopy=True, endian='big')
+    copied.close()
+    ordered.close()
+    tool.close()
+    for path in readonly_gain.glob('table.f*'):
+        if path.is_file():
+            path.chmod(0o444)
+    case('big-endian-readonly', source=readonly_gain)
     qa = quanta()
     stamp = lambda time: qa.time(qa.quantity(float(time), 's'), form='ymd', prec=10)[0]
     unique = sorted(set(times))
