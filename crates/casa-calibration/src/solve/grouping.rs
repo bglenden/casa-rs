@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selection, bucketing, and accumulation for `gaincal` and `bandpass`.
 
+mod samples;
+
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -804,8 +806,9 @@ impl SolveAccumulator {
                 .resize_with(graph_count, HashMap::new);
         }
         self.observe_metadata(row);
-        let no_weighted_data = samples.flags.iter().all(|flag| *flag)
-            || samples.weights.iter().all(|weight| *weight <= 0.0);
+        let flags = samples::channel_flags(samples);
+        let no_weighted_data =
+            flags.iter().all(|flag| *flag) || samples.weights.iter().all(|weight| *weight <= 0.0);
         let solution_channels = self.solution_channels;
         let mut row_weight = 0.0_f64;
         for (corr_index, &correlation_type) in correlation_types.iter().enumerate() {
@@ -833,37 +836,12 @@ impl SolveAccumulator {
                     correlation_index: corr_index,
                 })
                 .or_insert_with(|| vec![SolveEdgeAccumulation::default(); solution_channels]);
-            let mut channel_weights = Vec::with_capacity(if options.channelized {
-                channels.len()
-            } else {
-                0
-            });
-            let mut summed_weight = 0.0_f64;
-            for (solution_channel, &chan_index) in channels.iter().enumerate() {
-                let output_channel = if options.channelized {
-                    solution_channel
-                } else {
-                    0
-                };
-                let weight = Self::accumulate_sample(
-                    &mut accumulations[output_channel],
-                    &mut self.attempted,
-                    samples,
-                    options,
-                    corr_index,
-                    chan_index,
-                );
-                if options.channelized {
-                    channel_weights.push(weight);
-                } else {
-                    summed_weight += f64::from(weight);
-                }
+            row_weight += samples::SampleAccumulation {
+                values: accumulations,
+                attempted: &mut self.attempted,
+                channelized: options.channelized,
             }
-            row_weight += if options.channelized {
-                f64::from(median_with_even_mean(&mut channel_weights))
-            } else {
-                summed_weight
-            };
+            .observe(samples, corr_index, &flags, channels, options.stokes_i);
         }
         if row_weight > 0.0 {
             let centroid = self
@@ -889,43 +867,6 @@ impl SolveAccumulator {
         self.scan_numbers.insert(row.scan_number);
         self.antenna_ids.insert(row.antenna1);
         self.antenna_ids.insert(row.antenna2);
-    }
-
-    /// Accumulate one sample if it can enter the solve; return its effective
-    /// weight, zero when it is flagged or unusable.
-    fn accumulate_sample(
-        accumulation: &mut SolveEdgeAccumulation,
-        attempted: &mut bool,
-        samples: &SolveSamples<'_>,
-        options: &SolveGroupOptions,
-        corr_index: usize,
-        chan_index: usize,
-    ) -> f32 {
-        let weight = samples.weights[[corr_index, chan_index]];
-        if weight <= 0.0 || solve_sample_flagged(&samples.flags, options.gain_type, chan_index) {
-            return 0.0;
-        }
-        let model = match samples.model {
-            Some(model_data) => model_data[[corr_index, chan_index]],
-            None => Complex32::new(options.stokes_i, 0.0),
-        };
-        let model_norm_sqr = model.norm_sqr();
-        if model_norm_sqr <= f32::EPSILON {
-            return 0.0;
-        }
-        *attempted = true;
-        let sample = samples.data[[corr_index, chan_index]] / model;
-        let sample_power = sample.norm_sqr();
-        // Squared amplitude has the same threshold without per-sample hypot.
-        if sample_power <= f32::EPSILON * f32::EPSILON {
-            return 0.0;
-        }
-        let effective_weight = weight * model_norm_sqr;
-        accumulation.weighted_sum += sample * Complex32::new(effective_weight, 0.0);
-        accumulation.weight += effective_weight;
-        accumulation.weighted_sample_power += f64::from(effective_weight) * f64::from(sample_power);
-        accumulation.sample_count += 1;
-        effective_weight
     }
 
     /// Collapse each baseline's samples per correlation and solution channel
@@ -1252,20 +1193,6 @@ pub(crate) fn solve_flags<'a>(
         Cow::Owned(ArrayD::from_elem(flags.raw_dim(), true))
     } else {
         Cow::Borrowed(flags)
-    }
-}
-
-/// Correlation-independent flags, as `CalSolvingVi2::corrIndepFlags` makes
-/// them: a channel any correlation flags is flagged for all.
-fn solve_sample_flagged(
-    flags: &ArrayView2<'_, bool>,
-    gain_type: GainType,
-    chan_index: usize,
-) -> bool {
-    match gain_type {
-        GainType::G | GainType::T => {
-            (0..flags.shape()[0]).any(|corr_index| flags[[corr_index, chan_index]])
-        }
     }
 }
 
