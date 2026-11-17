@@ -9,13 +9,22 @@ use crate::storage::{
 
 /// Ordered RefTable descriptors from the view to its root. No cells are read
 /// and the returned path is the one whose process lock covers the view.
-fn reference_chain(mut path: PathBuf) -> Result<(PathBuf, Vec<RefTableDatContents>), TableError> {
+fn reference_chain(
+    mut path: PathBuf,
+    lock_probe: bool,
+) -> Result<(PathBuf, Vec<RefTableDatContents>), TableError> {
     let mut seen = std::collections::HashSet::new();
     let mut chain = Vec::new();
     loop {
         let control = path.join(TABLE_CONTROL_FILE);
-        if chain.is_empty() && !crate::storage::table_control::is_reference_descriptor(&control)? {
-            return Ok((path, chain));
+        match crate::storage::table_control::is_reference_descriptor(&control) {
+            // The descriptor of a plain base may be absent or incomplete
+            // while its writer holds the lock. Wait at that directory and
+            // defer validation to the locked open.
+            Ok(false) if lock_probe || chain.is_empty() => return Ok((path, chain)),
+            Err(_) if lock_probe => return Ok((path, chain)),
+            Err(error) => return Err(error.into()),
+            Ok(_) => {}
         }
         let real = std::fs::canonicalize(&path).map_err(crate::storage::StorageError::from)?;
         if !seen.insert(real) {
@@ -41,7 +50,7 @@ fn reference_chain(mut path: PathBuf) -> Result<(PathBuf, Vec<RefTableDatContent
 }
 
 pub(super) fn reference_lock_path(path: &Path) -> Result<PathBuf, TableError> {
-    reference_chain(path.to_path_buf()).map(|(root, _)| root)
+    reference_chain(path.to_path_buf(), true).map(|(root, _)| root)
 }
 
 fn base_name<'a>(chain: &'a [RefTableDatContents], mut name: &'a str) -> &'a str {
@@ -76,7 +85,8 @@ impl Table {
             return Ok(false);
         }
         let source = self.source_path.as_ref().expect("saved reference");
-        let (root, chain) = reference_chain(source.clone())?;
+        let (root, chain) = reference_chain(source.clone(), false)?;
+        self.check_reference_base(&root)?;
         let mut base = Table::open(TableOptions::new(&root))?;
         let mut selected_columns: Vec<_> =
             columns.iter().map(|col| base_name(&chain, col)).collect();
@@ -135,6 +145,20 @@ impl Table {
         Ok(true)
     }
 
+    fn check_reference_base(&self, base: &Path) -> Result<(), TableError> {
+        #[cfg(unix)]
+        if let Some(lock) = &self.lock_state
+            && !locking::same_directory(&lock.path, base)
+        {
+            return Err(TableError::Storage(
+                "the saved reference now points to a different base; reopen it".into(),
+            ));
+        }
+        #[cfg(not(unix))]
+        let _ = base;
+        Ok(())
+    }
+
     /// RefTable keywords (table and column) belong to the base table.
     /// TableInfo is stored beside the view's descriptor.
     pub(super) fn try_save_reference_metadata(
@@ -149,7 +173,8 @@ impl Table {
         {
             return Ok(false);
         }
-        let (root, chain) = reference_chain(destination.to_path_buf())?;
+        let (root, chain) = reference_chain(destination.to_path_buf(), false)?;
+        self.check_reference_base(&root)?;
         let mut table = Table::open(TableOptions::new(&root))?;
         *table.keywords_mut() = self.keywords().clone();
         for column in &chain[0].column_names {

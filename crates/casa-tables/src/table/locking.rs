@@ -91,6 +91,12 @@ impl Table {
             }
         }
 
+        if super::reference_writes::reference_lock_path(&options.path)? != lock_path {
+            return Err(TableError::Storage(
+                "the saved reference changed while acquiring its lock; reopen it".into(),
+            ));
+        }
+
         // Metadata must be read only after the initial lock is acquired. A
         // writer may publish a new table generation while this opener waits;
         // opening first would retain the stale pre-publication descriptor.
