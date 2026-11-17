@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 mod array_shapes;
+mod dirty;
 mod fixed_arrays;
 
 use std::collections::HashMap;
@@ -277,6 +278,7 @@ pub(crate) struct TableImpl {
     /// with the value at the last flush to tell whether there is anything
     /// to write (casacore's `tableChanged`/`dataManChanged` flags).
     generation: u64,
+    dirty: Option<std::sync::Mutex<dirty::DirtyChanges>>,
     /// Whether rows were added, inserted or removed since the rows were
     /// loaded or last saved in full, so that they no longer line up with
     /// the rows on disk. A partial in-place save refuses the table then
@@ -300,11 +302,6 @@ impl TableImpl {
     /// Record that the rows on disk now match these rows, after a full save.
     pub(crate) fn note_rows_persisted(&self) {
         self.rows_reshaped.store(false, Ordering::Relaxed);
-    }
-
-    /// Count one change made outside this value's own mutators.
-    pub(crate) fn note_change(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
     }
 
     pub(crate) fn retained_lazy_metadata_heap_bytes(&self) -> Option<usize> {
@@ -408,6 +405,7 @@ impl TableImpl {
             column_keywords: HashMap::new(),
             schema: None,
             generation: 0,
+            dirty: None,
             rows_reshaped: AtomicBool::new(false),
         }
     }
@@ -431,6 +429,7 @@ impl TableImpl {
             column_keywords: HashMap::new(),
             schema: None,
             generation: 0,
+            dirty: None,
             rows_reshaped: AtomicBool::new(false),
         }
     }
@@ -460,6 +459,7 @@ impl TableImpl {
             column_keywords,
             schema,
             generation: 0,
+            dirty: None,
             rows_reshaped: AtomicBool::new(false),
         }
     }
@@ -495,6 +495,7 @@ impl TableImpl {
             column_keywords,
             schema,
             generation: 0,
+            dirty: None,
             rows_reshaped: AtomicBool::new(false),
         }
     }
@@ -518,6 +519,7 @@ impl TableImpl {
             column_keywords,
             schema,
             generation: 0,
+            dirty: None,
             rows_reshaped: AtomicBool::new(false),
         }
     }
@@ -1740,7 +1742,7 @@ impl TableImpl {
         &mut self,
         row_index: usize,
     ) -> Result<Option<&mut RecordValue>, TableError> {
-        self.note_change();
+        self.note_row_change(row_index);
         Ok(self.ensure_loaded_mut()?.rows.get_mut(row_index))
     }
 
@@ -1755,7 +1757,7 @@ impl TableImpl {
         column: &str,
         value: ScalarValue,
     ) -> Result<Option<ScalarValue>, TableError> {
-        self.note_change();
+        self.note_cell_change(row_index, column);
         if let Some(loaded_rows) = self.loaded_rows.get_mut() {
             // Cells written before the rows were loaded are in them now; an
             // older value must not be saved over this one.
@@ -1799,7 +1801,7 @@ impl TableImpl {
         column: &str,
         value: ArrayValue,
     ) -> Result<Option<ArrayValue>, TableError> {
-        self.note_change();
+        self.note_cell_change(row_index, column);
         if let Some(loaded_rows) = self.loaded_rows.get_mut() {
             // As in `set_cached_scalar_cell`.
             self.pending_scalar_cells.by_column.clear();
@@ -1895,7 +1897,7 @@ impl TableImpl {
         &mut self,
         row_index: usize,
     ) -> Result<Option<&mut HashSet<String>>, TableError> {
-        self.note_change();
+        self.note_row_change(row_index);
         Ok(self.ensure_loaded_mut()?.undefined_cells.get_mut(row_index))
     }
 
@@ -1926,7 +1928,7 @@ impl TableImpl {
     }
 
     pub(crate) fn keywords_mut(&mut self) -> &mut RecordValue {
-        self.note_change();
+        self.note_metadata_change();
         &mut self.keywords
     }
 
@@ -1935,7 +1937,7 @@ impl TableImpl {
     }
 
     pub(crate) fn set_column_keywords(&mut self, column: String, keywords: RecordValue) {
-        self.note_change();
+        self.note_metadata_change();
         self.column_keywords.insert(column, keywords);
     }
 
@@ -1944,12 +1946,12 @@ impl TableImpl {
     }
 
     pub(crate) fn remove_column_keywords(&mut self, column: &str) -> Option<RecordValue> {
-        self.note_change();
+        self.note_metadata_change();
         self.column_keywords.remove(column)
     }
 
     pub(crate) fn rename_column_keywords(&mut self, old: &str, new: String) {
-        self.note_change();
+        self.note_metadata_change();
         if let Some(kw) = self.column_keywords.remove(old) {
             self.column_keywords.insert(new, kw);
         }

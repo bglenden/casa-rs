@@ -116,20 +116,17 @@ impl Table {
             return Ok(());
         }
         self.inner.note_rows_persisted();
+        self.mark_flushed();
         #[cfg(unix)]
-        if let Some(state) = self.lock_state.as_ref() {
-            state.flushed_generation.store(
-                self.inner.generation(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            if state.lock_file.has_lock(LockType::Write) {
-                crate::lock::publish_persisted_rows(&state.lock_file, &state.path).map_err(
-                    |e| TableError::LockIo {
-                        path: state.path.display().to_string(),
-                        message: e.to_string(),
-                    },
-                )?;
-            }
+        if let Some(state) = self.lock_state.as_ref()
+            && state.lock_file.has_lock(LockType::Write)
+        {
+            crate::lock::publish_persisted_rows(&state.lock_file, &state.path).map_err(|e| {
+                TableError::LockIo {
+                    path: state.path.display().to_string(),
+                    message: e.to_string(),
+                }
+            })?;
         }
         Ok(())
     }

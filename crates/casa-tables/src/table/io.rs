@@ -314,6 +314,13 @@ impl Table {
         self.note_persisted_write(&options.path);
         let storage = CompositeStorage;
         storage.save_metadata_only(&options.path, &snapshot)?;
+        if self
+            .source_path
+            .as_deref()
+            .is_some_and(|path| super::locking::same_directory(path, &options.path))
+        {
+            self.inner.note_metadata_saved();
+        }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
         Ok(())
     }
@@ -1021,7 +1028,10 @@ impl Table {
             profiler.mark("write_control_file");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(source_path);
-        self.inner.refresh_read_metadata(table_dat)
+        self.inner.refresh_read_metadata(table_dat)?;
+        self.inner
+            .note_selected_cells_saved(changed_columns, changed_rows.as_deref().unwrap_or(&[]));
+        Ok(())
     }
 
     /// Drop successfully persisted lazy cell updates for a bounded write batch.
@@ -1424,7 +1434,7 @@ impl Table {
     ///
     /// `Table::tableInfo()` (mutable overload) followed by `Table::flushTableInfo()`.
     pub fn set_info(&mut self, info: TableInfo) {
-        self.inner.note_change();
+        self.inner.note_metadata_change();
         self.table_info = info;
     }
 
@@ -1695,6 +1705,10 @@ impl Table {
     pub(super) fn reload_disk_state_at(&mut self, path: &Path) -> Result<(), TableError> {
         let mut reloaded = Table::open(TableOptions::new(path))?;
         self.inner = std::mem::take(&mut reloaded.inner);
+        #[cfg(unix)]
+        if self.lock_state.is_some() {
+            self.inner.track_dirty_changes();
+        }
         self.virtual_columns = std::mem::take(&mut reloaded.virtual_columns);
         self.virtual_bindings = std::mem::take(&mut reloaded.virtual_bindings);
         self.table_info = std::mem::take(&mut reloaded.table_info);

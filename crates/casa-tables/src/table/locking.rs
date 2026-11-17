@@ -96,6 +96,7 @@ impl Table {
         // Ordinary open remains lazy, so retained readers do not materialize
         // row payloads here.
         let mut table = load(options.clone())?;
+        table.inner.track_dirty_changes();
 
         // Read sync data if available.
         let sync_data = lock_file
@@ -417,12 +418,7 @@ impl Table {
     pub fn resync_or_discard(&mut self) -> Result<(), TableError> {
         let reloaded = self.resync();
         if reloaded.is_err() {
-            let generation = self.inner.generation();
-            if let Some(state) = self.lock_state.as_mut() {
-                state
-                    .flushed_generation
-                    .store(generation, std::sync::atomic::Ordering::Relaxed);
-            }
+            self.mark_flushed();
         }
         reloaded
     }
@@ -454,6 +450,7 @@ impl Table {
     /// does) was refused before it wrote anything.
     #[cfg(unix)]
     pub(super) fn mark_flushed(&self) {
+        self.inner.clear_dirty_changes();
         if let Some(state) = self.lock_state.as_ref() {
             state.flushed_generation.store(
                 self.inner.generation(),
@@ -504,13 +501,8 @@ impl Table {
             } else if metadata_only {
                 self.save_metadata_only(save_opts)?;
             } else {
-                self.save(save_opts)?;
+                self.flush_locked_changes()?;
             }
-            let generation = self.inner.generation();
-            let state = self.lock_state.as_mut().expect("lock_state present");
-            state
-                .flushed_generation
-                .store(generation, std::sync::atomic::Ordering::Relaxed);
         }
 
         // Publish every write this lock period made to the disk (and not
@@ -530,6 +522,58 @@ impl Table {
         }
 
         Ok(())
+    }
+
+    /// Flush the outstanding scope while preserving the persisted layout.
+    #[cfg(unix)]
+    pub(super) fn flush_locked_changes(&mut self) -> Result<(), TableError> {
+        let Some(state) = &self.lock_state else {
+            return Ok(());
+        };
+        let path = state.path.clone();
+        let Some(dirty) = self.inner.dirty_changes() else {
+            return self.flush_full_locked_layout();
+        };
+        if self.is_named_memory_manager() {
+            return self.finish_memory_manager_write(dirty.metadata || dirty.whole);
+        }
+        if dirty.whole {
+            return self.flush_full_locked_layout();
+        }
+        let mut groups = std::collections::BTreeMap::<Vec<usize>, Vec<String>>::new();
+        for (column, rows) in dirty.cells {
+            groups
+                .entry(rows.into_iter().collect())
+                .or_default()
+                .push(column);
+        }
+        for (rows, mut columns) in groups {
+            columns.sort_unstable();
+            let columns: Vec<_> = columns.iter().map(String::as_str).collect();
+            if let Err(error) = self.persist_selected_rows_in_place(&columns, &rows) {
+                if matches!(&error, TableError::Storage(message)
+                    if message.starts_with("partial in-place save does not support"))
+                    && let Some(options) = self.single_rewrite_options()?
+                {
+                    return self.save(options);
+                }
+                return Err(error);
+            }
+        }
+        if dirty.metadata {
+            self.save_metadata_only(TableOptions::new(path))?;
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn flush_full_locked_layout(&self) -> Result<(), TableError> {
+        if let Some(options) = self.single_rewrite_options()? {
+            return self.save(options);
+        }
+        Err(TableError::Storage(
+            "locked table has unscoped changes that require an explicit in-place write plan".into(),
+        ))
     }
 
     /// Returns `true` if the given lock type is currently held.
@@ -630,15 +674,9 @@ impl Table {
         if self.kind == TableKind::Memory && !self.is_named_memory_manager() {
             return Ok(false);
         }
-        // Some write operations change only the data managers or the files
-        // on disk, which the change count of the rows does not see. An
-        // admitted operation counts even if it later fails, since it may have
-        // written part of its change; a refused one does not.
-        let admitted = self.admit_write_operation(operation);
-        if admitted.is_ok() {
-            self.inner.note_change();
-        }
-        admitted
+        // In-memory mutators record their own scope. Disk edits record that
+        // they need publication before the first write, even on failure.
+        self.admit_write_operation(operation)
     }
 
     #[cfg(unix)]

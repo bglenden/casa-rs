@@ -274,24 +274,17 @@ pub(super) fn write_root(
             "ColumnSet::doLock: table {name} should be locked when using UserLocking"
         ));
     }
-    // Whether the change wrote itself and the handle holds what it wrote.
-    let mut written = false;
     let saved = change(&mut root.table, row_map).and_then(|persist| {
         if named_memory {
             let metadata = !matches!(target, Target::Cells | Target::RowProxy)
                 && !matches!(persist, Persist::Nothing);
-            written = true;
             return root
                 .table
                 .finish_memory_manager_write(metadata)
                 .map_err(Fail::from);
         }
         match persist {
-            Persist::Nothing => Ok(()),
-            Persist::Done => {
-                written = true;
-                Ok(())
-            }
+            Persist::Nothing | Persist::Done => Ok(()),
             Persist::Metadata => root
                 .table
                 .save_metadata_only(TableOptions::new(&root.name))
@@ -329,29 +322,14 @@ pub(super) fn write_root(
             }
         }
     });
-    // A table that holds the write lock and has changes it has not
-    // flushed is written in full, as StManAipsIO, when it is closed or
-    // dropped: a `user` table closed without an unlock, a `permanent`
-    // one always (a `casa-tables` defect, #1035; this reload is the
-    // workaround and goes with its fix). The change is on disk, or part
-    // of it is if the save failed part way; either way the table is
-    // reloaded as the disk has it, so that nothing is left to flush, and
-    // what reached the disk is still published when the lock is
-    // released. A reload that fails marks the table clean all the same
-    // (`resync_or_discard`): the full write must never be left to a
-    // drop. An automatic table releases through
-    // `unlock_metadata_only_or_discard`, which does the same when the
-    // release fails. The release comes last whatever else went wrong,
-    // so an error never leaves the write lock held with changes. A
-    // change that wrote itself needs no reload: the handle is what it
-    // wrote (a full save marks it flushed), and a reload under the lock
-    // would read the row count last published, which a removal of rows
-    // has lowered.
+    // Successful saves clear only the edits they persisted. After a failure,
+    // discard the unpersisted edits while still publishing anything that
+    // reached disk; do not let closing the handle retry a failed mutation.
     let reloaded = if named_memory && saved.is_err() {
         root.table
             .finish_memory_manager_write(false)
             .map_err(Fail::from)
-    } else if !named_memory && (saved.is_err() || (!automatic && !written)) {
+    } else if saved.is_err() {
         root.table.resync_or_discard().map_err(Fail::from)
     } else {
         Ok(())

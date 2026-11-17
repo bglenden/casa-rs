@@ -1863,10 +1863,12 @@ struct LockState {
 impl LockState {
     /// Whether the table changed since its state last matched the disk.
     fn has_unflushed_changes(&self, table: &TableImpl) -> bool {
-        table.generation()
-            != self
-                .flushed_generation
-                .load(std::sync::atomic::Ordering::Relaxed)
+        table.has_dirty_changes().unwrap_or_else(|| {
+            table.generation()
+                != self
+                    .flushed_generation
+                    .load(std::sync::atomic::Ordering::Relaxed)
+        })
     }
 
     /// Whether this lock period wrote the table on disk without yet
@@ -2330,17 +2332,8 @@ impl Drop for Table {
                         && state.has_unflushed_changes(&self.inner)
                 });
 
-                if has_changes_to_flush {
-                    let save_opts = self.lock_state.as_ref().map(|state| {
-                        TableOptions::new(&state.path)
-                            .with_data_manager(state.data_manager)
-                            .with_endian_format(state.endian_format)
-                    });
-                    if self.is_named_memory_manager() {
-                        let _ = self.finish_memory_manager_write(true);
-                    } else if let Some(save_opts) = save_opts {
-                        let _ = self.save(save_opts);
-                    }
+                if has_changes_to_flush && let Err(error) = self.flush_locked_changes() {
+                    tracing::warn!(%error, "could not flush changes while dropping locked table");
                 }
 
                 // Whatever part of this save, or of an earlier write under

@@ -68,7 +68,7 @@ impl Table {
     ///
     /// `TableCopy::copyInfo(target, source)`.
     pub fn copy_info(&mut self, source: &Table) {
-        self.inner.note_change();
+        self.inner.note_metadata_change();
         self.table_info = source.table_info.clone();
     }
 

@@ -211,3 +211,134 @@ fn published_cell_changes_keep_cold_readers_lazy_and_discard_stale_cells() {
         assert!(table.has_lock(LockType::Read));
     }
 }
+
+fn mixed_table_with_write_lock() -> (tempfile::TempDir, TableOptions, Table) {
+    use crate::ColumnBinding;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let options = TableOptions::new(dir.path().join("mixed.table"))
+        .with_data_manager(DataManagerKind::StandardStMan);
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("mark", PrimitiveType::Int32),
+    ])
+    .expect("schema");
+    let rows = vec![RecordValue::new(vec![
+        RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+        RecordField::new("mark", Value::Scalar(ScalarValue::Int32(2))),
+    ])];
+    Table::from_rows_with_schema(rows, schema)
+        .expect("table")
+        .save_with_bindings(
+            options.clone(),
+            &std::collections::HashMap::from([(
+                "mark".into(),
+                ColumnBinding {
+                    data_manager: DataManagerKind::IncrementalStMan,
+                    tile_shape: None,
+                },
+            )]),
+        )
+        .expect("save");
+    let mut writer = handle(&options);
+    assert!(writer.lock(LockType::Write, 1).expect("write lock"));
+    (dir, options, writer)
+}
+
+#[test]
+fn dropping_after_persisting_only_metadata_does_not_rewrite_managers() {
+    let (_dir, options, mut writer) = mixed_table_with_write_lock();
+    let managers = writer.data_manager_info().to_vec();
+    mark(&mut writer, "CHANGED");
+    writer
+        .save_metadata_only(options.clone())
+        .expect("save metadata");
+    drop(writer);
+    let reopened = handle(&options);
+    assert_eq!(reopened.data_manager_info(), managers);
+    assert!(reopened.keywords().get("CHANGED").is_some());
+}
+
+#[test]
+fn dropping_after_a_partial_save_flushes_the_unrelated_cell_in_place() {
+    let (_dir, options, mut writer) = mixed_table_with_write_lock();
+    let managers = writer.data_manager_info().to_vec();
+    writer
+        .cell_accessor_mut(0, "id")
+        .unwrap()
+        .set(Value::Scalar(ScalarValue::Int32(10)))
+        .unwrap();
+    writer
+        .cell_accessor_mut(0, "mark")
+        .unwrap()
+        .set(Value::Scalar(ScalarValue::Int32(20)))
+        .unwrap();
+    writer
+        .prepare_write()
+        .save_selected_rows(&["id"], &[0])
+        .expect("save first cell");
+    assert_eq!(
+        Table::open(options.clone())
+            .unwrap()
+            .cell_accessor(0, "mark")
+            .unwrap()
+            .scalar()
+            .unwrap(),
+        &ScalarValue::Int32(2)
+    );
+    drop(writer);
+    let reopened = handle(&options);
+    assert_eq!(reopened.data_manager_info(), managers);
+    assert_eq!(
+        reopened.cell_accessor(0, "id").unwrap().scalar().unwrap(),
+        &ScalarValue::Int32(10)
+    );
+    assert_eq!(
+        reopened.cell_accessor(0, "mark").unwrap().scalar().unwrap(),
+        &ScalarValue::Int32(20)
+    );
+}
+
+#[test]
+fn a_locked_aipsio_flush_keeps_the_group_and_stored_byte_order() {
+    use crate::EndianFormat;
+    let dir = tempfile::tempdir().unwrap();
+    let original = TableOptions::new(dir.path().join("be.table"))
+        .with_endian_format(EndianFormat::BigEndian)
+        .with_data_manager_group("big");
+    let schema = TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+    let rows = vec![RecordValue::new(vec![RecordField::new(
+        "id",
+        Value::Scalar(ScalarValue::Int32(1)),
+    )])];
+    Table::from_rows_with_schema(rows, schema)
+        .unwrap()
+        .save(original.clone())
+        .unwrap();
+    // No data-manager or endian override was requested when opening.
+    let options = TableOptions::new(original.path());
+    let mut writer = handle(&options);
+    assert!(writer.lock(LockType::Write, 1).unwrap());
+    writer
+        .cell_accessor_mut(0, "id")
+        .unwrap()
+        .set(Value::Scalar(ScalarValue::Int32(6)))
+        .unwrap();
+    writer.unlock().unwrap();
+    let reopened = Table::open(options).unwrap();
+    assert_eq!(
+        reopened.stored_endian_format().unwrap(),
+        Some(EndianFormat::BigEndian)
+    );
+    assert_eq!(
+        reopened
+            .stored_table_description()
+            .unwrap()
+            .unwrap()
+            .declared_managers,
+        [("id".into(), "StManAipsIO".into(), "big".into())],
+    );
+    assert_eq!(
+        reopened.cell_accessor(0, "id").unwrap().scalar().unwrap(),
+        &ScalarValue::Int32(6)
+    );
+}
