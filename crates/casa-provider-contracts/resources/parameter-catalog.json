@@ -12235,6 +12235,50 @@
         ]
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.intent",
+      "semantic_revision": 3,
+      "casa_name": "intent",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "casa_field"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Intent selector.",
+        "details": "CASA's scalar calibration selector text: preserve every character, including empty text and literal names such as 'none' or 'auto'; parse it natively.",
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.uvrange",
+      "semantic_revision": 3,
+      "casa_name": "uvrange",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "casa_field"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "UV range selector.",
+        "details": "CASA's scalar calibration selector text: preserve every character, including empty text and literal names such as 'none' or 'auto'; parse it natively.",
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
     }
   ]
 }

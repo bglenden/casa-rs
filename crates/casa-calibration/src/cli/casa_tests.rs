@@ -182,6 +182,20 @@ fn docallib_chooses_the_calibration_library() {
 }
 
 #[test]
+fn applycal_selectors_are_scalar_text_and_only_empty_text_is_absent() {
+    let defaults = apply(json!({"vis":"d.ms", "gaintable":["g.cal"]}));
+    assert!(defaults.selection.intent.is_none());
+    assert!(defaults.selection.uvrange.is_none());
+    for text in ["none", "auto", " CALIBRATE_PHASE* ", "/.*$/"] {
+        let request = apply(json!({
+            "vis":"d.ms", "gaintable":["g.cal"], "intent":text, "uvrange":text
+        }));
+        assert_eq!(request.selection.intent.as_deref(), Some(text));
+        assert_eq!(request.selection.uvrange.as_deref(), Some(text));
+    }
+}
+
+#[test]
 fn selectdata_false_keeps_field_and_spw_and_drops_the_other_selectors() {
     let selection = |selectdata: bool| {
         apply(json!({

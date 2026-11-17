@@ -5,7 +5,6 @@ use super::antenna_expr::regex::FieldRegex;
 use crate::{MsError, MsResult};
 
 pub(super) fn resolve(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<i32>> {
-    let text = text.trim();
     let text = if let Some(inner) = text.strip_prefix('(') {
         inner.strip_suffix(')').ok_or_else(|| invalid(text))?
     } else {
@@ -17,17 +16,15 @@ pub(super) fn resolve(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<i32>>
         let atoms = split(term, '&')?;
         if atoms.len() > 1
             && !(atoms.len() == 2 && atoms[0].starts_with('>') && atoms[1].starts_with('<'))
-            && atoms.iter().any(|atom| {
-                atom.starts_with(['<', '>'])
-                    || atom.bytes().all(|byte| byte.is_ascii_digit())
-                    || atom.contains('~')
-            })
+            && atoms
+                .iter()
+                .any(|atom| atom.starts_with(['<', '>']) || numeric_reference(atom))
         {
             return Err(invalid(term));
         }
         for atom in atoms {
             let mask = atom_mask(atom, rows)?;
-            if !mask.iter().any(|value| *value) {
+            if !mask.iter().any(|value| *value) && !numeric_reference(atom) {
                 return Err(MsError::VersionError(format!(
                     "intent selector {atom:?} did not match any STATE rows"
                 )));
@@ -39,6 +36,11 @@ pub(super) fn resolve(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<i32>>
         for (value, included) in selected.iter_mut().zip(matching) {
             *value |= included;
         }
+    }
+    if !selected.iter().any(|value| *value) {
+        return Err(MsError::VersionError(format!(
+            "intent selector {text:?} did not match any STATE rows"
+        )));
     }
     Ok(selected
         .into_iter()
@@ -56,8 +58,8 @@ fn split(text: &str, separator: char) -> MsResult<Vec<&str>> {
             Some(close) if character == close => delimiter = None,
             None if matches!(character, '"' | '/') => delimiter = Some(character),
             None if character == separator => {
-                let part = text[start..index].trim();
-                if part.is_empty() {
+                let part = &text[start..index];
+                if part.trim().is_empty() {
                     return Err(invalid(text));
                 }
                 parts.push(part);
@@ -66,8 +68,8 @@ fn split(text: &str, separator: char) -> MsResult<Vec<&str>> {
             _ => {}
         }
     }
-    let last = text[start..].trim();
-    if delimiter.is_some() || last.is_empty() {
+    let last = &text[start..];
+    if delimiter.is_some() || last.trim().is_empty() {
         return Err(invalid(text));
     }
     parts.push(last);
@@ -104,7 +106,7 @@ fn atom_mask(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<bool>> {
         let bound = number(bound)?;
         return Ok((0..rows.len()).map(|index| index as i64 > bound).collect());
     }
-    if decimal(text) {
+    if decimal(text.trim()) {
         let id = number(text)?;
         return Ok((0..rows.len()).map(|index| index as i64 == id).collect());
     }
@@ -126,7 +128,7 @@ fn atom_mask(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<bool>> {
         {
             return Err(invalid(text));
         }
-        Some(FieldRegex::compile(text, false).map_err(MsError::InvalidInput)?)
+        Some(FieldRegex::compile(text.trim_matches(' '), false).map_err(MsError::InvalidInput)?)
     };
     rows.iter()
         .map(|(mode, flagged)| {
@@ -156,6 +158,14 @@ fn atom_mask(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<bool>> {
 
 fn name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"_{}+-.=;@#%:! ".contains(&byte)
+}
+
+fn numeric_reference(text: &str) -> bool {
+    let decimal = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    decimal(text.trim())
+        || text
+            .split_once('~')
+            .is_some_and(|(first, _)| decimal(first.trim()))
 }
 
 fn invalid(text: &str) -> MsError {
@@ -190,10 +200,18 @@ mod tests {
             ("0~2147483647", vec![0, 1, 2]),
             (">0&<2", vec![1]),
             ("(0,1)", vec![0, 1]),
+            ("0,999", vec![0]),
         ] {
             assert_eq!(resolve(text, &rows).unwrap(), expected, "{text}");
         }
-        for text in ["NO_SUCH_INTENT", "0~", "0~1,", "\"unclosed", "999"] {
+        for text in [
+            "NO_SUCH_INTENT",
+            "0~",
+            "0~1,",
+            "\"unclosed",
+            "999",
+            "CALIBRATE_PHASE#ON_SOURCE, OBSERVE_TARGET#ON_SOURCE",
+        ] {
             assert!(resolve(text, &rows).is_err(), "{text}");
         }
     }
