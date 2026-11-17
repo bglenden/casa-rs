@@ -128,6 +128,21 @@ def run(root, native_bin):
         tool.close()
         polarized_sources[basis] = path
 
+    selection_source = root/'source-selection.ms'
+    copy_ms(source, selection_source)
+    tool.open(str(selection_source/'STATE'), nomodify=False)
+    state_start = tool.nrows()
+    tool.addrows(2)
+    for index, mode in enumerate(['CALIBRATE_PHASE#ON_SOURCE,CALIBRATE_WVR#ON_SOURCE',
+                                  'OBSERVE_TARGET#ON_SOURCE']):
+        for column, value in [('SIG', True), ('REF', False), ('CAL', 0.), ('LOAD', 0.),
+                              ('SUB_SCAN', 0), ('OBS_MODE', mode), ('FLAG_ROW', False)]:
+            tool.putcell(column, state_start+index, value)
+    tool.close()
+    tool.open(str(selection_source), nomodify=False)
+    tool.putcol('STATE_ID', np.where(tool.getcol('FIELD_ID') == 0, state_start, state_start+1))
+    tool.close()
+
     result = dict(casa_version=casa.version_string(), signature=str(reference), cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
@@ -290,6 +305,33 @@ def run(root, native_bin):
         case('parang-'+basis+'-channels', dict(gaintable=[], parang=True, spw='0:0~6^2'), input_vis=input_vis, precorrected=True)
         for mode in ['trial', 'flagonly']:
             case('parang-'+basis+'-'+mode, dict(gaintable=[], parang=True, applymode=mode), input_vis=input_vis)
+    for name, selector in [
+            ('phase-exact', 'CALIBRATE_PHASE#ON_SOURCE'),
+            ('phase-prefix', 'CALIBRATE_PHASE'),
+            ('phase-glob', '*PHASE*'),
+            ('calibrate', 'CALIBRATE*'),
+            ('target', 'OBSERVE_TARGET#ON_SOURCE'),
+            ('union', 'CALIBRATE_PHASE*,OBSERVE_TARGET*'),
+            ('state-id', str(state_start))]:
+        case('selection-intent-'+name, dict(intent=selector), input_vis=selection_source, precorrected=True)
+    for name, selector in [('less-m', '<35m'), ('greater-m', '>35m'),
+                           ('range-m', '20~50m'), ('range-km', '0.02~0.05km'),
+                           ('lambda', '<15000lambda'), ('klambda', '<15klambda'),
+                           ('union', '0~25m,40~60m')]:
+        case('selection-uv-'+name, dict(uvrange=selector), input_vis=selection_source, precorrected=True)
+    case('selection-combined', dict(intent='*PHASE*', uvrange='<50m', spw='0:2~5', antenna='A0&'), input_vis=selection_source, precorrected=True)
+    case('selection-new-corrected', dict(intent='*PHASE*', uvrange='<50m'), input_vis=selection_source)
+    case('selection-disabled', dict(selectdata=False, intent='*PHASE*', uvrange='invalid', timerange='invalid', antenna='invalid', scan='invalid', observation='invalid', msselect='invalid'), input_vis=selection_source, precorrected=True)
+    case('selection-disabled-field-spw', dict(selectdata=False, field='PHASE', intent='OBSERVE_TARGET*', spw='0:2~5', uvrange='invalid'), input_vis=selection_source, precorrected=True)
+    for name, arguments in [
+            ('unknown-intent', dict(intent='NO_SUCH_INTENT')),
+            ('invalid-uv', dict(uvrange='invalid')),
+            ('empty-uv', dict(uvrange='>1000000000m')),
+            ('empty-intersection', dict(intent='*PHASE*', field='PHASE')),
+            ('disabled-intent-active', dict(selectdata=False, intent='NO_SUCH_INTENT')),
+            ('backup-before-error', dict(uvrange='invalid', flagbackup=True)),
+            ('trial-error', dict(uvrange='invalid', applymode='trial'))]:
+        case('selection-'+name, arguments, input_vis=selection_source)
     return result
 
 

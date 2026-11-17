@@ -27,7 +27,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 5 | <code>image_analysis</code> | 12 | Export CASA images to FITS |
 | [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 5 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
 | [Split](#surface-split)<br><code>split</code> | task | 5 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
-| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 6 | <code>calibration</code> | 25 | Apply one or more calibration tables to a MeasurementSet. |
+| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 7 | <code>calibration</code> | 25 | Apply one or more calibration tables to a MeasurementSet. |
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 6 | <code>calibration</code> | 42 | Solve antenna gain calibration for a MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 7 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
@@ -604,7 +604,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Applycal (<code>applycal</code>)
 
 - Kind: `task`
-- Contract version: `6`
+- Contract version: `7`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Apply one or more calibration tables to a MeasurementSet.

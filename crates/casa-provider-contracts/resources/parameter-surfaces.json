@@ -14185,7 +14185,7 @@
     {
       "kind": "task",
       "id": "applycal",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "Applycal",
       "category": "Calibration",
       "summary": "Apply one or more calibration tables to a MeasurementSet.",
@@ -14281,8 +14281,7 @@
             "provider": {"field": "intent"},
             "python": {"name": "intent"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 979}
+          }
         },
         {
           "name": "selectdata",
@@ -14319,14 +14318,13 @@
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
+          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
             "provider": {"field": "uvrange"},
             "python": {"name": "uvrange"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "antenna",

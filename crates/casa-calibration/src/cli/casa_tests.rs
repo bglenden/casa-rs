@@ -190,6 +190,8 @@ fn selectdata_false_keeps_field_and_spw_and_drops_the_other_selectors() {
             "selectdata": selectdata,
             "field": "1",
             "spw": "0",
+            "intent": "CALIBRATE_PHASE*",
+            "uvrange": "<50m",
             "antenna": "A0",
             "scan": "2",
         }))
@@ -198,6 +200,7 @@ fn selectdata_false_keeps_field_and_spw_and_drops_the_other_selectors() {
     let all = MsSelection {
         field: Some("1".into()),
         spw: Some("0".into()),
+        intent: Some("CALIBRATE_PHASE*".into()),
         ..MsSelection::new()
     };
     assert_eq!(selection(false), all);
@@ -206,6 +209,7 @@ fn selectdata_false_keeps_field_and_spw_and_drops_the_other_selectors() {
         MsSelection {
             antenna: Some("A0".into()),
             scan: Some("2".into()),
+            uvrange: Some("<50m".into()),
             ..all
         }
     );

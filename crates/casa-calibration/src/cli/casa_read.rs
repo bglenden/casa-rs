@@ -254,7 +254,7 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
     })
 }
 
-/// CASA's selection: `field` and `spw` always; the others are inactive,
+/// CASA's selection: `field`, `spw` and `intent` always; the others are inactive,
 /// and so unset, while `selectdata` is not.
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
     let text = |name: &str| task.text(name);
@@ -262,6 +262,8 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         selectdata: true,
         field: text("field")?,
         spw: text("spw")?,
+        intent: text("intent")?,
+        uvrange: text("uvrange")?,
         antenna: text("antenna")?,
         scan: text("scan")?,
         observation: text("observation")?,
