@@ -1579,7 +1579,13 @@ fn encode_array_value(
             ));
         }
     };
+    encode_tiled_array(arr, big_endian)
+}
 
+fn encode_tiled_array(
+    arr: &ArrayValue,
+    big_endian: bool,
+) -> Result<(Vec<u8>, CasacoreDataType), StorageError> {
     // Tile data is stored in Fortran (column-major) order. Most arrays read
     // from casacore tables already have that memory order, so use the raw
     // memory-order slice before falling back to a transposed contiguous copy.
@@ -5147,8 +5153,7 @@ fn patch_tiled_cube_sparse_rows(
             }
             let encoded = match value {
                 Some(value) => {
-                    let wrapped = Value::Array(value.clone());
-                    let (encoded, dt) = encode_array_value(&wrapped, big_endian)?;
+                    let (encoded, dt) = encode_tiled_array(value, big_endian)?;
                     if dt != col_data_type {
                         return Err(StorageError::FormatMismatch(format!(
                             "tiled sparse save column {} expected {:?} but encoded {:?}",
@@ -5196,24 +5201,31 @@ fn patch_tiled_cube_sparse_rows(
 
     let tsm_path = tsm_data_path(table_path, dm_seq_nr, cube.file_seq_nr as u32);
     let mut file = OpenOptions::new().read(true).write(true).open(&tsm_path)?;
+    let file_len = file.metadata()?.len();
+    let mut packed_bucket = vec![0u8; bucket_size];
+    let writes_all_numeric_columns = column_patches.len() == col_data_types.len()
+        && column_patches
+            .iter()
+            .all(|column| column.col_data_type != CasacoreDataType::TpBool);
     for (row_tile_idx, row_tile_patches) in patches_by_row_tile {
         if row_tile_idx >= tiles_per_dim[row_axis] {
             continue;
         }
+        let covers_row_tile = writes_all_numeric_columns
+            && cube.cube_shape[row_axis] - row_tile_idx * row_tile_len >= row_tile_len
+            && row_tile_patches.len() == row_tile_len
+            && row_tile_patches.iter().enumerate().all(|(local, patch)| {
+                patch.pos_in_cube == row_tile_idx * row_tile_len + local
+                    && column_patches
+                        .iter()
+                        .all(|column| column.encoded_rows.contains_key(&patch.global_row_idx))
+            });
         for cell_tile_linear in 0..cell_tile_total {
-            let cell_tile_pos = if cell_tiles_per_dim.is_empty() {
-                Vec::new()
-            } else {
-                linear_to_nd(cell_tile_linear, cell_tiles_per_dim)
-            };
+            let cell_tile_pos = linear_to_nd(cell_tile_linear, cell_tiles_per_dim);
             let mut tile_pos = cell_tile_pos.clone();
             tile_pos.push(row_tile_idx);
             let tile_idx = nd_to_linear(&tile_pos, &tiles_per_dim);
             let tile_start = cube.file_offset as usize + tile_idx * bucket_size;
-            let mut packed_bucket = vec![0u8; bucket_size];
-            file.seek(SeekFrom::Start(tile_start as u64))?;
-            file.read_exact(&mut packed_bucket)?;
-
             let cell_cube_start: Vec<usize> = (0..row_axis)
                 .map(|dim| cell_tile_pos.get(dim).copied().unwrap_or(0) * cube.tile_shape[dim])
                 .collect();
@@ -5222,41 +5234,51 @@ fn patch_tiled_cube_sparse_rows(
                     std::cmp::min(cube.tile_shape[dim], cell_shape[dim] - cell_cube_start[dim])
                 })
                 .collect();
+            // A complete numeric tile can be replaced from the selected cells.
+            // Keep existing padding, packed bits and unassigned columns for
+            // partial tiles. A truncated file still takes the checking read.
+            if !covers_row_tile
+                || actual_cell_extent != tile_cell_shape
+                || file_len.saturating_sub(tile_start as u64) < bucket_size as u64
+            {
+                file.seek(SeekFrom::Start(tile_start as u64))?;
+                file.read_exact(&mut packed_bucket)?;
+            }
 
             for column_patch in &column_patches {
                 let src_start = column_patch.col_offset;
                 let src_end = src_start + column_patch.tile_storage_len;
-                let mut unpacked_tile = read_tile_storage(
-                    &packed_bucket[src_start..src_end],
-                    column_patch.col_data_type,
-                    nrpixels,
-                );
-                for patch in &row_tile_patches {
-                    let Some(encoded_row) = column_patch.encoded_rows.get(&patch.global_row_idx)
-                    else {
-                        continue;
-                    };
-                    debug_assert_eq!(encoded_row.len(), column_patch.expected_row_bytes);
-                    let local_row = patch.pos_in_cube % row_tile_len;
-                    let row_slice_start = local_row * column_patch.row_block_bytes;
-                    let row_slice_end = row_slice_start + column_patch.row_block_bytes;
-                    let row_tile = &mut unpacked_tile[row_slice_start..row_slice_end];
-                    copy_cube_to_tile(
-                        encoded_row,
-                        cell_shape,
-                        row_tile,
-                        tile_cell_shape,
-                        &cell_cube_start,
-                        &actual_cell_extent,
-                        column_patch.elem_size,
-                    );
+                let patch_tile = |tile: &mut [u8]| {
+                    for patch in &row_tile_patches {
+                        let Some(encoded_row) =
+                            column_patch.encoded_rows.get(&patch.global_row_idx)
+                        else {
+                            continue;
+                        };
+                        debug_assert_eq!(encoded_row.len(), column_patch.expected_row_bytes);
+                        let local_row = patch.pos_in_cube % row_tile_len;
+                        let row_start = local_row * column_patch.row_block_bytes;
+                        let row = &mut tile[row_start..row_start + column_patch.row_block_bytes];
+                        copy_cube_to_tile(
+                            encoded_row,
+                            cell_shape,
+                            row,
+                            tile_cell_shape,
+                            &cell_cube_start,
+                            &actual_cell_extent,
+                            column_patch.elem_size,
+                        );
+                    }
+                };
+                let stored = &mut packed_bucket[src_start..src_end];
+                if column_patch.col_data_type == CasacoreDataType::TpBool {
+                    let mut unpacked =
+                        read_tile_storage(stored, CasacoreDataType::TpBool, nrpixels);
+                    patch_tile(&mut unpacked);
+                    write_tile_storage(stored, CasacoreDataType::TpBool, &unpacked, nrpixels);
+                } else {
+                    patch_tile(stored);
                 }
-                write_tile_storage(
-                    &mut packed_bucket[src_start..src_end],
-                    column_patch.col_data_type,
-                    &unpacked_tile,
-                    nrpixels,
-                );
             }
 
             file.seek(SeekFrom::Start(tile_start as u64))?;
@@ -8887,6 +8909,12 @@ fn copy_cube_to_tile(
         let dst_off = 0;
         tile_data[dst_off..dst_off + inner_bytes]
             .copy_from_slice(&cube_data[src_off..src_off + inner_bytes]);
+        return;
+    }
+    if ndim == 2 && actual_extent[0] == cube_shape[0] && actual_extent[0] == tile_shape[0] {
+        let start = cube_start[1] * inner_bytes;
+        let len = actual_extent[1] * inner_bytes;
+        tile_data[..len].copy_from_slice(&cube_data[start..start + len]);
         return;
     }
 

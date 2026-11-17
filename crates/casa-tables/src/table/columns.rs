@@ -683,6 +683,18 @@ impl Table {
     ) -> Result<Option<Vec<usize>>, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
+        if matches!(
+            self.schema()
+                .and_then(|schema| schema.column(column))
+                .map(ColumnSchema::column_type),
+            Some(ColumnType::Array(_))
+        ) && self.dm_info.iter().any(|manager| {
+            manager.dm_type == "TiledShapeStMan"
+                && manager.columns.iter().any(|name| name == column)
+        }) && let Some(shape) = self.inner.try_stored_tiled_shape(row_index, column)?
+        {
+            return Ok(shape);
+        }
         // Ask the lazy store first: `cell` loads every row of the table.
         match self.inner.array_cell(row_index, column)? {
             crate::table_impl::LazyArrayLookup::Hit(array) => {
@@ -1951,6 +1963,28 @@ impl<'a> TableColumn<'a> {
     ) -> Result<Vec<Option<ArrayValue>>, TableError> {
         self.table
             .get_array_cells_owned_uncached(&self.column, row_indices)
+    }
+
+    /// Read a uniform two-dimensional column selection as one array with
+    /// shape `[axis0, axis1, selected_rows]` in Fortran order.
+    ///
+    /// Row order and duplicates are preserved. Returns `None` when the
+    /// storage manager cannot fill a packed buffer, the table has pending
+    /// cell changes, or selected cells are empty, undefined, or differ in
+    /// shape. The read bypasses the row cache.
+    ///
+    /// # Errors
+    /// A selected row is out of bounds or the storage read fails.
+    pub fn packed_2d_cells_uncached(
+        &self,
+        row_indices: &[usize],
+    ) -> Result<Option<ArrayValue>, TableError> {
+        for &row in row_indices {
+            self.table.require_row_index_without_loading_rows(row)?;
+        }
+        self.table
+            .inner
+            .packed_2d_cells_uncached(&self.column, row_indices)
     }
 
     /// Read whole 2-D cells of exactly `shape`, packed `[channel][row][axis0]`,

@@ -1330,6 +1330,40 @@ fn whole_msv4_patches_overwrite_partly_assigned_chunks() {
 
 /// Whole chunks at array edges round-trip every visible value.
 #[test]
+fn msv4_whole_chunks_update_a_nonzero_channel_window() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ps.zarr");
+    let before = read(&path, "base", 0..8);
+    let session = open_update(
+        &path,
+        &OpenOptions::default(),
+        &[UpdateTarget::new("base", WritableRole::Visibilities)],
+    )
+    .expect("session");
+    let request = per_times(session.observation(), request(4..8, 0), 5);
+    let report = pass(&session, &request, &[0], |batch| {
+        vec![Owned::Visibilities(
+            batch.group.values.expect("values").mapv(model),
+        )]
+    })
+    .expect("update");
+    drop(session);
+    assert!(report.units_written > 0);
+    assert_eq!(report.units_read, 0);
+    let after = read(&path, "base", 0..8);
+    for (key, sample) in &before {
+        let split = sample.values.len() / 2;
+        assert_eq!(
+            after[key].values[..split],
+            sample.values[..split],
+            "{key:?}"
+        );
+        let expected: Vec<_> = sample.values[split..].iter().copied().map(model).collect();
+        assert_eq!(after[key].values[split..], expected, "{key:?}");
+    }
+}
+
+#[test]
 fn whole_msv4_chunks_with_partial_edges_round_trip() {
     let root = tempfile::tempdir().expect("root");
     let source = fixture(root.path(), "ms_trial.ms");

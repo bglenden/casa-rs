@@ -3,6 +3,34 @@
 use super::*;
 
 impl TableImpl {
+    /// Use the retained shape map when validating writes to an existing
+    /// tiled cell. A pending override or row edit owns the current shape.
+    pub(crate) fn try_stored_tiled_shape(
+        &self,
+        row: usize,
+        column: &str,
+    ) -> Result<Option<Option<Vec<usize>>>, TableError> {
+        if self.loaded_rows.get().is_some()
+            || self.rows_reshaped()
+            || self.pending_array_cells.by_column.contains_key(column)
+        {
+            return Ok(None);
+        }
+        let Some(source) = &self.lazy_rows else {
+            return Ok(None);
+        };
+        let Some(metadata) = source.read_metadata.get() else {
+            return Ok(None);
+        };
+        let shapes = CompositeStorage.plain_array_cell_shapes_uncached(
+            &source.path,
+            metadata,
+            column,
+            &[row],
+        )?;
+        Ok(shapes.into_iter().next())
+    }
+
     fn metadata_source(&self, column: &str) -> Result<&LazyRowsSource, TableError> {
         if self.loaded_rows.get().is_some() || self.lazy_rows.is_none() {
             return Err(TableError::Storage(format!(

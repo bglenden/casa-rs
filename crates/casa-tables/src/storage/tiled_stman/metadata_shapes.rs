@@ -1,8 +1,87 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Array shapes and definedness from immutable tiled-manager headers.
+//! Array shapes, definedness and packed whole-cell reads using retained headers.
 use super::*;
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 impl TiledReadMetadata {
+    /// Read uniformly shaped cells into a single Fortran-order column.
+    /// Determine eligibility from the shape map before reading tile data.
+    pub(crate) fn load_uniform_2d(
+        &self,
+        path: &Path,
+        seq_nr: u32,
+        bound: &[&ColumnDescContents],
+        table_desc: &TableDescContents,
+        bound_index: usize,
+        rows: &[usize],
+    ) -> Result<Option<ArrayValue>, StorageError> {
+        let read = self.header(seq_nr)?;
+        let TiledVariant::Shape {
+            nr_used_row_map,
+            row_map,
+            cube_map,
+            pos_map,
+            ..
+        } = &read.variant
+        else {
+            return Ok(None);
+        };
+        let tiles = tile_columns(
+            &read.variant,
+            Cow::Borrowed(&read.header),
+            bound,
+            table_desc,
+            rows_reached(rows),
+        )?;
+        let Some(target) = tiles.tile_index[bound_index] else {
+            return Ok(None);
+        };
+        let header = &tiles.header;
+        let mapping = ShapeRowMapping {
+            nr_used_row_map: *nr_used_row_map,
+            row_map,
+            cube_map,
+            pos_map,
+        };
+        let Some([axis0, channels]) = uniform_shape_2d(header, &mapping, rows)? else {
+            return Ok(None);
+        };
+        let dt = header.col_data_types[target];
+        let col_desc = bound[bound_index];
+        let shape = [axis0, channels, rows.len()];
+        macro_rules! read_column {
+            ($dest:ident, $value:ident) => {{
+                let mut values = Vec::new();
+                let filled = fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
+                    path,
+                    seq_nr,
+                    header,
+                    target,
+                    col_desc,
+                    dt,
+                    tile_element_size(dt),
+                    rows,
+                    &mapping,
+                    0,
+                    channels,
+                    SelectedArray2DCellsMut::$dest(&mut values),
+                )?;
+                if filled.is_none() {
+                    return Ok(None);
+                }
+                let array = ArrayD::from_shape_vec(IxDyn(&shape).f(), values)
+                    .map_err(|error| StorageError::FormatMismatch(error.to_string()))?;
+                Ok(Some(ArrayValue::$value(array)))
+            }};
+        }
+        match dt {
+            CasacoreDataType::TpBool => read_column!(RowChannelBool, Bool),
+            CasacoreDataType::TpFloat => read_column!(RowChannelFloat32, Float32),
+            CasacoreDataType::TpComplex => read_column!(RowChannelComplex32, Complex32),
+            _ => Ok(None),
+        }
+    }
+
     pub(crate) fn shape_cell_is_defined(
         &self,
         dm_seq_nr: u32,
@@ -91,6 +170,32 @@ impl TiledReadMetadata {
             })
             .collect()
     }
+}
+
+fn uniform_shape_2d(
+    header: &TiledStManHeader,
+    mapping: &ShapeRowMapping<'_>,
+    rows: &[usize],
+) -> Result<Option<[usize; 2]>, StorageError> {
+    let mut uniform = None;
+    for &row in rows {
+        let Some((cube_index, position)) = shape_row_location(header, mapping, row)? else {
+            return Ok(None);
+        };
+        let cube = &header.cubes[cube_index];
+        let &[axis0, channels, cube_rows] = cube.cube_shape.as_slice() else {
+            return Ok(None);
+        };
+        if cube.file_seq_nr < 0 || axis0 == 0 || channels == 0 || position >= cube_rows {
+            return Ok(None);
+        }
+        let shape = [axis0, channels];
+        if uniform.is_some_and(|expected| shape != expected) {
+            return Ok(None);
+        }
+        uniform = Some(shape);
+    }
+    Ok(uniform)
 }
 
 fn row_location(

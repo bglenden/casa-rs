@@ -272,7 +272,15 @@ impl Open {
                 &root_rows,
             )?)),
             ColumnType::Array(_) => {
-                values::stack_rows(&array_cells(&root.table, column, &root_rows)?)
+                if let Some(block) = root
+                    .table
+                    .column_accessor(column)?
+                    .packed_2d_cells_uncached(&root_rows)?
+                {
+                    Ok(values::array(&block))
+                } else {
+                    values::stack_rows(&array_cells(&root.table, column, &root_rows)?)
+                }
             }
         }
     }
