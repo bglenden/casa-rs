@@ -25,12 +25,13 @@ pub(crate) fn write_gain_caltable(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     solved: &SolvedGains,
+    mode: crate::CalibrationOutputMode,
 ) -> Result<GainSolveReport, GainSolveError> {
     let name = ms
         .path()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "<in-memory>".to_string());
-    write_gain_caltable_named(ms, name, request, solved)
+    write_gain_caltable_named(ms, name, request, solved, mode)
 }
 
 /// [`write_gain_caltable`], recording `measurement_set_name` as the table's
@@ -41,8 +42,13 @@ pub(crate) fn write_gain_caltable_named(
     measurement_set_name: String,
     request: &GainSolveRequest,
     solved: &SolvedGains,
+    mode: crate::CalibrationOutputMode,
 ) -> Result<GainSolveReport, GainSolveError> {
+    let _write_phase = crate::timing::Phase::start("gain_write");
     let rows = &solved.rows;
+    if rows.is_empty() {
+        return Ok(gain_report(request, solved));
+    }
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
         ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
@@ -61,7 +67,7 @@ pub(crate) fn write_gain_caltable_named(
         ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
     ])
     .expect("valid gain caltable schema");
-    let mut writer = CalibrationTableWriter::create(
+    let mut writer = CalibrationTableWriter::with_mode(
         ms,
         CalibrationTableDescriptor {
             output: &request.output_table,
@@ -72,6 +78,7 @@ pub(crate) fn write_gain_caltable_named(
             include_polarization_basis: true,
             time_extra_precision_column: Some(COL_TIME_EXTRA_PREC),
         },
+        mode,
     )?;
 
     for row in rows {
@@ -161,9 +168,14 @@ pub(crate) fn write_gain_caltable_named(
     write_gain_spectral_window_subtable(ms, writer.output_path(), request, solved)?;
     writer.save_main()?;
 
+    Ok(gain_report(request, solved))
+}
+
+fn gain_report(request: &GainSolveRequest, solved: &SolvedGains) -> GainSolveReport {
+    let rows = &solved.rows;
     let field_ids = rows.iter().map(|row| row.field_id).collect::<BTreeSet<_>>();
     let spw_ids = rows.iter().map(|row| row.spw_id).collect::<BTreeSet<_>>();
-    Ok(GainSolveReport {
+    GainSolveReport {
         output_table: request.output_table.clone(),
         gain_type: request.gain_type,
         refant_antenna_id: solved.refant_id,
@@ -172,7 +184,7 @@ pub(crate) fn write_gain_caltable_named(
         solution_row_count: rows.len(),
         selected_data: solved.selected_data.clone(),
         solve_stats: solved.solve_stats.clone(),
-    })
+    }
 }
 
 /// Write the table's `SPECTRAL_WINDOW` as CASA's `gaincal` writes a G or T

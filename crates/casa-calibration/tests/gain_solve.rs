@@ -7,9 +7,9 @@ use tempfile::TempDir;
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
     CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
-    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveReport, GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path,
-    solve_calibration, summarize_table,
+    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveReport,
+    GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path, solve_calibration,
+    summarize_table,
 };
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
@@ -36,10 +36,8 @@ fn assert_no_solutions(
     result: Result<GainSolveReport, CalibrationError>,
     caltable_path: &std::path::Path,
 ) {
-    match result {
-        Err(CalibrationError::Gain(error)) if matches!(*error, GainSolveError::NoSolutions) => {}
-        other => panic!("expected NoSolutions, got {other:?}"),
-    }
+    // CASA 6.7.6.14 returns statistics for a zero-solution solve (#945).
+    assert_eq!(result.expect("no-solution report").solution_row_count, 0);
     assert!(
         !caltable_path.exists(),
         "no caltable should be written when nothing solves"

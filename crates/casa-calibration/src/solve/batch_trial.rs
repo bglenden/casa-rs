@@ -263,7 +263,8 @@ impl Stores {
 /// what the batch-fed solves are compared with.
 fn production(ms: &MeasurementSet, root: &Path) -> Vec<SolutionRow> {
     let request = gain_request(root.join("production.G"));
-    let report = solve_gain(ms, &request).expect("production gaincal");
+    let report =
+        solve_gain(ms, &request, crate::CalibrationOutputMode::Create).expect("production gaincal");
     assert_eq!(report.solution_row_count, 10, "5 antennas x 2 intervals");
     solve_gain_rows(ms, &request).expect("production rows").rows
 }

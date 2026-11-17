@@ -3222,6 +3222,12 @@ The law `casa_appends_to_a_casa_rs_gain_table` (casa-calibration
 `gain_table_windows_match_casa_on_ngc5921` and its two-sideband companion,
 it asserts that every column of every window row equals CASA's exactly.
 
+The same defect is present for channelized `bandpass(bandtype='B')` in
+CASA 6.7.6.14: `RESOLUTION` is each channel's frequency and
+`TOTAL_BANDWIDTH` is their sum. CAL-06 preserves those values for the same
+append-interoperability reason. `calibration_lifecycle_oracle.py` exchanges
+B tables in both directions and compares every SPW column.
+
 ## `imregrid` refuses a one-channel template in another spectral frame
 
 - Date noted: 2026-10-27
@@ -6203,6 +6209,50 @@ pixel in the same constant example it wrote 3 and 0.25.
 casa-rs uses both masks for both contributions. A pixel masked in either
 input contributes neither signal nor coverage, and valid pointings still
 contribute there. [Imaging issue #1515](https://github.com/bglenden/casa-rs/issues/1515)
+
+## `bandpass` suppresses its runtime exceptions
+
+- Date noted: 2026-11-16
+- CASA version: 6.7.6.14
+- Affected code: `casatasks/private/task_bandpass.py`, `bandpass`
+
+Calling `bandpass` with `field='missing-field'` on an otherwise valid MS
+logs the C++ selection exception but returns a dictionary with an empty
+`solve_tables` instead of raising it.
+The task's `finally` block returns `mycb.returndict()`, suppressing any
+exception from selection, solving or writing. The existing caltable survives
+this selection failure. casa-rs preserves that product and raises its existing
+execution error so a failed calibration is visible to a calling script.
+`tools/casa-compat/calibration_lifecycle_oracle.py` exercises both outcomes.
+
+## `gaincal` can append rows without storing their gain parameters
+
+- Date noted: 2026-11-16
+- CASA version: 6.7.6.14
+- Affected code: `SolvableVisCal::storeNCT`, `TableCopy::copyRows`
+
+Create a G table with ten rows, remove `CPARAM` with the table tool, then
+run `gaincal(append=True)` on the same input. CASA succeeds and leaves twenty
+rows without a `CPARAM` column: copying common columns silently discards the
+new gain solutions. casa-rs refuses this incompatible append schema and
+preserves the previous product. Losing scientific values is not a useful
+compatibility behavior. `calibration_lifecycle_oracle.py` reproduces both
+outcomes; `output_lifecycle` checks the native refusal and preservation.
+
+## Appending a first gain or B table tries to open nonexistent spectral metadata
+
+- Date noted: 2026-11-16
+- CASA version: 6.7.6.14
+- Affected code: `SolvableVisCal::discernAndSetSolnFrequencies`
+
+With `append=True` and an absent caltable, the frequency precheck opens
+`caltable/SPECTRAL_WINDOW` unconditionally and fails. This precedes
+`storeNCT`, whose append logic checks whether the destination is readable
+and otherwise writes a new table. casa-rs follows that latter intent:
+append creates a first table, then requires compatible metadata for later
+appends. A solve without successful solutions still creates nothing.
+`calibration_lifecycle_oracle.py` records CASA's failure (suppressed by the
+bandpass wrapper) and native creation on otherwise identical valid inputs.
 
 ## `table.summary(recurse=True)` use-after-free and `statistics` `NaN` ordering
 

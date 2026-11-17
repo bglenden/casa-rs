@@ -282,7 +282,7 @@ fn simulated_writer<'a>(
         || "<in-memory>".to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    CalibrationTableWriter::create_replacing(
+    CalibrationTableWriter::create_simulated(
         ms,
         CalibrationTableDescriptor {
             output,

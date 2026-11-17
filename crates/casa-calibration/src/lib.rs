@@ -34,6 +34,9 @@ mod lookup;
 mod lookup_frequency;
 mod managed_output;
 mod model;
+mod output;
+mod output_merge;
+mod paths;
 mod plan;
 mod plots;
 mod selected_data;
@@ -44,7 +47,10 @@ mod solve_stats;
 mod stats;
 mod summary;
 mod task_contract;
+mod timing;
 mod writer;
+
+pub use output::CalibrationOutputMode;
 
 pub use bandpass::{
     BandpassSolveCombine, BandpassSolveCuts, BandpassSolveError, BandpassSolveReport,
@@ -90,7 +96,7 @@ pub use plots::{
 pub use selected_data::SelectedData;
 pub use session::{
     CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
-    solve_calibration,
+    solve_calibration, solve_calibration_with_output_mode,
 };
 pub use simulated::{
     SIMULATED_TABLE_ROW_BYTES, SIMULATED_TABLE_VALUE_BYTES, SimulatedJones, SimulatedNoiseSolution,

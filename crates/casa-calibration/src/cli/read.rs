@@ -121,6 +121,7 @@ fn solve_gain(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFai
         );
     }
     Ok(SolveGainTaskRequest {
+        append: false,
         measurement_set: task.path("vis")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("out_table")?),
@@ -141,6 +142,7 @@ fn solve_gain(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFai
 
 fn solve_bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskFailure> {
     Ok(SolveBandpassTaskRequest {
+        append: false,
         measurement_set: task.path("vis")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("out_table")?),
@@ -169,6 +171,7 @@ fn fluxscale(task: &TaskInvocation<'_>) -> Result<FluxScaleRequest, TaskFailure>
     }
     let gainthreshold = task.optional_number("gainthreshold")?;
     Ok(FluxScaleRequest {
+        append: false,
         input_table: PathBuf::from(task.required_text("fluxscale_input")?),
         output_table: PathBuf::from(task.required_text("out_table")?),
         reference_fields,

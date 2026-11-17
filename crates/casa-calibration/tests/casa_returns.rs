@@ -450,12 +450,19 @@ fn bandpass_returns_its_tables_and_selected_data() {
             "smodel": [1, 0, 0, 0],
         }),
     );
-    match reply {
-        Some(TaskReply::Failed { message, .. }) => {
-            assert!(message.contains("no solution"), "{message}");
+    // Pinned CASA returns the statistics even when no channel solves (#945).
+    assert!(output.status.success());
+    let Some(TaskReply::Succeeded { value, .. }) = reply else {
+        panic!("no-solution solve must succeed")
+    };
+    assert_eq!(
+        entry(&value, "solve_tables"),
+        &CasaValue::StrArray {
+            shape: vec![1],
+            data: vec!["none.bcal".to_string()]
         }
-        other => panic!("{other:?}\n{}", String::from_utf8_lossy(&output.stderr)),
-    }
+    );
+    assert!(!dir.path().join("none.bcal").exists());
 
     let value = returned(
         dir.path(),

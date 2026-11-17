@@ -125,12 +125,29 @@ lists, and so on. Where CASA's default differs (`applycal`'s `calwt`,
 `gaincal`'s `calmode` and `smodel`, `bandpass`'s `combine` and `smodel`), a
 profile that left the value out adopts CASA's default with a warning.
 
-`overwrite=True` replaces only the `-o` report today. A run that would write
-a calibration table or MeasurementSet that already exists is refused whatever
-`overwrite` says: gaincal, bandpass and gencal caltables, the fluxscale
-table, and the corrected-data export. Choose a new name, or remove the old
-product first. Bringing these in line with CASA, whose gaincal replaces an
-existing caltable, is [#945](https://github.com/bglenden/casa-rs/issues/945).
+Scientific products follow each CASA task's lifecycle: `gaincal` and
+`bandpass` replace an existing calibration table unless `append=True`;
+`fluxscale` refuses an existing flux table unless `append=True`; `gencal`
+adds specified real corrections to its existing table; gain-curve generation
+replaces its absolute coefficients. Append requires a
+compatible calibration type, MeasurementSet identity and spectral metadata.
+A solve with no successful solutions returns its statistics without writing
+or replacing a table. New products are staged before publication so a failed
+run preserves the prior product.
+
+On these CASA-named tasks, `overwrite=True` controls only the `output` report.
+On the native `calibrate` workflow, it also permits replacing its scientific
+output (including corrected-data exports); without it an existing output is
+refused. Report collisions are checked before the scientific operation runs.
+
+Reports cannot overlap scientific inputs or outputs, including prior calibration
+tables and gain-curve sources. Append retains additional local keyword subtables.
+
+Scientific publication reserves the destination across processes. An interrupted
+writer leaves its reservation and staging or backup directories beside the
+product; a later writer refuses them. Inspect those directories and recover the
+prior product before removing the reservation and retrying. Append refuses
+symbolic-link subtables rather than risking their loss during replacement.
 
 ## Current limitations
 

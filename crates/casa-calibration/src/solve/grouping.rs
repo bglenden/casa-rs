@@ -73,6 +73,7 @@ pub(crate) fn build_solve_groups(
     options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
+    let mut correlations_by_ddid = HashMap::new();
     for (row, base_key, bucket_key) in bucketed_rows(rows, options.solve_interval, options.combine)
     {
         // A group takes its field from its earliest row, as CASA's
@@ -81,7 +82,7 @@ pub(crate) fn build_solve_groups(
             SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id)
         });
         let preapplied = preapplied_rows.and_then(|rows| rows.get(&row.row_index));
-        group.observe(ms, row, preapplied, &options)?;
+        group.observe(ms, row, preapplied, &options, &mut correlations_by_ddid)?;
     }
 
     Ok(groups)
@@ -415,7 +416,7 @@ pub(crate) struct SolveAccumulator {
     /// whether or not the solve succeeds.
     pub(crate) attempted: bool,
     baseline_centroids: HashMap<(i32, i32), WeightedTime>,
-    receptor_accumulations: Vec<HashMap<SolveAccumulationKey, SolveEdgeAccumulation>>,
+    receptor_accumulations: Vec<HashMap<SolveAccumulationKey, Vec<SolveEdgeAccumulation>>>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -447,7 +448,6 @@ struct SolveEdgeAccumulation {
 struct SolveAccumulationKey {
     baseline: (i32, i32),
     correlation_index: usize,
-    channel_index: usize,
 }
 
 /// A weighted mean of times.
@@ -519,19 +519,21 @@ impl SolveAccumulator {
         row: &SelectedSolveRow,
         preapplied_row: Option<&EvaluatedApplyRow>,
         options: &SolveGroupOptions,
+        correlations_by_ddid: &mut HashMap<i32, Vec<i32>>,
     ) -> Result<(), GainSolveError> {
         let inputs = read_row_inputs(ms, row, preapplied_row, options.model_source)?;
-        let correlation_types = correlation_types_for_ddid(ms, row.data_desc_id)?;
-        let channel_count = inputs.data.shape()[1];
-        let channels = if options.channelized {
-            (0..channel_count).collect()
-        } else {
-            selected_channels(row.channel_selection.as_ref(), channel_count)?
+        let correlation_types = match correlations_by_ddid.entry(row.data_desc_id) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(correlation_types_for_ddid(ms, row.data_desc_id)?)
+            }
         };
+        let channel_count = inputs.data.shape()[1];
+        let channels = selected_channels(row.channel_selection.as_ref(), channel_count)?;
         self.observe_samples(
             &SolveSampleRow::of(row),
             &inputs.samples(),
-            &correlation_types,
+            correlation_types,
             &channels,
             options,
         )
@@ -550,7 +552,7 @@ impl SolveAccumulator {
         options: &SolveGroupOptions,
     ) -> Result<(), GainSolveError> {
         if options.channelized {
-            let channel_count = samples.data.shape()[1];
+            let channel_count = channels.len();
             if self.sample_rows > 0 && self.solution_channels != channel_count {
                 return Err(GainSolveError::UnsupportedParameterShape {
                     path: "<measurement-set DATA>".to_string(),
@@ -569,7 +571,9 @@ impl SolveAccumulator {
                 .resize_with(graph_count, HashMap::new);
         }
         self.observe_metadata(row);
-
+        let no_weighted_data = samples.flags.iter().all(|flag| *flag)
+            || samples.weights.iter().all(|weight| *weight <= 0.0);
+        let solution_channels = self.solution_channels;
         let mut row_weight = 0.0_f64;
         for (corr_index, &correlation_type) in correlation_types.iter().enumerate() {
             let Some(receptors) = correlation_receptors(correlation_type) else {
@@ -581,18 +585,31 @@ impl SolveAccumulator {
                         .collect(),
                 });
             };
-            if receptors.0 != receptors.1 {
+            if no_weighted_data || receptors.0 != receptors.1 {
                 continue;
             }
             let graph_index = match options.gain_type {
                 GainType::G => receptors.0,
                 GainType::T => 0,
             };
+            // Look the baseline/correlation up once per row; channels are
+            // dense indices, not independent hash keys for every sample.
+            let accumulations = self.receptor_accumulations[graph_index]
+                .entry(SolveAccumulationKey {
+                    baseline: (row.antenna1, row.antenna2),
+                    correlation_index: corr_index,
+                })
+                .or_insert_with(|| vec![SolveEdgeAccumulation::default(); solution_channels]);
             let mut channel_weights = Vec::with_capacity(channels.len());
-            for &chan_index in channels {
-                let weight = self.accumulate_sample(
-                    graph_index,
-                    row,
+            for (solution_channel, &chan_index) in channels.iter().enumerate() {
+                let output_channel = if options.channelized {
+                    solution_channel
+                } else {
+                    0
+                };
+                let weight = Self::accumulate_sample(
+                    &mut accumulations[output_channel],
+                    &mut self.attempted,
                     samples,
                     options,
                     corr_index,
@@ -638,9 +655,8 @@ impl SolveAccumulator {
     /// Accumulate one sample if it can enter the solve; return its effective
     /// weight, zero when it is flagged or unusable.
     fn accumulate_sample(
-        &mut self,
-        graph_index: usize,
-        row: &SolveSampleRow,
+        accumulation: &mut SolveEdgeAccumulation,
+        attempted: &mut bool,
         samples: &SolveSamples<'_>,
         options: &SolveGroupOptions,
         corr_index: usize,
@@ -658,19 +674,12 @@ impl SolveAccumulator {
         if model_norm_sqr <= f32::EPSILON {
             return 0.0;
         }
-        self.attempted = true;
+        *attempted = true;
         let sample = samples.data[[corr_index, chan_index]] / model;
         if sample.norm() <= f32::EPSILON {
             return 0.0;
         }
         let effective_weight = weight * model_norm_sqr;
-        let accumulation = self.receptor_accumulations[graph_index]
-            .entry(SolveAccumulationKey {
-                baseline: (row.antenna1, row.antenna2),
-                correlation_index: corr_index,
-                channel_index: if options.channelized { chan_index } else { 0 },
-            })
-            .or_default();
         accumulation.weighted_sum += sample * Complex32::new(effective_weight, 0.0);
         accumulation.weight += effective_weight;
         accumulation.weighted_sample_power +=
@@ -695,36 +704,39 @@ impl SolveAccumulator {
         ];
         let mut baseline_weights = HashMap::<(i32, i32), f64>::new();
         for (receptor, accumulations) in self.receptor_accumulations.iter().enumerate() {
-            for (key, accumulation) in accumulations {
-                if accumulation.weight <= f32::EPSILON {
-                    continue;
-                }
-                let averaged = accumulation.weighted_sum / Complex32::new(accumulation.weight, 0.0);
-                let (sample, weight) = match solve_mode {
-                    GainSolveMode::Phase => {
-                        let amplitude = averaged.norm();
-                        if amplitude <= f32::EPSILON {
-                            continue;
-                        }
-                        (
-                            averaged / Complex32::new(amplitude, 0.0),
-                            accumulation.weight * amplitude * amplitude,
-                        )
+            for (key, channels) in accumulations {
+                for (channel_index, accumulation) in channels.iter().enumerate() {
+                    if accumulation.weight <= f32::EPSILON {
+                        continue;
                     }
-                    GainSolveMode::AmplitudePhase => (averaged, accumulation.weight),
-                };
-                self.channel_graphs[key.channel_index][receptor].accumulate(
-                    key.baseline,
-                    weight,
-                    sample * Complex32::new(weight, 0.0),
-                    SolveEdgeStats {
-                        weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
-                        raw_weighted_sample_power: accumulation.weighted_sample_power,
-                        sample_count: accumulation.sample_count,
-                        collapsed_count: 1,
-                    },
-                );
-                *baseline_weights.entry(key.baseline).or_default() += f64::from(weight);
+                    let averaged =
+                        accumulation.weighted_sum / Complex32::new(accumulation.weight, 0.0);
+                    let (sample, weight) = match solve_mode {
+                        GainSolveMode::Phase => {
+                            let amplitude = averaged.norm();
+                            if amplitude <= f32::EPSILON {
+                                continue;
+                            }
+                            (
+                                averaged / Complex32::new(amplitude, 0.0),
+                                accumulation.weight * amplitude * amplitude,
+                            )
+                        }
+                        GainSolveMode::AmplitudePhase => (averaged, accumulation.weight),
+                    };
+                    self.channel_graphs[channel_index][receptor].accumulate(
+                        key.baseline,
+                        weight,
+                        sample * Complex32::new(weight, 0.0),
+                        SolveEdgeStats {
+                            weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
+                            raw_weighted_sample_power: accumulation.weighted_sample_power,
+                            sample_count: accumulation.sample_count,
+                            collapsed_count: 1,
+                        },
+                    );
+                    *baseline_weights.entry(key.baseline).or_default() += f64::from(weight);
+                }
             }
         }
 
@@ -781,12 +793,16 @@ impl SolveAccumulator {
             .iter_mut()
             .zip(other.receptor_accumulations)
         {
-            for (key, accumulation) in theirs {
-                let entry = mine.entry(key).or_default();
-                entry.weighted_sum += accumulation.weighted_sum;
-                entry.weight += accumulation.weight;
-                entry.weighted_sample_power += accumulation.weighted_sample_power;
-                entry.sample_count += accumulation.sample_count;
+            for (key, channels) in theirs {
+                let entries = mine
+                    .entry(key)
+                    .or_insert_with(|| vec![SolveEdgeAccumulation::default(); channels.len()]);
+                for (entry, accumulation) in entries.iter_mut().zip(channels) {
+                    entry.weighted_sum += accumulation.weighted_sum;
+                    entry.weight += accumulation.weight;
+                    entry.weighted_sample_power += accumulation.weighted_sample_power;
+                    entry.sample_count += accumulation.sample_count;
+                }
             }
         }
     }
@@ -803,7 +819,8 @@ impl SolveAccumulator {
             + self
                 .receptor_accumulations
                 .iter()
-                .map(HashMap::len)
+                .flat_map(HashMap::values)
+                .map(Vec::len)
                 .sum::<usize>()
     }
 
@@ -1025,9 +1042,9 @@ mod tests {
             .entry(SolveAccumulationKey {
                 baseline: (0, 1),
                 correlation_index,
-                channel_index: 0,
             })
-            .or_default();
+            .or_insert_with(|| vec![SolveEdgeAccumulation::default()]);
+        let accumulation = &mut accumulation[0];
         accumulation.weighted_sum += sample;
         accumulation.weight += 1.0;
         accumulation.weighted_sample_power += f64::from(sample.norm_sqr());
@@ -1077,14 +1094,13 @@ mod tests {
                 SolveAccumulationKey {
                     baseline,
                     correlation_index: 0,
-                    channel_index: 0,
                 },
-                SolveEdgeAccumulation {
+                vec![SolveEdgeAccumulation {
                     weighted_sum: Complex32::new(weight, 0.0),
                     weight,
                     weighted_sample_power: f64::from(weight),
                     sample_count: 1,
-                },
+                }],
             );
         }
         group.baseline_centroids.insert(

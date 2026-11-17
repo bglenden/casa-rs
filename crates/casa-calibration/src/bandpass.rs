@@ -13,6 +13,8 @@
 //! should be CASA-compatible on disk and should yield corrected visibilities
 //! close to CASA's own `bandpass` when applied after the same prior gains.
 
+mod metadata;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -188,11 +190,6 @@ pub enum BandpassSolveError {
     #[error("bandpass solve selection produced no rows")]
     EmptySelection,
 
-    /// No channel of any interval could be solved, so there is no caltable
-    /// to write; CASA logs "No output calibration table written." here.
-    #[error("bandpass solve found no solution in any interval or channel; no caltable written")]
-    NoSolutions,
-
     /// The solve requires a point-source Stokes-I model.
     #[error("unsupported smodel {smodel:?}; only [I,0,0,0] is supported in this wave")]
     UnsupportedSkyModel {
@@ -292,8 +289,10 @@ pub enum BandpassSolveError {
 pub(crate) fn solve_bandpass(
     ms: &MeasurementSet,
     request: &BandpassSolveRequest,
+    mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
+    let input_phase = crate::timing::Phase::start("bandpass_select_read_average");
     let context = prepare_calibration_solve(
         ms,
         &request.selection,
@@ -322,6 +321,8 @@ pub(crate) fn solve_bandpass(
         return Err(BandpassSolveError::EmptySelection);
     }
 
+    drop(input_phase);
+    let kernel_phase = crate::timing::Phase::start("bandpass_solve");
     let mut solution_rows = Vec::new();
     let mut solve_stats = SolveStatsBuilder::new(
         GainType::G.polarizations(),
@@ -363,12 +364,32 @@ pub(crate) fn solve_bandpass(
         solve_stats.solutions(group.spw_id, solutions);
         solution_rows.extend(rows);
     }
+    drop(kernel_phase);
+    let _write_phase = crate::timing::Phase::start("bandpass_write");
     if solution_rows.is_empty() {
-        return Err(BandpassSolveError::NoSolutions);
+        return Ok(BandpassSolveReport {
+            output_table: request.output_table.clone(),
+            table_subtype: match request.band_type {
+                BandpassType::B => "B Jones",
+                BandpassType::BPoly => "BPOLY",
+            }
+            .to_string(),
+            refant_antenna_id: context.refant_id,
+            field_ids: Vec::new(),
+            spectral_window_ids: Vec::new(),
+            solution_row_count: 0,
+            channel_count: 0,
+            selected_data: context.selected_data,
+            solve_stats: solve_stats.finish(),
+        });
     }
     let report = match request.band_type {
-        BandpassType::B => write_bandpass_caltable(ms, request, context.refant_id, &solution_rows),
-        BandpassType::BPoly => write_bpoly_caltable(ms, request, context.refant_id, &solution_rows),
+        BandpassType::B => {
+            write_bandpass_caltable(ms, request, context.refant_id, &solution_rows, mode)
+        }
+        BandpassType::BPoly => {
+            write_bpoly_caltable(ms, request, context.refant_id, &solution_rows, mode)
+        }
     }?;
     Ok(BandpassSolveReport {
         selected_data: context.selected_data,
@@ -577,6 +598,7 @@ fn write_bandpass_caltable(
     request: &BandpassSolveRequest,
     refant_id: i32,
     rows: &[BandpassSolutionRow],
+    mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
@@ -596,7 +618,7 @@ fn write_bandpass_caltable(
         ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
     ])
     .expect("valid bandpass schema");
-    let mut writer = CalibrationTableWriter::create(
+    let mut writer = CalibrationTableWriter::with_mode(
         ms,
         CalibrationTableDescriptor {
             output: &request.output_table,
@@ -610,6 +632,7 @@ fn write_bandpass_caltable(
             include_polarization_basis: true,
             time_extra_precision_column: Some(COL_TIME_EXTRA_PREC),
         },
+        mode,
     )?;
 
     for row in rows {
@@ -701,13 +724,15 @@ fn write_bandpass_caltable(
         ]))?;
     }
 
-    writer.finish(&[
+    writer.copy_subtables(&[
         (SubtableId::Observation, "OBSERVATION"),
         (SubtableId::Antenna, "ANTENNA"),
         (SubtableId::Field, "FIELD"),
         (SubtableId::History, "HISTORY"),
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
     ])?;
+    metadata::write(&writer.output_path().join("SPECTRAL_WINDOW"), request, rows)?;
+    writer.save_main()?;
 
     let field_ids = rows.iter().map(|row| row.field_id).collect::<BTreeSet<_>>();
     let spw_ids = rows.iter().map(|row| row.spw_id).collect::<BTreeSet<_>>();
@@ -734,6 +759,7 @@ fn write_bpoly_caltable(
     request: &BandpassSolveRequest,
     refant_id: i32,
     rows: &[BandpassSolutionRow],
+    mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     let fitted_rows = fit_bpoly_rows(
         ms,
@@ -741,6 +767,7 @@ fn write_bpoly_caltable(
         request.amplitude_degree,
         request.phase_degree,
         request.cuts,
+        &request.selection,
     )?;
 
     let schema = TableSchema::new(vec![
@@ -809,7 +836,7 @@ fn write_bpoly_caltable(
         ),
     ])
     .expect("valid BPOLY schema");
-    let mut writer = CalibrationTableWriter::create(
+    let mut writer = CalibrationTableWriter::with_mode(
         ms,
         CalibrationTableDescriptor {
             output: &request.output_table,
@@ -823,6 +850,7 @@ fn write_bpoly_caltable(
             include_polarization_basis: false,
             time_extra_precision_column: Some(COL_TIME_EXTRA_PREC),
         },
+        mode,
     )?;
     {
         let table = writer.table_mut();
@@ -1105,6 +1133,7 @@ fn fit_bpoly_rows(
     amplitude_degree: usize,
     phase_degree: usize,
     cuts: Option<BandpassSolveCuts>,
+    selection: &casa_ms::MsSelection,
 ) -> Result<Vec<BPolySolutionRow>, BandpassSolveError> {
     let spectral_window =
         ms.spectral_window()
@@ -1132,6 +1161,14 @@ fn fit_bpoly_rows(
                     source,
                 }
             })?;
+            let selected = selection.channel_selection_for_spw(row.spw_id);
+            let channel_frequencies_hz = crate::solve::grouping::selected_channels(
+                selected.as_ref(),
+                channel_frequencies_hz.len(),
+            )?
+            .into_iter()
+            .map(|channel| channel_frequencies_hz[channel])
+            .collect::<Vec<_>>();
             fit_bpoly_row(
                 row,
                 &channel_frequencies_hz,

@@ -173,22 +173,106 @@ struct PriorCalRow {
     observation_id: i32,
     fparam: Vec<f32>,
     snr_value: f32,
+    preserved: Option<RecordValue>,
 }
 
 /// Generate one native prior calibration table.
 pub fn gencal(request: &GencalRequest) -> Result<GencalReport, GencalError> {
+    gencal_with_output_mode(request, crate::CalibrationOutputMode::Update)
+}
+
+pub(crate) fn gencal_with_output_mode(
+    request: &GencalRequest,
+    mode: crate::CalibrationOutputMode,
+) -> Result<GencalReport, GencalError> {
+    // Reserve before reading prior parameters, so concurrent updates cannot
+    // both accumulate from the same old product and silently lose a correction.
+    let output = crate::output::CalibrationOutput::prepare(&request.output_table, mode)?;
     let ms = MeasurementSet::open(&request.measurement_set).map_err(|source| {
         GencalError::OpenMeasurementSet {
             path: request.measurement_set.display().to_string(),
             source: Box::new(source),
         }
     })?;
-    let rows = match request.caltype {
+    let mut rows = match request.caltype {
         GencalType::Antpos => antpos_rows(&ms, request)?,
         GencalType::Gceff => gaincurve_rows(&ms, request)?,
         GencalType::Opac => opacity_rows(&ms, request)?,
     };
-    write_float_caltable(&ms, request, &rows)
+    if mode == crate::CalibrationOutputMode::Update
+        && request.output_table.exists()
+        && request.caltype != GencalType::Gceff
+    {
+        crate::output::validate_destination(&request.output_table, "Calibration")?;
+        accumulate_parameters(request, &mut rows)?;
+    }
+    write_float_caltable(&ms, request, &rows, output, mode)
+}
+
+/// SolvableVisCal::setSpecify loads existing parameters; specify adds real
+/// corrections to the selected slice. Gain-curve generation supplies absolute
+/// coefficients instead of additive user corrections.
+fn accumulate_parameters(
+    request: &GencalRequest,
+    rows: &mut [PriorCalRow],
+) -> Result<(), GencalError> {
+    let old = crate::output_merge::open(&request.output_table)?;
+    if old.keywords().get("VisCal")
+        != Some(&Value::Scalar(ScalarValue::String(
+            request.caltype.table_subtype().to_string(),
+        )))
+    {
+        return Err(GencalError::InvalidRequest(
+            "existing table has incompatible calibration type; prior product is unchanged"
+                .to_string(),
+        ));
+    }
+    let mut prior = BTreeMap::new();
+    for row in old
+        .rows()
+        .map_err(|e| GencalError::InvalidRequest(e.to_string()))?
+    {
+        let id = |column| match row.get(column) {
+            Some(Value::Scalar(ScalarValue::Int32(v))) => Ok(*v),
+            _ => Err(GencalError::InvalidRequest(format!(
+                "missing {column} in existing gencal table"
+            ))),
+        };
+        let key = (id(COL_SPECTRAL_WINDOW_ID)?, id(COL_ANTENNA1)?);
+        let Some(Value::Array(ArrayValue::Float32(parameters))) = row.get(COL_FPARAM) else {
+            return Err(GencalError::InvalidRequest(
+                "existing table has no Float FPARAM".to_string(),
+            ));
+        };
+        if prior
+            .insert(
+                key,
+                (parameters.iter().copied().collect::<Vec<_>>(), row.clone()),
+            )
+            .is_some()
+        {
+            return Err(GencalError::InvalidRequest(
+                "existing gencal table has duplicate antenna/SPW entries".to_string(),
+            ));
+        }
+    }
+    for row in rows {
+        // setSpecify's existing-table branch leaves currObs at its default
+        // -1, then keepNCT writes that for the regenerated rows.
+        row.observation_id = -1;
+        if let Some((values, metadata)) = prior.get(&(row.spw_id, row.antenna_id)) {
+            row.preserved = Some(metadata.clone());
+            if values.len() != row.fparam.len() {
+                return Err(GencalError::InvalidRequest(
+                    "existing gencal parameter shape is incompatible".to_string(),
+                ));
+            }
+            for (parameter, previous) in row.fparam.iter_mut().zip(values) {
+                *parameter += previous;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn antpos_rows(
@@ -215,6 +299,7 @@ fn antpos_rows(
             observation_id: 0,
             fparam: offsets.iter().map(|value| *value as f32).collect(),
             snr_value: 1.0,
+            preserved: None,
         });
     }
     Ok(rows)
@@ -277,6 +362,7 @@ fn gaincurve_rows(
                 observation_id: -1,
                 fparam,
                 snr_value: 0.0,
+                preserved: None,
             });
         }
     }
@@ -308,26 +394,56 @@ fn opacity_rows(
             )));
         }
     };
-    let mut rows = Vec::with_capacity(antenna_count * selected_spws.len());
-    for (spw_id, opacity) in selected_spws.iter().copied().zip(opacity) {
+    let opacities = selected_spws
+        .into_iter()
+        .zip(opacity)
+        .collect::<BTreeMap<_, _>>();
+    let selected_antennas = opacity_antennas(ms, &request.antenna, antenna_count)?;
+    let mut rows = Vec::new();
+    for spw_id in parse_spw_selector(ms, "")? {
         for antenna_id in 0..antenna_count {
             rows.push(PriorCalRow {
                 field_id: -1,
                 spw_id,
                 antenna_id: antenna_id as i32,
                 observation_id: 0,
-                fparam: vec![opacity as f32],
+                fparam: vec![if selected_antennas.contains(&(antenna_id as i32)) {
+                    opacities.get(&spw_id).copied().unwrap_or(0.0) as f32
+                } else {
+                    0.0
+                }],
                 snr_value: 1.0,
+                preserved: None,
             });
         }
     }
     Ok(rows)
 }
 
+fn opacity_antennas(
+    ms: &MeasurementSet,
+    selector: &str,
+    count: usize,
+) -> Result<BTreeSet<i32>, GencalError> {
+    if selector.trim().is_empty() {
+        return Ok((0..count as i32).collect());
+    }
+    let parameters = vec![0.0; selector.split(',').count() * 3];
+    let selected = parse_antenna_offsets(ms, selector, &parameters)?;
+    if selected.keys().any(|id| *id < 0 || *id >= count as i32) {
+        return Err(GencalError::InvalidRequest(
+            "antenna outside input MS".to_string(),
+        ));
+    }
+    Ok(selected.into_keys().collect())
+}
+
 fn write_float_caltable(
     ms: &MeasurementSet,
     request: &GencalRequest,
     rows: &[PriorCalRow],
+    output: crate::output::CalibrationOutput,
+    mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
@@ -346,7 +462,7 @@ fn write_float_caltable(
     ])
     .expect("valid gencal caltable schema");
     let subtype = request.caltype.table_subtype();
-    let mut writer = CalibrationTableWriter::create(
+    let mut writer = CalibrationTableWriter::staged(
         ms,
         CalibrationTableDescriptor {
             output: &request.output_table,
@@ -361,14 +477,16 @@ fn write_float_caltable(
             include_polarization_basis: true,
             time_extra_precision_column: None,
         },
-    )?;
+        output,
+        mode,
+    );
 
     for row in rows {
         let len = row.fparam.len();
         let zeros = vec![0.0_f32; len];
         let flags = vec![false; len];
         let snr = vec![row.snr_value; len];
-        writer.append(RecordValue::new(vec![
+        let mut record = RecordValue::new(vec![
             RecordField::new(COL_TIME, Value::Scalar(ScalarValue::Float64(0.0))),
             RecordField::new(
                 COL_FIELD_ID,
@@ -393,8 +511,15 @@ fn write_float_caltable(
             RecordField::new(COL_PARAMERR, Value::Array(f32_column(&zeros))),
             RecordField::new(COL_FLAG, Value::Array(bool_column(&flags))),
             RecordField::new(COL_SNR, Value::Array(f32_column(&snr))),
-            RecordField::new(COL_WEIGHT, Value::Array(f32_column(&zeros))),
-        ]))?;
+        ]);
+        if let Some(prior) = &row.preserved {
+            for column in [COL_PARAMERR, COL_FLAG, COL_SNR] {
+                if let Some(value) = prior.get(column) {
+                    record.upsert(column, value.clone());
+                }
+            }
+        }
+        writer.append(record)?;
     }
 
     writer.copy_subtables(&[
@@ -404,7 +529,7 @@ fn write_float_caltable(
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
         (SubtableId::History, "HISTORY"),
     ])?;
-    collapse_spectral_axis(&writer.output_path().join("SPECTRAL_WINDOW"))?;
+    collapse_spectral_axis(&writer.output_path().join("SPECTRAL_WINDOW"), rows)?;
     writer.save_main()?;
 
     let spectral_window_ids = rows
@@ -597,10 +722,18 @@ fn matching_gaincurve_from_rows(
 /// SolvableVisCal::initSVC collapses all spectral vectors for uniform
 /// parameters: mean channel frequency and summed widths/resolutions.
 /// Keep this inside the writer's staging directory, before publication.
-fn collapse_spectral_axis(path: &Path) -> Result<(), GencalError> {
+fn collapse_spectral_axis(path: &Path, solutions: &[PriorCalRow]) -> Result<(), GencalError> {
     let mut table = Table::open(TableOptions::new(path))
         .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
     for row in 0..table.row_count() {
+        let absent = !solutions
+            .iter()
+            .any(|solution| solution.spw_id == row as i32);
+        table
+            .cell_accessor_mut(row, "FLAG_ROW")
+            .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Bool(absent))))
+            .map_err(|e| GencalError::InvalidRequest(e.to_string()))?;
+
         for column in ["CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"] {
             let ArrayValue::Float64(values) = table
                 .cell_accessor(row, column)
@@ -859,7 +992,7 @@ fn bool_column(values: &[bool]) -> ArrayValue {
     )
 }
 
-fn default_vla_gaincurve_table() -> Option<PathBuf> {
+pub(crate) fn default_vla_gaincurve_table() -> Option<PathBuf> {
     if let Ok(path) = env::var("CASA_RS_VLA_GAINCURVES") {
         return Some(PathBuf::from(path));
     }

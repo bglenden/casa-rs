@@ -97,31 +97,49 @@ pub fn solve_calibration(
     dataset: CalibrationDataset<'_>,
     request: CalibrationSolveRequest,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
+    solve_calibration_with_output_mode(dataset, request, crate::CalibrationOutputMode::Replace)
+}
+
+/// Execute a solve with an explicit product publication policy. Append checks
+/// CASA's table identity and SPW metadata before publishing; no solutions never
+/// creates or changes a product, irrespective of this policy.
+pub fn solve_calibration_with_output_mode(
+    dataset: CalibrationDataset<'_>,
+    request: CalibrationSolveRequest,
+    mode: crate::CalibrationOutputMode,
+) -> Result<CalibrationSolveResult, CalibrationError> {
     match dataset {
         CalibrationDataset::Path(path) => {
+            let open_phase = crate::timing::Phase::start("open_ms");
             let measurement_set = MeasurementSet::open(&path).map_err(|source| {
                 CalibrationError::OpenMeasurementSet {
                     path: path.display().to_string(),
                     source,
                 }
             })?;
-            solve_open_dataset(&measurement_set, request)
+            drop(open_phase);
+            solve_open_dataset(&measurement_set, request, mode)
         }
-        CalibrationDataset::Open(measurement_set) => solve_open_dataset(measurement_set, request),
+        CalibrationDataset::Open(measurement_set) => {
+            solve_open_dataset(measurement_set, request, mode)
+        }
     }
 }
 
 fn solve_open_dataset(
     measurement_set: &MeasurementSet,
     request: CalibrationSolveRequest,
+    mode: crate::CalibrationOutputMode,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
     match request {
-        CalibrationSolveRequest::Gain(request) => solve_gain(measurement_set, &request)
+        CalibrationSolveRequest::Gain(request) => solve_gain(measurement_set, &request, mode)
             .map(CalibrationSolveResult::Gain)
             .map_err(CalibrationError::from),
-        CalibrationSolveRequest::Bandpass(request) => solve_bandpass(measurement_set, &request)
-            .map(CalibrationSolveResult::Bandpass)
-            .map_err(CalibrationError::from),
+        CalibrationSolveRequest::Bandpass(request) => {
+            solve_bandpass(measurement_set, &request, mode)
+                .map(CalibrationSolveResult::Bandpass)
+                .map_err(CalibrationError::from)
+        }
     }
 }
 

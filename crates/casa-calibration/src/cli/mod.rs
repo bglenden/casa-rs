@@ -66,13 +66,32 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     // Checked before the task runs, so a refused report changes nothing.
     if let Some(path) = report.output.as_deref() {
         refuse_existing_report(path, report.overwrite)?;
+        refuse_report_in_product(path, &request, task)?;
+    }
+    if task.surface() == "fluxscale"
+        && let CalibrationTaskRequest::FluxScale(scale) = &request
+        && !scale.append
+        && scale.output_table.exists()
+    {
+        return Err(TaskFailure::validation(format!("fluxtable {} exists. Please specify a different name. Or set append=True, to append the results to the table.",scale.output_table.display())).at("fluxtable"));
     }
     let applied = match &request {
         CalibrationTaskRequest::SolveGain(solve) => solve.prior_calibration_tables.clone(),
         CalibrationTaskRequest::SolveBandpass(solve) => solve.prior_calibration_tables.clone(),
         _ => Vec::new(),
     };
-    let result = request.execute().map_err(TaskFailure::execution)?;
+    let mode = if task.surface() == "calibrate" {
+        Some(if report.overwrite {
+            crate::CalibrationOutputMode::Replace
+        } else {
+            crate::CalibrationOutputMode::Create
+        })
+    } else {
+        None
+    };
+    let result = request
+        .execute_with_output_mode(mode)
+        .map_err(TaskFailure::execution)?;
     let value = casa_value(task.surface(), &applied, &result);
     let rendered = render::render(report.format, &result).map_err(TaskFailure::execution)?;
     let text = match report.output.as_deref() {
@@ -85,6 +104,78 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         None => rendered,
     };
     Ok(TaskSuccess::new(value, &result)?.with_text(text))
+}
+
+fn refuse_report_in_product(
+    path: &Path,
+    request: &CalibrationTaskRequest,
+    task: &TaskInvocation<'_>,
+) -> Result<(), TaskFailure> {
+    let mut products = scientific_paths(request);
+    if task.surface() == "fluxscale"
+        && let Some(vis) = task.text("vis")?
+    {
+        products.push(vis.into());
+    }
+    if matches!(task.surface(), "applycal" | "gaincal" | "bandpass")
+        && task.flag("docallib")?
+        && let Some(callib) = task.text("callib")?
+    {
+        products.push(callib.into());
+    }
+    for product in products {
+        if crate::paths::overlap(path, &product)
+            .map_err(|e| TaskFailure::validation(e.to_string()).at("output"))?
+        {
+            return Err(
+                TaskFailure::validation("report path overlaps a scientific product").at("output"),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn scientific_paths(request: &CalibrationTaskRequest) -> Vec<std::path::PathBuf> {
+    let (mut paths, chain) = match request {
+        CalibrationTaskRequest::SolveGain(r) => (
+            vec![r.measurement_set.clone(), r.output_table.clone()],
+            r.prior_calibration_tables.as_slice(),
+        ),
+        CalibrationTaskRequest::SolveBandpass(r) => (
+            vec![r.measurement_set.clone(), r.output_table.clone()],
+            r.prior_calibration_tables.as_slice(),
+        ),
+        CalibrationTaskRequest::ExecuteApply(r) => (
+            vec![r.measurement_set.clone()],
+            r.calibration_tables.as_slice(),
+        ),
+        CalibrationTaskRequest::PlanApply(r) => (
+            vec![r.measurement_set.clone()],
+            r.calibration_tables.as_slice(),
+        ),
+        CalibrationTaskRequest::Summary(r) => (r.paths.clone(), &[][..]),
+        CalibrationTaskRequest::Stats(r) => (vec![r.path.clone()], &[][..]),
+        CalibrationTaskRequest::FluxScale(r) => {
+            (vec![r.input_table.clone(), r.output_table.clone()], &[][..])
+        }
+        CalibrationTaskRequest::ExportCorrectedData(r) => {
+            (vec![r.input_ms.clone(), r.output_ms.clone()], &[][..])
+        }
+        CalibrationTaskRequest::Gencal(r) => {
+            let mut paths = vec![r.measurement_set.clone(), r.output_table.clone()];
+            if r.caltype == crate::GencalType::Gceff
+                && let Some(source) = r
+                    .gaincurve_table
+                    .clone()
+                    .or_else(crate::gencal::default_vla_gaincurve_table)
+            {
+                paths.push(source);
+            }
+            (paths, &[][..])
+        }
+    };
+    paths.extend(chain.iter().map(|table| table.path.clone()));
+    paths
 }
 
 /// What `surface` returns for `result`, as CASA's task of that name does;

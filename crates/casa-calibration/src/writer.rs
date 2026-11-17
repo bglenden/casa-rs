@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared calibration-table schema, metadata, and persistence lifecycle.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use casa_ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
-use casa_tables::{
-    DataManagerKind, Table, TableError, TableInfo, TableOptions, TableSchema, strip_directory,
-};
+use casa_tables::{Table, TableError, TableInfo, TableOptions, TableSchema, strip_directory};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use thiserror::Error;
 
@@ -16,6 +13,8 @@ use crate::constants::{
     COL_INTERVAL, COL_TIME, KEY_CASA_VERSION, KEY_MS_NAME, KEY_PAR_TYPE, KEY_POL_BASIS,
     KEY_VIS_CAL, STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE,
 };
+use crate::output::CalibrationOutput;
+use crate::{CalibrationOutputMode, output_merge};
 
 /// Common on-disk identity for one calibration-table family.
 pub(crate) struct CalibrationTableDescriptor<'a> {
@@ -67,47 +66,44 @@ pub enum CalibrationTableWriteError {
 /// Typed owner of common calibration-table construction and final persistence.
 pub(crate) struct CalibrationTableWriter<'a> {
     measurement_set: &'a MeasurementSet,
-    final_output: PathBuf,
-    output: PathBuf,
+    output: CalibrationOutput,
     table: Table,
-    /// Whether publishing replaces a table already at the destination.
-    replaces: bool,
+    mode: CalibrationOutputMode,
+    sort_for_casa: bool,
 }
 
 impl<'a> CalibrationTableWriter<'a> {
-    pub(crate) fn create(
+    pub(crate) fn create_simulated(
         measurement_set: &'a MeasurementSet,
         descriptor: CalibrationTableDescriptor<'_>,
     ) -> Result<Self, CalibrationTableWriteError> {
-        let output = prepare_output_root(descriptor.output)?;
-        Ok(Self::staged(measurement_set, descriptor, output, false))
+        let output = CalibrationOutput::prepare_simulated(descriptor.output)?;
+        let mut writer = Self::staged(
+            measurement_set,
+            descriptor,
+            output,
+            CalibrationOutputMode::Replace,
+        );
+        // Simulation supplies its established row order and budgets one
+        // materialized table. Do not duplicate it for task storeNCT sorting.
+        writer.sort_for_casa = false;
+        Ok(writer)
     }
 
-    /// As [`Self::create`], for a destination that may hold a table the
-    /// new one replaces (CASA's `NewCalTable::writeToDisk`). The table
-    /// there stays until the new one has been saved beside it
-    /// ([`Self::save_main`]); anything there that is not a table is
-    /// refused.
-    pub(crate) fn create_replacing(
+    pub(crate) fn with_mode(
         measurement_set: &'a MeasurementSet,
         descriptor: CalibrationTableDescriptor<'_>,
+        mode: CalibrationOutputMode,
     ) -> Result<Self, CalibrationTableWriteError> {
-        let destination = descriptor.output;
-        if destination.exists() && !is_table(destination) {
-            return Err(CalibrationTableWriteError::Prepare {
-                path: destination.display().to_string(),
-                reason: "exists and is not a table".to_string(),
-            });
-        }
-        let output = prepare_staging(destination)?;
-        Ok(Self::staged(measurement_set, descriptor, output, true))
+        let output = CalibrationOutput::prepare(descriptor.output, mode)?;
+        Ok(Self::staged(measurement_set, descriptor, output, mode))
     }
 
-    fn staged(
+    pub(crate) fn staged(
         measurement_set: &'a MeasurementSet,
         descriptor: CalibrationTableDescriptor<'_>,
-        output: PathBuf,
-        replaces: bool,
+        output: CalibrationOutput,
+        mode: CalibrationOutputMode,
     ) -> Self {
         let mut table = Table::with_schema(descriptor.schema);
         table.set_info(TableInfo {
@@ -150,21 +146,21 @@ impl<'a> CalibrationTableWriter<'a> {
         for name in STANDARD_SUBTABLE_KEYWORDS {
             table.keywords_mut().upsert(
                 *name,
-                Value::table_ref(strip_directory(&output.join(name), &output)),
+                Value::table_ref(strip_directory(&output.staging.join(name), &output.staging)),
             );
         }
         Self {
             measurement_set,
-            final_output: descriptor.output.to_path_buf(),
             output,
             table,
-            replaces,
+            mode,
+            sort_for_casa: true,
         }
     }
 
     /// Staging root used for family-specific subtables before publication.
     pub(crate) fn output_path(&self) -> &Path {
-        &self.output
+        &self.output.staging
     }
 
     pub(crate) fn table_mut(&mut self) -> &mut Table {
@@ -175,17 +171,9 @@ impl<'a> CalibrationTableWriter<'a> {
         self.table
             .add_row(row)
             .map_err(|source| CalibrationTableWriteError::Append {
-                path: self.output.display().to_string(),
+                path: self.output.staging.display().to_string(),
                 source: Box::new(source),
             })
-    }
-
-    pub(crate) fn finish(
-        self,
-        subtables: &[(SubtableId, &'static str)],
-    ) -> Result<(), CalibrationTableWriteError> {
-        self.copy_subtables(subtables)?;
-        self.save_main()
     }
 
     pub(crate) fn copy_subtables(
@@ -196,119 +184,54 @@ impl<'a> CalibrationTableWriter<'a> {
             self.measurement_set
                 .subtable(id)
                 .expect("required calibration subtable available")
-                .save(TableOptions::new(self.output.join(name)))
+                .save(TableOptions::new(self.output.staging.join(name)))
                 .map_err(|source| CalibrationTableWriteError::CopySubtable {
                     subtable: name.to_string(),
-                    path: self.output.display().to_string(),
+                    path: self.output.staging.display().to_string(),
                     source: Box::new(source),
                 })?;
         }
         Ok(())
     }
 
-    pub(crate) fn save_main(self) -> Result<(), CalibrationTableWriteError> {
-        self.table
-            .save(TableOptions::new(&self.output).with_data_manager(DataManagerKind::StandardStMan))
-            .map_err(|source| CalibrationTableWriteError::Save {
-                path: self.output.display().to_string(),
-                source: Box::new(source),
-            })?;
-        let publish_error = |reason: String| CalibrationTableWriteError::Publish {
-            staging: self.output.display().to_string(),
-            output: self.final_output.display().to_string(),
-            reason,
-        };
-        if !self.final_output.exists() {
-            return fs::rename(&self.output, &self.final_output)
-                .map_err(|error| publish_error(error.to_string()));
+    pub(crate) fn save_main(mut self) -> Result<(), CalibrationTableWriteError> {
+        if self.mode == CalibrationOutputMode::Append && self.output.destination.exists() {
+            if self.table.info().sub_type == "BPOLY" {
+                let mut old = output_merge::open(&self.output.destination)?;
+                output_merge::append_legacy(
+                    &mut old,
+                    &mut self.table,
+                    &self.output.destination,
+                    &self.output.staging,
+                )?;
+                self.table = old;
+            } else {
+                let spw = output_merge::merge_spw(&self.output.destination, &self.output.staging)?;
+                let mut old = output_merge::open(&self.output.destination)?;
+                output_merge::append(&mut old, &self.table, &self.output.destination)?;
+                output_merge::preserve_subtables(&self.output.destination, &self.output.staging)?;
+                spw.save(TableOptions::new(
+                    self.output.staging.join("SPECTRAL_WINDOW"),
+                ))
+                .map_err(|e| output_merge::invalid(&self.output.staging, e.to_string()))?;
+                self.table = old;
+            }
         }
-        if !self.replaces {
-            return Err(publish_error(
-                "destination appeared while the table was being built".to_string(),
-            ));
+        if self.sort_for_casa {
+            output_merge::save_sorted(&mut self.table, &self.output.staging)?;
+        } else {
+            self.table
+                .save(
+                    TableOptions::new(&self.output.staging)
+                        .with_data_manager(casa_tables::DataManagerKind::StandardStMan),
+                )
+                .map_err(|source| CalibrationTableWriteError::Save {
+                    path: self.output.staging.display().to_string(),
+                    source: Box::new(source),
+                })?;
         }
-        if !is_table(&self.final_output) {
-            return Err(publish_error(
-                "destination is no longer a table; it is left as it is".to_string(),
-            ));
-        }
-        // Move the old table aside, put the new one in its place, and only
-        // then remove the old one; put it back if the new one cannot go in.
-        let replaced = sibling(&self.final_output, "casa-rs-replaced")
-            .map_err(|error| publish_error(error.to_string()))?;
-        fs::rename(&self.final_output, &replaced).map_err(|error| {
-            publish_error(format!("cannot move the table it replaces aside: {error}"))
-        })?;
-        if let Err(error) = fs::rename(&self.output, &self.final_output) {
-            let restored = fs::rename(&replaced, &self.final_output);
-            return Err(publish_error(format!(
-                "{error}; the table it replaces was {}",
-                if restored.is_ok() {
-                    "restored".to_string()
-                } else {
-                    format!("left at {}", replaced.display())
-                }
-            )));
-        }
-        fs::remove_dir_all(&replaced).map_err(|error| {
-            publish_error(format!(
-                "the new table is in place, but the one it replaced is left at {}: {error}",
-                replaced.display()
-            ))
-        })
+        self.output.commit()
     }
-}
-
-/// Whether `path` is a table directory.
-fn is_table(path: &Path) -> bool {
-    path.join("table.dat").is_file()
-}
-
-/// A hidden sibling of `path` marked `what` and this process.
-fn sibling(path: &Path, what: &str) -> Result<PathBuf, CalibrationTableWriteError> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let name = path
-        .file_name()
-        .ok_or_else(|| CalibrationTableWriteError::Prepare {
-            path: path.display().to_string(),
-            reason: "output path must name a table".to_string(),
-        })?
-        .to_string_lossy();
-    Ok(parent.join(format!(".{name}.{what}-{}", std::process::id())))
-}
-
-fn prepare_output_root(path: &Path) -> Result<PathBuf, CalibrationTableWriteError> {
-    if path.exists() {
-        return Err(CalibrationTableWriteError::Prepare {
-            path: path.display().to_string(),
-            reason: "output already exists".to_string(),
-        });
-    }
-    prepare_staging(path)
-}
-
-/// Reserve the staging directory a table for `path` is built in.
-fn prepare_staging(path: &Path) -> Result<PathBuf, CalibrationTableWriteError> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    fs::create_dir_all(parent).map_err(|error| CalibrationTableWriteError::Prepare {
-        path: path.display().to_string(),
-        reason: error.to_string(),
-    })?;
-    let staging = sibling(path, "casa-rs-incomplete")?;
-    fs::create_dir(&staging).map_err(|error| CalibrationTableWriteError::Prepare {
-        path: path.display().to_string(),
-        reason: format!(
-            "cannot reserve staging path {} (an interrupted or concurrent write may exist): {error}",
-            staging.display()
-        ),
-    })?;
-    Ok(staging)
 }
 
 pub(crate) fn set_fixed_unit_keyword(table: &mut Table, column: &str, units: &[&str]) {
@@ -345,11 +268,12 @@ pub(crate) fn set_measinfo_keyword(
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
 
     use tempfile::tempdir;
 
-    use super::prepare_output_root;
+    use crate::CalibrationOutputMode;
+    use crate::output::CalibrationOutput;
+    use std::fs;
 
     #[test]
     fn output_collision_is_rejected_without_modifying_existing_data() {
@@ -359,7 +283,8 @@ mod tests {
         let sentinel = output.join("sentinel");
         fs::write(&sentinel, b"keep").expect("write sentinel");
 
-        let error = prepare_output_root(&output).expect_err("collision must fail");
+        let error = CalibrationOutput::prepare(&output, CalibrationOutputMode::Create)
+            .expect_err("collision must fail");
 
         assert!(error.to_string().contains("output already exists"));
         assert_eq!(fs::read(&sentinel).expect("sentinel remains"), b"keep");
@@ -369,20 +294,22 @@ mod tests {
     fn interrupted_staging_output_is_visible_and_blocks_reuse() {
         let temp = tempdir().expect("tempdir");
         let output = temp.path().join("bandpass.cal");
-        let staging = prepare_output_root(&output).expect("reserve staging output");
-        fs::write(staging.join("partial"), b"incomplete").expect("write partial output");
+        let staging = CalibrationOutput::prepare(&output, CalibrationOutputMode::Create)
+            .expect("reserve staging output");
+        fs::write(staging.staging.join("partial"), b"incomplete").expect("write partial output");
 
-        let error = prepare_output_root(&output).expect_err("staging collision must fail");
+        let error = CalibrationOutput::prepare(&output, CalibrationOutputMode::Create)
+            .expect_err("staging collision must fail");
 
         assert!(!output.exists());
         assert_eq!(
-            fs::read(staging.join("partial")).expect("partial remains"),
+            fs::read(staging.staging.join("partial")).expect("partial remains"),
             b"incomplete"
         );
         assert!(
             error
                 .to_string()
-                .contains("interrupted or concurrent write")
+                .contains("another writer or interrupted publication")
         );
     }
 }

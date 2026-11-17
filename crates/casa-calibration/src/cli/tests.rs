@@ -391,6 +391,7 @@ fn gain_solve() -> SolveGainTaskRequest {
     let mut prior = table("prior.gcal", true);
     prior.interp = ApplyInterpolationMode::Linear;
     SolveGainTaskRequest {
+        append: false,
         measurement_set: PathBuf::from("dataset.ms"),
         selection: MsSelection {
             field: Some("0".into()),
@@ -460,6 +461,7 @@ fn calibrate_gain_solve_reads_every_parameter_it_emits() {
     assert_eq!(
         solve,
         SolveGainTaskRequest {
+            append: false,
             parang: true,
             ..gain_solve()
         }
@@ -514,6 +516,7 @@ fn calibrate_bandpass_solve_reads_every_parameter_it_emits() {
     assert_eq!(
         request("calibrate", &args).expect("calibrate"),
         CalibrationTaskRequest::SolveBandpass(SolveBandpassTaskRequest {
+            append: false,
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection::new(),
             output_table: PathBuf::from("bandpass.bcal"),
@@ -574,6 +577,7 @@ fn calibrate_fluxscale_reads_every_parameter_it_emits() {
     assert_eq!(
         request("calibrate", &args).expect("fluxscale"),
         CalibrationTaskRequest::FluxScale(FluxScaleRequest {
+            append: false,
             input_table: PathBuf::from("gain.gcal"),
             output_table: PathBuf::from("flux.gcal"),
             reference_fields: vec!["1331+305".into()],

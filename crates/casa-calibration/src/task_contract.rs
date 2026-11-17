@@ -20,8 +20,8 @@ use crate::{
     CalibrationDataset, CalibrationSolveRequest, CalibrationSolveResult, CalibrationStatsAxis,
     CalibrationStatsRequest, FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode,
     GainSolveModelSource, GainSolveRequest, GainType, GencalRequest, RefAntSelector,
-    calibration_stats, execute_apply_from_path_with_options, export_corrected_data, fluxscale,
-    gencal, plan_apply_from_path, solve_calibration, summarize_tables,
+    calibration_stats, execute_apply_from_path_with_options, plan_apply_from_path,
+    summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -221,6 +221,9 @@ pub struct SolveGainTaskRequest {
     pub selection: MsSelection,
     /// Output calibration-table path.
     pub output_table: PathBuf,
+    /// Append compatible solutions instead of replacing the table.
+    #[serde(default)]
+    pub append: bool,
     /// Gain family to solve.
     pub gain_type: GainType,
     /// Solve mode.
@@ -265,6 +268,9 @@ pub struct SolveBandpassTaskRequest {
     pub selection: MsSelection,
     /// Output calibration-table path.
     pub output_table: PathBuf,
+    /// Append compatible solutions instead of replacing the table.
+    #[serde(default)]
+    pub append: bool,
     /// Reference antenna selector.
     pub refant: RefAntSelector,
     /// Prior calibration tables to pre-apply while solving.
@@ -322,6 +328,14 @@ pub enum CalibrationTaskRequest {
 impl CalibrationTaskRequest {
     /// Execute the request and return the canonical task result envelope.
     pub fn execute(&self) -> Result<CalibrationTaskResult, String> {
+        self.execute_with_output_mode(None)
+    }
+
+    pub(crate) fn execute_with_output_mode(
+        &self,
+        mode: Option<crate::CalibrationOutputMode>,
+    ) -> Result<CalibrationTaskResult, String> {
+        use crate::CalibrationOutputMode::{Append, Create, Replace, Update};
         match self {
             Self::Summary(request) => {
                 if request.paths.is_empty() {
@@ -372,15 +386,18 @@ impl CalibrationTaskRequest {
             .map(CalibrationTaskResult::Apply)
             .map_err(|error| error.to_string()),
             Self::ExportCorrectedData(request) => {
-                export_corrected_data(&crate::ExportCorrectedDataRequest {
-                    input_ms: request.input_ms.clone(),
-                    output_ms: request.output_ms.clone(),
-                    selection: request.selection.clone(),
-                })
+                crate::corrected_export::export_corrected_data_with_overwrite(
+                    &crate::ExportCorrectedDataRequest {
+                        input_ms: request.input_ms.clone(),
+                        output_ms: request.output_ms.clone(),
+                        selection: request.selection.clone(),
+                    },
+                    mode == Some(Replace),
+                )
                 .map(CalibrationTaskResult::ExportCorrectedData)
                 .map_err(|error| error.to_string())
             }
-            Self::SolveGain(request) => solve_calibration(
+            Self::SolveGain(request) => crate::solve_calibration_with_output_mode(
                 CalibrationDataset::path(&request.measurement_set),
                 CalibrationSolveRequest::Gain(GainSolveRequest {
                     selection: request.selection.clone(),
@@ -398,6 +415,7 @@ impl CalibrationTaskRequest {
                     min_baselines_per_antenna: request.min_baselines_per_antenna,
                     smodel: request.smodel,
                 }),
+                mode.unwrap_or(if request.append { Append } else { Replace }),
             )
             .map(|result| match result {
                 CalibrationSolveResult::Gain(report) => report,
@@ -405,7 +423,7 @@ impl CalibrationTaskRequest {
             })
             .map(CalibrationTaskResult::SolveGain)
             .map_err(|error| error.to_string()),
-            Self::SolveBandpass(request) => solve_calibration(
+            Self::SolveBandpass(request) => crate::solve_calibration_with_output_mode(
                 CalibrationDataset::path(&request.measurement_set),
                 CalibrationSolveRequest::Bandpass(BandpassSolveRequest {
                     selection: request.selection.clone(),
@@ -421,6 +439,7 @@ impl CalibrationTaskRequest {
                     smodel: request.smodel,
                     cuts: request.cuts,
                 }),
+                mode.unwrap_or(if request.append { Append } else { Replace }),
             )
             .map(|result| match result {
                 CalibrationSolveResult::Bandpass(report) => report,
@@ -428,12 +447,17 @@ impl CalibrationTaskRequest {
             })
             .map(CalibrationTaskResult::SolveBandpass)
             .map_err(|error| error.to_string()),
-            Self::FluxScale(request) => fluxscale(request)
-                .map(CalibrationTaskResult::FluxScale)
-                .map_err(|error| error.to_string()),
-            Self::Gencal(request) => gencal(request)
-                .map(CalibrationTaskResult::Gencal)
-                .map_err(|error| error.to_string()),
+            Self::FluxScale(request) => crate::fluxscale::fluxscale_with_output_mode(
+                request,
+                mode.unwrap_or(if request.append { Append } else { Create }),
+            )
+            .map(CalibrationTaskResult::FluxScale)
+            .map_err(|error| error.to_string()),
+            Self::Gencal(request) => {
+                crate::gencal::gencal_with_output_mode(request, mode.unwrap_or(Update))
+                    .map(CalibrationTaskResult::Gencal)
+                    .map_err(|error| error.to_string())
+            }
         }
     }
 }

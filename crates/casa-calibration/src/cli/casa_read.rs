@@ -79,6 +79,7 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
     let min_snr = min_snr(task)?;
     let (model_source, smodel) = model(task, &measurement_set)?;
     Ok(SolveGainTaskRequest {
+        append: task.flag("append")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("caltable")?),
         gain_type: gaintype(task)?,
@@ -124,6 +125,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         }
     };
     Ok(SolveBandpassTaskRequest {
+        append: task.flag("append")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("caltable")?),
         refant: refant(task)?,
@@ -185,6 +187,7 @@ fn fluxscale(task: &TaskInvocation<'_>) -> Result<FluxScaleRequest, TaskFailure>
         .collect::<Result<Vec<_>, _>>()?;
     let gainthreshold = task.number("gainthreshold")?;
     Ok(FluxScaleRequest {
+        append: task.flag("append")?,
         input_table: PathBuf::from(task.required_text("caltable")?),
         output_table: PathBuf::from(task.required_text("fluxtable")?),
         reference_fields,
@@ -216,11 +219,6 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         // CASA looks the corrections up (the VLA's position database, the
         // ALMA tables) when no antenna is named.
         GencalType::Antpos if antenna.trim().is_empty() => {
-            return Err(not_yet("antenna", &antenna));
-        }
-        // CASA writes the opacity for the named antennas alone, and zero
-        // for the others; casa-rs writes it for every antenna.
-        GencalType::Opac if !antenna.trim().is_empty() => {
             return Err(not_yet("antenna", &antenna));
         }
         // With no window named, CASA takes one opacity for all of them.

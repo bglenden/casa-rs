@@ -121,7 +121,7 @@ def ms_cases(root: Path) -> dict[str, Callable[[], Any]]:
     }
 
 
-def make_cal_ms(path: str) -> None:
+def make_cal_ms(path: str, *, channels: int = 8, scan_seconds: int = 60, integration_seconds: int = 10) -> None:
     """A MeasurementSet of five antennas, two fields (FLUX, then PHASE) and
     one 8-channel window in XX and YY: a 60 s scan of each, 10 s
     integrations, predicted from point sources of 2 and 1 Jy with no
@@ -150,16 +150,16 @@ def make_cal_ms(path: str) -> None:
         referencelocation=me.observatory("ALMA"),
     )
     sm.setspwindow(
-        spwname="SPW0", freq="100GHz", deltafreq="1MHz", freqresolution="1MHz", nchannels=8, stokes="XX YY"
+        spwname="SPW0", freq="100GHz", deltafreq="1MHz", freqresolution="1MHz", nchannels=channels, stokes="XX YY"
     )
     sm.setfeed(mode="perfect X Y")
     sm.setfield(sourcename="FLUX", sourcedirection=me.direction("J2000", "0h0m0s", "-30d0m0s"))
     sm.setfield(sourcename="PHASE", sourcedirection=me.direction("J2000", "1h0m0s", "-30d0m0s"))
     sm.setlimits(shadowlimit=0.001, elevationlimit="8.0deg")
     sm.setauto(autocorrwt=0.0)
-    sm.settimes(integrationtime="10s", usehourangle=True, referencetime=me.epoch("UTC", "2020/01/01/00:00:00"))
-    sm.observe("FLUX", "SPW0", starttime="0s", stoptime="60s")
-    sm.observe("PHASE", "SPW0", starttime="60s", stoptime="120s")
+    sm.settimes(integrationtime=f"{integration_seconds}s", usehourangle=True, referencetime=me.epoch("UTC", "2020/01/01/00:00:00"))
+    sm.observe("FLUX", "SPW0", starttime="0s", stoptime=f"{scan_seconds}s")
+    sm.observe("PHASE", "SPW0", starttime=f"{scan_seconds}s", stoptime=f"{2 * scan_seconds}s")
     sm.predict(complist=components)
     sm.close()
 
