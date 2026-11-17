@@ -3695,6 +3695,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#tablesummaryrecursetrue-use-after-free-and-statistics-nan-ordering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        table.summary(recurse=True) use-after-free and statistics NaN ordering
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9479,6 +9490,18 @@ pixel in the same constant example it wrote 3 and 0.25.</p>
 <p>casa-rs uses both masks for both contributions. A pixel masked in either
 input contributes neither signal nor coverage, and valid pointings still
 contribute there. <a href="https://github.com/bglenden/casa-rs/issues/1515">Imaging issue #1515</a></p>
+<h2 id="tablesummaryrecursetrue-use-after-free-and-statistics-nan-ordering"><code>table.summary(recurse=True)</code> use-after-free and <code>statistics</code> <code>NaN</code> ordering<a class="headerlink" href="#tablesummaryrecursetrue-use-after-free-and-statistics-nan-ordering" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, calling <code>tb.summary(recurse=True)</code> on a table with a <code>Table:</code>
+subtable keyword passes a destroyed <code>String</code> buffer when recursing into subtable
+paths in <code>TableProxy::printValueHolder</code>, aborting with a <code>UnicodeDecodeError</code> or
+corrupted path. Calling <code>tb.statistics</code> on floating columns containing <code>NaN</code> also
+violates strict weak ordering in casacore's <code>GenSort::kthLargest</code>, making <code>median</code>,
+<code>medabsdevmed</code>, <code>quartile</code>, <code>min</code>, and <code>max</code> depend arbitrarily on input array index
+positions.</p>
+<p>casa-rs safely canonicalizes and deduplicates <code>Table:</code> keyword subtable paths in
+<code>tb.summary(recurse=True)</code> without invalid memory access, and in <code>tb.statistics</code>
+ignores <code>NaN</code> for <code>min</code>/<code>max</code> while returning <code>NaN</code> deterministically for moments
+and order statistics on <code>NaN</code> inputs. <a href="https://github.com/bglenden/casa-rs/issues/1028">Table tool issue #1028</a></p>
 
 
 
