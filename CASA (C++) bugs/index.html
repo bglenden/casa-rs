@@ -3794,6 +3794,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#tablefromasdm-can-report-success-after-discarding-xml-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        table.fromASDM can report success after discarding XML values
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fits-tnull-cards-can-disappear-from-tablefromfits-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FITS TNULL cards can disappear from table.fromfits output
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9711,6 +9733,24 @@ wrapper (<code>__getitem__</code>), even though <code>r.get(rownr)</code> and <c
 table accessor, supporting negative indices, slices, and sequences of row
 indices, and raising <code>IndexError</code> cleanly on out-of-range indices.
 <a href="https://github.com/bglenden/casa-rs/issues/1028">Table tool issue #1028</a></p>
+<h2 id="tablefromasdm-can-report-success-after-discarding-xml-values"><code>table.fromASDM</code> can report success after discarding XML values<a class="headerlink" href="#tablefromasdm-can-report-success-after-discarding-xml-values" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, call <code>table().fromASDM("out.table", "Scan.xml")</code> with
+<code>&lt;ScanTable&gt;&lt;row&gt;&lt;scanNumber&gt;12&lt;/scanNumber&gt;&lt;/row&gt;&lt;/ScanTable&gt;</code>. The
+table contains one row but its <code>scanNumber</code> is 0. The legacy SAX code
+only enables its value callback for fields listed in a working directory
+file named <code>taglist.txt</code>; even with the tag in that file, this build
+did not store the value. With a nonexistent XML file CASA returns
+<code>True</code> and creates no table.</p>
+<p>casa-rs uses the same ordered column descriptions and converts the XML
+values directly. It reports invalid or unreadable input before replacing
+the destination. The ASDM XML converter reads one table at a time; it
+does not import ASDM datasets or their binary data. See #1028.</p>
+<h2 id="fits-tnull-cards-can-disappear-from-tablefromfits-output">FITS <code>TNULL</code> cards can disappear from <code>table.fromfits</code> output<a class="headerlink" href="#fits-tnull-cards-can-disappear-from-tablefromfits-output" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 preserved the integer -32768 in a FITS <code>1J</code> column but
+did not add a <code>NULL</code> column keyword for its <code>TNULL2 = -32768</code> card.
+<code>FITSTabular::nullsFromHDU</code> looks up each indexed card with a
+zero-based column index. casa-rs preserves both the unscaled integer
+cell and the matching null marker so readers can interpret it. See #1028.</p>
 
 
 

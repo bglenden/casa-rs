@@ -791,7 +791,7 @@
 <a href=#791 id=791 data-nosnippet>791</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(CasaValue::empty_record());
 <a href=#792 id=792 data-nosnippet>792</a>        };
 <a href=#793 id=793 data-nosnippet>793</a>        <span class="kw">let </span>root = open.root();
-<a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">if </span>root.table.is_memory() {
+<a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">if </span>root.table.is_memory() &amp;&amp; root.table.data_manager_info().is_empty() {
 <a href=#795 id=795 data-nosnippet>795</a>            <span class="kw">let </span><span class="kw-2">mut </span>columns: Vec&lt;String&gt; = open
 <a href=#796 id=796 data-nosnippet>796</a>                .visible_columns(<span class="kw-2">&amp;</span>root.table)
 <a href=#797 id=797 data-nosnippet>797</a>                .into_iter()

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AsciiError"],"fn":["read_ascii","write_ascii"],"struct":["AsciiInput"]};

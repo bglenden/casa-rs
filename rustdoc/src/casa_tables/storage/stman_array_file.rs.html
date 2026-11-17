@@ -785,7 +785,7 @@
 <a href=#785 id=785 data-nosnippet>785</a>// ---------------------------------------------------------------------------
 <a href=#786 id=786 data-nosnippet>786</a>
 <a href=#787 id=787 data-nosnippet>787</a></span><span class="doccomment">/// Create an empty array Value for the given data type and shape.
-<a href=#788 id=788 data-nosnippet>788</a></span><span class="kw">fn </span>make_empty_array(dt: CasacoreDataType, shape: <span class="kw-2">&amp;</span>[usize]) -&gt; Value {
+<a href=#788 id=788 data-nosnippet>788</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_empty_array(dt: CasacoreDataType, shape: <span class="kw-2">&amp;</span>[usize]) -&gt; Value {
 <a href=#789 id=789 data-nosnippet>789</a>    <span class="kw">let </span>s = IxDyn(shape);
 <a href=#790 id=790 data-nosnippet>790</a>    <span class="kw">let </span>av = <span class="kw">match </span>dt {
 <a href=#791 id=791 data-nosnippet>791</a>        CasacoreDataType::TpBool =&gt; ArrayValue::Bool(ArrayD::default(s)),

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FitsTableError"],"fn":["read_fits_table"]};
