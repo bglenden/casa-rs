@@ -326,7 +326,7 @@ impl CalibrationTableLookup {
             },
             applicable_selected_row_count: 0,
             summary,
-            resolved_gainfield: None,
+            resolved_gainfields: Vec::new(),
             resolved_nearest_gainfields: Vec::new(),
             spw_mapping: Vec::new(),
             calibration_spectral_windows: Vec::new(),
@@ -467,7 +467,9 @@ impl CalibrationTableLookup {
 
 /// Each (spectral window, antenna)'s solutions across the fields of
 /// `table`, in time order, fields in order at equal times.
-fn across_fields(table: &LoadedCalibrationTable) -> HashMap<(i32, i32), Vec<CalibrationSolution>> {
+pub(crate) fn across_fields(
+    table: &LoadedCalibrationTable,
+) -> HashMap<(i32, i32), Vec<CalibrationSolution>> {
     let mut by_window: HashMap<(i32, i32), Vec<(i32, &CalibrationSolution)>> = HashMap::new();
     for (&(field, spw, antenna), solutions) in &table.solutions {
         by_window

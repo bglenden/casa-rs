@@ -99,7 +99,7 @@ fn plan_apply_resolves_gainfield_by_exact_name() {
             calibration_tables: vec![ApplyCalibrationTableSpec {
                 path: caltable_path,
                 apply_to: Default::default(),
-                gainfield: Some(GainFieldSelector::FieldName("CALIBRATOR".to_string())),
+                gainfield: Some(GainFieldSelector::Expression("CALIBRATOR".to_string())),
                 spwmap: Vec::new(),
                 interp: ApplyInterpolationMode::Nearest,
                 calwt: true,
@@ -109,8 +109,8 @@ fn plan_apply_resolves_gainfield_by_exact_name() {
     .expect("plan apply");
 
     let resolved = plan.calibration_tables[0]
-        .resolved_gainfield
-        .as_ref()
+        .resolved_gainfields
+        .first()
         .expect("resolved gainfield");
     assert_eq!(resolved.field_id, 0);
     assert_eq!(resolved.field_name.as_deref(), Some("CALIBRATOR"));

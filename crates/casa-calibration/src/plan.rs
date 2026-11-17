@@ -30,6 +30,10 @@ use crate::model::CalibrationTableSummary;
 use crate::session::resolve_calibration_selection;
 use crate::summary::{CalibrationTableError, summarize_table};
 
+#[path = "plan_fields.rs"]
+mod fields;
+use fields::resolve_gainfield;
+
 /// Calibration-application mode planned for the executor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ApplyMode {
@@ -90,8 +94,8 @@ impl ApplyInterpolationMode {
 pub enum GainFieldSelector {
     /// Resolve a caltable field by exact integer FIELD_ID.
     FieldId(i32),
-    /// Resolve a caltable field by exact FIELD.NAME match.
-    FieldName(String),
+    /// Select caltable rows with CASA FIELD grammar.
+    Expression(String),
     /// Resolve each selected MS field to the nearest caltable field on sky.
     Nearest,
 }
@@ -263,8 +267,8 @@ pub struct ApplyCalibrationTablePlan {
     pub applicable_selected_row_count: usize,
     /// Normalized summary for the table.
     pub summary: CalibrationTableSummary,
-    /// Resolved explicit gainfield, if any.
-    pub resolved_gainfield: Option<ResolvedGainField>,
+    /// Selected caltable fields; empty selects every calibration field.
+    pub resolved_gainfields: Vec<ResolvedGainField>,
     /// Resolved per-MS-field nearest gainfield mappings, if requested.
     pub resolved_nearest_gainfields: Vec<ResolvedNearestGainField>,
     /// Mapped SPWs needed by the selected MS rows.
@@ -739,6 +743,19 @@ fn build_table_plan(
             source: Box::new(source),
         }
     })?;
+    let windows = ms
+        .spectral_window()
+        .map_err(|source| ApplyPlanError::Selection { source })?
+        .row_count();
+    if spec.spwmap.len() > windows {
+        return Err(ApplyPlanError::UnsupportedCalibrationTable {
+            path: spec.path.display().to_string(),
+            reason: format!(
+                "spwmap has {} entries but the MeasurementSet has {windows} spectral windows",
+                spec.spwmap.len()
+            ),
+        });
+    }
     if !summary.supported_for_v1_apply() {
         let reason = summary
             .issues
@@ -760,7 +777,7 @@ fn build_table_plan(
     let applicable_data_spw_ids = unique_i32(applicable_rows.iter().map(|row| row.data_spw_id));
 
     let is_bpoly = summary.table_subtype == "BPOLY";
-    let (resolved_gainfield, resolved_nearest_gainfields) = if is_bpoly {
+    let (resolved_gainfields, resolved_nearest_gainfields) = if is_bpoly {
         if let Some(selector) = spec.gainfield.as_ref() {
             return Err(ApplyPlanError::ResolveGainField {
                 path: spec.path.display().to_string(),
@@ -768,7 +785,7 @@ fn build_table_plan(
                 reason: "BPOLY apply currently supports only the default field mapping".to_string(),
             });
         }
-        (None, Vec::new())
+        (Vec::new(), Vec::new())
     } else {
         resolve_gainfield(ms, spec, &summary, &applicable_field_ids)?
     };
@@ -810,7 +827,7 @@ fn build_table_plan(
         spec: spec.clone(),
         applicable_selected_row_count: applicable_rows.len(),
         summary,
-        resolved_gainfield,
+        resolved_gainfields,
         resolved_nearest_gainfields,
         spw_mapping,
         calibration_spectral_windows,
@@ -832,242 +849,6 @@ fn k_antpos_default_spwmap_spec(
         .unwrap_or_default();
     spec.spwmap = vec![0; len];
     spec
-}
-
-fn resolve_gainfield(
-    ms: &MeasurementSet,
-    spec: &ApplyCalibrationTableSpec,
-    summary: &CalibrationTableSummary,
-    selected_field_ids: &[i32],
-) -> Result<(Option<ResolvedGainField>, Vec<ResolvedNearestGainField>), ApplyPlanError> {
-    let Some(selector) = spec.gainfield.as_ref() else {
-        return Ok((None, Vec::new()));
-    };
-
-    match selector {
-        GainFieldSelector::FieldId(field_id) => {
-            if !summary.field_ids.contains(field_id) {
-                return Err(ApplyPlanError::ResolveGainField {
-                    path: spec.path.display().to_string(),
-                    selector: field_id.to_string(),
-                    reason: "FIELD_ID is not referenced by any MAIN row".to_string(),
-                });
-            }
-            Ok((
-                Some(ResolvedGainField {
-                    selector: selector.clone(),
-                    field_id: *field_id,
-                    field_name: field_name_by_id(summary, *field_id)?,
-                }),
-                Vec::new(),
-            ))
-        }
-        GainFieldSelector::FieldName(name) => resolve_gainfield_by_name(spec, summary, name)
-            .map(|resolved| (Some(resolved), Vec::new())),
-        GainFieldSelector::Nearest => {
-            resolve_gainfield_nearest(ms, spec, summary, selected_field_ids)
-                .map(|resolved| (None, resolved))
-        }
-    }
-}
-
-fn resolve_gainfield_by_name(
-    spec: &ApplyCalibrationTableSpec,
-    summary: &CalibrationTableSummary,
-    field_name: &str,
-) -> Result<ResolvedGainField, ApplyPlanError> {
-    let table = open_summary_subtable(summary, "FIELD")?;
-    let mut matches = Vec::new();
-
-    for row_index in 0..table.row_count() {
-        let name = get_string(&table, row_index, "NAME")?;
-        if name == field_name && summary.field_ids.contains(&(row_index as i32)) {
-            matches.push(row_index as i32);
-        }
-    }
-
-    match matches.as_slice() {
-        [field_id] => Ok(ResolvedGainField {
-            selector: GainFieldSelector::FieldName(field_name.to_string()),
-            field_id: *field_id,
-            field_name: Some(field_name.to_string()),
-        }),
-        [] => Err(ApplyPlanError::ResolveGainField {
-            path: spec.path.display().to_string(),
-            selector: field_name.to_string(),
-            reason: "no exact FIELD.NAME match referenced by the calibration rows".to_string(),
-        }),
-        _ => Err(ApplyPlanError::ResolveGainField {
-            path: spec.path.display().to_string(),
-            selector: field_name.to_string(),
-            reason: "multiple exact FIELD.NAME matches were referenced by the calibration rows"
-                .to_string(),
-        }),
-    }
-}
-
-#[derive(Debug, Clone)]
-struct FieldDirectionInfo {
-    field_id: i32,
-    field_name: Option<String>,
-    ra_rad: f64,
-    dec_rad: f64,
-}
-
-fn resolve_gainfield_nearest(
-    ms: &MeasurementSet,
-    spec: &ApplyCalibrationTableSpec,
-    summary: &CalibrationTableSummary,
-    selected_field_ids: &[i32],
-) -> Result<Vec<ResolvedNearestGainField>, ApplyPlanError> {
-    let ms_fields = load_ms_field_directions(ms, selected_field_ids)?;
-    let cal_fields = load_caltable_field_directions(summary)?;
-    if cal_fields.is_empty() {
-        return Err(ApplyPlanError::ResolveGainField {
-            path: spec.path.display().to_string(),
-            selector: "nearest".to_string(),
-            reason: "no usable FIELD directions were found in the calibration table".to_string(),
-        });
-    }
-
-    let mut resolved = Vec::new();
-    for ms_field in ms_fields {
-        let mut best = None::<(&FieldDirectionInfo, f64)>;
-        for cal_field in &cal_fields {
-            let separation = angular_separation_rad(
-                ms_field.ra_rad,
-                ms_field.dec_rad,
-                cal_field.ra_rad,
-                cal_field.dec_rad,
-            );
-            match best {
-                Some((_, best_separation)) if separation >= best_separation => {}
-                _ => best = Some((cal_field, separation)),
-            }
-        }
-        let Some((cal_field, separation)) = best else {
-            return Err(ApplyPlanError::ResolveGainField {
-                path: spec.path.display().to_string(),
-                selector: "nearest".to_string(),
-                reason: format!(
-                    "no caltable FIELD rows were available for MS field {}",
-                    ms_field.field_id
-                ),
-            });
-        };
-        resolved.push(ResolvedNearestGainField {
-            measurement_set_field_id: ms_field.field_id,
-            measurement_set_field_name: ms_field.field_name.clone(),
-            calibration_field_id: cal_field.field_id,
-            calibration_field_name: cal_field.field_name.clone(),
-            angular_separation_rad: separation,
-        });
-    }
-    Ok(resolved)
-}
-
-fn load_ms_field_directions(
-    ms: &MeasurementSet,
-    selected_field_ids: &[i32],
-) -> Result<Vec<FieldDirectionInfo>, ApplyPlanError> {
-    let field = ms
-        .field()
-        .map_err(|source| ApplyPlanError::Selection { source })?;
-    let mut out = Vec::new();
-    for &field_id in selected_field_ids {
-        let row = usize::try_from(field_id).map_err(|_| ApplyPlanError::ResolveGainField {
-            path: ms
-                .path()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "<in-memory>".to_string()),
-            selector: "nearest".to_string(),
-            reason: format!("MS FIELD_ID {field_id} does not fit in usize"),
-        })?;
-        if row >= field.row_count() {
-            return Err(ApplyPlanError::ResolveGainField {
-                path: ms
-                    .path()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "<in-memory>".to_string()),
-                selector: "nearest".to_string(),
-                reason: format!("MS FIELD_ID {field_id} is outside the FIELD subtable"),
-            });
-        }
-        let (ra_rad, dec_rad) = phase_direction_to_radec(
-            field
-                .phase_dir(row)
-                .map_err(|source| ApplyPlanError::Selection { source })?,
-        )
-        .map_err(|reason| ApplyPlanError::ResolveGainField {
-            path: ms
-                .path()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "<in-memory>".to_string()),
-            selector: "nearest".to_string(),
-            reason: format!("MS FIELD_ID {field_id}: {reason}"),
-        })?;
-        out.push(FieldDirectionInfo {
-            field_id,
-            field_name: field.name(row).ok(),
-            ra_rad,
-            dec_rad,
-        });
-    }
-    Ok(out)
-}
-
-fn load_caltable_field_directions(
-    summary: &CalibrationTableSummary,
-) -> Result<Vec<FieldDirectionInfo>, ApplyPlanError> {
-    let table = open_summary_subtable(summary, "FIELD")?;
-    let mut out = Vec::new();
-    for row_index in 0..table.row_count() {
-        let field_id = row_index as i32;
-        if !summary.field_ids.contains(&field_id) {
-            continue;
-        }
-        let phase_dir = table
-            .cell_accessor(row_index, "PHASE_DIR")
-            .and_then(|cell| cell.array())
-            .map_err(|source| ApplyPlanError::OpenSubtable {
-                path: summary.path.display().to_string(),
-                subtable: "FIELD",
-                source,
-            })?;
-        let (ra_rad, dec_rad) = phase_direction_to_radec(phase_dir).map_err(|reason| {
-            ApplyPlanError::ResolveGainField {
-                path: summary.path.display().to_string(),
-                selector: "nearest".to_string(),
-                reason: format!("caltable FIELD_ID {field_id}: {reason}"),
-            }
-        })?;
-        out.push(FieldDirectionInfo {
-            field_id,
-            field_name: get_string(&table, row_index, "NAME").ok(),
-            ra_rad,
-            dec_rad,
-        });
-    }
-    Ok(out)
-}
-
-fn phase_direction_to_radec(value: &ArrayValue) -> Result<(f64, f64), String> {
-    let ArrayValue::Float64(values) = value else {
-        return Err("PHASE_DIR was not a Float64 array".to_string());
-    };
-    if values.ndim() != 2 {
-        return Err(format!("PHASE_DIR had shape {:?}", values.shape()));
-    }
-    let shape = values.shape();
-    if shape[0] < 2 || shape[1] == 0 {
-        return Err(format!("PHASE_DIR had unsupported shape {:?}", shape));
-    }
-    Ok((values[[0, 0]], values[[1, 0]]))
-}
-
-fn angular_separation_rad(ra1: f64, dec1: f64, ra2: f64, dec2: f64) -> f64 {
-    let cos_sep = dec1.sin() * dec2.sin() + dec1.cos() * dec2.cos() * (ra1 - ra2).cos();
-    cos_sep.clamp(-1.0, 1.0).acos()
 }
 
 fn resolve_spw_mapping(

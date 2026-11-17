@@ -460,17 +460,13 @@ fn expand_aligned_values<T: Clone>(
 }
 
 pub(super) fn parse_gainfield_value(value: &str) -> Option<GainFieldSelector> {
-    let value = value.trim();
     if value.is_empty() {
         return None;
     }
-    if value.eq_ignore_ascii_case("nearest") {
+    if value == "nearest" {
         return Some(GainFieldSelector::Nearest);
     }
-    if let Ok(field_id) = value.parse::<i32>() {
-        return Some(GainFieldSelector::FieldId(field_id));
-    }
-    Some(GainFieldSelector::FieldName(value.to_string()))
+    Some(GainFieldSelector::Expression(value.to_string()))
 }
 
 pub(super) fn parse_interp_value(value: &str) -> Result<ApplyInterpolationMode, String> {

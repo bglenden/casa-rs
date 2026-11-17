@@ -60,6 +60,7 @@ use crate::plan::{
 
 mod availability;
 use availability::execute as execute_apply_plan;
+mod fields;
 mod gain_validity;
 mod initialization;
 use gain_validity::correcting_gain;
@@ -560,7 +561,7 @@ fn for_each_apply_row(
     let loaded_tables = plan
         .calibration_tables
         .iter()
-        .map(|table_plan| load_calibration_table(table_plan, geometry_engine.as_ref()))
+        .map(|table_plan| fields::load(table_plan, geometry_engine.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     let parang_state = if plan.parang {
         Some(load_parallactic_angle_state(ms).map_err(|source| {
@@ -900,7 +901,7 @@ fn execute_apply_available(
     let loaded_tables = plan
         .calibration_tables
         .iter()
-        .map(|table_plan| load_calibration_table(table_plan, geometry_engine.as_ref()))
+        .map(|table_plan| fields::load(table_plan, geometry_engine.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     let parang_state = if plan.parang {
         Some(load_parallactic_angle_state(ms).map_err(|source| {
@@ -2013,13 +2014,7 @@ fn apply_row_all_channels(
             .iter()
             .find(|mapping| mapping.measurement_set_field_id == row.field_id)
             .map(|mapping| mapping.calibration_field_id)
-            .or_else(|| {
-                table_plan
-                    .resolved_gainfield
-                    .as_ref()
-                    .map(|field| field.field_id)
-            })
-            .unwrap_or(row.field_id);
+            .unwrap_or(-1);
 
         let ant1_key = calibration_lookup_key(
             table_index,
@@ -5068,7 +5063,7 @@ mod tests {
                 },
                 applicable_selected_row_count: 1,
                 summary: empty_cal_summary(cal_path.clone()),
-                resolved_gainfield: None,
+                resolved_gainfields: Vec::new(),
                 resolved_nearest_gainfields: Vec::new(),
                 spw_mapping: vec![crate::plan::ApplySpwMapping {
                     data_spw_id: 2,

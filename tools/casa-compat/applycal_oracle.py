@@ -146,12 +146,34 @@ def run(root, native_bin):
     tool.putcol('STATE_ID', states)
     tool.close()
 
+    chain_source = root/'source-chain.ms'
+    copy_ms(source, chain_source)
+    tool.open(str(chain_source), nomodify=False)
+    tool.putcol('FIELD_ID', np.ones_like(tool.getcol('FIELD_ID')))
+    tool.close()
+    time_gain = root/'time-fields.gcal'
+    copy_ms(solved, time_gain)
+    tool.open(str(time_gain), nomodify=False)
+    fields, antennas, times = (tool.getcol(column) for column in ['FIELD_ID', 'ANTENNA1', 'TIME'])
+    values = tool.getcol('CPARAM')
+    for row, (field, antenna, epoch) in enumerate(zip(fields, antennas, times)):
+        amplitude = (2. if field == 0 else 4.) + .15*np.sin((epoch-times.min())/13.)
+        phase = (.3 if field == 0 else -.5) if antenna == 0 else 0.
+        values[:, :, row] = amplitude*np.exp(1.j*phase)
+    tool.putcol('CPARAM', values)
+    tool.putcol('FLAG', np.zeros_like(tool.getcol('FLAG')))
+    tool.putcol('TIME', times+5.)
+    tool.close()
+
     result = dict(casa_version=casa.version_string(), signature=str(reference), cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
     def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None):
         records, paths = {}, {}
-        before_gain = snapshot(gain)
+        supplied_tables = (extra or {}).get('gaintable', [str(gain)])
+        supplied_tables = [supplied_tables] if isinstance(supplied_tables, str) else supplied_tables
+        before_gain = {Path(path): snapshot(Path(path)) if Path(path).exists() else None
+                       for path in supplied_tables if path}
         for engine, module in [('casa', casa), ('native', native)]:
             path = root/f'{name}.{engine}.ms'
             paths[engine] = path
@@ -200,7 +222,7 @@ def run(root, native_bin):
                     for _ in range(repetitions):
                         value = module.applycal(**arguments)
                 record = dict(value=plain(value))
-            except (ValueError, TypeError, RuntimeError, OSError) as error:
+            except Exception as error:
                 record = dict(error=type(error).__name__, exception_bases=[kind.__name__ for kind in type(error).__mro__], message=str(error))
             finally:
                 if preload is not None:
@@ -214,7 +236,8 @@ def run(root, native_bin):
             backup = Path(str(path)+'.flagversions')
             record['flag_versions'] = sorted(item.name for item in backup.glob('flags.*')) if backup.exists() else []
             records[engine] = record
-        assert before_gain == snapshot(gain), f'{name}: input gain table mutated'
+        for path, before in before_gain.items():
+            assert before == (snapshot(path) if path.exists() else None), f'{name}: input table {path} mutated'
         def check(component, operation):
             try:
                 operation()
@@ -357,6 +380,18 @@ def run(root, native_bin):
             ('empty-intent-bound-union', dict(intent=f'>{state_start}&<{state_start+1},{state_start}')),
             ('trial-error', dict(uvrange='invalid', applymode='trial'))]:
         case('selection-'+name, arguments, input_vis=selection_source)
+    case('chain-default-fields', gain=time_gain, input_vis=chain_source, precorrected=True)
+    for name, selector in [('id0', '0'), ('id1', '1'), ('name0', 'FLUX'), ('name1', 'PHASE'),
+                           ('glob', 'FL*'), ('all', '*'), ('list', '0,1'), ('range', '0~1'),
+                           ('nearest', 'nearest'), ('uppercase-name', 'NEAREST')]:
+        case('chain-gainfield-'+name, dict(gainfield=[selector]), gain=time_gain, input_vis=chain_source, precorrected=True)
+    case('chain-gainfield-scalar', dict(gainfield='FLUX'), gain=time_gain, input_vis=chain_source, precorrected=True)
+    for method in ['nearest', 'linear', 'cubic', 'nearestperobs', 'linearperobs',
+                   'nearestperscan', 'linearperscan', 'linearPD']:
+        case('chain-time-'+method, dict(interp=[method]), gain=time_gain, input_vis=chain_source, precorrected=True)
+    case('chain-spwmap-identity', dict(spwmap=[0]), gain=time_gain, input_vis=chain_source, precorrected=True)
+    case('chain-spwmap-too-long', dict(spwmap=[0, 0]), gain=time_gain, input_vis=chain_source, precorrected=True)
+    case('chain-two-tables', dict(gaintable=[str(time_gain), str(constant)], gainfield=['0,1', ''], interp=['linear', 'nearest'], calwt=[True, False]), gain=time_gain, input_vis=chain_source, precorrected=True)
     return result
 
 

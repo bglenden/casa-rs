@@ -302,7 +302,7 @@ fn format_gainfield_selector(selector: &GainFieldSelector) -> String {
     match selector {
         GainFieldSelector::Nearest => "nearest".to_string(),
         GainFieldSelector::FieldId(field_id) => field_id.to_string(),
-        GainFieldSelector::FieldName(name) => name.clone(),
+        GainFieldSelector::Expression(name) => name.clone(),
     }
 }
 
@@ -409,7 +409,7 @@ fn parse_gainfield_selector(value: &str) -> Result<Option<GainFieldSelector>, St
             _ => Err("fldmap supports only one numeric FIELD_ID in this wave".to_string()),
         };
     }
-    Ok(Some(GainFieldSelector::FieldName(value)))
+    Ok(Some(GainFieldSelector::Expression(value)))
 }
 
 fn parse_int_array(value: &str, label: &str) -> Result<Vec<i32>, String> {
