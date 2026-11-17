@@ -5,6 +5,78 @@ use super::*;
 use tempfile::TempDir;
 
 #[test]
+fn empty_string_records_keep_buffers_and_canonical_offsets() {
+    for big_endian in [false, true] {
+        for version in [0, 1] {
+            let root = TempDir::new().unwrap();
+            let path = root.path().join("empty-strings.arr");
+            let text = Value::Array(ArrayValue::from_string_vec(vec![String::new()]));
+            let number = Value::Array(ArrayValue::from_f32_vec(vec![2.]));
+            let mut writer = StManArrayFileWriter::create(&path, big_endian, version).unwrap();
+            let first = writer
+                .write_array(&text, CasacoreDataType::TpString)
+                .unwrap();
+            // A stream-position query/seek would have flushed this buffer.
+            assert!(!writer.file.buffer().is_empty());
+            assert_eq!(
+                writer.sequential_end,
+                Some(if version == 0 { 28 } else { 32 })
+            );
+            let second = writer
+                .write_array(&number, CasacoreDataType::TpFloat)
+                .unwrap();
+            assert_eq!((first, second), (16, 32));
+            writer.finish().unwrap();
+            drop(writer);
+            let mut reader = StManArrayFileReader::open(&path, big_endian).unwrap();
+            assert_eq!(
+                reader
+                    .read_array_at(first, CasacoreDataType::TpString)
+                    .unwrap(),
+                Some(text)
+            );
+            assert_eq!(reader.pos, if version == 0 { 28 } else { 32 });
+            assert!(!reader.file.buffer().is_empty());
+            assert_eq!(
+                reader
+                    .read_array_at(second, CasacoreDataType::TpFloat)
+                    .unwrap(),
+                Some(number)
+            );
+            // In v0 the four padding bytes can contain a separately stored
+            // zero-length string. A nonzero offset must still invalidate the
+            // cursor, despite the resulting value also being an empty string.
+            if version == 0 {
+                let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+                file.seek(SeekFrom::Start(24)).unwrap();
+                write_u32(
+                    &mut file,
+                    28,
+                    if big_endian {
+                        ArrayFileByteOrder::Big
+                    } else {
+                        ArrayFileByteOrder::Little
+                    },
+                )
+                .unwrap();
+                drop(file);
+                let mut reader = StManArrayFileReader::open(&path, big_endian).unwrap();
+                reader
+                    .read_array_at(first, CasacoreDataType::TpString)
+                    .unwrap();
+                assert_eq!(reader.pos, u64::MAX);
+                assert_eq!(
+                    reader
+                        .read_array_at(second, CasacoreDataType::TpFloat)
+                        .unwrap(),
+                    Some(Value::Array(ArrayValue::from_f32_vec(vec![2.])))
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn malformed_shape_does_not_poison_the_next_aligned_read() {
     for big_endian in [false, true] {
         for version in [0, 1] {

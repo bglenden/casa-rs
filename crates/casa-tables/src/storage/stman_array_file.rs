@@ -359,12 +359,13 @@ impl StManArrayFileReader {
         // Typed reads can fail after consuming part of a cell, including
         // strings that seek internally. Restore knowledge only on success.
         let data_position = std::mem::replace(&mut self.pos, u64::MAX);
-        let array_value = self.read_typed_data(dt, total, &shape)?;
-        // String payloads seek internally; other cells have a known length.
-        self.pos = if dt == CasacoreDataType::TpString {
-            u64::MAX
-        } else {
+        let (array_value, sequential) = self.read_typed_data(dt, total, &shape)?;
+        // String offset zero reads no external payload and preserves buffering.
+        // Nonzero offsets can seek even when their decoded string is empty.
+        self.pos = if sequential {
             data_position + (total as f64 * canonical_elem_bytes(dt) + 0.95) as u64
+        } else {
+            u64::MAX
         };
         Ok(Some(Value::Array(array_value)))
     }
@@ -374,7 +375,7 @@ impl StManArrayFileReader {
         dt: CasacoreDataType,
         count: usize,
         shape: &[usize],
-    ) -> Result<ArrayValue, StorageError> {
+    ) -> Result<(ArrayValue, bool), StorageError> {
         match dt {
             CasacoreDataType::TpBool => {
                 let byte_count = count.div_ceil(8);
@@ -388,14 +389,14 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::Bool(arr))
+                Ok((ArrayValue::Bool(arr), true))
             }
             CasacoreDataType::TpUChar => {
                 let mut vals = vec![0u8; count];
                 self.file.read_exact(&mut vals)?;
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::UInt8(arr))
+                Ok((ArrayValue::UInt8(arr), true))
             }
             CasacoreDataType::TpShort => {
                 let mut vals = Vec::with_capacity(count);
@@ -404,7 +405,7 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::Int16(arr))
+                Ok((ArrayValue::Int16(arr), true))
             }
             CasacoreDataType::TpUShort => {
                 let mut vals = Vec::with_capacity(count);
@@ -413,7 +414,7 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::UInt16(arr))
+                Ok((ArrayValue::UInt16(arr), true))
             }
             CasacoreDataType::TpInt => {
                 let mut vals = Vec::with_capacity(count);
@@ -422,7 +423,7 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::Int32(arr))
+                Ok((ArrayValue::Int32(arr), true))
             }
             CasacoreDataType::TpUInt => {
                 let mut vals = Vec::with_capacity(count);
@@ -431,7 +432,7 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::UInt32(arr))
+                Ok((ArrayValue::UInt32(arr), true))
             }
             CasacoreDataType::TpInt64 => {
                 let mut vals = Vec::with_capacity(count);
@@ -440,7 +441,7 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::Int64(arr))
+                Ok((ArrayValue::Int64(arr), true))
             }
             CasacoreDataType::TpFloat => {
                 let mut vals = Vec::with_capacity(count);
@@ -449,7 +450,7 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::Float32(arr))
+                Ok((ArrayValue::Float32(arr), true))
             }
             CasacoreDataType::TpDouble => {
                 let mut vals = Vec::with_capacity(count);
@@ -458,7 +459,7 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::Float64(arr))
+                Ok((ArrayValue::Float64(arr), true))
             }
             CasacoreDataType::TpComplex => {
                 let mut vals = Vec::with_capacity(count);
@@ -469,7 +470,7 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::Complex32(arr))
+                Ok((ArrayValue::Complex32(arr), true))
             }
             CasacoreDataType::TpDComplex => {
                 let mut vals = Vec::with_capacity(count);
@@ -480,7 +481,7 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::Complex64(arr))
+                Ok((ArrayValue::Complex64(arr), true))
             }
             CasacoreDataType::TpString => {
                 // Read u32 file offsets, then resolve each to a string.
@@ -488,6 +489,7 @@ impl StManArrayFileReader {
                 for _ in 0..count {
                     offsets.push(read_u32(&mut self.file, self.bo)?);
                 }
+                let sequential = offsets.iter().all(|&offset| offset == 0);
                 let mut strings = Vec::with_capacity(count);
                 for &off in &offsets {
                     if off == 0 {
@@ -504,7 +506,7 @@ impl StManArrayFileReader {
                 }
                 let arr = ArrayD::from_shape_vec(IxDyn(shape).f(), strings)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?;
-                Ok(ArrayValue::String(arr))
+                Ok((ArrayValue::String(arr), sequential))
             }
             _ => Err(StorageError::FormatMismatch(format!(
                 "unsupported array file data type: {dt:?}"
@@ -640,10 +642,8 @@ impl StManArrayFileWriter {
         self.file_length = offset + header_bytes + data_bytes;
 
         // Write the actual array data.
-        self.write_typed_data(value, dt)?;
-        if dt != CasacoreDataType::TpString {
-            self.sequential_end = Some(self.file_length);
-        }
+        let sequential = self.write_typed_data(value, dt)?;
+        self.sequential_end = sequential.then_some(self.file_length);
 
         Ok(offset)
     }
@@ -652,7 +652,7 @@ impl StManArrayFileWriter {
         &mut self,
         value: &Value,
         dt: CasacoreDataType,
-    ) -> Result<(), StorageError> {
+    ) -> Result<bool, StorageError> {
         match (value, dt) {
             (Value::Array(ArrayValue::Bool(arr)), CasacoreDataType::TpBool) => {
                 let flat = fortran_flat_iter(arr);
@@ -719,6 +719,12 @@ impl StManArrayFileWriter {
             (Value::Array(ArrayValue::String(arr)), CasacoreDataType::TpString) => {
                 // Write u32 offset placeholders, then append strings.
                 let flat = fortran_flat_iter(arr);
+                if flat.iter().all(String::is_empty) {
+                    for _ in 0..flat.len() {
+                        write_u32(&mut self.file, 0, self.bo)?;
+                    }
+                    return Ok(true);
+                }
                 let offsets_pos = self.file.stream_position()?;
                 // Write zero placeholders.
                 for _ in 0..flat.len() {
@@ -743,6 +749,7 @@ impl StManArrayFileWriter {
                 for off in &string_offsets {
                     write_u32(&mut self.file, *off, self.bo)?;
                 }
+                return Ok(false);
             }
             _ => {
                 return Err(StorageError::FormatMismatch(format!(
@@ -750,7 +757,7 @@ impl StManArrayFileWriter {
                 )));
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     fn flush_header(&mut self) -> Result<(), StorageError> {
