@@ -6,7 +6,7 @@ The module also publishes its canonical object-surface contract directly from
 Rust:
 
 - `protocol_info()` returns the stable object protocol descriptor
-- `schema_bundle()` returns the canonical schema bundle for `Image`, `Table`
+- `schema_bundle()` returns the canonical schema bundle for `Image`
   and the `casars.tools` classes
 
 ## Images
@@ -72,17 +72,19 @@ coordinate rounding can move the edge by a pixel compared with CASA.
 
 ## Tables
 
-Use `Table.open(path, writable=False)` to open an existing table. The v1 table surface focuses on cell/column access instead of browser-style row dictionaries:
+Use the CASA-style `casars.tools.table` tool for in-process table access:
 
-- table metadata through `row_count`, `column_names`, `keywords`, and `column_keywords(name)`
-- cell access through `get_cell` and `set_cell`
-- column access through `get_column` and `put_column`
-- column keyword updates through `set_column_keywords`
+```python
+from casars.tools import table
 
-Returned values follow the documented type mapping:
+tb = table()
+tb.open("observation.ms")
+print(tb.nrows(), tb.colnames())
+first_baseline = tb.getcell("ANTENNA1", 0)
+tb.close()
+```
 
-- scalar numeric, bool, and complex values become Python scalars
-- numeric scalar columns become NumPy arrays
-- fixed-shape numeric array cells and columns become NumPy arrays
-- variable-shape array columns fall back to Python lists of per-row NumPy arrays
-- record values become nested Python dictionaries
+`getcol` returns fixed-shape arrays with rows on the last axis.
+Use `getvarcol` for variable-shape cells. To write, open with
+`nomodify=False`; the write methods are `putcell`, `putcol`,
+and `putcolkeywords`, among others.

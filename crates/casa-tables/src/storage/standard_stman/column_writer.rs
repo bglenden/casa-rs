@@ -24,11 +24,11 @@ use std::path::{Path, PathBuf};
 use casa_types::{ArrayValue, RecordValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
-use super::index::{IndexLayout, write_index_and_header};
+use super::index::{StreamIndex, write_group_indexes};
 use super::{
     CasacoreDataType, ColumnDescContents, ColumnSources, StManArrayFileWriter, StorageError,
     StringBuckets, bucket_offset, canonical_element_size, is_ssm_fixed_string, is_ssm_indirect,
-    is_ssm_variable_string, new_ssm_bucket_layout_with_policy, serialize_ssm_dm_blob,
+    is_ssm_variable_string, new_ssm_bucket_layout_with_policy, serialize_ssm_dm_blob_mapped,
     ssm_cell_element_count, write_cell_to_bucket, write_i64_be, write_i64_le,
 };
 
@@ -144,6 +144,87 @@ pub(super) fn write_ssm_file_columns(
     casacore_default_small: bool,
     dm_name: &str,
 ) -> Result<Vec<u8>, StorageError> {
+    write_ssm_file_columns_with_layout(
+        file_path,
+        col_descs,
+        cells,
+        big_endian,
+        casacore_default_small,
+        dm_name,
+        None,
+    )
+}
+
+/// Plan one or more streams of data buckets. A manager can bind columns
+/// whose combined widths exceed its configured bucket size, as long as
+/// each column fits by itself (SSMBase::addColumn).
+fn data_streams(
+    bits: &[usize],
+    nrrow: usize,
+    size: usize,
+    new_table_rows_per_bucket: Option<u32>,
+) -> Result<Vec<StreamIndex>, StorageError> {
+    let mut groups = vec![(0usize, 0usize)];
+    for (index, &width) in bits.iter().enumerate() {
+        let bytes = width.div_ceil(8);
+        if bytes > size {
+            return Err(StorageError::UnsupportedDataManager(
+                "StandardStMan column does not fit the configured bucket size".into(),
+            ));
+        }
+        let (_, used) = groups.last_mut().expect("initial stream");
+        if *used + bytes > size {
+            groups.push((index, bytes));
+        } else {
+            *used += bytes;
+        }
+    }
+    let mut next_bucket = 0;
+    Ok(groups
+        .iter()
+        .enumerate()
+        .map(|(index, &(first, _))| {
+            let last = groups
+                .get(index + 1)
+                .map_or(bits.len(), |&(start, _)| start);
+            let bits = &bits[first..last];
+            let rows_per_bucket = new_table_rows_per_bucket.unwrap_or_else(|| {
+                if bits.iter().all(|&width| width == 0) {
+                    return 32;
+                }
+                let fits = |rows: usize| {
+                    bits.iter()
+                        .map(|bits| (rows * bits).div_ceil(8))
+                        .sum::<usize>()
+                        <= size
+                };
+                let (mut low, mut high) = (1, 8 * size / bits.iter().sum::<usize>() + 1);
+                while high - low > 1 {
+                    let mid = low + (high - low) / 2;
+                    if fits(mid) { low = mid } else { high = mid }
+                }
+                low as u32
+            });
+            let start = next_bucket;
+            next_bucket += nrrow.div_ceil(rows_per_bucket as usize);
+            StreamIndex {
+                columns: last - first,
+                rows_per_bucket,
+                buckets: start..next_bucket,
+            }
+        })
+        .collect())
+}
+
+pub(super) fn write_ssm_file_columns_with_layout(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    cells: &impl SsmCells,
+    big_endian: bool,
+    casacore_default_small: bool,
+    dm_name: &str,
+    inherited: Option<(Option<u32>, u32)>,
+) -> Result<Vec<u8>, StorageError> {
     let nrrow = cells.row_count();
     let ncol = col_descs.len();
     // The shared array file of indirect columns (SSM's version 0, without
@@ -160,17 +241,28 @@ pub(super) fn write_ssm_file_columns(
         None
     };
     let bits = column_bits(col_descs);
-    let (rows_per_bucket, bucket_size) =
-        new_ssm_bucket_layout_with_policy(&bits, nrrow, casacore_default_small);
-    let bucket_rows = rows_per_bucket as usize;
+    let (bucket, cache_size) = inherited.unwrap_or((None, 2));
+    let (default_rows, bucket_size) = if let Some(size) = bucket {
+        (None, size)
+    } else {
+        let (rows, bytes) = new_ssm_bucket_layout_with_policy(&bits, nrrow, casacore_default_small);
+        (Some(rows), bytes)
+    };
     let bucket_bytes = bucket_size as usize;
+    let streams = data_streams(&bits, nrrow, bucket_bytes, default_rows)?;
+    let nr_data_buckets = streams.last().map_or(0, |stream| stream.buckets.end);
     let mut column_offsets = Vec::with_capacity(ncol);
-    let mut offset = 0u32;
-    for &column_bits in &bits {
-        column_offsets.push(offset);
-        offset += (bucket_rows * column_bits).div_ceil(8) as u32;
+    let mut column_indexes = Vec::with_capacity(ncol);
+    let mut first_column = 0;
+    for (index, stream) in streams.iter().enumerate() {
+        let mut offset = 0;
+        for &column_bits in &bits[first_column..first_column + stream.columns] {
+            column_offsets.push(offset);
+            column_indexes.push(index as u32);
+            offset += (stream.rows_per_bucket as usize * column_bits).div_ceil(8) as u32;
+        }
+        first_column += stream.columns;
     }
-    let nr_data_buckets = nrrow.div_ceil(bucket_rows);
 
     let mut file = File::create(file_path)?;
     let mut strings = StringBuckets::after(nr_data_buckets);
@@ -182,7 +274,9 @@ pub(super) fn write_ssm_file_columns(
         } else {
             ssm_cell_element_count(desc)
         };
-        for bucket in 0..nr_data_buckets {
+        let stream = &streams[column_indexes[column] as usize];
+        let bucket_rows = stream.rows_per_bucket as usize;
+        for bucket in 0..stream.buckets.len() {
             slice.clear();
             slice.resize((bucket_rows * bits[column]).div_ceil(8), 0);
             let first_row = bucket * bucket_rows;
@@ -224,7 +318,8 @@ pub(super) fn write_ssm_file_columns(
                 }
             }
             file.seek(SeekFrom::Start(
-                bucket_offset(bucket, bucket_bytes) + u64::from(column_offsets[column]),
+                bucket_offset(stream.buckets.start + bucket, bucket_bytes)
+                    + u64::from(column_offsets[column]),
             ))?;
             file.write_all(&slice)?;
         }
@@ -236,20 +331,16 @@ pub(super) fn write_ssm_file_columns(
     if let Some(writer) = array_writer.as_mut() {
         writer.finish()?;
     }
-    let nr_string_buckets = strings.len();
-    write_index_and_header(
+    write_group_indexes(
         &mut file,
-        IndexLayout {
-            nrrow,
-            ncol,
-            rows_per_bucket,
-            bucket_size,
-            nr_data_buckets,
-            nr_string_buckets,
-        },
+        nrrow,
+        bucket_size,
+        strings.len(),
+        cache_size,
+        &streams,
         big_endian,
     )?;
-    serialize_ssm_dm_blob(dm_name, &column_offsets, ncol)
+    serialize_ssm_dm_blob_mapped(dm_name, &column_offsets, &column_indexes)
 }
 
 /// Append an indirect cell to the array file and return its offset there:

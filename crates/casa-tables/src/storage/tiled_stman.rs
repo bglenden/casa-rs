@@ -374,6 +374,7 @@ use super::table_control::{
 };
 use super::{StorageError, StorageProfiler, TileLayoutPlanner};
 
+pub(super) mod append;
 mod band_writer;
 #[cfg(test)]
 mod casacore_tiled_data_tests;

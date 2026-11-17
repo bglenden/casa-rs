@@ -748,13 +748,7 @@ impl Table {
             validate_cell_against_schema_column(row_index, column_schema, Some(&value))?;
         }
 
-        {
-            if let Some(set) = self.inner.undefined_for_row_mut(row_index)? {
-                set.remove(column);
-            }
-        }
-
-        let row = self.row_mut(row_index)?;
+        let row = self.inner.editable_cell_row(row_index, column)?;
 
         if schema_column.is_some() {
             row.upsert(column.to_string(), value);

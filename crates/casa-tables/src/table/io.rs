@@ -295,6 +295,9 @@ impl Table {
     /// This is a Rust-specific optimization and currently supports only plain
     /// tables on disk.
     pub fn save_metadata_only(&self, options: TableOptions) -> Result<(), TableError> {
+        if self.try_save_reference_metadata(&options.path)? {
+            return Ok(());
+        }
         let snapshot = StorageSnapshot {
             // The rows the sync data at the target publishes, which its
             // `table.dat` can trail (#880). This save writes no rows, so this
@@ -314,6 +317,13 @@ impl Table {
         self.note_persisted_write(&options.path);
         let storage = CompositeStorage;
         storage.save_metadata_only(&options.path, &snapshot)?;
+        if self
+            .source_path
+            .as_deref()
+            .is_some_and(|path| super::locking::same_directory(path, &options.path))
+        {
+            self.inner.note_metadata_saved();
+        }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
         Ok(())
     }
@@ -567,6 +577,9 @@ impl Table {
         if changed_columns.is_empty() {
             return Ok(());
         }
+        if self.try_save_reference_cells(changed_columns, changed_rows)? {
+            return Ok(());
+        }
         if self.kind != TableKind::Plain {
             return Err(TableError::Storage(
                 "partial in-place save requires a plain disk-backed table".to_string(),
@@ -795,15 +808,11 @@ impl Table {
                             } else {
                                 group.name.as_str()
                             });
-                        let casacore_default_small =
-                            crate::storage::standard_stman::ssm_has_small_buckets(&data_path)
-                                .unwrap_or(false);
-                        let dm_data = crate::storage::standard_stman::write_ssm_file_with_options(
+                        let dm_data = crate::storage::standard_stman::rewrite_ssm_rows(
+                            &data_path,
                             &data_path,
                             &group_col_descs,
                             &rows,
-                            table_dat.big_endian,
-                            casacore_default_small,
                             dm_name,
                         )?;
                         if let Some(entry) = table_dat
@@ -1021,7 +1030,10 @@ impl Table {
             profiler.mark("write_control_file");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(source_path);
-        self.inner.refresh_read_metadata(table_dat)
+        self.inner.refresh_read_metadata(table_dat)?;
+        self.inner
+            .note_selected_cells_saved(changed_columns, changed_rows.as_deref().unwrap_or(&[]));
+        Ok(())
     }
 
     /// Drop successfully persisted lazy cell updates for a bounded write batch.
@@ -1221,6 +1233,7 @@ impl Table {
                 seq_nr: target_seq_nr,
                 columns: vec![target_column.to_string()],
             });
+            self.inner.note_added_column_saved(target_column);
             self.inner.refresh_read_metadata(table_dat)
         })();
         self.finish_write_operation(auto_unlock, result)
@@ -1383,6 +1396,7 @@ impl Table {
                 seq_nr,
                 columns: vec![column.to_string()],
             });
+            self.inner.note_added_column_saved(column);
             self.inner.refresh_read_metadata(table_dat)
         })();
         self.finish_write_operation(auto_unlock, result)
@@ -1424,7 +1438,7 @@ impl Table {
     ///
     /// `Table::tableInfo()` (mutable overload) followed by `Table::flushTableInfo()`.
     pub fn set_info(&mut self, info: TableInfo) {
-        self.inner.note_change();
+        self.inner.note_metadata_change();
         self.table_info = info;
     }
 
@@ -1689,23 +1703,23 @@ impl Table {
             .as_ref()
             .ok_or_else(|| TableError::Storage("cannot resync: table has no source path".into()))?
             .clone();
-        let opts = TableOptions::new(&path);
-        let mut reloaded = Table::open(opts)?;
+        self.reload_disk_state_at(&path)
+    }
+
+    pub(super) fn reload_disk_state_at(&mut self, path: &Path) -> Result<(), TableError> {
+        let mut reloaded = Table::open(TableOptions::new(path))?;
         self.inner = std::mem::take(&mut reloaded.inner);
+        #[cfg(unix)]
+        if self.lock_state.is_some() {
+            self.inner.track_dirty_changes();
+        }
         self.virtual_columns = std::mem::take(&mut reloaded.virtual_columns);
         self.virtual_bindings = std::mem::take(&mut reloaded.virtual_bindings);
         self.table_info = std::mem::take(&mut reloaded.table_info);
         self.dm_info = std::mem::take(&mut reloaded.dm_info);
-        // Preserve source_path, kind, marked_for_delete, and lock_state. The
-        // reloaded state is what is on disk, so a lock has nothing to flush;
-        // a write already persisted under it stays to be published.
-        #[cfg(unix)]
-        if let Some(state) = self.lock_state.as_mut() {
-            state.flushed_generation.store(
-                self.inner.generation(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-        }
+        // Keep this handle's locks and unpublished writes. The reloaded
+        // state is already backed by disk.
+        self.mark_flushed();
         Ok(())
     }
 
@@ -1733,10 +1747,9 @@ impl Table {
             return Ok(false);
         };
         let control_path = path.join(crate::storage::TABLE_CONTROL_FILE);
-        Ok(matches!(
-            crate::storage::table_control::read_table_dat_dispatch(&control_path)?,
-            crate::storage::table_control::TableDatResult::Ref(_)
-        ))
+        Ok(crate::storage::table_control::is_reference_descriptor(
+            &control_path,
+        )?)
     }
 
     /// The options that write this table in full as it is laid out on disk,

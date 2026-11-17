@@ -241,6 +241,11 @@ impl ColumnSchema {
         &self.name
     }
 
+    pub(crate) fn renamed(mut self, name: String) -> Self {
+        self.name = name;
+        self
+    }
+
     /// Return the column kind (scalar, array, or record).
     pub fn column_type(&self) -> &ColumnType {
         &self.column_type

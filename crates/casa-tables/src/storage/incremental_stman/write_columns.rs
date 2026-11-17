@@ -69,6 +69,17 @@ pub(crate) fn write_ism_file_column_sources(
     scalar_columns: &ColumnSources<'_>,
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
+    write_ism_column_sources_with_layout(file_path, col_descs, scalar_columns, big_endian, None, 1)
+}
+
+pub(super) fn write_ism_column_sources_with_layout(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &ColumnSources<'_>,
+    big_endian: bool,
+    bucket: Option<u32>,
+    cache_size: u32,
+) -> Result<Vec<u8>, StorageError> {
     if scalar_columns.column_count() != col_descs.len() {
         return Err(StorageError::FormatMismatch(format!(
             "ISM column source count mismatch: expected {}, got {}",
@@ -76,9 +87,15 @@ pub(crate) fn write_ism_file_column_sources(
             scalar_columns.column_count()
         )));
     }
-    let (col_info, bucket_size) = ism_source_layout(col_descs)?;
+    let (col_info, default_bucket) = ism_source_layout(col_descs)?;
+    let bucket_size = bucket.unwrap_or(default_bucket);
     let nrrow = scalar_columns.row_count();
     let ncol = col_descs.len();
+    if (bucket_size as usize) < 4 + 12 * ncol {
+        return Err(StorageError::FormatMismatch(format!(
+            "IncrementalStMan bucket size {bucket_size} cannot hold an index for {ncol} columns"
+        )));
+    }
 
     if let Some(scalar_runs) = (0..ncol)
         .map(|col_idx| scalar_columns.scalar_runs(col_idx))
@@ -91,6 +108,7 @@ pub(crate) fn write_ism_file_column_sources(
             &scalar_runs,
             bucket_size,
             big_endian,
+            cache_size,
         );
     }
 
@@ -223,7 +241,7 @@ pub(crate) fn write_ism_file_column_sources(
         arrays.finish()?;
     }
     let index_data = serialize_ism_index(&ism_rows, &ism_bucket_nrs, big_endian)?;
-    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian)?;
+    let header_buf = serialize_ism_header(bucket_size, nr_buckets as u32, big_endian, cache_size)?;
 
     file.write_all(&index_data)?;
     file.seek(SeekFrom::Start(0))?;
@@ -243,22 +261,21 @@ fn write_bucket(
     bucket_size: u32,
     big_endian: bool,
 ) -> Result<(), StorageError> {
-    let mut raw = vec![0u8; bucket_size as usize];
-    let data_len = bucket.data.len().min(bucket_size as usize - 4);
-    raw[4..4 + data_len].copy_from_slice(&bucket.data[..data_len]);
-
+    let data_len = bucket.data.len();
     let index_len: usize = bucket
         .col_indices
         .iter()
         .map(|(row_nrs, _)| 4 + row_nrs.len() * 8)
         .sum();
-    if 4 + data_len + index_len > raw.len() {
+    if 4 + data_len + index_len > bucket_size as usize {
         return Err(StorageError::FormatMismatch(format!(
             "ISM bucket requires {} bytes, exceeds planned bucket size {}",
             4 + data_len + index_len,
-            raw.len()
+            bucket_size
         )));
     }
+    let mut raw = vec![0u8; bucket_size as usize];
+    raw[4..4 + data_len].copy_from_slice(&bucket.data);
     let index_start = raw.len() - index_len;
     let index_offset = index_start as u32;
     if big_endian {

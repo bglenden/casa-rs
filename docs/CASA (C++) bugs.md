@@ -3824,7 +3824,10 @@ the Python value, has a `TpInt64` case for a scalar but none for `TpArrayInt64`
 (the converter for records in the same file has both). The recording is
 `crates/casars-python/python/tests/data/casa_table_tool.json` (`cells`,
 `getcol('id')`; the fixture's `id` column is `Int64`). casa-rs returns the
-`int64` array, as it does for every other integer column.
+`int64` array, as it does for every other integer column. This also
+affects the `_COUNT_` column of a result from TaQL `COUNT`:
+`getcol("_COUNT_")` raises the same error; `getcell("_COUNT_", row)`
+returns the count. See `taql_count_int64` in that recording (#1028).
 
 ## `tb.putkeyword` stores an int beyond 32 bits as 0
 

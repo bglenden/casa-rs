@@ -493,3 +493,55 @@ def test_a_copyrows_of_an_integer_that_does_not_fit_the_column_is_refused_where_
     assert reader.open(str(out))
     assert reader.nrows() == 1 and reader.getcell("id", 0) == 1
     reader.done()
+
+
+def test_reopened_reference_writes_parent_rows_under_parent_lock(reference_tables: Path) -> None:
+    parent_path = reference_tables / "big.table"
+    view_path = reference_tables / "ref.table"
+    descriptor = (view_path / "table.dat").read_bytes()
+    parent, view = tools.table(), tools.table()
+    assert parent.open(str(parent_path), nomodify=False, lockoptions={"option": "user"})
+    assert view.open(str(view_path), nomodify=False, lockoptions={"option": "user"})
+    assert parent.lock(write=True, nattempts=1)
+    assert not view.lock(write=True, nattempts=1)
+    assert parent.unlock()
+    assert view.lock(write=True, nattempts=1)
+    assert not parent.lock(write=True, nattempts=1)
+    assert view.putcol("id", [81, 83])
+    assert view.putkeyword("THROUGH_VIEW", 66)
+    assert view.putcolkeyword("id", "VIEW_COLUMN_KEYWORD", 17)
+    assert view.unlock()
+    assert parent.lock(write=False, nattempts=1)
+    assert parent.getcol("id").tolist() == [81, 2, 83]
+    assert parent.getkeyword("THROUGH_VIEW") == 66
+    assert parent.getcolkeyword("id", "VIEW_COLUMN_KEYWORD") == 17
+    assert parent.unlock()
+    assert view.close()
+    assert view.open(str(view_path))
+    assert view.getcol("id").tolist() == [81, 83]
+    assert view.rownumbers().tolist() == [0, 2]
+    assert (view_path / "table.dat").read_bytes() == descriptor
+    view.done()
+    parent.done()
+
+
+def test_reordered_child_of_a_reopened_reference_keeps_last_write(reference_tables: Path) -> None:
+    base_path = reference_tables / "big.table"
+    duplicate_path = reference_tables / "duplicate.table"
+    base = tools.table()
+    assert base.open(str(base_path), nomodify=False)
+    original = base.selectrows([0, 0], name=str(duplicate_path))
+    assert original.close()
+    assert base.close()
+
+    reopened = tools.table()
+    assert reopened.open(str(duplicate_path), nomodify=False)
+    child = reopened.selectrows([1, 0, 1])
+    assert child.putcol("id", [11, 12, 13])
+    assert reopened.getcol("id").tolist() == [13, 13]
+    child.done()
+    child = reopened.selectrows([1, 0])
+    assert child.putcol("id", [14, 15])
+    assert reopened.getcol("id").tolist() == [15, 15]
+    child.done()
+    reopened.done()

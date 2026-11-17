@@ -800,13 +800,8 @@ impl PyTableTool {
         dminfo: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let columns = record_fields(desc)?;
-        let with_dminfo = match dminfo {
-            Some(dminfo) => !record_fields(dminfo)?.is_empty(),
-            None => false,
-        };
-        self.call(py, move |state, log| {
-            state.addcols(columns, with_dminfo, log)
-        })
+        let dminfo = dminfo.map(record_fields).transpose()?.unwrap_or_default();
+        self.call(py, move |state, log| state.addcols(columns, dminfo, log))
     }
 
     /// The storage managers of the table, with their columns.

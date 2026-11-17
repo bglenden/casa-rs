@@ -14,7 +14,7 @@ import tarfile
 import numpy as np
 import pytest
 
-from casars.data import Table
+from _table_readback import open_table, read_column
 from casars.tools import componentlist, measures, simulator, table
 
 
@@ -55,7 +55,7 @@ def test_upstream_plp_predicts_spectral_curvature(tmp_path):
     assert sm.openfromms(str(path))
     assert sm.predict(complist=str(model), incremental=False)
     assert sm.close()
-    data = np.asarray(Table.open(path).get_column('DATA'))
+    data = np.asarray(read_column(open_table(path), 'DATA'))
     ratio = np.array([1., 1.1, 1.2, 1.3, 1.4]) / 1.5
     expected = 5. * ratio ** (3. + 2. * np.log(ratio))
     # Retain the upstream rtol and numpy.allclose's original 1e-8 atol.
@@ -76,14 +76,14 @@ def screen_table(tmp_path, interval):
                       beta=1.1, windspeed=7., simint=interval)
     assert sm.corrupt()
     assert sm.close()
-    assert 'CORRECTED_DATA' in Table.open(path).column_names
-    return Table.open(output)
+    assert 'CORRECTED_DATA' in open_table(path).colnames()
+    return open_table(output)
 
 
 def assert_screen_sampling(solutions):
-    times = np.asarray(solutions.get_column('TIME'))
-    antenna = np.asarray(solutions.get_column('ANTENNA1'))
-    gains = np.asarray(solutions.get_column('CPARAM'))[:, 0, 0]
+    times = np.asarray(read_column(solutions, 'TIME'))
+    antenna = np.asarray(read_column(solutions, 'ANTENNA1'))
+    gains = np.asarray(read_column(solutions, 'CPARAM'))[:, 0, 0]
     assert np.all(np.isfinite(gains))
     np.testing.assert_allclose(np.abs(gains), 1., rtol=1e-6, atol=1e-6)
     # AtmosCorruptor.cphase translates a frozen screen by floor(slot*dt*v/pixel).

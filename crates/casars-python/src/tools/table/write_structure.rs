@@ -4,17 +4,16 @@
 //! `renamecol` and `removecols` change `table.dat` in place and delete the
 //! files of a storage manager left with no column, whatever the table's
 //! layout (`Table::rename_column_in_place`, `Table::remove_columns_in_place`);
-//! `addrows` and `removerows` write the table in full as it is laid out,
-//! which casa-tables can do for one `StManAipsIO` group only
-//! (`Table::single_stman_aipsio_options`). A table of other storage managers
-//! refuses them with `NotImplementedError`, and never has a row loaded before
-//! the refusal (#1028 names the library's missing in-place row changes).
+//! `addrows` and `removerows` preserve the existing manager bindings on disk.
+//! As in casacore, only managers that support row removal admit `removerows`.
 //!
 //! Departures from CASA 6.7.6.14, recorded in `docs/CASA (C++) bugs.md`:
 //! `addrows` of a negative count removes rows there (the count wraps); here
 //! it is refused.
 
-use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table, TableOptions};
+use casa_tables::{
+    ArrayShapeContract, ColumnAddition, ColumnSchema, ColumnType, Table, TableOptions,
+};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
@@ -233,12 +232,12 @@ impl State {
     /// `addcols(desc, dminfo)`: columns of default values (a cell of an array
     /// of variable shape undefined), all or none of them added (CASA adds the
     /// ones before a column that fails, which casa-rs does not follow:
-    /// `docs/CASA (C++) bugs.md`). A column goes into the table's one storage
-    /// manager; naming another, or a `dminfo`, is not implemented.
+    /// `docs/CASA (C++) bugs.md`). With `dminfo` the columns go into a
+    /// new storage manager.
     pub(super) fn addcols(
         &mut self,
         description: Vec<(String, Incoming)>,
-        with_dminfo: bool,
+        dminfo: Vec<(String, Incoming)>,
         log: &mut Vec<LogLine>,
     ) -> Reply {
         let before = self
@@ -287,30 +286,33 @@ impl State {
                 if columns.is_empty() {
                     return Ok(Persist::Nothing);
                 }
-                if with_dminfo || columns.iter().any(|column| column.names_manager) {
-                    return Err(Fail::Unsupported(
-                    "table.addcols with a storage manager of its own is not yet implemented in \
-                     casa-rs: a column goes into the table's one StManAipsIO group (#1028)"
-                        .to_string(),
-                ));
-                }
-                let options = if table.is_memory() {
-                    None
+                let manager = super::new_column::add_manager(dminfo)?;
+                if !table.is_memory() {
+                    let columns = columns
+                        .into_iter()
+                        .map(|column| ColumnAddition {
+                            default: default_value(&column.schema),
+                            schema: column.schema,
+                            keywords: column.keywords.unwrap_or_default(),
+                            manager_type: column.manager_type,
+                            manager_group: column.manager_group,
+                        })
+                        .collect();
+                    table.add_columns_in_place(columns, manager)?;
                 } else {
-                    Some(whole_table(table, "addcols")?)
-                };
-                for column in columns {
-                    let name = column.schema.name().to_string();
-                    let default = default_value(&column.schema);
-                    table.add_column(column.schema, default)?;
-                    if let Some(keywords) = column.keywords {
-                        table.set_column_keywords(&name, keywords);
+                    if manager.is_some() || columns.iter().any(|column| column.names_manager) {
+                        return Err(Fail::Unsupported(
+                            "table.addcols cannot add a storage manager to a memory table".into(),
+                        ));
                     }
-                }
-                if let Some(options) = options {
-                    table.save(options)?;
-                    // Refresh the data-manager description after a full save.
-                    table.resync()?;
+                    for column in columns {
+                        let name = column.schema.name().to_string();
+                        let default = default_value(&column.schema);
+                        table.add_column(column.schema, default)?;
+                        if let Some(keywords) = column.keywords {
+                            table.set_column_keywords(&name, keywords);
+                        }
+                    }
                 }
                 Ok(Persist::Done)
             },
@@ -351,17 +353,13 @@ impl State {
                 if count == 0 {
                     return Ok(Persist::Nothing);
                 }
-                let options = if table.is_memory() {
-                    None
-                } else {
-                    Some(whole_table(table, "addrows")?)
-                };
                 let row = default_row(table);
-                for _ in 0..count {
-                    table.add_row(row.clone())?;
-                }
-                if let Some(options) = options {
-                    table.save(options)?;
+                if table.is_memory() {
+                    for _ in 0..count {
+                        table.add_row(row.clone())?;
+                    }
+                } else {
+                    table.append_rows_in_place(count, &row)?;
                 }
                 Ok(Persist::Done)
             },
@@ -408,6 +406,10 @@ impl State {
                 }
                 left.remove(number as usize);
             }
+            if !table.is_memory() {
+                table.retain_rows_in_place(&left)?;
+                return Ok(Persist::Done);
+            }
             let mut kept = left.into_iter().peekable();
             let removed: Vec<usize> = (0..nrows)
                 .filter(|row| {
@@ -418,15 +420,7 @@ impl State {
                     !stays
                 })
                 .collect();
-            let options = if table.is_memory() {
-                None
-            } else {
-                Some(whole_table(table, "removerows")?)
-            };
             table.remove_rows(&removed)?;
-            if let Some(options) = options {
-                table.save(options)?;
-            }
             Ok(Persist::Done)
         })
     }

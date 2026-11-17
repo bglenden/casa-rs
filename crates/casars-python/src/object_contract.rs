@@ -180,89 +180,11 @@ enum LogicalOutputValue {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-enum LogicalColumnInputValue {
-    /// Dense column payload that projects to a NumPy array.
-    NdArray(LogicalNdArray),
-    /// Row-wise payload list for strings, records, or variable-shape arrays.
-    ValueList(Vec<LogicalInputValue>),
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-enum LogicalColumnOutputValue {
-    /// Dense column payload that projects to a NumPy array.
-    NdArray(LogicalNdArray),
-    /// Row-wise payload list for strings, records, missing values, or variable-shape arrays.
-    ValueList(Vec<LogicalOutputValue>),
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct ImagePutSliceRequest {
     /// Logical array payload written into the image.
     data: LogicalNdArray,
     /// Inclusive starting coordinate in CASA/Rust axis order.
     start: Vec<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-struct TableColumnKeywordsRequest {
-    /// Target column name.
-    column: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-struct TableCellRequest {
-    /// Target row index.
-    row: usize,
-    /// Target column name.
-    column: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-struct TableSetCellRequest {
-    /// Target row index.
-    row: usize,
-    /// Target column name.
-    column: String,
-    /// Replacement value encoded with the logical CASA/Python input value model.
-    value: LogicalInputValue,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-struct TableColumnRequest {
-    /// Target column name.
-    column: String,
-    /// Starting row index.
-    #[serde(default)]
-    start: usize,
-    /// Number of rows to read; `null` means to the end.
-    count: Option<usize>,
-    /// Positive row stride.
-    #[serde(default = "one")]
-    step: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-struct TablePutColumnRequest {
-    /// Target column name.
-    column: String,
-    /// Replacement values encoded with the logical CASA/Python input value model.
-    values: LogicalColumnInputValue,
-    /// Starting row index.
-    #[serde(default)]
-    start: usize,
-    /// Positive row stride.
-    #[serde(default = "one")]
-    step: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-struct TableSetColumnKeywordsRequest {
-    /// Target column name.
-    column: String,
-    /// Replacement keyword record.
-    keywords: BTreeMap<String, LogicalInputValue>,
 }
 
 /// Canonical schema bundle for the `casars.data` object surface.
@@ -296,22 +218,10 @@ impl DataObjectSchemaBundle {
         let output_value_schema = schema_for!(LogicalOutputValue);
         let input_record_schema = schema_for!(BTreeMap<String, LogicalInputValue>);
         let output_record_schema = schema_for!(BTreeMap<String, LogicalOutputValue>);
-        let optional_output_record_schema =
-            schema_for!(Option<BTreeMap<String, LogicalOutputValue>>);
         let string_list_schema = schema_for!(Vec<String>);
         let optional_string_schema = schema_for!(Option<String>);
         let shape_schema = schema_for!(Vec<usize>);
         let units_schema = schema_for!(String);
-        let row_count_schema = schema_for!(usize);
-        let table_cell_request_schema = schema_for!(TableCellRequest);
-        let table_set_cell_schema = schema_for!(TableSetCellRequest);
-        let table_column_request_schema = schema_for!(TableColumnRequest);
-        let table_put_column_schema = schema_for!(TablePutColumnRequest);
-        let table_column_keywords_request_schema = schema_for!(TableColumnKeywordsRequest);
-        let table_set_column_keywords_schema = schema_for!(TableSetColumnKeywordsRequest);
-        let column_input_schema = schema_for!(LogicalColumnInputValue);
-        let column_output_schema = schema_for!(LogicalColumnOutputValue);
-        let written_count_schema = schema_for!(usize);
         let tools = Self::tool_contracts();
 
         let mut components = ProviderComponentSchemas::new();
@@ -332,150 +242,71 @@ impl DataObjectSchemaBundle {
             &output_value_schema,
             &input_record_schema,
             &output_record_schema,
-            &optional_output_record_schema,
             &string_list_schema,
             &optional_string_schema,
             &shape_schema,
             &units_schema,
-            &row_count_schema,
-            &table_cell_request_schema,
-            &table_set_cell_schema,
-            &table_column_request_schema,
-            &table_put_column_schema,
-            &table_column_keywords_request_schema,
-            &table_set_column_keywords_schema,
-            &column_input_schema,
-            &column_output_schema,
-            &written_count_schema,
         ]));
 
-        let mut objects = vec![
-            ObjectTypeContract {
-                name: "Image".to_string(),
-                constructors: vec![ObjectConstructorDescriptor {
-                    name: "open".to_string(),
-                    parameters_schema: open_schema.clone(),
-                }],
-                properties: vec![
-                    ObjectPropertyDescriptor {
-                        name: "shape".to_string(),
-                        value_schema: shape_schema.clone(),
-                        readable: true,
-                        writable: false,
-                    },
-                    ObjectPropertyDescriptor {
-                        name: "pixel_type".to_string(),
-                        value_schema: pixel_type_schema.clone(),
-                        readable: true,
-                        writable: false,
-                    },
-                    ObjectPropertyDescriptor {
-                        name: "units".to_string(),
-                        value_schema: units_schema.clone(),
-                        readable: true,
-                        writable: false,
-                    },
-                    ObjectPropertyDescriptor {
-                        name: "image_info".to_string(),
-                        value_schema: output_record_schema.clone(),
-                        readable: true,
-                        writable: false,
-                    },
-                    ObjectPropertyDescriptor {
-                        name: "misc_info".to_string(),
-                        value_schema: output_record_schema.clone(),
-                        readable: true,
-                        writable: false,
-                    },
-                    ObjectPropertyDescriptor {
-                        name: "mask_names".to_string(),
-                        value_schema: string_list_schema.clone(),
-                        readable: true,
-                        writable: false,
-                    },
-                    ObjectPropertyDescriptor {
-                        name: "default_mask_name".to_string(),
-                        value_schema: optional_string_schema.clone(),
-                        readable: true,
-                        writable: false,
-                    },
-                ],
-                methods: Self::image_methods(
-                    &array_region_schema,
-                    &image_put_slice_schema,
-                    &plane_request_schema,
-                    &logical_array_schema,
-                    optional_logical_array_schema,
-                ),
-                lifecycle_operations: Vec::new(),
-            },
-            ObjectTypeContract {
-                name: "Table".to_string(),
-                constructors: vec![ObjectConstructorDescriptor {
-                    name: "open".to_string(),
-                    parameters_schema: open_schema,
-                }],
-                properties: vec![
-                    ObjectPropertyDescriptor {
-                        name: "row_count".to_string(),
-                        value_schema: row_count_schema,
-                        readable: true,
-                        writable: false,
-                    },
-                    ObjectPropertyDescriptor {
-                        name: "column_names".to_string(),
-                        value_schema: string_list_schema,
-                        readable: true,
-                        writable: false,
-                    },
-                    ObjectPropertyDescriptor {
-                        name: "keywords".to_string(),
-                        value_schema: output_record_schema.clone(),
-                        readable: true,
-                        writable: false,
-                    },
-                ],
-                methods: vec![
-                    ObjectMethodDescriptor {
-                        name: "column_keywords".to_string(),
-                        parameters_schema: table_column_keywords_request_schema,
-                        result_schema: Some(optional_output_record_schema),
-                        mutating: false,
-                    },
-                    ObjectMethodDescriptor {
-                        name: "get_cell".to_string(),
-                        parameters_schema: table_cell_request_schema,
-                        result_schema: Some(output_value_schema),
-                        mutating: false,
-                    },
-                    ObjectMethodDescriptor {
-                        name: "set_cell".to_string(),
-                        parameters_schema: table_set_cell_schema,
-                        result_schema: None,
-                        mutating: true,
-                    },
-                    ObjectMethodDescriptor {
-                        name: "get_column".to_string(),
-                        parameters_schema: table_column_request_schema,
-                        result_schema: Some(column_output_schema),
-                        mutating: false,
-                    },
-                    ObjectMethodDescriptor {
-                        name: "put_column".to_string(),
-                        parameters_schema: table_put_column_schema,
-                        result_schema: Some(written_count_schema),
-                        mutating: true,
-                    },
-                    ObjectMethodDescriptor {
-                        name: "set_column_keywords".to_string(),
-                        parameters_schema: table_set_column_keywords_schema,
-                        result_schema: None,
-                        mutating: true,
-                    },
-                ],
-                lifecycle_operations: Vec::new(),
-            },
-        ];
+        let mut objects = vec![ObjectTypeContract {
+            name: "Image".to_string(),
+            constructors: vec![ObjectConstructorDescriptor {
+                name: "open".to_string(),
+                parameters_schema: open_schema.clone(),
+            }],
+            properties: vec![
+                ObjectPropertyDescriptor {
+                    name: "shape".to_string(),
+                    value_schema: shape_schema.clone(),
+                    readable: true,
+                    writable: false,
+                },
+                ObjectPropertyDescriptor {
+                    name: "pixel_type".to_string(),
+                    value_schema: pixel_type_schema.clone(),
+                    readable: true,
+                    writable: false,
+                },
+                ObjectPropertyDescriptor {
+                    name: "units".to_string(),
+                    value_schema: units_schema.clone(),
+                    readable: true,
+                    writable: false,
+                },
+                ObjectPropertyDescriptor {
+                    name: "image_info".to_string(),
+                    value_schema: output_record_schema.clone(),
+                    readable: true,
+                    writable: false,
+                },
+                ObjectPropertyDescriptor {
+                    name: "misc_info".to_string(),
+                    value_schema: output_record_schema.clone(),
+                    readable: true,
+                    writable: false,
+                },
+                ObjectPropertyDescriptor {
+                    name: "mask_names".to_string(),
+                    value_schema: string_list_schema.clone(),
+                    readable: true,
+                    writable: false,
+                },
+                ObjectPropertyDescriptor {
+                    name: "default_mask_name".to_string(),
+                    value_schema: optional_string_schema.clone(),
+                    readable: true,
+                    writable: false,
+                },
+            ],
+            methods: Self::image_methods(
+                &array_region_schema,
+                &image_put_slice_schema,
+                &plane_request_schema,
+                &logical_array_schema,
+                optional_logical_array_schema,
+            ),
+            lifecycle_operations: Vec::new(),
+        }];
         objects.extend(tools);
 
         Self {
@@ -563,14 +394,6 @@ impl DataObjectSchemaBundle {
                             "get_plane": "numpy.ndarray",
                             "get_mask_slice": "numpy.ndarray | None"
                         }
-                    },
-                    "Table": {
-                        "python_class": "casars.data.Table",
-                        "return_types": {
-                            "get_cell": "Any",
-                            "get_column": "numpy.ndarray | list[numpy.ndarray] | list[Any]",
-                            "column_keywords": "dict[str, Any] | None"
-                        }
                     }
                 }
             }
@@ -585,10 +408,7 @@ impl DataObjectSchemaBundle {
     /// `casars.data` classes, and the CASA tools, which name their own module
     /// and carry their parameter order.
     fn python_projections() -> ProviderProjectionMetadata {
-        let mut objects = vec![
-            json!({ "name": "Image", "class_name": "Image" }),
-            json!({ "name": "Table", "class_name": "Table" }),
-        ];
+        let mut objects = vec![json!({ "name": "Image", "class_name": "Image" })];
         objects.extend(TOOLS.iter().map(|tool| tool.python_projection()));
         ProviderProjectionMetadata {
             cli: None,
@@ -603,10 +423,6 @@ impl DataObjectSchemaBundle {
     pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
-}
-
-const fn one() -> usize {
-    1
 }
 
 #[cfg(test)]
@@ -637,7 +453,6 @@ mod tests {
             names,
             [
                 "Image",
-                "Table",
                 "simulator",
                 "measures",
                 "quanta",

@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 
 import casars
-from casars.data import Table
+from _table_readback import open_table, read_column
 from casars.tools import measures
 
 from _casa_tools import (
@@ -456,6 +456,6 @@ def test_sources_are_listed_as_casa_lists_them() -> None:
     assert type(found) is str and "  " not in found
     root = os.environ.get("CASA_RS_MEASURESPATH")
     if root:
-        table = Table.open(Path(root) / "ephemerides" / "Sources")
-        assert found == " ".join(table.get_column("Name"))
+        table = open_table(Path(root) / "ephemerides" / "Sources")
+        assert found == " ".join(read_column(table, "Name"))
     assert len(found.split(" ")) >= 1000

@@ -49,8 +49,9 @@ impl Table {
             lock_opts.mode,
             LockMode::PermanentLocking | LockMode::PermanentLockingWait
         );
+        let lock_path = super::reference_writes::reference_lock_path(&options.path)?;
         let mut lock_file =
-            LockFile::create_or_open(&options.path, false, lock_opts.inspection_interval, perm)
+            LockFile::create_or_open(&lock_path, false, lock_opts.inspection_interval, perm)
                 .map_err(|e| TableError::LockIo {
                     path: options.path.display().to_string(),
                     message: e.to_string(),
@@ -90,12 +91,19 @@ impl Table {
             }
         }
 
+        if super::reference_writes::reference_lock_path(&options.path)? != lock_path {
+            return Err(TableError::Storage(
+                "the saved reference changed while acquiring its lock; reopen it".into(),
+            ));
+        }
+
         // Metadata must be read only after the initial lock is acquired. A
         // writer may publish a new table generation while this opener waits;
         // opening first would retain the stale pre-publication descriptor.
         // Ordinary open remains lazy, so retained readers do not materialize
         // row payloads here.
         let mut table = load(options.clone())?;
+        table.inner.track_dirty_changes();
 
         // Read sync data if available.
         let sync_data = lock_file
@@ -107,7 +115,7 @@ impl Table {
             .unwrap_or_else(SyncData::new);
 
         table.lock_state = Some(LockState {
-            path: options.path.clone(),
+            path: lock_path,
             lock_file,
             sync_data,
             options: lock_opts,
@@ -193,7 +201,7 @@ impl Table {
     /// published since this handle last synchronized, and returns whether it
     /// did. The caller holds a lock, so no writer is publishing.
     #[cfg(unix)]
-    fn reload_if_published(&mut self) -> Result<bool, TableError> {
+    pub(super) fn reload_if_published(&mut self) -> Result<bool, TableError> {
         let state = self
             .lock_state
             .as_ref()
@@ -214,32 +222,18 @@ impl Table {
         if !state.sync_data.needs_reload(&new_sync) {
             return Ok(false);
         }
-        // Another handle or process modified the table — reload.
-        let storage = CompositeStorage;
-        let snapshot = storage
-            .load_with_row_hint(&state.path, Some(new_sync.nrrow))
-            .map_err(|e| lock_io(e.to_string()))?;
-        self.virtual_columns = snapshot.virtual_columns;
-        // The storage managers and the table info are what another
-        // process may have changed too (a renamed or removed column).
-        self.dm_info = snapshot.dm_info;
-        self.table_info = snapshot.table_info;
-        self.inner.replace_from_snapshot(
-            snapshot.rows,
-            snapshot.undefined_cells,
-            snapshot.keywords,
-            snapshot.column_keywords,
-            snapshot.schema,
-        );
-        // Update our stored sync data. The reloaded table is what is
-        // on disk, so there is nothing to flush.
-        if let Some(s) = self.lock_state.as_mut() {
-            s.sync_data = new_sync;
-            s.flushed_generation.store(
-                self.inner.generation(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-        }
+        // Reopen the descriptor just as a fresh reader would. This drops
+        // any stale cells and keeps unread cells on disk.
+        let path = self
+            .source_path
+            .clone()
+            .unwrap_or_else(|| state.path.clone());
+        self.reload_disk_state_at(&path)
+            .map_err(|error| TableError::LockIo {
+                path: path.display().to_string(),
+                message: error.to_string(),
+            })?;
+        self.lock_state.as_mut().expect("open lock state").sync_data = new_sync;
         Ok(true)
     }
 
@@ -434,12 +428,7 @@ impl Table {
     pub fn resync_or_discard(&mut self) -> Result<(), TableError> {
         let reloaded = self.resync();
         if reloaded.is_err() {
-            let generation = self.inner.generation();
-            if let Some(state) = self.lock_state.as_mut() {
-                state
-                    .flushed_generation
-                    .store(generation, std::sync::atomic::Ordering::Relaxed);
-            }
+            self.mark_flushed();
         }
         reloaded
     }
@@ -471,6 +460,7 @@ impl Table {
     /// does) was refused before it wrote anything.
     #[cfg(unix)]
     pub(super) fn mark_flushed(&self) {
+        self.inner.clear_dirty_changes();
         if let Some(state) = self.lock_state.as_ref() {
             state.flushed_generation.store(
                 self.inner.generation(),
@@ -499,7 +489,8 @@ impl Table {
                 })?;
             let flush = state.lock_file.has_lock(LockType::Write)
                 && state.has_unflushed_changes(&self.inner);
-            let opts = TableOptions::new(&state.path)
+            let source = self.source_path.as_ref().unwrap_or(&state.path);
+            let opts = TableOptions::new(source)
                 .with_data_manager(state.data_manager)
                 .with_endian_format(state.endian_format);
             (flush, opts, state.options.mode)
@@ -521,13 +512,8 @@ impl Table {
             } else if metadata_only {
                 self.save_metadata_only(save_opts)?;
             } else {
-                self.save(save_opts)?;
+                self.flush_locked_changes()?;
             }
-            let generation = self.inner.generation();
-            let state = self.lock_state.as_mut().expect("lock_state present");
-            state
-                .flushed_generation
-                .store(generation, std::sync::atomic::Ordering::Relaxed);
         }
 
         // Publish every write this lock period made to the disk (and not
@@ -547,6 +533,63 @@ impl Table {
         }
 
         Ok(())
+    }
+
+    /// Flush the outstanding scope while preserving the persisted layout.
+    #[cfg(unix)]
+    pub(super) fn flush_locked_changes(&mut self) -> Result<(), TableError> {
+        let Some(state) = &self.lock_state else {
+            return Ok(());
+        };
+        let path = self
+            .source_path
+            .clone()
+            .unwrap_or_else(|| state.path.clone());
+        let Some(dirty) = self.inner.dirty_changes() else {
+            return self.flush_full_locked_layout();
+        };
+        if self.is_named_memory_manager() {
+            return self.finish_memory_manager_write(
+                dirty.metadata || dirty.whole || !dirty.added_columns.is_empty(),
+            );
+        }
+        if dirty.whole || !dirty.added_columns.is_empty() {
+            return self.flush_full_locked_layout();
+        }
+        let mut groups = std::collections::BTreeMap::<Vec<usize>, Vec<String>>::new();
+        for (column, rows) in dirty.cells {
+            groups
+                .entry(rows.into_iter().collect())
+                .or_default()
+                .push(column);
+        }
+        for (rows, mut columns) in groups {
+            columns.sort_unstable();
+            let columns: Vec<_> = columns.iter().map(String::as_str).collect();
+            if let Err(error) = self.persist_selected_rows_in_place(&columns, &rows) {
+                if matches!(&error, TableError::Storage(message)
+                    if message.starts_with("partial in-place save does not support"))
+                    && let Some(options) = self.single_rewrite_options()?
+                {
+                    return self.save(options);
+                }
+                return Err(error);
+            }
+        }
+        if dirty.metadata {
+            self.save_metadata_only(TableOptions::new(path))?;
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn flush_full_locked_layout(&self) -> Result<(), TableError> {
+        if let Some(options) = self.single_rewrite_options()? {
+            return self.save(options);
+        }
+        Err(TableError::Storage(
+            "locked table has unscoped changes that require an explicit in-place write plan".into(),
+        ))
     }
 
     /// Returns `true` if the given lock type is currently held.
@@ -647,15 +690,9 @@ impl Table {
         if self.kind == TableKind::Memory && !self.is_named_memory_manager() {
             return Ok(false);
         }
-        // Some write operations change only the data managers or the files
-        // on disk, which the change count of the rows does not see. An
-        // admitted operation counts even if it later fails, since it may have
-        // written part of its change; a refused one does not.
-        let admitted = self.admit_write_operation(operation);
-        if admitted.is_ok() {
-            self.inner.note_change();
-        }
-        admitted
+        // In-memory mutators record their own scope. Disk edits record that
+        // they need publication before the first write, even on failure.
+        self.admit_write_operation(operation)
     }
 
     #[cfg(unix)]

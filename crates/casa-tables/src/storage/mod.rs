@@ -5,9 +5,11 @@ mod array_shapes;
 mod array_sources;
 pub(crate) mod canonical;
 mod cell_elements;
+pub(crate) mod column_changes;
 pub(crate) mod data_type;
 mod fixed_arrays;
 pub(crate) mod incremental_stman;
+pub(crate) mod row_changes;
 mod scalar_sources;
 mod selected_cells;
 pub(crate) mod standard_stman;
@@ -1204,9 +1206,10 @@ impl CompositeStorage {
                 }
                 Ok(snapshot)
             }
-            // Metadata-only open is primarily for plain tiled tables. Fall back
-            // to the full loader for more complex table types.
-            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+            TableDatResult::Ref(reference) => {
+                self.load_ref_table_projected(table_path, &reference, true)
+            }
+            TableDatResult::Concat(_) => {
                 let mut snapshot = self.load(table_path)?;
                 snapshot.rows.clear();
                 if profile_open {
@@ -3615,98 +3618,113 @@ impl CompositeStorage {
         table_path: &Path,
         ref_dat: &RefTableDatContents,
     ) -> Result<StorageSnapshot, StorageError> {
-        let parent_path = add_directory_for_link(&ref_dat.parent_relative_path, table_path);
+        self.load_ref_table_projected(table_path, ref_dat, false)
+    }
 
-        // Recursively load the parent table.
-        let parent = self.load(&parent_path)?;
-
-        // Validate that the parent hasn't shrunk.
-        if ref_dat.parent_nrrow > parent.rows.len() as u64 {
+    fn load_ref_table_projected(
+        &self,
+        path: &Path,
+        reference: &RefTableDatContents,
+        metadata_only: bool,
+    ) -> Result<StorageSnapshot, StorageError> {
+        let parent_path = add_directory_for_link(&reference.parent_relative_path, path);
+        let parent = if metadata_only {
+            self.load_metadata_only(&parent_path)?
+        } else {
+            self.load(&parent_path)?
+        };
+        let names: Vec<_> = reference
+            .column_names
+            .iter()
+            .map(|name| {
+                let base = reference
+                    .column_name_map
+                    .iter()
+                    .find(|(view, _)| view == name)
+                    .map_or(name, |(_, base)| base);
+                (name, base)
+            })
+            .collect();
+        if reference.parent_nrrow > parent.row_count as u64
+            && reference
+                .row_map
+                .iter()
+                .any(|&row| row >= parent.row_count as u64)
+        {
             return Err(StorageError::FormatMismatch(format!(
-                "parent table has {} rows but RefTable expects at least {}",
-                parent.rows.len(),
-                ref_dat.parent_nrrow
+                "RefTable references a row beyond its parent ({} rows)",
+                parent.row_count
             )));
         }
-
-        // Extract referenced rows. Whether the view uses a subset of the
-        // columns is judged by the parent's columns: a row leaves out the
-        // fields of its undefined cells, so its fields can number fewer.
-        let parent_columns = parent.schema.as_ref().map(|schema| schema.columns().len());
-        let mut rows = Vec::with_capacity(ref_dat.row_map.len());
-        let mut undefined_cells = Vec::with_capacity(ref_dat.row_map.len());
-        for &parent_row in &ref_dat.row_map {
-            let idx = parent_row as usize;
-            if idx >= parent.rows.len() {
-                return Err(StorageError::FormatMismatch(format!(
-                    "RefTable references parent row {idx} but parent has {} rows",
-                    parent.rows.len()
-                )));
-            }
-            // Apply column projection if the view uses a subset of columns.
-            if ref_dat.column_names.len()
-                < parent_columns.unwrap_or_else(|| parent.rows[idx].fields().len())
-            {
-                let mut projected = RecordValue::default();
-                let mut projected_undefined = HashSet::new();
-                for view_col in &ref_dat.column_names {
-                    // Resolve view column name to parent column name.
-                    let parent_col = ref_dat
-                        .column_name_map
+        let mut rows = Vec::new();
+        let mut undefined_cells = Vec::new();
+        if !metadata_only {
+            rows.reserve(reference.row_map.len());
+            undefined_cells.reserve(reference.row_map.len());
+            for &row in &reference.row_map {
+                let index = row as usize;
+                let fields = parent.rows.get(index).ok_or_else(|| {
+                    StorageError::FormatMismatch(format!(
+                        "RefTable references missing parent row {row}"
+                    ))
+                })?;
+                rows.push(RecordValue::new(
+                    names
                         .iter()
-                        .find(|(v, _)| v == view_col)
-                        .map(|(_, p)| p.as_str())
-                        .unwrap_or(view_col.as_str());
-                    if let Some(val) = parent.rows[idx].get(parent_col) {
-                        projected.push(RecordField::new(view_col.clone(), val.clone()));
-                    }
-                    if parent.undefined_cells[idx].contains(parent_col) {
-                        projected_undefined.insert(view_col.clone());
-                    }
-                }
-                rows.push(projected);
-                undefined_cells.push(projected_undefined);
-            } else {
-                rows.push(parent.rows[idx].clone());
-                undefined_cells.push(parent.undefined_cells[idx].clone());
+                        .filter_map(|(name, base)| {
+                            fields
+                                .get(base.as_str())
+                                .map(|value| RecordField::new(name.as_str(), value.clone()))
+                        })
+                        .collect(),
+                ));
+                undefined_cells.push(
+                    names
+                        .iter()
+                        .filter(|(_, base)| parent.undefined_cells[index].contains(base.as_str()))
+                        .map(|(name, _)| (*name).clone())
+                        .collect(),
+                );
             }
         }
-
-        // Build projected schema if applicable.
-        let schema = parent.schema.and_then(|s| {
-            if ref_dat.column_names.len() < s.columns().len() {
-                let cols: Vec<_> = ref_dat
-                    .column_names
+        let schema = parent
+            .schema
+            .map(|parent| {
+                let columns = names
                     .iter()
-                    .filter_map(|name| {
-                        let parent_name = ref_dat
-                            .column_name_map
-                            .iter()
-                            .find(|(v, _)| v == name)
-                            .map(|(_, p)| p.as_str())
-                            .unwrap_or(name.as_str());
-                        s.columns()
-                            .iter()
-                            .find(|c| c.name() == parent_name)
+                    .map(|(name, base)| {
+                        parent
+                            .column(base)
                             .cloned()
+                            .map(|column| column.renamed((*name).clone()))
+                            .ok_or_else(|| {
+                                StorageError::Schema(format!(
+                                    "RefTable references missing parent column {base}"
+                                ))
+                            })
                     })
-                    .collect();
-                crate::schema::TableSchema::new(cols).ok()
-            } else {
-                Some(s)
-            }
-        });
-
-        let table_info = load_table_info(table_path);
-
+                    .collect::<Result<Vec<_>, _>>()?;
+                TableSchema::new(columns).map_err(StorageError::from)
+            })
+            .transpose()?;
+        let column_keywords = names
+            .into_iter()
+            .filter_map(|(name, base)| {
+                parent
+                    .column_keywords
+                    .get(base)
+                    .cloned()
+                    .map(|keywords| (name.clone(), keywords))
+            })
+            .collect();
         Ok(StorageSnapshot {
-            row_count: rows.len(),
+            row_count: reference.row_map.len(),
             rows,
             undefined_cells,
             keywords: parent.keywords,
-            column_keywords: parent.column_keywords,
+            column_keywords,
             schema,
-            table_info,
+            table_info: load_table_info(path),
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
             dm_info: vec![],

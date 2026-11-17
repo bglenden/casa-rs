@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+use super::*;
+use crate::storage::row_changes::{Rows, StagedEdit};
+
+/// One column to install in an existing disk table.
+pub struct ColumnAddition {
+    /// The column's schema.
+    pub schema: ColumnSchema,
+    /// The default cell for each existing row, or `None` if undefined.
+    pub default: Option<Value>,
+    /// Keyword values stored with the new descriptor.
+    pub keywords: RecordValue,
+    /// Preferred manager class when a new binding is needed.
+    pub manager_type: Option<String>,
+    /// Preferred group name when a new binding is needed.
+    pub manager_group: Option<String>,
+}
+
+/// Install the new columns together in their own storage manager.
+pub struct ManagerAddition {
+    /// Casacore manager class (for example, `StandardStMan`).
+    pub kind: String,
+    /// Name of this manager in the table.
+    pub name: String,
+    /// Manager configuration (such as tiled default shape).
+    pub spec: RecordValue,
+}
+
+impl Table {
+    /// Append rows to a plain disk table without changing its storage
+    /// manager bindings. Standard and AipsIO managers use `defaults`;
+    /// incremental managers inherit their preceding values and variable
+    /// tiled arrays remain undefined.
+    ///
+    /// # Errors
+    ///
+    /// The table has no durable plain layout, has unsaved edits, contains
+    /// a storage manager that cannot append, or cannot be locked or written.
+    pub fn append_rows_in_place(
+        &mut self,
+        count: usize,
+        defaults: &RecordValue,
+    ) -> Result<(), TableError> {
+        if count == 0 {
+            return Ok(());
+        }
+        self.edit_rows_in_place(Rows::Append { count, defaults })
+    }
+
+    /// Keep the given rows in an existing plain table, in ascending order,
+    /// and delete all others. This operation preserves manager bindings.
+    ///
+    /// # Errors
+    ///
+    /// The row sequence is unsorted or contains repetitions or invalid row
+    /// numbers; the table cannot be written or has a manager that refuses
+    /// to remove rows (for example, IncrementalStMan).
+    pub fn retain_rows_in_place(&mut self, kept: &[usize]) -> Result<(), TableError> {
+        if kept.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(TableError::Storage(
+                "retained rows must strictly increase".into(),
+            ));
+        }
+        self.edit_rows_in_place(Rows::Keep(kept))
+    }
+
+    /// Add columns without changing the files for managers that do not
+    /// receive a column. When supplied, `manager` binds all the new
+    /// columns to one new manager. Otherwise the first manager that
+    /// accepts addition supplies the storage, as in casacore.
+    ///
+    /// # Errors
+    ///
+    /// The table is not a clean plain table, a column or manager name
+    /// already exists, the selected binding is unsupported, or a storage
+    /// file cannot be read or written.
+    pub fn add_columns_in_place(
+        &mut self,
+        columns: Vec<ColumnAddition>,
+        manager: Option<ManagerAddition>,
+    ) -> Result<(), TableError> {
+        if columns.is_empty() {
+            return Ok(());
+        }
+        self.edit_clean_layout("add columns in place", move |this, path, mut dat, old| {
+            dat.raise_row_count(old);
+            let plan =
+                StagedEdit::stage_columns(path, dat, columns, manager, this.data_manager_info())?;
+            this.note_persisted_write(path);
+            plan.publish()?;
+            this.reload_disk_state_at(path)
+        })
+    }
+
+    fn edit_rows_in_place(&mut self, rows: Rows<'_>) -> Result<(), TableError> {
+        self.edit_clean_layout("edit rows in place", |this, path, dat, old| {
+            if let Rows::Keep(kept) = rows {
+                if kept.last().is_some_and(|&row| row as u64 >= old) {
+                    return Err(TableError::Storage("retained row is out of range".into()));
+                }
+                if kept.len() as u64 == old {
+                    return Ok(());
+                }
+            }
+            let plan = StagedEdit::stage(path, dat, old, rows)?;
+            this.note_persisted_write(path);
+            plan.publish()?;
+            // Publish the new count before reopening; the old lock sync
+            // count otherwise hides removals.
+            this.note_full_save(path)?;
+            this.reload_disk_state_at(path)
+        })
+    }
+
+    fn edit_clean_layout(
+        &mut self,
+        operation: &str,
+        edit: impl FnOnce(
+            &mut Self,
+            &Path,
+            crate::storage::TableDatContents,
+            u64,
+        ) -> Result<(), TableError>,
+    ) -> Result<(), TableError> {
+        let path = self.source_path.clone().ok_or_else(|| {
+            TableError::Storage("in-place row edits require an existing table".into())
+        })?;
+        if self.kind != TableKind::Plain || self.holds_unflushed_changes() {
+            return Err(TableError::Storage(
+                "in-place row edits require a clean plain table".into(),
+            ));
+        }
+        let auto_unlock = self.begin_write_operation(operation)?;
+        let result = (|| {
+            #[cfg(unix)]
+            if auto_unlock {
+                self.reload_if_published()?;
+            }
+            let dat = crate::storage::table_control::read_table_dat(
+                &path.join(crate::storage::TABLE_CONTROL_FILE),
+            )?;
+            let old = self.require_persisted_rows(&path, &dat)?;
+            edit(self, &path, dat, old)
+        })();
+        self.finish_write_operation(auto_unlock, result)
+    }
+}

@@ -287,17 +287,17 @@ pub use storage::{
     streamed_scalar_columns_resident_bytes, table_cache_budget_bytes,
 };
 pub use table::{
-    ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride, ColumnOverrides,
-    DataManagerKind, EndianFormat, GeneratedArrayColumn, GeneratedArrayValueRun,
+    ColumnAddition, ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride,
+    ColumnOverrides, DataManagerKind, EndianFormat, GeneratedArrayColumn, GeneratedArrayValueRun,
     GeneratedScalarColumn, GeneratedScalarValueRun, IncrementalCorruption, IncrementalLayoutCheck,
-    PreparedRowAppender, PreparedTableRow, PreparedTableRowMut, QueryResult, RecordColumnCell,
-    RecordColumnIter, RequiredScalarColumnDestination, RequiredScalarColumnValues,
-    RequiredScalarColumnValuesMut, RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES,
-    SelectedArray1DCells, SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2D,
-    SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape, SelectedReadFootprint,
-    Slicer, SortOrder, StoredTableDescription, StreamedScalarColumn, StreamedScalarType,
-    StreamedScalarValues, StreamingScalarColumnWriter, Table, TableCell, TableCellMut, TableColumn,
-    TableColumnMut, TableError, TableKind, TableOptions, TableRow, TableRowMut, TableWritePlan,
-    table_cache_name,
+    ManagerAddition, PreparedRowAppender, PreparedTableRow, PreparedTableRowMut, QueryResult,
+    RecordColumnCell, RecordColumnIter, RequiredScalarColumnDestination,
+    RequiredScalarColumnValues, RequiredScalarColumnValuesMut, RowRange,
+    STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
+    SelectedArray1DShape, SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut,
+    SelectedArray2DShape, SelectedReadFootprint, Slicer, SortOrder, StoredTableDescription,
+    StreamedScalarColumn, StreamedScalarType, StreamedScalarValues, StreamingScalarColumnWriter,
+    Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
+    TableOptions, TableRow, TableRowMut, TableWritePlan, table_cache_name,
 };
 pub use table_path::{add_directory, strip_directory};

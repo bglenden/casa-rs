@@ -344,81 +344,6 @@ class Image:
         )
 
 
-class Table:
-    """Persistent CASA-compatible table access."""
-
-    def __init__(self, inner: _core.Table) -> None:
-        self._inner = inner
-
-    @classmethod
-    def open(cls, path: StrPath, *, writable: bool = False) -> "Table":
-        """Open an existing persistent table."""
-
-        return cls(_core.Table.open(path, writable=writable))
-
-    @property
-    def row_count(self) -> int:
-        """Number of rows in the table."""
-
-        return self._inner.row_count
-
-    @property
-    def column_names(self) -> list[str]:
-        """Known column names."""
-
-        return list(self._inner.column_names)
-
-    @property
-    def keywords(self) -> RecordLike:
-        """Table-level keyword record."""
-
-        return self._inner.keywords
-
-    def column_keywords(self, name: str) -> RecordLike | None:
-        """Column-level keyword record for ``name``."""
-
-        return self._inner.column_keywords(name)
-
-    def get_cell(self, row: int, column: str) -> Any:
-        """Read one cell."""
-
-        return self._inner.get_cell(row, column)
-
-    def set_cell(self, row: int, column: str, value: Any) -> None:
-        """Write one cell."""
-
-        self._inner.set_cell(row, column, value)
-
-    def get_column(
-        self,
-        column: str,
-        *,
-        start: int = 0,
-        count: int | None = None,
-        step: int = 1,
-    ) -> Any:
-        """Read a column range as NumPy arrays or native Python structures."""
-
-        return self._inner.get_column(column, start=start, count=count, step=step)
-
-    def put_column(
-        self,
-        column: str,
-        values: Sequence[Any],
-        *,
-        start: int = 0,
-        step: int = 1,
-    ) -> int:
-        """Write a column range from Python-native values."""
-
-        return self._inner.put_column(column, values, start=start, step=step)
-
-    def set_column_keywords(self, column: str, keywords: Mapping[str, Any]) -> None:
-        """Replace the keyword record for ``column``."""
-
-        self._inner.set_column_keywords(column, dict(keywords))
-
-
 __all__ = [
     "ArrayLike",
     "Image",
@@ -429,7 +354,6 @@ __all__ = [
     "ProtocolInfo",
     "RecordLike",
     "StrPath",
-    "Table",
     "linearmosaic",
     "measurement_set_plot",
     "plot_matplotlib",
