@@ -233,7 +233,8 @@ def test_the_tool_answers_as_casa_does(
         if "error" in step:
             if step["error"]["message"] == "Unknown casa DataType!":
                 assert "value" in got and got["value"]["ndarray"] == "int64", where
-                same_cells_as_getcell(tool, step, got["value"], path, where)
+                receiver = bound.get(step.get("options", {}).get("on", ""), tool)
+                same_cells_as_getcell(receiver, step, got["value"], path, where)
             else:
                 assert "error" in got, f"{where}: CASA raised {step['error']}, casa-rs gave {got}"
                 same_error(got["error"], step["error"], where)

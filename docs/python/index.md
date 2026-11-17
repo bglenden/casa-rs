@@ -92,8 +92,7 @@ unset sentinel instead of copying catalog defaults into Python.
 
 Python binds Rust through PyO3 alone, in one native module, `casars._core`.
 It carries task parameters, task results and MeasurementSet plot documents as
-well as the in-process objects: the `casars.data.Image` and
-`casars.data.Table` NumPy object layer, the CASA tool classes of
+well as the in-process objects: the `casars.data.Image` NumPy object layer, the CASA tool classes of
 `casars.tools` and the `casars.simutil` class.
 
 ## Plotting and image inspection

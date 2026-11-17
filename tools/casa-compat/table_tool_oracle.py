@@ -1855,6 +1855,17 @@ def main():
     }
     scenarios["rows"] = {"fixture": "table", "steps": ROWS, "source": arguments.fixture}
     scenarios["columns"] = {"fixture": "table", "steps": COLUMNS, "source": arguments.fixture}
+    scenarios["taql_count_int64"] = {
+        "fixture": "table",
+        "source": arguments.fixture,
+        "steps": [
+            ["open", [PLACEHOLDER], {}],
+            ["taql", [f'COUNT(id) FROM "{PLACEHOLDER}"'], {}, {"bind": "count"}],
+            ["colnames", [], {}, {"on": "count"}],
+            ["getcol", ["_COUNT_"], {}, {"on": "count"}],
+            ["getcell", ["_COUNT_", 0], {}, {"on": "count"}],
+        ],
+    }
     scenarios["rows_columns"] = {"fixture": "table", "steps": ROWS_COLUMNS, "source": arguments.fixture}
     scenarios["state"] = {"fixture": "table", "steps": STATE, "source": arguments.fixture}
     scenarios["state_ms"] = {"fixture": "ms", "steps": STATE_MS, "source": arguments.ms}

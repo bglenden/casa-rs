@@ -18,7 +18,6 @@ __all__ = [
     "Image",
     "imexplore",
     "SurfaceParameters",
-    "Table",
     "TaskParameters",
     "data",
     "parameters",
@@ -33,12 +32,10 @@ def __getattr__(name: str) -> Any:
 
     if name in {"imexplore", "tools"}:
         return import_module(f".{name}", __name__)
-    if name in {"data", "Image", "Table"}:
+    if name in {"data", "Image"}:
         data_module = import_module(".data", __name__)
 
         if name == "data":
             return data_module
-        if name == "Image":
-            return data_module.Image
-        return data_module.Table
+        return data_module.Image
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

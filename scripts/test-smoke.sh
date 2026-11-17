@@ -41,7 +41,8 @@ from casars import tasks
 from casars.parameters import TaskParameters
 
 assert hasattr(casars, "Image")
-assert hasattr(casars, "Table")
+assert not hasattr(casars, "Table")
+assert callable(casars.tools.table)
 assert casars.__version__
 
 assert callable(tasks.calibrate)

@@ -2591,6 +2591,13 @@
    {"method":"open","args":[{"str":"<TABLE>"}],"kwargs":{},"value":{"bool":true}},
    {"method":"getcolshapestring","args":[{"str":"DATA"}],"kwargs":{"startrow":{"int":67,"type":"int"},"nrow":{"int":5,"type":"int"}},"value":{"list":[{"str":"[4, 64]"},{"str":"[4, 64]"},{"str":"[4, 1]"},{"str":"[4, 1]"},{"str":"[4, 1]"}]}},
    {"method":"close","args":[],"kwargs":{},"value":{"bool":true}}
+  ]},
+  "taql_count_int64": {"fixture": "table", "steps": [
+   {"method":"open","args":[{"str":"<TABLE>"}],"kwargs":{},"value":{"bool":true}},
+   {"method":"taql","args":[{"str":"COUNT(id) FROM \"<TABLE>\""}],"kwargs":{},"options":{"bind":"count"},"value":{"tool":true}},
+   {"method":"colnames","args":[],"kwargs":{},"options":{"on":"count"},"value":{"list":[{"str":"id"},{"str":"_COUNT_"}]}},
+   {"method":"getcol","args":[{"str":"_COUNT_"}],"kwargs":{},"options":{"on":"count"},"error":{"type":"RuntimeError","message":"Unknown casa DataType!"}},
+   {"method":"getcell","args":[{"str":"_COUNT_"},{"int":0,"type":"int"}],"kwargs":{},"options":{"on":"count"},"value":{"int":1,"type":"int"}}
   ]}
  }
 }

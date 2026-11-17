@@ -10,7 +10,7 @@ import time
 import numpy as np
 import casars
 from casars.tools import simulator
-from casars.data import Table
+from casars.tools import table as table_tool
 
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--out",type=Path,required=True)
@@ -34,10 +34,10 @@ assert sm.setapply(table=str(terms),type="G",interp="linear",calwt=True,t=25.0,o
 assert sm.corrupt();sm.close()
 wall=time.perf_counter()-start;after=resource.getrusage(resource.RUSAGE_SELF)
 # Diagnostic readback is outside the timed application boundary.
-table=Table.open(path);assert table.row_count==antennas*(antennas+1)//2*integrations
+table=table_tool(); assert table.open(str(path)); assert table.nrows()==antennas*(antennas+1)//2*integrations
 for column in ("DATA","TIME","FLAG","FLAG_ROW","WEIGHT","SIGMA"):
-    value=np.asarray(table.get_column(column));assert column!="DATA" or np.isfinite(value).all()
+    value=np.asarray(table.getcol(column));assert column!="DATA" or np.isfinite(value).all()
     np.save(args.out/(column+".npy"),value)
-record={"revision":args.revision,"module":str(Path(casars.__file__).resolve()),"package":importlib.metadata.version("casa-rs-python"),"numpy":np.__version__,"backend":"CPU","workers":1,"budget_requested":policy["memory_budget"],"antennas":antennas,"channels":channels,"integrations":integrations,"rows":table.row_count,"wall_s":wall,"user_s":after.ru_utime-before.ru_utime,"system_s":after.ru_stime-before.ru_stime,"process_peak_rss_bytes":after.ru_maxrss,"boundary":"First simulator constructor/open through final existing-MS calibration close; imports and diagnostic readback excluded.","fft":"No FFT: random gains and simple noise only."}
+record={"revision":args.revision,"module":str(Path(casars.__file__).resolve()),"package":importlib.metadata.version("casa-rs-python"),"numpy":np.__version__,"backend":"CPU","workers":1,"budget_requested":policy["memory_budget"],"antennas":antennas,"channels":channels,"integrations":integrations,"rows":table.nrows(),"wall_s":wall,"user_s":after.ru_utime-before.ru_utime,"system_s":after.ru_stime-before.ru_stime,"process_peak_rss_bytes":after.ru_maxrss,"boundary":"First simulator constructor/open through final existing-MS calibration close; imports and diagnostic readback excluded.","fft":"No FFT: random gains and simple noise only."}
 (args.out/"report.json").write_text(json.dumps(record,indent=1)+"\n")
 print(json.dumps(record),flush=True)

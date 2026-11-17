@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from casars import tasks
-from casars.data import Table
+from _table_readback import open_table, read_column
 from casars.tasks import _runner
 
 
@@ -102,18 +102,18 @@ def test_upstream_leakage_cases_apply_the_saved_jones_matrices(sky_inputs, tmp_p
               incell="1arcsec", incenter="345GHz", inwidth="1GHz", compwidth="1GHz",
               totaltime="20s", integration="10s", **parameters)
     root = tmp_path / "leak"
-    clean = Table.open(root / "leak.small.ms")
-    leaked = Table.open(root / "leak.small.fullpol.ms")
-    solutions = Table.open(root / "leak.small.fullpol.cal")
-    dterms = np.asarray(solutions.get_column("CPARAM"))[:, :, 0]
-    antennas = np.asarray(solutions.get_column("ANTENNA1"))
+    clean = open_table(root / "leak.small.ms")
+    leaked = open_table(root / "leak.small.fullpol.ms")
+    solutions = open_table(root / "leak.small.fullpol.cal")
+    dterms = np.asarray(read_column(solutions, "CPARAM"))[:, :, 0]
+    antennas = np.asarray(read_column(solutions, "ANTENNA1"))
     leakages = {int(ant): d for ant, d in zip(antennas, dterms)}
-    before = np.asarray(clean.get_column("DATA"))
-    after = np.asarray(leaked.get_column("DATA"))
+    before = np.asarray(read_column(clean, "DATA"))
+    after = np.asarray(read_column(leaked, "DATA"))
     assert before.shape[1] == 4 and np.any(before != 0)
     expected = before.copy()
     # CASA JonesGenLin: first-order D leakage changes cross hands only.
-    for row, (a, b) in enumerate(zip(clean.get_column("ANTENNA1"), clean.get_column("ANTENNA2"))):
+    for row, (a, b) in enumerate(zip(read_column(clean, "ANTENNA1"), read_column(clean, "ANTENNA2"))):
         da, db = leakages[int(a)], leakages[int(b)]
         expected[row, 1] += da[0] * before[row, 3] + db[1].conjugate() * before[row, 0]
         expected[row, 2] += da[1] * before[row, 0] + db[0].conjugate() * before[row, 3]

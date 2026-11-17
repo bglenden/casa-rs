@@ -25,7 +25,8 @@ import numpy as np
 import pytest
 
 import casars
-from casars.data import Table, schema_bundle
+from casars.data import schema_bundle
+from _table_readback import open_table, read_column
 from casars.tools import simulator
 
 DATA = Path(__file__).parent / "data"
@@ -217,20 +218,20 @@ def test_an_sm_script_writes_the_measurement_set(tmp_path: Path) -> None:
     assert sm.close()
     assert sm.name() == ""
 
-    main = Table.open(ms)
+    main = open_table(ms)
     # 4 antennas with autocorrelations (CASA writes them until setauto(0)):
     # 10 baselines in each of 3 integrations.
-    assert main.row_count == 30
+    assert main.nrows() == 30
     assert {"ANTENNA1", "ANTENNA2", "DATA", "FLAG", "TIME", "UVW", "WEIGHT"} <= set(
-        main.column_names
+        main.colnames()
     )
-    times = main.get_column("TIME")
+    times = read_column(main, "TIME")
     reference_s = 58849.0 * 86400.0
     assert np.allclose(np.unique(times), reference_s + np.array([5.0, 15.0, 25.0]))
-    assert Table.open(ms / "ANTENNA").get_column("NAME") == ["A1", "A2", "A3", "A4"]
-    assert Table.open(ms / "FIELD").get_column("NAME") == ["F"]
+    assert read_column(open_table(ms / "ANTENNA"), "NAME") == ["A1", "A2", "A3", "A4"]
+    assert read_column(open_table(ms / "FIELD"), "NAME") == ["F"]
     assert np.allclose(
-        Table.open(ms / "SPECTRAL_WINDOW").get_column("CHAN_FREQ"),
+        read_column(open_table(ms / "SPECTRAL_WINDOW"), "CHAN_FREQ"),
         1.4e9 + 1e6 * np.arange(4),
     )
 
@@ -242,7 +243,7 @@ def test_setauto_zero_drops_the_autocorrelations(tmp_path: Path) -> None:
     configure(sm, autocorrelations=False)
     assert sm.observe("F", "L", starttime="0s", stoptime="30s")
     sm.done()
-    assert Table.open(tmp_path / "cross.ms").row_count == 18
+    assert open_table(tmp_path / "cross.ms").nrows() == 18
 
 
 @needs_measures
@@ -252,7 +253,7 @@ def test_open_writes_the_previous_session(tmp_path: Path) -> None:
     configure(sm)
     sm.observe("F", "L", starttime="0s", stoptime="10s")
     sm.open(str(tmp_path / "second.ms"))
-    assert Table.open(tmp_path / "first.ms").row_count == 10
+    assert open_table(tmp_path / "first.ms").nrows() == 10
     assert sm.name() == str(tmp_path / "second.ms")
     sm.close()
 
@@ -354,7 +355,7 @@ def test_casa_conversion_failures_log_and_continue(
         "Could not convert referencelocation 1 to a Position Measures",
     ]
     sm.close()
-    phase = Table.open(tmp_path / "x.ms" / "FIELD").get_column("PHASE_DIR")
+    phase = read_column(open_table(tmp_path / "x.ms" / "FIELD"), "PHASE_DIR")
     assert np.allclose(phase[1].ravel(), [0.0, np.pi / 2])
 
 
@@ -396,8 +397,8 @@ def test_vector_arguments_take_scalars_and_sequences(tmp_path: Path) -> None:
     with pytest.raises(TypeError):
         sm.setconfig(x="0.0")
     sm.close()
-    antennas = Table.open(tmp_path / "x.ms" / "ANTENNA")
-    assert antennas.get_column("NAME") == ["A", "A"]
+    antennas = open_table(tmp_path / "x.ms" / "ANTENNA")
+    assert read_column(antennas, "NAME") == ["A", "A"]
 
 
 @needs_measures
@@ -411,15 +412,15 @@ def test_observemany_writes_a_scan_per_run_of_one_field(tmp_path: Path) -> None:
         stoptimes=["10s", "20s", "30s"], directions=["", "J2000 23h30m30 34d00m00", ""],
     )
     sm.close()
-    main = Table.open(tmp_path / "x.ms")
+    main = open_table(tmp_path / "x.ms")
     # 4 antennas, no autocorrelations: 6 baselines in each of 3 integrations.
-    assert main.row_count == 18
-    scans = main.get_column("SCAN_NUMBER")
-    fields = main.get_column("FIELD_ID")
+    assert main.nrows() == 18
+    scans = read_column(main, "SCAN_NUMBER")
+    fields = read_column(main, "FIELD_ID")
     assert list(scans) == [1] * 12 + [2] * 6
     assert list(fields) == [0] * 12 + [1] * 6
     # POINTING follows each pointing's phase centre: F's, the moved one, G's.
-    directions = np.asarray(Table.open(tmp_path / "x.ms" / "POINTING").get_column("DIRECTION"))
+    directions = np.asarray(read_column(open_table(tmp_path / "x.ms" / "POINTING"), "DIRECTION"))
     pointed = {tuple(np.round(cell.reshape(2), 9)) for cell in directions}
     moved = (round(np.radians(352.625 - 360.0), 9), round(np.radians(34.0), 9))
     f_centre = (round(np.radians(352.5 - 360.0), 9), round(np.radians(34.0), 9))
@@ -456,7 +457,7 @@ def test_observemany_pads_one_name_as_casa_does_and_raises_for_mismatched_lists(
             stoptimes=["10s", "20s"],
         )
     sm.close()
-    assert len(set(Table.open(tmp_path / "x.ms").get_column("SCAN_NUMBER"))) == 1
+    assert len(set(read_column(open_table(tmp_path / "x.ms"), "SCAN_NUMBER"))) == 1
 
 
 @needs_measures
@@ -504,15 +505,15 @@ def test_selected_components_retain_call_order_and_observe_resets_selection(tmp_
     assert sm.observe("G", "L", starttime="20s", stoptime="30s")
     assert sm.predict(complist=str(path), incremental=True)
     assert sm.close()
-    table = Table.open(tmp_path / "x.ms")
-    fields = np.asarray(table.get_column("FIELD_ID"))
-    first = np.asarray(table.get_column("ANTENNA1"))
-    second = np.asarray(table.get_column("ANTENNA2"))
-    scans = np.asarray(table.get_column("SCAN_NUMBER"))
+    table = open_table(tmp_path / "x.ms")
+    fields = np.asarray(read_column(table, "FIELD_ID"))
+    first = np.asarray(read_column(table, "ANTENNA1"))
+    second = np.asarray(read_column(table, "ANTENNA2"))
+    scans = np.asarray(read_column(table, "SCAN_NUMBER"))
     earlier = scans < np.max(scans)
     selected = earlier & (((fields == 1) & (first != second)) | ((fields == 0) & (first == 0)))
     assert selected.any() and (~selected).any()
-    data = np.asarray(table.get_column("DATA"))
+    data = np.asarray(read_column(table, "DATA"))
     np.testing.assert_allclose(data[selected], 2.0, rtol=0, atol=1e-6)
     np.testing.assert_allclose(data[~selected], 1.0, rtol=0, atol=1e-6)
 
@@ -526,9 +527,9 @@ def test_setmosaicfield_adds_a_grid_centred_on_its_centre(tmp_path: Path) -> Non
     )
     assert sm.observe("M_1", "L", starttime="0s", stoptime="10s")
     sm.close()
-    fields = Table.open(tmp_path / "x.ms" / "FIELD")
-    assert fields.get_column("NAME") == ["F", "M_0", "M_1", "M_2"]
-    centres = np.asarray(fields.get_column("PHASE_DIR")).reshape(4, 2)
+    fields = open_table(tmp_path / "x.ms" / "FIELD")
+    assert read_column(fields, "NAME") == ["F", "M_0", "M_1", "M_2"]
+    centres = np.asarray(read_column(fields, "PHASE_DIR")).reshape(4, 2)
     ra = np.unwrap(centres[1:, 0])
     dec = centres[1:, 1]
     spacing = np.radians(1.0 / 60.0) / np.cos(np.radians(34.0))
@@ -606,15 +607,15 @@ def test_omitted_arguments_behave_as_casas_defaults(tmp_path: Path) -> None:
         "OBSERVATION": ["OBSERVER", "PROJECT", "TELESCOPE_NAME"],
     }
     for subtable, columns in checked.items():
-        omitted = Table.open(tmp_path / "omitted.ms" / subtable)
-        explicit = Table.open(tmp_path / "explicit.ms" / subtable)
-        assert omitted.row_count == explicit.row_count > 0, subtable
+        omitted = open_table(tmp_path / "omitted.ms" / subtable)
+        explicit = open_table(tmp_path / "explicit.ms" / subtable)
+        assert omitted.nrows() == explicit.nrows() > 0, subtable
         for column in columns:
-            left, right = omitted.get_column(column), explicit.get_column(column)
+            left, right = read_column(omitted, column), read_column(explicit, column)
             assert np.array_equal(np.asarray(left), np.asarray(right)), (subtable, column)
     # Hour-angle mode by default: the scan is centred on transit, not on the
     # reference time; 4 antennas without autocorrelations in 3 integrations.
-    assert Table.open(tmp_path / "omitted.ms").row_count == 18
+    assert open_table(tmp_path / "omitted.ms").nrows() == 18
 
 
 def noisy(path: Path, seed: int | None, **controls: Any) -> np.ndarray:
@@ -628,16 +629,16 @@ def noisy(path: Path, seed: int | None, **controls: Any) -> np.ndarray:
     assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
     assert sm.corrupt() is True
     sm.close()
-    return np.asarray(Table.open(path).get_column("DATA"))
+    return np.asarray(read_column(open_table(path), "DATA"))
 
 
 @needs_measures
 def test_setnoise_and_corrupt_add_casas_thermal_noise_at_close(tmp_path: Path) -> None:
     data = noisy(tmp_path / "noisy.ms", 5)
-    main = Table.open(tmp_path / "noisy.ms")
+    main = open_table(tmp_path / "noisy.ms")
     # 4 antennas with autocorrelations: 10 rows in each of 30 integrations.
     assert data.shape == (300, 2, 4)
-    auto = np.asarray(main.get_column("ANTENNA1")) == np.asarray(main.get_column("ANTENNA2"))
+    auto = np.asarray(read_column(main, "ANTENNA1")) == np.asarray(read_column(main, "ANTENNA2"))
     cross = data[~auto]
     # Each real and imaginary part has σ² = 0.01, within five standard errors.
     tolerance = 5 * 0.01 * np.sqrt(2 / cross.size)
@@ -646,7 +647,7 @@ def test_setnoise_and_corrupt_add_casas_thermal_noise_at_close(tmp_path: Path) -
     # Autocorrelations get real noise only.
     assert np.all(data[auto].imag == 0.0)
     assert np.var(data[auto].real) > 0.005
-    assert np.array_equal(np.asarray(main.get_column("WEIGHT")), np.ones((300, 2)))
+    assert np.array_equal(np.asarray(read_column(main, "WEIGHT")), np.ones((300, 2)))
 
 
 @needs_measures
@@ -665,12 +666,12 @@ def test_openfromms_corrupts_the_measurement_set_closed_before(tmp_path: Path) -
     assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
     assert sm.corrupt() is True
     sm.close()
-    assert np.array_equal(np.asarray(Table.open(path).get_column("DATA")), expected)
+    assert np.array_equal(np.asarray(read_column(open_table(path), "DATA")), expected)
     assert sm.openfromms(str(path)) is True
     assert sm.settimes(integrationtime="10s", usehourangle=False, referencetime=REFERENCE)
     assert sm.observe("F", "L", starttime="300s", stoptime="310s")
     sm.close()
-    extended = np.asarray(Table.open(path).get_column("DATA"))
+    extended = np.asarray(read_column(open_table(path), "DATA"))
     assert extended.shape == (310, 2, 4)
     assert np.array_equal(extended[:300], expected)
     assert np.count_nonzero(extended[300:]) == 0
@@ -748,7 +749,7 @@ def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCapture
     assert sm.reset() is True
     assert sm.corrupt() is True
     sm.close()
-    data = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
+    data = np.asarray(read_column(open_table(tmp_path / "x.ms"), "DATA"))
     assert np.all(data == 0)
 
 
@@ -762,11 +763,11 @@ def test_offline_noise_reuses_its_saved_additive_field(tmp_path: Path) -> None:
     assert sm.setnoise(simplenoise="0.25Jy", OTF=False, table=str(tmp_path / "noise.cal"))
     assert sm.corrupt() and sm.corrupt()
     assert sm.close()
-    saved = Table.open(tmp_path / "noise.A.cal")
-    assert saved.keywords["VisCal"] == "A Noise"
-    assert saved.row_count == 3 * 10
-    parameters = np.asarray(saved.get_column("CPARAM"))
-    data = np.asarray(Table.open(tmp_path / "data.ms").get_column("DATA"))
+    saved = open_table(tmp_path / "noise.A.cal")
+    assert saved.getkeyword("VisCal") == "A Noise"
+    assert saved.nrows() == 3 * 10
+    parameters = np.asarray(read_column(saved, "CPARAM"))
+    data = np.asarray(read_column(open_table(tmp_path / "data.ms"), "DATA"))
     assert parameters.shape == (30, 4, 4)
     assert np.array_equal(data, -2 * parameters[:, [0, 3], :])
 
@@ -781,10 +782,10 @@ def test_setnoise_writes_its_tsys_table_after_reset(tmp_path: Path, mode: str, v
     assert sm.setnoise(mode=mode, table=str(tmp_path / "noise_.cal"), pwv="1mm")
     assert sm.reset()
     assert sm.close()
-    table = Table.open(tmp_path / "noise.T.cal")
-    assert table.keywords["VisCal"] == vis_cal
-    assert table.row_count == 3 * 4
-    gains = np.asarray(table.get_column("CPARAM"))
+    table = open_table(tmp_path / "noise.T.cal")
+    assert table.getkeyword("VisCal") == vis_cal
+    assert table.nrows() == 3 * 4
+    gains = np.asarray(read_column(table, "CPARAM"))
     assert gains.size == 3 * 4 * (1 if mode == "tsys-manual" else 4)
     assert np.all(np.isfinite(gains)) and np.all(gains.real > 0)
     assert np.all(gains.imag == 0)
@@ -802,12 +803,12 @@ def test_offline_tsys_reuses_unit_a_noise(tmp_path: Path, mode: str) -> None:
                        table=str(tmp_path / "noise.cal"))
     assert sm.corrupt() and sm.corrupt()
     assert sm.reset() and sm.close()
-    a = np.asarray(Table.open(tmp_path / "noise.A.cal").get_column("CPARAM"))
-    t = np.asarray(Table.open(tmp_path / "noise.T.cal").get_column("CPARAM"))[:, 0, :]
-    main = Table.open(tmp_path / "data.ms")
-    data = np.asarray(main.get_column("DATA"))
-    p = np.asarray(main.get_column("ANTENNA1"))
-    q = np.asarray(main.get_column("ANTENNA2"))
+    a = np.asarray(read_column(open_table(tmp_path / "noise.A.cal"), "CPARAM"))
+    t = np.asarray(read_column(open_table(tmp_path / "noise.T.cal"), "CPARAM"))[:, 0, :]
+    main = open_table(tmp_path / "data.ms")
+    data = np.asarray(read_column(main, "DATA"))
+    p = np.asarray(read_column(main, "ANTENNA1"))
+    q = np.asarray(read_column(main, "ANTENNA2"))
     integration = np.arange(30) // 10
     denominator = t[integration * 4 + p] * t[integration * 4 + q].conj()
     expected = -2 * a[:, [0, 3], :] / denominator[:, None, :]
@@ -830,7 +831,7 @@ def tsys_atm_data(path: Path, **site: Any) -> np.ndarray:
     assert sm.setnoise(mode="tsys-atm", **site) is True
     assert sm.corrupt() is True
     sm.close()
-    return np.asarray(Table.open(path).get_column("DATA"))
+    return np.asarray(read_column(open_table(path), "DATA"))
 
 
 @needs_measures
@@ -840,8 +841,8 @@ def test_tsys_atm_noise_rises_up_the_water_line(tmp_path: Path) -> None:
         "waterheight": "1500m",
     }
     data = tsys_atm_data(tmp_path / "site.ms", **site)
-    main = Table.open(tmp_path / "site.ms")
-    auto = np.asarray(main.get_column("ANTENNA1")) == np.asarray(main.get_column("ANTENNA2"))
+    main = open_table(tmp_path / "site.ms")
+    auto = np.asarray(read_column(main, "ANTENNA1")) == np.asarray(read_column(main, "ANTENNA2"))
     variance = np.var(data[~auto].real, axis=(0, 1))
     # Each channel nearer the line sees a hotter, more opaque sky.
     assert np.all(np.diff(variance) > 0), variance
@@ -875,12 +876,12 @@ def test_setgain_and_setleakage_follow_casa(
     assert sm.setgain(mode="random", amplitude=[0.02, 0.01]) is True
     assert sm.corrupt() is True
     sm.close()
-    gained = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
+    gained = np.asarray(read_column(open_table(tmp_path / "x.ms"), "DATA"))
     # The fbm gains' table, written at close: a G Jones row for each of the
     # 6 integrations and 4 antennas.
-    table = Table.open(tmp_path / "g.cal")
-    assert table.keywords["VisCal"] == "G Jones"
-    assert table.row_count == 6 * 4
+    table = open_table(tmp_path / "g.cal")
+    assert table.getkeyword("VisCal") == "G Jones"
+    assert table.nrows() == 6 * 4
     # setapply of that table corrupts as its gains did.
     sm = simulator()
     sm.open(str(tmp_path / "applied.ms"))
@@ -901,7 +902,7 @@ def test_setgain_and_setleakage_follow_casa(
     assert sm.corrupt() is True
     assert sm.corrupt() is True
     sm.close()
-    plain = np.asarray(Table.open(tmp_path / "plain.ms").get_column("DATA"))
+    plain = np.asarray(read_column(open_table(tmp_path / "plain.ms"), "DATA"))
     assert gained.shape == plain.shape
     assert not np.array_equal(gained, plain)
     # Leakage needs the cross hands, which RR LL lacks.
@@ -927,9 +928,9 @@ def test_table_application_uses_valid_and_neutral_parameters(tmp_path: Path, kin
     assert sm.setnoise(simplenoise="0.1Jy")
     assert sm.corrupt()
     sm.close()
-    before = Table.open(path)
+    before = open_table(path)
     columns = ("DATA", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA")
-    expected = {name: np.asarray(before.get_column(name)).copy() for name in columns}
+    expected = {name: np.asarray(read_column(before, name)).copy() for name in columns}
     assert np.any(expected["DATA"] != 0)
     sm = simulator()
     assert sm.openfromms(str(path))
@@ -957,12 +958,12 @@ def test_table_application_uses_valid_and_neutral_parameters(tmp_path: Path, kin
                        interp=interp)
     assert sm.corrupt()
     sm.close()
-    after = Table.open(path)
+    after = open_table(path)
     if kind == "T_valid":
         # The independent scalar equation: (2+0j) * conj(2+0j) = 4.
         expected["DATA"] *= 4
     for name in columns:
-        np.testing.assert_array_equal(after.get_column(name), expected[name], err_msg=name)
+        np.testing.assert_array_equal(read_column(after, name), expected[name], err_msg=name)
 
 
 @needs_measures
@@ -979,8 +980,8 @@ def test_frequency_table_application_matches_the_receptor_equations(tmp_path: Pa
     assert sm.setnoise(simplenoise="0.1Jy")
     assert sm.corrupt()
     sm.close()
-    before = Table.open(path)
-    expected = {name: np.asarray(before.get_column(name)).copy() for name in ("DATA", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA")}
+    before = open_table(path)
+    expected = {name: np.asarray(read_column(before, name)).copy() for name in ("DATA", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA")}
     sm = simulator()
     assert sm.openfromms(str(path))
     assert sm.setgain(table=str(calibration), amplitude=[0.0])
@@ -998,10 +999,10 @@ def test_frequency_table_application_matches_the_receptor_equations(tmp_path: Pa
     assert tb.putkeyword("VisCal", kind + " Jones")
     assert tb.putinfo({"subType": kind + " Jones"})
     tb.close()
-    window = Table.open(path / "SPECTRAL_WINDOW")
+    window = open_table(path / "SPECTRAL_WINDOW")
     assert tb.open(str(calibration / "SPECTRAL_WINDOW"), nomodify=False)
     for column in ("NUM_CHAN", "CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
-        assert tb.putcol(column, np.moveaxis(np.asarray(window.get_column(column)), 0, -1))
+        assert tb.putcol(column, np.moveaxis(np.asarray(read_column(window, column)), 0, -1))
     tb.close()
     sm = simulator()
     assert sm.openfromms(str(path))
@@ -1019,9 +1020,9 @@ def test_frequency_table_application_matches_the_receptor_equations(tmp_path: Pa
             pairs = ((0, 0), (0, 1), (1, 0), (1, 1))
             for correlation, (left, right) in enumerate(pairs):
                 data[:, correlation, :] *= coefficients[0 if receptors == 1 else left] * coefficients[0 if receptors == 1 else right].conj()
-    after = Table.open(path)
+    after = open_table(path)
     for name, reference in expected.items():
-        actual = after.get_column(name)
+        actual = read_column(after, name)
         if name == "DATA":
             np.testing.assert_allclose(actual, reference, rtol=2e-6, atol=1e-7)
         else:
@@ -1042,9 +1043,9 @@ def test_higher_time_interpolation_matches_closed_form(tmp_path: Path, kind: str
     assert sm.setnoise(simplenoise="0.1Jy")
     assert sm.corrupt()
     sm.close()
-    before = Table.open(path)
+    before = open_table(path)
     names = ("DATA", "TIME", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA")
-    expected = {name: np.asarray(before.get_column(name)).copy() for name in names}
+    expected = {name: np.asarray(read_column(before, name)).copy() for name in names}
     sm = simulator()
     assert sm.openfromms(str(path))
     assert sm.setgain(mode="fbm", table=str(calibration), amplitude=[0.0, 0.0])
@@ -1075,9 +1076,9 @@ def test_higher_time_interpolation_matches_closed_form(tmp_path: Path, kind: str
                             else [289/160, 203/160, 47/80, 5/4])
     index = np.rint((expected["TIME"] - expected["TIME"].min()) / 10).astype(int)
     expected["DATA"] *= amplitudes[index, None, None] ** 2
-    after = Table.open(path)
+    after = open_table(path)
     for name, reference in expected.items():
-        actual = np.asarray(after.get_column(name))
+        actual = np.asarray(read_column(after, name))
         if name == "DATA":
             np.testing.assert_allclose(actual, reference, rtol=2e-6, atol=1e-7)
         else:
@@ -1106,18 +1107,18 @@ def test_settrop_follows_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) 
     assert sm.settrop(pwv=1.0, deltapwv=0.01) is True
     assert sm.corrupt() is True
     sm.close()
-    custom = Table.open(tmp_path / "custom.cal")
-    assert custom.row_count == 3 * 4
-    assert np.array_equal(np.diff(np.unique(custom.get_column("TIME"))), [20., 20.])
+    custom = open_table(tmp_path / "custom.cal")
+    assert custom.nrows() == 3 * 4
+    assert np.array_equal(np.diff(np.unique(read_column(custom, "TIME"))), [20., 20.])
     # The individual term's table, written at close: a Tf Jones row for each
     # of the 6 integrations and 4 antennas, phase only, a value a channel.
-    ramp = Table.open(tmp_path / "ramp.cal")
-    assert ramp.row_count == 6 * 4
-    assert np.allclose(np.abs(np.asarray(ramp.get_column("CPARAM"))), 1.0, atol=1e-6)
-    table = Table.open(tmp_path / "t.cal")
-    assert table.keywords["VisCal"] == "Tf Jones"
-    assert table.row_count == 6 * 4
-    cparam = np.asarray(table.get_column("CPARAM"))
+    ramp = open_table(tmp_path / "ramp.cal")
+    assert ramp.nrows() == 6 * 4
+    assert np.allclose(np.abs(np.asarray(read_column(ramp, "CPARAM"))), 1.0, atol=1e-6)
+    table = open_table(tmp_path / "t.cal")
+    assert table.getkeyword("VisCal") == "Tf Jones"
+    assert table.nrows() == 6 * 4
+    cparam = np.asarray(read_column(table, "CPARAM"))
     assert cparam.size == 6 * 4 * 4
     assert np.allclose(np.abs(cparam), 1.0, atol=1e-6)
     assert np.any(np.angle(cparam) != 0)
@@ -1136,7 +1137,7 @@ def test_setnoise_tsys_manual_scales_the_unit_draws_by_each_rows_sigma(tmp_path:
         assert sm.setnoise(**noise) is True
         assert sm.corrupt() is True
         sm.close()
-        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+        return np.asarray(read_column(open_table(tmp_path / name), "DATA"))
 
     unit = run("unit.ms", mode="simplenoise", simplenoise="1Jy")
     tsys = run("tsys.ms", mode="tsys-manual", tau=0.1)
@@ -1192,7 +1193,7 @@ def test_predict_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureF
     with pytest.raises(RuntimeError, match="does not exist"):
         sm.predict(imagename=str(tmp_path / "missing.image"))
     sm.close()
-    assert np.all(np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA")) == 0)
+    assert np.all(np.asarray(read_column(open_table(tmp_path / "x.ms"), "DATA")) == 0)
 
 
 @needs_measures
@@ -1214,9 +1215,9 @@ def test_a_list_the_cl_tool_writes_is_predicted(tmp_path: Path) -> None:
     assert sm.observe("F", "L", starttime="0s", stoptime="30s")
     assert sm.predict(complist=str(path)) is True
     sm.close()
-    table = Table.open(tmp_path / "x.ms")
-    data = np.asarray(table.get_column("DATA"))
-    cross = np.asarray(table.get_column("ANTENNA1")) != np.asarray(table.get_column("ANTENNA2"))
+    table = open_table(tmp_path / "x.ms")
+    data = np.asarray(read_column(table, "DATA"))
+    cross = np.asarray(read_column(table, "ANTENNA1")) != np.asarray(read_column(table, "ANTENNA2"))
     assert cross.any()
     np.testing.assert_allclose(data[cross], 1.0, atol=1e-6)
 
@@ -1254,7 +1255,7 @@ def test_auto_predicts_on_the_metal_device_as_the_cpu_does(tmp_path: Path) -> No
         assert sm.observe("F", "L", starttime="0s", stoptime="300s")
         assert sm.predict(imagename=str(model)) is True
         sm.close()
-        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+        return np.asarray(read_column(open_table(tmp_path / name), "DATA"))
 
     cpu = predicted("cpu.ms", "cpu")
     auto = predicted("auto.ms", "auto")
@@ -1283,13 +1284,13 @@ def test_wproject_predicts_and_refuses_as_casa_does(
         assert sm.setoptions(**options) is True
         assert sm.predict(imagename=str(model)) is True
         sm.close()
-        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+        return np.asarray(read_column(open_table(tmp_path / name), "DATA"))
 
     w = predicted("w.ms", ftmachine="wproject", wprojplanes=8, padding=1.5)
     assert np.array_equal(w, predicted("w-padded.ms", ftmachine="wproject", wprojplanes=8))
     gridft = predicted("ft.ms")
-    table = Table.open(tmp_path / "w.ms")
-    autos = np.asarray(table.get_column("ANTENNA1")) == np.asarray(table.get_column("ANTENNA2"))
+    table = open_table(tmp_path / "w.ms")
+    autos = np.asarray(read_column(table, "ANTENNA1")) == np.asarray(read_column(table, "ANTENNA2"))
     assert autos.any()
     assert np.all(w[autos] == 0)
     assert np.all(np.abs(w[~autos]).max(axis=(1, 2)) > 0)
@@ -1325,9 +1326,9 @@ def test_total_power_samples_the_model_at_the_pointing(
     assert sm.setoptions(ftmachine="sd", gridfunction="BOX") is True
     assert sm.predict(imagename=str(model)) is True
     sm.close()
-    table = Table.open(tmp_path / "sd.ms")
-    data = np.asarray(table.get_column("DATA"))
-    autos = np.asarray(table.get_column("ANTENNA1")) == np.asarray(table.get_column("ANTENNA2"))
+    table = open_table(tmp_path / "sd.ms")
+    data = np.asarray(read_column(table, "DATA"))
+    autos = np.asarray(read_column(table, "ANTENNA1")) == np.asarray(read_column(table, "ANTENNA2"))
     assert autos.any() and (~autos).any()
     assert np.all(data[autos] == 1.0)
     assert np.all(data[~autos] == 0)
@@ -1361,7 +1362,7 @@ def test_setvp_applies_the_vla_and_evla_default_patterns(tmp_path: Path) -> None
         assert sm.setvp(dovp=True, usedefaultvp=False) is True
         assert sm.predict(imagename=str(model)) is True
         sm.close()
-        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+        return np.asarray(read_column(open_table(tmp_path / name), "DATA"))
 
     vla = predicted("vla.ms", "VLA")
     evla = predicted("evla.ms", "EVLA")
@@ -1465,25 +1466,25 @@ def test_noise_later_observations_keep_original_window_coverage(tmp_path: Path, 
                           freqresolution="1MHz", nchannels=4, stokes="RR LL")
     assert sm.observe("F", "later", starttime="3620s", stoptime="3640s")
     assert sm.corrupt() and sm.close()
-    main = Table.open(path)
-    data = np.asarray(main.get_column("DATA"))
+    main = open_table(path)
+    data = np.asarray(read_column(main, "DATA"))
     assert data.shape[0] == 70
     assert np.any(data[:30]) and np.any(data[30:50])
     assert np.all(data[50:] == 0)
     if not otf:
-        saved = Table.open(tmp_path / "noise.A.cal")
-        a = np.asarray(saved.get_column("CPARAM"))
+        saved = open_table(tmp_path / "noise.A.cal")
+        a = np.asarray(read_column(saved, "CPARAM"))
         integration = np.minimum(np.arange(50) // 10, 2)
         baseline = np.arange(50) % 10
         expected = -a[integration * 10 + baseline][:, [0, 3], :]
         if mode != "simplenoise":
-            t = np.asarray(Table.open(tmp_path / "noise.T.cal").get_column("CPARAM"))[:, 0, :]
-            p = np.asarray(main.get_column("ANTENNA1"))[:50]
-            q = np.asarray(main.get_column("ANTENNA2"))[:50]
+            t = np.asarray(read_column(open_table(tmp_path / "noise.T.cal"), "CPARAM"))[:, 0, :]
+            p = np.asarray(read_column(main, "ANTENNA1"))[:50]
+            q = np.asarray(read_column(main, "ANTENNA2"))[:50]
             expected /= (t[integration * 4 + p] * t[integration * 4 + q].conj())[:, None, :]
         assert np.linalg.norm(data[:50] - expected) / np.linalg.norm(expected) < 1e-3
-        assert Table.open(tmp_path / "noise.A.cal" / "SPECTRAL_WINDOW").row_count == 1
-    assert Table.open(path / "SPECTRAL_WINDOW").row_count == 2
+        assert open_table(tmp_path / "noise.A.cal" / "SPECTRAL_WINDOW").nrows() == 1
+    assert open_table(path / "SPECTRAL_WINDOW").nrows() == 2
 
 
 @needs_measures
@@ -1493,14 +1494,14 @@ def test_multiple_list_feeds_write_their_offsets_and_observation_rows(tmp_path: 
     assert sm.setfeed(mode="list", x=[0., 0.0002], y=[0., -0.0001], pol=["X", "R"])
     assert sm.observe("F", "L", starttime="0s", stoptime="30s")
     assert sm.setnoise(simplenoise="0.1Jy") and sm.corrupt() and sm.close()
-    feeds = Table.open(tmp_path / "x.ms" / "FEED")
-    assert feeds.row_count == 8
-    assert np.array_equal(feeds.get_column("FEED_ID"), [0, 1] * 4)
-    assert np.array_equal(np.asarray(feeds.get_column("POLARIZATION_TYPE"))[1], ["L", "R"])
-    assert np.array_equal(np.asarray(feeds.get_column("BEAM_OFFSET"))[1], [[0.0002, 0.0002], [-0.0001, -0.0001]])
-    main = Table.open(tmp_path / "x.ms")
-    assert main.row_count == 60
-    assert np.array_equal(main.get_column("FEED1"), [0] * 30 + [1] * 30)
-    assert np.array_equal(main.get_column("FEED1"), main.get_column("FEED2"))
-    data = np.asarray(main.get_column("DATA"))
+    feeds = open_table(tmp_path / "x.ms" / "FEED")
+    assert feeds.nrows() == 8
+    assert np.array_equal(read_column(feeds, "FEED_ID"), [0, 1] * 4)
+    assert np.array_equal(np.asarray(read_column(feeds, "POLARIZATION_TYPE"))[1], ["L", "R"])
+    assert np.array_equal(np.asarray(read_column(feeds, "BEAM_OFFSET"))[1], [[0.0002, 0.0002], [-0.0001, -0.0001]])
+    main = open_table(tmp_path / "x.ms")
+    assert main.nrows() == 60
+    assert np.array_equal(read_column(main, "FEED1"), [0] * 30 + [1] * 30)
+    assert np.array_equal(read_column(main, "FEED1"), read_column(main, "FEED2"))
+    data = np.asarray(read_column(main, "DATA"))
     assert np.all(np.isfinite(data)) and np.any(data[:30]) and np.any(data[30:])

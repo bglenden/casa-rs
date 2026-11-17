@@ -75,7 +75,7 @@ That means Python package compatibility has two layers:
 
 The `casars.data` surface has its own narrower stability boundary in v1:
 
-- stable in v1: reading existing persistent images and tables
+- stable in v1: reading existing persistent images
 - stable in v1: writing pixel slices into existing persistent images with `Image.put_slice`
 - deferred from v1: image creation, coordinate-system authoring, and broader image metadata editing
 
@@ -86,7 +86,9 @@ and `casars.data.schema_bundle()` is currently:
 - protocol version: `1`
 - surface kind: `object`
 
-That boundary is intentional. The v1 compatibility promise covers file-backed data access and pixel updates, not the full CASA image-authoring surface.
+Persistent table access uses the CASA tool `casars.tools.table`; the old
+`casars.data.Table` and `casars.Table` names were retired. The image data
+surface continues to cover file-backed reads and pixel updates.
 
 The same bundle, still at protocol version 1, also describes the `casars.tools`
 classes (`simulator`, `measures`, `quanta`, `componentlist`, `image`,

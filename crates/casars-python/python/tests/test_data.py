@@ -12,17 +12,18 @@ import time
 import numpy as np
 
 from casars import data
-from casars.data import Image, Table, protocol_info, schema_bundle
+from casars.data import Image, protocol_info, schema_bundle
+from casars.tools import table as table_tool
 
 
 def test_top_level_lazy_data_surface_imports() -> None:
     import casars
 
     assert hasattr(casars, "Image")
-    assert hasattr(casars, "Table")
+    assert not hasattr(casars, "Table")
     assert casars.data is not None
     assert casars.Image is casars.data.Image
-    assert casars.Table is casars.data.Table
+    assert not hasattr(casars.data, "Table")
 
 
 def test_data_schema_bundle_reports_object_surface() -> None:
@@ -43,7 +44,7 @@ def test_data_schema_bundle_reports_object_surface() -> None:
     objects = {entry["name"]: entry for entry in bundle["semantic"]["objects"]}
     # The CASA tools of casars.tools share the bundle (test_tools_*.py).
     assert set(objects) == {
-        "Image", "Table", "simulator", "measures", "quanta", "componentlist",
+        "Image", "simulator", "measures", "quanta", "componentlist",
         "image", "coordsys", "table", "msmetadata", "ms",
     }
     assert {prop["name"] for prop in objects["Image"]["properties"]} == {
@@ -61,15 +62,6 @@ def test_data_schema_bundle_reports_object_surface() -> None:
         "get_plane",
         "get_mask_slice",
     }
-    assert {method["name"] for method in objects["Table"]["methods"]} == {
-        "column_keywords",
-        "get_cell",
-        "set_cell",
-        "get_column",
-        "put_column",
-        "set_column_keywords",
-    }
-
     image_methods = {entry["name"]: entry for entry in objects["Image"]["methods"]}
     mask_result = image_methods["get_mask_slice"]["result_schema"]
     assert "null" in json.dumps(mask_result)
@@ -185,62 +177,61 @@ def test_linearmosaic_writes_flux_and_coverage(tmp_path: Path) -> None:
 
 def test_table_reads_and_writes(tmp_path: Path) -> None:
     fixture_root = _create_fixtures(tmp_path)
-    table = Table.open(fixture_root / "python_fixture.table", writable=True)
+    table = table_tool()
+    assert table.open(str(fixture_root / "python_fixture.table"), nomodify=False)
 
-    assert table.row_count == 3
-    assert table.column_names == ["id", "label", "gain", "spectrum", "vary", "meta"]
-    assert table.keywords["observer"] == "python-fixture"
-    assert table.keywords["version"] == 1
-    assert table.column_keywords("spectrum") == {"unit": "Jy", "frame": "LSRK"}
+    assert table.nrows() == 3
+    assert table.colnames() == ["id", "label", "gain", "spectrum", "vary", "meta"]
+    assert table.getkeyword("observer") == "python-fixture"
+    assert table.getkeyword("version") == 1
+    assert table.getcolkeywords("spectrum") == {"unit": "Jy", "frame": "LSRK"}
 
-    assert table.get_cell(0, "label") == "alpha"
-    gain = table.get_cell(1, "gain")
+    assert table.getcell("label", 0) == "alpha"
+    gain = table.getcell("gain", 1)
     assert gain == complex(2.0, -2.0)
-    assert table.get_cell(2, "meta") == {"label": "gamma", "weight": 30}
+    assert table.getcell("meta", 2) == {"label": "gamma", "weight": 30}
 
-    ids = table.get_column("id")
+    ids = table.getcol("id")
     assert isinstance(ids, np.ndarray)
     np.testing.assert_array_equal(ids, np.array([1, 2, 3], dtype=np.int64))
 
-    gains = table.get_column("gain")
+    gains = table.getcol("gain")
     assert isinstance(gains, np.ndarray)
     np.testing.assert_array_equal(
         gains,
         np.array([1.0 - 1.0j, 2.0 - 2.0j, 3.0 - 3.0j], dtype=np.complex128),
     )
 
-    spectra = table.get_column("spectrum")
+    spectra = table.getcol("spectrum")
     assert isinstance(spectra, np.ndarray)
-    assert spectra.shape == (3, 2, 2)
+    assert spectra.shape == (2, 2, 3)
     np.testing.assert_array_equal(
-        spectra[0],
+        spectra[:, :, 0],
         np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
     )
 
-    varying = table.get_column("vary")
-    assert isinstance(varying, list)
-    assert [item.shape for item in varying] == [(2,), (3,), (1,)]
+    varying = table.getvarcol("vary")
+    assert [np.squeeze(item, axis=-1).shape for item in varying.values()] == [(2,), (3,), (1,)]
 
-    written = table.put_column("label", ["delta", "epsilon", "zeta"])
-    assert written == 3
-    assert table.get_column("label") == ["delta", "epsilon", "zeta"]
+    assert table.putcol("label", ["delta", "epsilon", "zeta"])
+    assert np.asarray(table.getcol("label")).tolist() == ["delta", "epsilon", "zeta"]
 
-    written = table.put_column("meta", [{"label": "delta", "weight": 100}], start=0)
-    assert written == 1
-    assert table.get_cell(0, "meta") == {"label": "delta", "weight": 100}
+    assert table.putcell("meta", 0, {"label": "delta", "weight": 100})
+    assert table.getcell("meta", 0) == {"label": "delta", "weight": 100}
 
-    table.set_column_keywords("gain", {"unit": "arb", "stage": "python"})
-    assert table.column_keywords("gain") == {"unit": "arb", "stage": "python"}
+    table.putcolkeywords("gain", {"unit": "arb", "stage": "python"})
+    assert table.getcolkeywords("gain") == {"unit": "arb", "stage": "python"}
 
     # A 2-D keyword array reads back, from disk, with element (i, j) where it
     # was, whatever numpy's memory order (#952).
     matrix = np.arange(6, dtype=np.float64).reshape(2, 3)
-    table.set_column_keywords(
+    table.putcolkeywords(
         "spectrum",
         {"c_order": matrix, "f_order": np.asfortranarray(matrix), "strided": matrix[:, ::2]},
     )
-    reopened = Table.open(fixture_root / "python_fixture.table")
-    stored = reopened.column_keywords("spectrum")
+    assert table.close()
+    assert table.open(str(fixture_root / "python_fixture.table"))
+    stored = table.getcolkeywords("spectrum")
     np.testing.assert_array_equal(stored["c_order"], matrix)
     np.testing.assert_array_equal(stored["f_order"], matrix)
     np.testing.assert_array_equal(stored["strided"], matrix[:, ::2])
