@@ -15850,7 +15850,7 @@
     {
       "kind": "task",
       "id": "fluxscale",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "Fluxscale",
       "category": "Calibration",
       "summary": "Scale gain solutions using reference calibrator fields.",
@@ -15888,270 +15888,787 @@
       "bindings": [
         {
           "name": "vis",
-          "concept": {"id": "data.input.vis", "semantic_revision": 1},
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 2
+          },
           "order": 0,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "always"},
-          "active_when": {"kind": "always"},
-          "refinements": [{"kind": "length", "min": 0, "max": 1}],
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "context_role": "input_dataset",
           "surface_note": "Canonical vis maps to provider field measurement_set. CASA's fluxscale requires the MeasurementSet the gain table was solved from.",
           "projections": {
-            "cli": {"flags": ["--vis", "--ms"], "metavar": "MS"},
-            "provider": {"field": "measurement_set", "adapter": "identity"},
-            "python": {"name": "vis"},
-            "presentation": {"label": "MeasurementSet Path", "group": "Input"}
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ],
+              "metavar": "MS"
+            },
+            "provider": {
+              "field": "measurement_set",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet Path",
+              "group": "Input"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#990",
+            "reason": "Fluxscale takes one scalar MeasurementSet path; tclean can take a list of MeasurementSets."
           }
         },
         {
           "name": "caltable",
-          "concept": {"id": "scaling.caltable", "semantic_revision": 1},
-          "order": 1,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "always"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--caltable", "--in"], "metavar": "TABLE"},
-            "provider": {"field": "caltable", "adapter": "identity"},
-            "python": {"name": "caltable"},
-            "presentation": {"label": "Gain Table", "group": "Fluxscale"}
+          "concept": {
+            "id": "scaling.caltable",
+            "semantic_revision": 1
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "fluxscale's caltable is the gain table it reads, distinct from the calibration table a solve writes."}
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable",
+                "--in"
+              ],
+              "metavar": "TABLE"
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "Gain Table",
+              "group": "Fluxscale"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "fluxscale's caltable is the gain table it reads, distinct from the calibration table a solve writes."
+          }
         },
         {
           "name": "fluxtable",
-          "concept": {"id": "scaling.fluxtable", "semantic_revision": 1},
+          "concept": {
+            "id": "scaling.fluxtable",
+            "semantic_revision": 1
+          },
           "order": 2,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "always"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "projections": {
-            "cli": {"flags": ["--fluxtable", "--out"], "metavar": "TABLE"},
-            "provider": {"field": "fluxtable", "adapter": "identity"},
-            "python": {"name": "fluxtable"},
-            "presentation": {"label": "Flux Table", "group": "Fluxscale"}
+            "cli": {
+              "flags": [
+                "--fluxtable",
+                "--out"
+              ],
+              "metavar": "TABLE"
+            },
+            "provider": {
+              "field": "fluxtable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "fluxtable"
+            },
+            "presentation": {
+              "label": "Flux Table",
+              "group": "Fluxscale"
+            }
           }
         },
         {
           "name": "reference",
-          "concept": {"id": "scaling.reference", "semantic_revision": 1},
+          "concept": {
+            "id": "scaling.reference",
+            "semantic_revision": 2
+          },
           "order": 3,
-          "default": {"kind": "literal", "value": {"kind": "array", "value": []}},
-          "required_when": {"kind": "always"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "projections": {
-            "cli": {"flags": ["--reference"], "metavar": "FIELDS"},
-            "provider": {"field": "reference", "adapter": "identity"},
-            "python": {"name": "reference"},
-            "presentation": {"label": "Reference Fields", "group": "Fluxscale"}
+            "cli": {
+              "flags": [
+                "--reference"
+              ],
+              "metavar": "FIELDS"
+            },
+            "provider": {
+              "field": "reference",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "reference"
+            },
+            "presentation": {
+              "label": "Reference Fields",
+              "group": "Fluxscale"
+            }
           }
         },
         {
           "name": "transfer",
-          "concept": {"id": "scaling.transfer", "semantic_revision": 1},
+          "concept": {
+            "id": "scaling.transfer",
+            "semantic_revision": 2
+          },
           "order": 4,
-          "default": {"kind": "literal", "value": {"kind": "array", "value": []}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "projections": {
-            "cli": {"flags": ["--transfer"], "metavar": "FIELDS"},
-            "provider": {"field": "transfer", "adapter": "identity"},
-            "python": {"name": "transfer"},
-            "presentation": {"label": "Transfer Fields", "group": "Fluxscale"}
+            "cli": {
+              "flags": [
+                "--transfer"
+              ],
+              "metavar": "FIELDS"
+            },
+            "provider": {
+              "field": "transfer",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "transfer"
+            },
+            "presentation": {
+              "label": "Transfer Fields",
+              "group": "Fluxscale"
+            }
           }
         },
         {
           "name": "listfile",
-          "concept": {"id": "scaling.listfile", "semantic_revision": 1},
-          "order": 5,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--listfile"], "metavar": "PATH"},
-            "provider": {"field": "listfile"},
-            "python": {"name": "listfile"},
-            "presentation": {"label": "List File", "group": "Fluxscale", "advanced": true}
+          "concept": {
+            "id": "scaling.listfile",
+            "semantic_revision": 1
           },
-          "unimplemented": {"issue": 979}
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--listfile"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "listfile"
+            },
+            "python": {
+              "name": "listfile"
+            },
+            "presentation": {
+              "label": "List File",
+              "group": "Fluxscale",
+              "advanced": true
+            }
+          }
         },
         {
           "name": "append",
-          "concept": {"id": "scaling.append", "semantic_revision": 1},
-          "order": 6,
-          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--append"], "false_flags": ["--no-append"]},
-            "provider": {"field": "append"},
-            "python": {"name": "append"},
-            "presentation": {"label": "Append", "group": "Fluxscale", "advanced": true}
+          "concept": {
+            "id": "scaling.append",
+            "semantic_revision": 1
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "fluxscale's append adds to an existing flux table, distinct from imstat's appended log file."}
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--append"
+              ],
+              "false_flags": [
+                "--no-append"
+              ]
+            },
+            "provider": {
+              "field": "append"
+            },
+            "python": {
+              "name": "append"
+            },
+            "presentation": {
+              "label": "Append",
+              "group": "Fluxscale",
+              "advanced": true
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "fluxscale's append adds to an existing flux table, distinct from imstat's appended log file."
+          }
         },
         {
           "name": "refspwmap",
-          "concept": {"id": "scaling.refspwmap", "semantic_revision": 1},
-          "order": 7,
-          "default": {"kind": "literal", "value": {"kind": "array", "value": [{"kind": "integer", "value": -1}]}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--refspwmap"], "metavar": "SPWS"},
-            "provider": {"field": "refspwmap", "adapter": "identity"},
-            "python": {"name": "refspwmap"},
-            "presentation": {"label": "Reference SPW Map", "group": "Fluxscale"}
+          "concept": {
+            "id": "scaling.refspwmap",
+            "semantic_revision": 2
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "CASA's refspwmap is a list of windows, [-1] for none; calibrate's is casa-rs's comma-separated text."}
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "integer",
+                  "value": -1
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refspwmap"
+              ],
+              "metavar": "SPWS"
+            },
+            "provider": {
+              "field": "refspwmap",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "refspwmap"
+            },
+            "presentation": {
+              "label": "Reference SPW Map",
+              "group": "Fluxscale"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#990",
+            "reason": "CASA numeric arguments accept Python bool as integer 0/1; revision 2 preserves that conversion."
+          }
         },
         {
           "name": "gainthreshold",
-          "concept": {"id": "scaling.gainthreshold", "semantic_revision": 1},
-          "order": 8,
-          "default": {"kind": "literal", "value": {"kind": "float", "value": -1.0}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--gainthreshold"], "metavar": "FRACTION"},
-            "provider": {"field": "gainthreshold", "adapter": "identity"},
-            "python": {"name": "gainthreshold"},
-            "presentation": {"label": "Gain Threshold", "group": "Fluxscale"}
+          "concept": {
+            "id": "scaling.gainthreshold",
+            "semantic_revision": 2
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "CASA's gainthreshold is a number, -1 for none; calibrate's is casa-rs's optional number."}
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": -1.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gainthreshold"
+              ],
+              "metavar": "FRACTION"
+            },
+            "provider": {
+              "field": "gainthreshold",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "gainthreshold"
+            },
+            "presentation": {
+              "label": "Gain Threshold",
+              "group": "Fluxscale"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#990",
+            "reason": "CASA numeric arguments accept Python bool as integer 0/1; revision 2 preserves that conversion."
+          }
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 1},
-          "order": 9,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--antenna"], "metavar": "SELECTOR"},
-            "provider": {"field": "antenna"},
-            "python": {"name": "antenna"},
-            "presentation": {"label": "Antenna", "group": "Selection", "advanced": true}
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 2
           },
-          "unimplemented": {"issue": 979}
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "Antenna",
+              "group": "Selection",
+              "advanced": true
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#990",
+            "reason": "Fluxscale selects calibration rows with the shared CASA grammar. Revision 2 preserves exact text, including the empty default, for native parsing."
+          }
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
-          "order": 10,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--timerange"], "metavar": "SELECTOR"},
-            "provider": {"field": "timerange"},
-            "python": {"name": "timerange"},
-            "presentation": {"label": "Time Range", "group": "Selection", "advanced": true}
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 2
           },
-          "unimplemented": {"issue": 979}
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "timerange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "timerange"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Selection",
+              "advanced": true
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#990",
+            "reason": "Fluxscale selects calibration rows with the shared CASA grammar. Revision 2 preserves exact text, including the empty default, for native parsing."
+          }
         },
         {
           "name": "scan",
-          "concept": {"id": "ms.selection.scan", "semantic_revision": 1},
-          "order": 11,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--scan"], "metavar": "SELECTOR"},
-            "provider": {"field": "scan"},
-            "python": {"name": "scan"},
-            "presentation": {"label": "Scan", "group": "Selection", "advanced": true}
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 2
           },
-          "unimplemented": {"issue": 979}
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "scan",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "Scan",
+              "group": "Selection",
+              "advanced": true
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#990",
+            "reason": "Fluxscale selects calibration rows with the shared CASA grammar. Revision 2 preserves exact text, including the empty default, for native parsing."
+          }
         },
         {
           "name": "incremental",
-          "concept": {"id": "parameter.incremental", "semantic_revision": 1},
+          "concept": {
+            "id": "parameter.incremental",
+            "semantic_revision": 1
+          },
           "order": 12,
-          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "projections": {
-            "cli": {"flags": ["--incremental"], "false_flags": ["--no-incremental"]},
-            "provider": {"field": "incremental", "adapter": "identity"},
-            "python": {"name": "incremental"},
-            "presentation": {"label": "Incremental Fluxscale", "group": "Fluxscale"}
+            "cli": {
+              "flags": [
+                "--incremental"
+              ],
+              "false_flags": [
+                "--no-incremental"
+              ]
+            },
+            "provider": {
+              "field": "incremental",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "incremental"
+            },
+            "presentation": {
+              "label": "Incremental Fluxscale",
+              "group": "Fluxscale"
+            }
           }
         },
         {
           "name": "fitorder",
-          "concept": {"id": "scaling.fitorder", "semantic_revision": 1},
-          "order": 13,
-          "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--fitorder"], "metavar": "N"},
-            "provider": {"field": "fitorder"},
-            "python": {"name": "fitorder"},
-            "presentation": {"label": "Fit Order", "group": "Fluxscale", "advanced": true}
+          "concept": {
+            "id": "scaling.fitorder",
+            "semantic_revision": 2
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "fluxscale's fitorder is the order of its spectral-index fit, distinct from a continuum-subtraction polynomial."},
-          "unimplemented": {"issue": 979}
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fitorder"
+              ],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "fitorder"
+            },
+            "python": {
+              "name": "fitorder"
+            },
+            "presentation": {
+              "label": "Fit Order",
+              "group": "Fluxscale",
+              "advanced": true
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#990",
+            "reason": "CASA numeric arguments accept Python bool as integer 0/1; revision 2 preserves that conversion."
+          }
         },
         {
           "name": "display",
-          "concept": {"id": "scaling.display", "semantic_revision": 1},
-          "order": 14,
-          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--display"], "false_flags": ["--no-display"]},
-            "provider": {"field": "display"},
-            "python": {"name": "display"},
-            "presentation": {"label": "Display", "group": "Fluxscale", "advanced": true}
+          "concept": {
+            "id": "scaling.display",
+            "semantic_revision": 1
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "fluxscale's display plots its fitted spectra, distinct from flagdata's display of flags."},
-          "unimplemented": {"issue": 979}
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--display"
+              ],
+              "false_flags": [
+                "--no-display"
+              ]
+            },
+            "provider": {
+              "field": "display"
+            },
+            "python": {
+              "name": "display"
+            },
+            "presentation": {
+              "label": "Display",
+              "group": "Fluxscale",
+              "advanced": true
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "fluxscale's display plots its fitted spectra, distinct from flagdata's display of flags."
+          }
         },
         {
           "name": "output",
-          "concept": {"id": "calibration.report.output", "semantic_revision": 1},
+          "concept": {
+            "id": "calibration.report.output",
+            "semantic_revision": 1
+          },
           "order": 15,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "projections": {
-            "cli": {"flags": ["-o", "--output"], "metavar": "PATH"},
-            "provider": {"field": "output", "adapter": "omit_none"},
-            "python": {"name": "output", "keyword_only": true},
-            "presentation": {"label": "Output Path", "group": "Output"}
+            "cli": {
+              "flags": [
+                "-o",
+                "--output"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "output",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "output",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Path",
+              "group": "Output"
+            }
           }
         },
         {
           "name": "overwrite",
-          "concept": {"id": "output.overwrite", "semantic_revision": 1},
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
           "order": 16,
-          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "projections": {
-            "cli": {"flags": ["--overwrite"]},
-            "provider": {"field": "overwrite", "adapter": "identity"},
-            "python": {"name": "overwrite", "keyword_only": true},
-            "presentation": {"label": "Overwrite Output", "group": "Output", "advanced": true}
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Overwrite Output",
+              "group": "Output",
+              "advanced": true
+            }
           }
         },
         {
           "name": "format",
-          "concept": {"id": "parameter.format", "semantic_revision": 1},
+          "concept": {
+            "id": "parameter.format",
+            "semantic_revision": 1
+          },
           "order": 17,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": "text"}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "text"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "context_role": "presentation",
           "projections": {
-            "cli": {"flags": ["--format"], "metavar": "FORMAT"},
-            "provider": {"field": "format", "adapter": "identity"},
-            "python": {"name": "format", "keyword_only": true},
-            "presentation": {"label": "Output Format", "group": "Output", "advanced": true}
+            "cli": {
+              "flags": [
+                "--format"
+              ],
+              "metavar": "FORMAT"
+            },
+            "provider": {
+              "field": "format",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "format",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Format",
+              "group": "Output",
+              "advanced": true
+            }
           }
         }
       ]

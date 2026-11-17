@@ -1,24 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Limited `fluxscale` support for the first bootstrap wave.
-//!
-//! This module intentionally implements a narrow but useful slice:
-//!
-//! - complex antenna-based gain tables (`CPARAM`)
-//! - reference and transfer field resolution by id, exact name, or simple `*` glob
-//! - optional `refspwmap`
-//! - optional `gainthreshold`
-//! - full-table output or incremental correction-factor output
-//! - each transfer field's spectral fit across its windows, as CASA reports
-//!   it
-//!
-//! The acceptance contract is twofold:
-//!
-//! - the output caltable must remain CASA-compatible on disk
-//! - the derived transfer fluxes and scaled gains must agree closely with CASA
-//!   on slow parity fixtures
+//! CASA `fluxscale`: reference/transfer gain ratios, calibration-row selections,
+//! flux-density estimates and polynomial spectral fits. Full and incremental
+//! calibration products preserve CASA/casacore interchange.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_tables::{Table, TableError, TableOptions};
@@ -28,19 +13,29 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::constants::{COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_SPECTRAL_WINDOW_ID};
-use crate::summary::{CalibrationTableError, summarize_table};
+use crate::constants::COL_CPARAM;
+use crate::summary::CalibrationTableError;
 
 mod fit;
+mod full_output;
+pub(crate) mod history;
+mod incremental;
+mod input;
+mod listing;
+mod selection;
+mod stats;
 
-/// Request for a first-wave `fluxscale` solve.
+/// Request for a CASA flux-scale transfer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FluxScaleRequest {
+    /// Selection and MeasurementSet metadata used by the CASA task surface.
+    #[serde(flatten)]
+    pub options: FluxScaleOptions,
     /// Input gain table produced by `gaincal`.
     pub input_table: PathBuf,
     /// Output flux-scaled gain table.
     pub output_table: PathBuf,
-    /// Reference field selectors, by id, exact name, or simple `*` glob.
+    /// Reference fields in CASA FIELD selection grammar.
     pub reference_fields: Vec<String>,
     /// Transfer field selectors. Empty means all solved non-reference fields.
     pub transfer_fields: Vec<String>,
@@ -55,6 +50,41 @@ pub struct FluxScaleRequest {
     pub append: bool,
 }
 
+/// Optional metadata and solution selections for flux-scale estimation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct FluxScaleOptions {
+    /// CASA resolves reference/transfer field names against this MeasurementSet.
+    /// Native table-only callers may use the gain table's FIELD metadata.
+    pub measurement_set: Option<PathBuf>,
+    /// CASA antenna/baseline expression on the calibration table.
+    pub antenna: String,
+    /// CASA time expression on calibration solution times.
+    pub timerange: String,
+    /// CASA scan expression on calibration solution scan numbers.
+    pub scan: String,
+    /// Polynomial degree in log-frequency/log-flux space (CASA default 1).
+    pub fitorder: i32,
+    /// Optional text report, overwritten for each successful invocation.
+    pub listfile: Option<PathBuf>,
+    /// CASA 6.7.6's display hooks are empty; this requests the same no-plot behavior.
+    pub display: bool,
+}
+
+impl Default for FluxScaleOptions {
+    fn default() -> Self {
+        Self {
+            measurement_set: None,
+            antenna: String::new(),
+            timerange: String::new(),
+            scan: String::new(),
+            fitorder: 1,
+            listfile: None,
+            display: false,
+        }
+    }
+}
+
 /// Per-SPW flux result for one transfer field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FluxScaleSpwResult {
@@ -62,7 +92,7 @@ pub struct FluxScaleSpwResult {
     pub fluxd: [f64; 4],
     /// Flux-density errors in CASA-style Stokes order.
     pub fluxd_err: [f64; 4],
-    /// Number of scalar gain samples contributing to the estimate.
+    /// Number of matched antenna/polarization mean gain ratios.
     pub num_sol: [f64; 4],
 }
 
@@ -105,7 +135,7 @@ pub struct FluxScaleReport {
     pub fields: BTreeMap<i32, FluxScaleFieldResult>,
 }
 
-/// Errors returned by the limited `fluxscale` implementation.
+/// Errors returned by flux-scale estimation and persistence.
 #[derive(Debug, Error)]
 pub enum FluxScaleError {
     /// Staging or publishing the complete scientific product failed.
@@ -197,6 +227,11 @@ struct GainSampleRow {
     row_index: usize,
     field_id: i32,
     spw_id: i32,
+    antenna_id: i32,
+    antenna2_id: i32,
+    time_seconds: f64,
+    interval_seconds: f64,
+    scan_number: i32,
     gains: ArrayD<Complex32>,
     flags: ArrayD<bool>,
 }
@@ -204,6 +239,8 @@ struct GainSampleRow {
 #[derive(Debug, Clone)]
 struct FieldInfo {
     name: String,
+    code: Option<String>,
+    flagged: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -220,7 +257,7 @@ struct FluxScaleEstimate {
     num_sol: usize,
 }
 
-/// Execute a first-wave `fluxscale` request.
+/// Estimate transfer flux densities and write the corresponding gain corrections.
 pub fn fluxscale(request: &FluxScaleRequest) -> Result<FluxScaleReport, FluxScaleError> {
     fluxscale_with_output_mode(
         request,
@@ -238,13 +275,30 @@ pub(crate) fn fluxscale_with_output_mode(
 ) -> Result<FluxScaleReport, FluxScaleError> {
     let input_phase = crate::timing::Phase::start("fluxscale_read");
     validate_request(request)?;
-    let summary = summarize_table(&request.input_table)
-        .map_err(|source| FluxScaleError::SummarizeInput { source })?;
-    validate_input_table(&summary)?;
+    let input = Table::open(TableOptions::new(&request.input_table)).map_err(|error| {
+        FluxScaleError::UnsupportedInput {
+            path: request.input_table.display().to_string(),
+            reason: error.to_string(),
+        }
+    })?;
+    validate_input_table(&input, &request.input_table)?;
 
-    let field_info = load_field_info(&request.input_table)?;
+    let field_root = request
+        .options
+        .measurement_set
+        .as_deref()
+        .unwrap_or(&request.input_table);
+    if let Some(vis) = &request.options.measurement_set {
+        casa_ms::ms::MeasurementSet::open(vis).map_err(|error| {
+            FluxScaleError::UnsupportedInput {
+                path: vis.display().to_string(),
+                reason: error.to_string(),
+            }
+        })?;
+    }
+    let field_info = load_field_info(field_root)?;
     let spw_info = load_spw_info(&request.input_table)?;
-    let rows = load_gain_rows(&request.input_table)?;
+    let rows = input::read(&input, &request.input_table)?;
 
     let reference_field_ids = resolve_field_selectors(&request.reference_fields, &field_info)?;
     let transfer_field_ids = resolve_transfer_fields(
@@ -253,61 +307,83 @@ pub(crate) fn fluxscale_with_output_mode(
         &field_info,
         &rows,
     )?;
+    let selected_fields = reference_field_ids
+        .union(&transfer_field_ids)
+        .copied()
+        .collect();
+    let masks = selection::sample_masks(
+        &request.input_table,
+        &rows,
+        &request.options,
+        &selected_fields,
+    )?;
 
     drop(input_phase);
     let compute_phase = crate::timing::Phase::start("fluxscale_estimate");
-    let estimates = derive_estimates(
+    let estimates = stats::derive_selected_estimates(
         &rows,
         &reference_field_ids,
         &transfer_field_ids,
         request.gainthreshold,
         &request.refspwmap,
+        &masks,
     )?;
 
     drop(compute_phase);
     let write_phase = crate::timing::Phase::start("fluxscale_write");
-    write_scaled_output(
-        &request.input_table,
-        &request.output_table,
-        &rows,
-        &estimates,
-        request.incremental,
-        mode,
-    )?;
+    write_scaled_output(request, &input, &rows, &estimates, mode, &masks)?;
     drop(write_phase);
-    Ok(build_report(
-        &request.output_table,
+    let report = build_report(
+        request,
         &transfer_field_ids,
         &field_info,
         &spw_info,
         &estimates,
-    ))
+        &rows,
+        &masks,
+    );
+    if let Some(path) = &request.options.listfile {
+        listing::write(path, request, &report)?;
+    }
+    if request.options.display {
+        tracing::debug!("CASA fluxscale display hooks do not produce a plot");
+    }
+    Ok(report)
 }
 
 fn validate_request(request: &FluxScaleRequest) -> Result<(), FluxScaleError> {
     if request.reference_fields.is_empty() {
         return Err(FluxScaleError::MissingReferenceFields);
     }
+    listing::validate(request)?;
     Ok(())
 }
 
-fn validate_input_table(summary: &crate::CalibrationTableSummary) -> Result<(), FluxScaleError> {
-    if summary.table_type != crate::constants::TABLE_INFO_TYPE {
+fn validate_input_table(table: &Table, path: &Path) -> Result<(), FluxScaleError> {
+    let keyword = |name| match table.keywords().get(name) {
+        Some(Value::Scalar(ScalarValue::String(value))) => Some(value.as_str()),
+        _ => None,
+    };
+    if table.info().table_type != crate::constants::TABLE_INFO_TYPE {
         return Err(FluxScaleError::UnsupportedInput {
-            path: summary.path.display().to_string(),
-            reason: format!("table.info type is {:?}", summary.table_type),
+            path: path.display().to_string(),
+            reason: format!("table.info type is {:?}", table.info().table_type),
         });
     }
-    if summary.parameter_family != crate::CalibrationParameterFamily::Complex {
+    if keyword("ParType") == Some("Float")
+        || !table
+            .schema()
+            .is_some_and(|schema| schema.contains_column(COL_CPARAM))
+    {
         return Err(FluxScaleError::UnsupportedInput {
-            path: summary.path.display().to_string(),
+            path: path.display().to_string(),
             reason: "fluxscale currently supports only complex CPARAM tables".to_string(),
         });
     }
-    match summary.keywords.vis_cal.as_deref() {
+    match keyword("VisCal") {
         Some("G Jones") | Some("T Jones") => Ok(()),
         other => Err(FluxScaleError::UnsupportedInput {
-            path: summary.path.display().to_string(),
+            path: path.display().to_string(),
             reason: format!("expected VisCal to be G Jones or T Jones, found {other:?}"),
         }),
     }
@@ -323,7 +399,21 @@ fn load_field_info(root: &Path) -> Result<HashMap<i32, FieldInfo>, FluxScaleErro
     let mut out = HashMap::new();
     for row in 0..table.row_count() {
         let name = get_string(&table, row, "NAME")?;
-        out.insert(row as i32, FieldInfo { name });
+        let code = get_string(&table, row, "CODE").ok();
+        let flagged = matches!(
+            table
+                .cell_accessor(row, "FLAG_ROW")
+                .and_then(|cell| cell.value()),
+            Ok(Some(Value::Scalar(ScalarValue::Bool(true))))
+        );
+        out.insert(
+            row as i32,
+            FieldInfo {
+                name,
+                code,
+                flagged,
+            },
+        );
     }
     Ok(out)
 }
@@ -350,68 +440,23 @@ fn load_spw_info(root: &Path) -> Result<HashMap<i32, SpwInfo>, FluxScaleError> {
     Ok(out)
 }
 
-fn load_gain_rows(root: &Path) -> Result<Vec<GainSampleRow>, FluxScaleError> {
-    let table =
-        Table::open(TableOptions::new(root)).map_err(|source| FluxScaleError::MutateOutput {
-            path: root.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let mut rows = Vec::new();
-    for row_index in 0..table.row_count() {
-        let field_id = get_i32(&table, row_index, COL_FIELD_ID)?;
-        let spw_id = get_i32(&table, row_index, COL_SPECTRAL_WINDOW_ID)?;
-        let gains = get_complex_array(&table, row_index, COL_CPARAM)?;
-        let flags = get_bool_array(&table, row_index, COL_FLAG)?;
-        rows.push(GainSampleRow {
-            row_index,
-            field_id,
-            spw_id,
-            gains,
-            flags,
-        });
-    }
-    Ok(rows)
-}
-
 fn resolve_field_selectors(
     selectors: &[String],
     field_info: &HashMap<i32, FieldInfo>,
 ) -> Result<BTreeSet<i32>, FluxScaleError> {
-    let mut resolved = BTreeSet::new();
-    for selector in selectors {
-        let selector = selector.trim();
-        if selector.is_empty() {
-            continue;
-        }
-        for part in selector
-            .split(',')
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-        {
-            if let Ok(field_id) = part.parse::<i32>() {
-                if field_info.contains_key(&field_id) {
-                    resolved.insert(field_id);
-                    continue;
-                }
-                return Err(FluxScaleError::UnresolvedFieldSelector {
-                    selector: part.to_string(),
-                });
-            }
-            let mut matched = false;
-            for (&field_id, info) in field_info {
-                if matches_simple_glob(part, &info.name) {
-                    matched = true;
-                    resolved.insert(field_id);
-                }
-            }
-            if !matched {
-                return Err(FluxScaleError::UnresolvedFieldSelector {
-                    selector: part.to_string(),
-                });
-            }
-        }
-    }
-    Ok(resolved)
+    let fields = (0..field_info.len())
+        .map(|id| casa_ms::selection::FieldSelectorRow {
+            name: &field_info[&(id as i32)].name,
+            code: field_info[&(id as i32)].code.as_deref(),
+            flagged: field_info[&(id as i32)].flagged,
+        })
+        .collect::<Vec<_>>();
+    casa_ms::selection::resolve_field_selector_rows(&fields, &selectors.join(","))
+        .map(|ids| ids.into_iter().collect())
+        .map_err(|error| FluxScaleError::UnsupportedInput {
+            path: "reference/transfer".into(),
+            reason: error.to_string(),
+        })
 }
 
 fn resolve_transfer_fields(
@@ -438,191 +483,17 @@ fn resolve_transfer_fields(
     Ok(transfer)
 }
 
-fn derive_estimates(
-    rows: &[GainSampleRow],
-    reference_field_ids: &BTreeSet<i32>,
-    transfer_field_ids: &BTreeSet<i32>,
-    gainthreshold: Option<f64>,
-    refspwmap: &[i32],
-) -> Result<HashMap<(i32, i32), FluxScaleEstimate>, FluxScaleError> {
-    let mut amplitudes = HashMap::<(i32, i32), Vec<f64>>::new();
-
-    for row in rows {
-        let key = (row.field_id, row.spw_id);
-        let mut values = row_amplitudes(row);
-        if values.is_empty() {
-            continue;
-        }
-        amplitudes.entry(key).or_default().append(&mut values);
-    }
-
-    let mut filtered = HashMap::<(i32, i32), Vec<f64>>::new();
-    for (key, values) in amplitudes {
-        filtered.insert(key, apply_gainthreshold(values, gainthreshold));
-    }
-
-    let mut reference_means = HashMap::<i32, f64>::new();
-    for field_id in reference_field_ids {
-        for (&(candidate_field_id, spw_id), values) in &filtered {
-            if candidate_field_id != *field_id || values.is_empty() {
-                continue;
-            }
-            reference_means.entry(spw_id).or_default();
-        }
-    }
-    for (spw_id, mean) in reference_means.iter_mut() {
-        let pooled = reference_field_ids
-            .iter()
-            .filter_map(|field_id| filtered.get(&(*field_id, *spw_id)))
-            .flat_map(|values| values.iter().copied())
-            .collect::<Vec<_>>();
-        if pooled.is_empty() {
-            return Err(FluxScaleError::MissingGainSamples {
-                field_id: *reference_field_ids.iter().next().unwrap_or(&-1),
-                spw_id: *spw_id,
-            });
-        }
-        *mean = pooled.iter().sum::<f64>() / pooled.len() as f64;
-    }
-
-    let mut estimates = HashMap::new();
-    for field_id in transfer_field_ids {
-        let field_spws = filtered
-            .keys()
-            .filter_map(|(candidate_field_id, spw_id)| {
-                (*candidate_field_id == *field_id).then_some(*spw_id)
-            })
-            .collect::<BTreeSet<_>>();
-        for spw_id in field_spws {
-            let values =
-                filtered
-                    .get(&(*field_id, spw_id))
-                    .ok_or(FluxScaleError::MissingGainSamples {
-                        field_id: *field_id,
-                        spw_id,
-                    })?;
-            if values.is_empty() {
-                return Err(FluxScaleError::MissingGainSamples {
-                    field_id: *field_id,
-                    spw_id,
-                });
-            }
-            let reference_spw_id = mapped_reference_spw(spw_id, refspwmap);
-            let reference_mean = *reference_means.get(&reference_spw_id).ok_or(
-                FluxScaleError::MissingGainSamples {
-                    field_id: *reference_field_ids.iter().next().unwrap_or(&-1),
-                    spw_id: reference_spw_id,
-                },
-            )?;
-            let transfer_mean = values.iter().sum::<f64>() / values.len() as f64;
-            if !(reference_mean.is_finite()
-                && transfer_mean.is_finite()
-                && reference_mean > 0.0
-                && transfer_mean > 0.0)
-            {
-                return Err(FluxScaleError::UnstableScaleFactor {
-                    field_id: *field_id,
-                    spw_id,
-                });
-            }
-
-            let ratio = transfer_mean / reference_mean;
-            let flux_density_jy = ratio * ratio;
-            let correction_factor = (1.0 / ratio) as f32;
-            let flux_density_error_jy = estimate_flux_error(values, reference_mean);
-            estimates.insert(
-                (*field_id, spw_id),
-                FluxScaleEstimate {
-                    flux_density_jy,
-                    flux_density_error_jy,
-                    correction_factor,
-                    num_sol: values.len(),
-                },
-            );
-        }
-    }
-
-    Ok(estimates)
-}
-
-fn row_amplitudes(row: &GainSampleRow) -> Vec<f64> {
-    if row.gains.ndim() != row.flags.ndim() {
-        return Vec::new();
-    }
-    row.gains
-        .iter()
-        .zip(row.flags.iter())
-        .filter_map(|(gain, flagged)| {
-            (!*flagged && gain.norm() > f32::EPSILON).then_some(gain.norm() as f64)
-        })
-        .collect()
-}
-
-fn apply_gainthreshold(mut values: Vec<f64>, gainthreshold: Option<f64>) -> Vec<f64> {
-    let Some(gainthreshold) = gainthreshold else {
-        return values;
-    };
-    if gainthreshold < 0.0 || values.is_empty() {
-        return values;
-    }
-    values.sort_by(f64::total_cmp);
-    let median = median(&values);
-    values
-        .into_iter()
-        .filter(|value| (value - median).abs() <= gainthreshold * median)
-        .collect()
-}
-
-fn median(values: &[f64]) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    let mid = values.len() / 2;
-    if values.len().is_multiple_of(2) {
-        (values[mid - 1] + values[mid]) / 2.0
-    } else {
-        values[mid]
-    }
-}
-
-fn mapped_reference_spw(spw_id: i32, refspwmap: &[i32]) -> i32 {
-    let Ok(index) = usize::try_from(spw_id) else {
-        return spw_id;
-    };
-    match refspwmap.get(index).copied() {
-        Some(mapped) if mapped >= 0 => mapped,
-        _ => spw_id,
-    }
-}
-
-fn estimate_flux_error(transfer_values: &[f64], reference_mean: f64) -> f64 {
-    if transfer_values.len() <= 1 || reference_mean <= 0.0 {
-        return 0.0;
-    }
-    let factors = transfer_values
-        .iter()
-        .map(|value| (value / reference_mean).powi(2))
-        .collect::<Vec<_>>();
-    let mean = factors.iter().sum::<f64>() / factors.len() as f64;
-    let variance = factors
-        .iter()
-        .map(|value| {
-            let delta = *value - mean;
-            delta * delta
-        })
-        .sum::<f64>()
-        / (factors.len() as f64);
-    variance.sqrt() / (factors.len() as f64).sqrt()
-}
-
 fn write_scaled_output(
-    input_root: &Path,
-    output_root: &Path,
+    request: &FluxScaleRequest,
+    input: &Table,
     rows: &[GainSampleRow],
     estimates: &HashMap<(i32, i32), FluxScaleEstimate>,
-    incremental: bool,
     mode: crate::CalibrationOutputMode,
+    masks: &selection::SampleMasks,
 ) -> Result<(), FluxScaleError> {
+    let input_root = &request.input_table;
+    let output_root = &request.output_table;
+    let incremental = request.incremental;
     if crate::paths::overlap(input_root, output_root).map_err(|e| {
         FluxScaleError::PrepareOutput {
             path: output_root.display().to_string(),
@@ -641,26 +512,83 @@ fn write_scaled_output(
         });
     }
     let target = crate::output::CalibrationOutput::prepare(output_root, mode)?;
-    copy_table_tree(input_root, &target.staging)?;
-    let mut table = Table::open(TableOptions::new(&target.staging)).map_err(|source| {
-        FluxScaleError::MutateOutput {
-            path: output_root.display().to_string(),
-            source: Box::new(source),
+    crate::output_merge::preserve_subtables(input_root, &target.staging)?;
+    let sorted =
+        !incremental && mode != crate::CalibrationOutputMode::Append && full_output::ordered(rows);
+    if sorted && full_output::save(input, input_root, &target.staging, rows, estimates)? {
+        mark_output_windows(&target.staging, rows, false)?;
+        target.commit()?;
+        return Ok(());
+    }
+    let mut table = if incremental {
+        empty_output(input)
+    } else {
+        input
+            .to_memory()
+            .map_err(|source| FluxScaleError::MutateOutput {
+                path: output_root.display().to_string(),
+                source: Box::new(source),
+            })?
+    };
+    for name in crate::constants::STANDARD_SUBTABLE_KEYWORDS {
+        table.keywords_mut().upsert(
+            *name,
+            Value::table_ref(casa_tables::strip_directory(
+                &target.staging.join(name),
+                &target.staging,
+            )),
+        );
+    }
+    if incremental {
+        let metadata = request
+            .options
+            .measurement_set
+            .as_deref()
+            .unwrap_or(input_root);
+        if let Some(vis) = &request.options.measurement_set {
+            table.keywords_mut().upsert(
+                "MSName",
+                Value::Scalar(ScalarValue::String(
+                    vis.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                )),
+            );
         }
-    })?;
-    for row in rows {
-        let Some(estimate) = estimates.get(&(row.field_id, row.spw_id)) else {
-            continue;
-        };
-        let scaled = scale_gains(&row.gains, estimate.correction_factor, incremental);
+        incremental::populate(&mut table, metadata, rows, estimates, masks)?;
+        incremental::copy_metadata(metadata, &target.staging)?;
+    } else {
+        for row in rows {
+            let Some(estimate) = estimates.get(&(row.field_id, row.spw_id)) else {
+                continue;
+            };
+            let scaled = row.gains.mapv(|value| value * estimate.correction_factor);
+            table
+                .cell_accessor_mut(row.row_index, COL_CPARAM)
+                .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(scaled))))
+                .map_err(|source| FluxScaleError::MutateOutput {
+                    path: output_root.display().to_string(),
+                    source: Box::new(source),
+                })?;
+        }
+    }
+    if !incremental && rows.len() != table.row_count() {
+        let selected = rows
+            .iter()
+            .map(|row| row.row_index)
+            .collect::<BTreeSet<_>>();
+        let removed = (0..table.row_count())
+            .filter(|index| !selected.contains(index))
+            .collect::<Vec<_>>();
         table
-            .cell_accessor_mut(row.row_index, COL_CPARAM)
-            .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(scaled))))
+            .remove_rows(&removed)
             .map_err(|source| FluxScaleError::MutateOutput {
                 path: output_root.display().to_string(),
                 source: Box::new(source),
             })?;
     }
+    mark_output_windows(&target.staging, rows, incremental)?;
     if mode == crate::CalibrationOutputMode::Append && output_root.exists() {
         let spw = crate::output_merge::merge_spw(output_root, &target.staging)?;
         let mut old = crate::output_merge::open(output_root)?;
@@ -670,29 +598,64 @@ fn write_scaled_output(
             .map_err(|e| crate::output_merge::invalid(output_root, e.to_string()))?;
         table = old;
     }
-    crate::output_merge::save_sorted(&mut table, &target.staging)?;
+    if sorted {
+        table
+            .save(
+                TableOptions::new(&target.staging)
+                    .with_data_manager(casa_tables::DataManagerKind::StandardStMan),
+            )
+            .map_err(|error| crate::output_merge::invalid(output_root, error.to_string()))?;
+    } else {
+        crate::output_merge::save_sorted(&mut table, &target.staging)?;
+    }
     target.commit()?;
     Ok(())
 }
 
-fn scale_gains(
-    values: &ArrayD<Complex32>,
-    correction_factor: f32,
-    incremental: bool,
-) -> ArrayD<Complex32> {
-    if incremental {
-        ArrayD::from_elem(values.raw_dim(), Complex32::new(correction_factor, 0.0))
-    } else {
-        values.mapv(|value| value * correction_factor)
+fn empty_output(input: &Table) -> Table {
+    let mut table =
+        Table::with_schema_memory(input.schema().expect("validated gain schema").clone());
+    table.set_info(input.info().clone());
+    *table.keywords_mut() = input.keywords().clone();
+    for column in input.schema().expect("validated gain schema").columns() {
+        if let Some(keywords) = input.column_keywords(column.name()) {
+            table.set_column_keywords(column.name(), keywords.clone());
+        }
     }
+    table
+}
+
+fn mark_output_windows(
+    stage: &Path,
+    rows: &[GainSampleRow],
+    incremental: bool,
+) -> Result<(), FluxScaleError> {
+    let path = stage.join("SPECTRAL_WINDOW");
+    let failed = |error: TableError| crate::output_merge::invalid(&path, error.to_string());
+    let mut table = Table::open(TableOptions::new(&path)).map_err(failed)?;
+    let used = rows.iter().map(|row| row.spw_id).collect::<BTreeSet<_>>();
+    for index in 0..table.row_count() {
+        table
+            .cell_accessor_mut(index, "FLAG_ROW")
+            .and_then(|mut cell| {
+                cell.set(Value::Scalar(ScalarValue::Bool(
+                    !incremental && !used.contains(&(index as i32)),
+                )))
+            })
+            .map_err(failed)?;
+    }
+    table.save(TableOptions::new(&path)).map_err(failed)?;
+    Ok(())
 }
 
 fn build_report(
-    output_table: &Path,
+    request: &FluxScaleRequest,
     transfer_field_ids: &BTreeSet<i32>,
     field_info: &HashMap<i32, FieldInfo>,
     spw_info: &HashMap<i32, SpwInfo>,
     estimates: &HashMap<(i32, i32), FluxScaleEstimate>,
+    rows: &[GainSampleRow],
+    masks: &selection::SampleMasks,
 ) -> FluxScaleReport {
     let mut fields = BTreeMap::new();
     let mut spw_ids = BTreeSet::new();
@@ -700,11 +663,19 @@ fn build_report(
     for field_id in transfer_field_ids {
         let mut spw_results = BTreeMap::new();
         let mut windows = Vec::new();
-        for (&(candidate_field_id, spw_id), estimate) in estimates {
-            if candidate_field_id != *field_id {
-                continue;
-            }
+        for &spw_id in spw_info.keys() {
             spw_ids.insert(spw_id);
+            let Some(estimate) = estimates.get(&(*field_id, spw_id)) else {
+                spw_results.insert(
+                    spw_id,
+                    FluxScaleSpwResult {
+                        fluxd: [-1.; 4],
+                        fluxd_err: [-1.; 4],
+                        num_sol: [-1.; 4],
+                    },
+                );
+                continue;
+            };
             spw_results.insert(
                 spw_id,
                 FluxScaleSpwResult {
@@ -722,7 +693,8 @@ fn build_report(
                 flux_density_error_jy: estimate.flux_density_error_jy,
             });
         }
-        let fit = fit::spectral_fit(&windows);
+        windows.sort_by(|a, b| a.frequency_hz.total_cmp(&b.frequency_hz));
+        let fit = fit::spectral_fit_order(&windows, request.options.fitorder);
 
         fields.insert(
             *field_id,
@@ -755,6 +727,13 @@ fn build_report(
     let frequencies_hz = sorted_spw_ids
         .iter()
         .map(|spw_id| {
+            if !rows
+                .iter()
+                .zip(&masks.data)
+                .any(|(row, selected)| *selected && row.spw_id == *spw_id)
+            {
+                return -1.;
+            }
             spw_info
                 .get(spw_id)
                 .map(|info| info.ref_frequency_hz)
@@ -763,65 +742,11 @@ fn build_report(
         .collect();
 
     FluxScaleReport {
-        output_table: output_table.to_path_buf(),
+        output_table: request.output_table.clone(),
         spw_ids: sorted_spw_ids,
         spw_names,
         frequencies_hz,
         fields,
-    }
-}
-
-fn copy_table_tree(source: &Path, destination: &Path) -> Result<(), FluxScaleError> {
-    // casacore table.lock contains synchronization state, including row
-    // counts; copying it can override the new table.dat on a CASA reopen.
-    if source.file_name().is_some_and(|name| name == "table.lock") {
-        return Ok(());
-    }
-    if source.is_dir() {
-        fs::create_dir_all(destination).map_err(|error| FluxScaleError::CopyTableTree {
-            source_path: source.display().to_string(),
-            destination_path: destination.display().to_string(),
-            reason: error.to_string(),
-        })?;
-        for entry in fs::read_dir(source).map_err(|error| FluxScaleError::CopyTableTree {
-            source_path: source.display().to_string(),
-            destination_path: destination.display().to_string(),
-            reason: error.to_string(),
-        })? {
-            let entry = entry.map_err(|error| FluxScaleError::CopyTableTree {
-                source_path: source.display().to_string(),
-                destination_path: destination.display().to_string(),
-                reason: error.to_string(),
-            })?;
-            copy_table_tree(&entry.path(), &destination.join(entry.file_name()))?;
-        }
-        return Ok(());
-    }
-    fs::copy(source, destination).map_err(|error| FluxScaleError::CopyTableTree {
-        source_path: source.display().to_string(),
-        destination_path: destination.display().to_string(),
-        reason: error.to_string(),
-    })?;
-    Ok(())
-}
-
-fn get_i32(table: &Table, row: usize, column: &str) -> Result<i32, FluxScaleError> {
-    match table
-        .cell_accessor(row, column)
-        .and_then(|cell| cell.value())
-        .map_err(|source| FluxScaleError::MutateOutput {
-            path: column.to_string(),
-            source: Box::new(source),
-        })? {
-        Some(Value::Scalar(ScalarValue::Int32(value))) => Ok(*value),
-        Some(other) => Err(FluxScaleError::UnsupportedInput {
-            path: column.to_string(),
-            reason: format!("expected Int32 in {column}, found {:?}", other.kind()),
-        }),
-        None => Err(FluxScaleError::UnsupportedInput {
-            path: column.to_string(),
-            reason: format!("missing required column {column}"),
-        }),
     }
 }
 
@@ -872,78 +797,4 @@ fn get_ref_frequency(table: &Table, row: usize) -> Result<f64, FluxScaleError> {
             Some(_) | None => Ok(0.0),
         },
     }
-}
-
-fn get_complex_array(
-    table: &Table,
-    row: usize,
-    column: &str,
-) -> Result<ArrayD<Complex32>, FluxScaleError> {
-    match table
-        .cell_accessor(row, column)
-        .and_then(|cell| cell.array())
-        .map_err(|source| FluxScaleError::MutateOutput {
-            path: column.to_string(),
-            source: Box::new(source),
-        })? {
-        ArrayValue::Complex32(values) => Ok(values.clone()),
-        other => Err(FluxScaleError::UnsupportedInput {
-            path: column.to_string(),
-            reason: format!(
-                "expected Complex32 array in {column}, found {:?}",
-                other.primitive_type()
-            ),
-        }),
-    }
-}
-
-fn get_bool_array(table: &Table, row: usize, column: &str) -> Result<ArrayD<bool>, FluxScaleError> {
-    match table
-        .cell_accessor(row, column)
-        .and_then(|cell| cell.array())
-        .map_err(|source| FluxScaleError::MutateOutput {
-            path: column.to_string(),
-            source: Box::new(source),
-        })? {
-        ArrayValue::Bool(values) => Ok(values.clone()),
-        other => Err(FluxScaleError::UnsupportedInput {
-            path: column.to_string(),
-            reason: format!(
-                "expected Bool array in {column}, found {:?}",
-                other.primitive_type()
-            ),
-        }),
-    }
-}
-
-fn matches_simple_glob(pattern: &str, candidate: &str) -> bool {
-    if !pattern.contains('*') {
-        return pattern == candidate;
-    }
-    let mut rest = candidate;
-    let parts = pattern.split('*').collect::<Vec<_>>();
-    let anchored_start = !pattern.starts_with('*');
-    let anchored_end = !pattern.ends_with('*');
-
-    for (index, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        if index == 0 && anchored_start {
-            if !rest.starts_with(part) {
-                return false;
-            }
-            rest = &rest[part.len()..];
-            continue;
-        }
-        if index == parts.len() - 1 && anchored_end {
-            return rest.ends_with(part);
-        }
-        let Some(position) = rest.find(part) else {
-            return false;
-        };
-        rest = &rest[position + part.len()..];
-    }
-
-    true
 }

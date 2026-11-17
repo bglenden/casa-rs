@@ -6286,3 +6286,52 @@ domain. `tools/casa-compat/calibration_lifecycle_oracle.py` reproduces the
 CASA error and compares the two native append products. Invalid boolean
 arguments retain the native exception policy documented in
 `docs/python/api.md`.
+
+## Fluxscale negative and underdetermined spectral-fit orders
+
+CASA 6.7.6.14 `fluxscale` allocates coefficient arrays with `fitorder+1`
+entries before checking a negative order. With three valid spectral windows,
+`fitorder=-1` logs "Using fitorder=1", then writes outside the zero-width
+array and segfaults (isolated Python oracle exit 139). casa-rs implements the
+advertised fallback to order 1 and allocates the corresponding two entries.
+
+With two valid windows and `fitorder>1`, `SolvableVisJones::fluxscale`
+advertises order 1 but leaves `myfitorder` at its initializer, zero. It fits a
+constant instead. With three windows and degree 3 or 5 it returns an
+underdetermined solution, including negative covariance diagonals; one probe
+returned a cubic coefficient of 1560 and a covariance diagonal of -2.95e20.
+casa-rs reduces the fitted degree to the number of valid windows minus one,
+warns, and pads the requested coefficient/error vectors with zeros. Valid,
+determined fits retain the requested degree and CASA's covariance convention.
+The existing singular order-one behavior is retained.
+
+For exactly determined fits, casacore `LSQFit::solve` subtracts accumulated
+moments (`sum(w*y*y) - x*b + x*(N*x-b)`) and divides by at least one when
+estimating residual scatter. Roundoff can become a positive uncertainty
+although the data determine every coefficient exactly. A five-window degree-4
+probe returned coefficient 24697.456405169 and uncertainty 0.0038844, and a
+flux-density error of 6.1e-7. casa-rs retains zero residual uncertainty when
+there are no residual degrees of freedom, extending its existing two-window
+linear-fit convention. The oracle separately bounds these CASA artifacts to
+1e-3 of the corresponding coefficient/flux scale and checks native zeros;
+determined coefficients, covariance, and overdetermined uncertainties retain
+their direct numerical comparisons. Existing stricter order-one checks remain.
+
+Source: `synthesis/MeasurementComponents/SolvableVisCal.cc`,
+`SolvableVisJones::fluxscale`, coefficient allocation and `myfitorder` branches.
+Reproduction: `tools/casa-compat/fluxscale_oracle.py` builds the three-window
+input; the negative-order crash must be run in a separate Python process.
+Regression: `casa-calibration`'s spectral-fit tests and captured CASA gain data.
+
+## Fluxscale history can contain uninitialized object identifiers
+
+`MSHistoryHandler::addMessage` writes every required HISTORY column except
+`OBJECT_ID`. Repeated CASA 6.7.6.14 fluxscale calls return arbitrary integers
+there (one run produced -1045601744 and 32549); freshly allocated storage can
+instead read as zero. casa-rs initializes this required field to zero. The
+oracle compares all other history content, checks the native zero, and treats
+the current timestamp and implementation version as process-specific metadata.
+
+CASA 6.7.6.14 also accepts `refspwmap=[]` at the Python boundary but indexes
+element zero unconditionally in `SolvableVisJones::fluxscale`, causing a
+segfault. Native empty mapping means identity, as `refspwmap=[-1]` does.

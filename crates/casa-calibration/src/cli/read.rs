@@ -171,6 +171,7 @@ fn fluxscale(task: &TaskInvocation<'_>) -> Result<FluxScaleRequest, TaskFailure>
     }
     let gainthreshold = task.optional_number("gainthreshold")?;
     Ok(FluxScaleRequest {
+        options: Default::default(),
         append: false,
         input_table: PathBuf::from(task.required_text("fluxscale_input")?),
         output_table: PathBuf::from(task.required_text("out_table")?),

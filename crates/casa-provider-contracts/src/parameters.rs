@@ -378,8 +378,14 @@ pub const PROJECT_TOKEN: &str = "$project";
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NormalizationRule {
     Identity,
+    /// CASA numeric parameters accept Python booleans as integer 0/1,
+    /// including within ordinary parameter lists (but not NumPy bool scalars).
+    BooleanAsInteger,
     /// Preserve tclean FIELD text, including literal dollar signs.
     TcleanField,
+    /// FIELD expressions are data parsed natively; preserve every literal
+    /// character, including quoted names containing dollar signs or commas.
+    CasaField,
     Trim,
     Lowercase,
     Path,

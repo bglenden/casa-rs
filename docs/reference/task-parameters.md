@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 606
+- Concepts: 612
 - Surfaces: 31 (31 task, 0 session)
 - Surface bindings: 896
 
@@ -30,7 +30,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Applycal](#surface-applycal)<br><code>applycal</code> | task | 6 | <code>calibration</code> | 25 | Apply one or more calibration tables to a MeasurementSet. |
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 6 | <code>calibration</code> | 42 | Solve antenna gain calibration for a MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
-| [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 6 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
+| [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 7 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
 | [Gencal](#surface-gencal)<br><code>gencal</code> | task | 6 | <code>calibration</code> | 18 | Generate a calibration table such as antpos, gceff, or opac. |
 | [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 7 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 5 | <code>flagdata</code> | 76 | Run native CASA-style MeasurementSet flagging. |
@@ -749,27 +749,27 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Fluxscale (<code>fluxscale</code>)
 
 - Kind: `task`
-- Contract version: `6`
+- Contract version: `7`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Scale gain solutions using reference calibrator fields.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. CASA's fluxscale requires the MeasurementSet the gain table was solved from. |
+| <code>vis</code> | <code>data.input.vis@r2</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. CASA's fluxscale requires the MeasurementSet the gain table was solved from. |
 | <code>caltable</code> | <code>scaling.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Fluxscale | Gain table fluxscale reads, solved for the reference and transfer fields. |
 | <code>fluxtable</code> | <code>scaling.fluxtable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Fluxscale | Flux-scaled gain table fluxscale writes. |
-| <code>reference</code> | <code>scaling.reference@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; required | Fluxscale | Fields whose flux densities are known. |
-| <code>transfer</code> | <code>scaling.transfer@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Fluxscale | Fields whose flux densities are derived; empty for all the others. |
+| <code>reference</code> | <code>scaling.reference@r2</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; required | Fluxscale | Fields whose flux densities are known. |
+| <code>transfer</code> | <code>scaling.transfer@r2</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Fluxscale | Fields whose flux densities are derived; empty for all the others. |
 | <code>listfile</code> | <code>scaling.listfile@r1</code> | <code>string</code> | <code>""</code>; optional | Fluxscale | Text file that receives the derived flux densities; empty for none. |
 | <code>append</code> | <code>scaling.append@r1</code> | <code>bool</code> | <code>false</code>; optional | Fluxscale | Append fluxscale's solutions to an existing flux table. |
-| <code>refspwmap</code> | <code>scaling.refspwmap@r1</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Fluxscale | Reference window for each spectral window; [-1] for none. |
-| <code>gainthreshold</code> | <code>scaling.gainthreshold@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Fluxscale | Fraction from the median outside which gain amplitudes are excluded; -1 for none. |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
+| <code>refspwmap</code> | <code>scaling.refspwmap@r2</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Fluxscale | Reference window for each spectral window; [-1] for none. |
+| <code>gainthreshold</code> | <code>scaling.gainthreshold@r2</code> | <code>float</code> | <code>-1.0</code>; optional | Fluxscale | Fraction from the median outside which gain amplitudes are excluded; -1 for none. |
+| <code>antenna</code> | <code>ms.selection.antenna@r2</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA antenna (baseline) selection, exact text |
+| <code>timerange</code> | <code>ms.selection.timerange@r2</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA time selection, exact text |
+| <code>scan</code> | <code>ms.selection.scan@r2</code> | <code>string</code> | <code>""</code>; optional | Selection | Syntax-preserving numeric scan selection |
 | <code>incremental</code> | <code>parameter.incremental@r1</code> | <code>bool</code> | <code>false</code>; optional | Fluxscale | Write incremental correction factors instead of absolute transfer gains |
-| <code>fitorder</code> | <code>scaling.fitorder@r1</code> | <code>integer</code> | <code>1</code>; optional | Fluxscale | Polynomial order of the spectral-index fit across spectral windows. |
+| <code>fitorder</code> | <code>scaling.fitorder@r2</code> | <code>integer</code> | <code>1</code>; optional | Fluxscale | Polynomial order of the spectral-index fit across spectral windows. |
 | <code>display</code> | <code>scaling.display@r1</code> | <code>bool</code> | <code>false</code>; optional | Fluxscale | Plot the fitted flux-density spectra. |
 | <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>""</code>; optional | Output | Optional destination for a calibration task report. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |

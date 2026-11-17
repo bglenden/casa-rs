@@ -23,7 +23,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
 | flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
-| fluxscale | fluxscale | yes | 15 | 15 | 0 | 6 | 3 | 0 |
+| fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
 | gaincal | gaincal | yes | 38 | 38 | 0 | 11 | 4 | 0 |
 | gencal | gencal | yes | 14 | 14 | 0 | 8 | 4 | 0 |
 | imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
@@ -148,7 +148,6 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #979: `listfile`, `antenna`, `timerange`, `scan`, `fitorder`, `display`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`
 - Shared parameters: 15, in CASA's order: yes
 - Defaults that differ: none

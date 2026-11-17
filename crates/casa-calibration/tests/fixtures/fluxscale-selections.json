@@ -1,0 +1,133 @@
+{
+  "source": "CASA 6.7.6.14; fluxscale-original.json gains with SCAN_NUMBER cycling 1,2,3 separately for each FIELD integration",
+  "cases": [
+    {
+      "name": "default",
+      "arguments": {},
+      "flux_density_jy": 1.014581621096799,
+      "flux_density_error_jy": 0.03767496546937333,
+      "num_sol": 10.0
+    },
+    {
+      "name": "ant0",
+      "arguments": {
+        "antenna": "0"
+      },
+      "flux_density_jy": 1.024951459067888,
+      "flux_density_error_jy": 0.009424421220529833,
+      "num_sol": 8.0
+    },
+    {
+      "name": "ant_name",
+      "arguments": {
+        "antenna": "A0"
+      },
+      "flux_density_jy": 1.024951459067888,
+      "flux_density_error_jy": 0.009424421220529833,
+      "num_sol": 8.0
+    },
+    {
+      "name": "ant_range",
+      "arguments": {
+        "antenna": "0~2"
+      },
+      "flux_density_jy": 1.024951459067888,
+      "flux_density_error_jy": 0.011869609856780214,
+      "num_sol": 8.0
+    },
+    {
+      "name": "ant_not",
+      "arguments": {
+        "antenna": "!0"
+      },
+      "flux_density_jy": 0.8133643726034571,
+      "flux_density_error_jy": 0.0,
+      "num_sol": 2.0
+    },
+    {
+      "name": "ant_auto",
+      "arguments": {
+        "antenna": "0&&"
+      },
+      "flux_density_jy": 0.8133643726034571,
+      "flux_density_error_jy": 0.0,
+      "num_sol": 2.0
+    },
+    {
+      "name": "ant_pair",
+      "arguments": {
+        "antenna": "0&1"
+      },
+      "flux_density_jy": 1.03725689894537,
+      "flux_density_error_jy": 0.0,
+      "num_sol": 2.0
+    },
+    {
+      "name": "time",
+      "arguments": {
+        "timerange": "2019/12/31/21:52:25.2960~2019/12/31/21:53:55.2960"
+      },
+      "flux_density_jy": 0.9994181696622568,
+      "flux_density_error_jy": 0.03842342058943386,
+      "num_sol": 10.0
+    },
+    {
+      "name": "scan",
+      "arguments": {
+        "scan": "1,3"
+      },
+      "flux_density_jy": 1.0777608183405514,
+      "flux_density_error_jy": 0.09640491203159791,
+      "num_sol": 10.0
+    },
+    {
+      "name": "scan_bound",
+      "arguments": {
+        "scan": ">1"
+      },
+      "flux_density_jy": 0.9935350295640997,
+      "flux_density_error_jy": 0.053894911561419574,
+      "num_sol": 10.0
+    },
+    {
+      "name": "partial_ant_time",
+      "arguments": {
+        "antenna": "!0",
+        "timerange": "2019/12/31/21:52:25.2960~2019/12/31/21:53:55.2960"
+      },
+      "flux_density_jy": 0.9994181696622568,
+      "flux_density_error_jy": 0.03842342058943386,
+      "num_sol": 10.0
+    },
+    {
+      "name": "partial_ant_scan",
+      "arguments": {
+        "antenna": "!0",
+        "scan": "1"
+      },
+      "flux_density_jy": 1.0227437319263277,
+      "flux_density_error_jy": 0.1505303453095989,
+      "num_sol": 10.0
+    },
+    {
+      "name": "regex_ref",
+      "arguments": {
+        "reference": [
+          "/FL.*/"
+        ]
+      },
+      "flux_density_jy": 1.014581621096799,
+      "flux_density_error_jy": 0.03767496546937333,
+      "num_sol": 10.0
+    },
+    {
+      "name": "threshold",
+      "arguments": {
+        "gainthreshold": 0.1
+      },
+      "flux_density_jy": 0.9551087599586223,
+      "flux_density_error_jy": 0.036725000209956726,
+      "num_sol": 10.0
+    }
+  ]
+}

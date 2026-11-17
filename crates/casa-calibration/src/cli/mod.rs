@@ -92,6 +92,14 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let result = request
         .execute_with_output_mode(mode)
         .map_err(TaskFailure::execution)?;
+    if task.surface() == "fluxscale"
+        && let (
+            CalibrationTaskRequest::FluxScale(request),
+            CalibrationTaskResult::FluxScale(report),
+        ) = (&request, &result)
+    {
+        crate::fluxscale::history::record(task, request, report);
+    }
     let value = casa_value(task.surface(), &applied, &result);
     let rendered = render::render(report.format, &result).map_err(TaskFailure::execution)?;
     let text = match report.output.as_deref() {
@@ -157,7 +165,9 @@ fn scientific_paths(request: &CalibrationTaskRequest) -> Vec<std::path::PathBuf>
         CalibrationTaskRequest::Summary(r) => (r.paths.clone(), &[][..]),
         CalibrationTaskRequest::Stats(r) => (vec![r.path.clone()], &[][..]),
         CalibrationTaskRequest::FluxScale(r) => {
-            (vec![r.input_table.clone(), r.output_table.clone()], &[][..])
+            let mut paths = vec![r.input_table.clone(), r.output_table.clone()];
+            paths.extend(r.options.listfile.iter().cloned());
+            (paths, &[][..])
         }
         CalibrationTaskRequest::ExportCorrectedData(r) => {
             (vec![r.input_ms.clone(), r.output_ms.clone()], &[][..])

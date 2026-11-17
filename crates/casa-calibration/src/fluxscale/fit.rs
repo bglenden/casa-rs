@@ -2,9 +2,9 @@
 //! A transfer field's spectral fit across its windows, as CASA's
 //! `fluxscale` reports it (`SolvableVisJones::fluxscale`, #931).
 //!
-//! CASA fits `log10 S = a0 + a1 log10(f / f0)`, its default `fitorder=1`
-//! and the only order casa-rs takes, where `f0` is the windows' geometric
-//! mean frequency.
+//! CASA fits a polynomial in `log10(f / f0)` to `log10 S`, where `f0`
+//! is the windows' geometric mean frequency. Retain the default order-one
+//! arithmetic, and use the shared weighted solver for other degrees.
 
 /// One window's flux density for the fit.
 #[derive(Debug, Clone, Copy)]
@@ -60,6 +60,117 @@ pub(super) fn spectral_fit(windows: &[WindowFlux]) -> SpectralFit {
         [] => unfitted(0.0, 0.0),
         [window] => unfitted(window.frequency_hz, window.flux_density_jy),
         _ => fit(windows),
+    }
+}
+
+pub(super) fn effective_order(requested: i32, windows: usize) -> usize {
+    let requested = if requested < 0 { 1 } else { requested as usize };
+    requested.min(windows.saturating_sub(1))
+}
+
+pub(super) fn spectral_fit_order(windows: &[WindowFlux], requested: i32) -> SpectralFit {
+    let requested = if requested < 0 {
+        tracing::warn!(
+            requested,
+            "negative fitorder: using fitorder=1, as CASA advertises"
+        );
+        1
+    } else {
+        requested as usize
+    };
+    if requested == 1 {
+        return spectral_fit(windows);
+    }
+    let order = effective_order(requested as i32, windows.len());
+    if windows.len() > 1 && order < requested {
+        tracing::warn!(
+            requested,
+            order,
+            "reducing underdetermined spectral fit degree"
+        );
+    }
+    let mut result = match windows {
+        [] => spectral_fit(windows),
+        [window] => SpectralFit {
+            ref_frequency_hz: window.frequency_hz,
+            fluxd: window.flux_density_jy,
+            fluxd_err: 0.,
+            spidx: Vec::new(),
+            spidx_err: Vec::new(),
+            covariance: Vec::new(),
+        },
+        _ => polynomial_fit(windows, order),
+    };
+    result.spidx.resize(requested + 1, 0.);
+    result.spidx_err.resize(requested + 1, 0.);
+    result
+}
+
+fn polynomial_fit(windows: &[WindowFlux], order: usize) -> SpectralFit {
+    let mean_log_frequency = windows
+        .iter()
+        .map(|window| window.frequency_hz.log10())
+        .sum::<f64>()
+        / windows.len() as f64;
+    let size = order + 1;
+    let points = windows
+        .iter()
+        .filter_map(|window| {
+            let sigma = window.flux_density_error_jy / window.flux_density_jy;
+            let x = window.frequency_hz.log10() - mean_log_frequency;
+            (sigma != 0.).then(|| {
+                let mut basis = vec![1.; size];
+                for index in 1..size {
+                    basis[index] = basis[index - 1] * x;
+                }
+                (basis, window.flux_density_jy.log10(), 1. / (sigma * sigma))
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut normal = vec![0.; size * size];
+    for (basis, _, weight) in &points {
+        for i in 0..size {
+            for j in 0..size {
+                normal[i * size + j] += weight * basis[i] * basis[j];
+            }
+        }
+    }
+    let coefficients = casa_numerics::solve_weighted_least_squares(&points, size)
+        .unwrap_or_else(|| vec![f64::NAN; size]);
+    let covariance = casa_numerics::invert_symmetric_positive_definite(&normal, size)
+        .unwrap_or_else(|| vec![f64::NAN; size * size]);
+    let chi_square = points
+        .iter()
+        .map(|(basis, y, weight)| {
+            let prediction = basis
+                .iter()
+                .zip(&coefficients)
+                .map(|(x, a)| x * a)
+                .sum::<f64>();
+            weight * (y - prediction).powi(2)
+        })
+        .sum::<f64>();
+    let free = points.len().saturating_sub(size);
+    let unit_error = if free > 0 {
+        (chi_square / free as f64).sqrt()
+    } else {
+        0.
+    };
+    let errors = (0..size)
+        .map(|index| covariance[index * size + index].sqrt() * unit_error)
+        .collect::<Vec<_>>();
+    let fluxd = 10_f64.powf(coefficients[0]);
+    SpectralFit {
+        ref_frequency_hz: 10_f64.powf(mean_log_frequency),
+        fluxd,
+        fluxd_err: if errors[0] > 0. {
+            std::f64::consts::LN_10 * fluxd * errors[0]
+        } else {
+            0.
+        },
+        spidx: coefficients,
+        spidx_err: errors,
+        covariance: covariance.chunks(size).map(<[f64]>::to_vec).collect(),
     }
 }
 
@@ -134,6 +245,61 @@ fn fit(windows: &[WindowFlux]) -> SpectralFit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arbitrary_degrees_match_casa_polynomial_and_covariance() {
+        let windows = [
+            WindowFlux {
+                frequency_hz: 100_003_500_000.,
+                flux_density_jy: 1.014_581_621_096_799,
+                flux_density_error_jy: 0.037_674_965_469_373_33,
+            },
+            WindowFlux {
+                frequency_hz: 110_003_500_000.,
+                flux_density_jy: 1.625_712_369_547_564,
+                flux_density_error_jy: 0.060_974_668_343_850_31,
+            },
+            WindowFlux {
+                frequency_hz: 125_003_500_000.,
+                flux_density_jy: 3.518_518_820_391_956_4,
+                flux_density_error_jy: 0.114_365_520_945_259_77,
+            },
+        ];
+        let constant = spectral_fit_order(&windows, 0);
+        close(constant.fluxd, 1.913_940_282_294_492_4);
+        close(constant.fluxd_err, 0.713_361_317_227_738_9);
+        close_all(&constant.spidx, &[0.281_928_383_036_135_4]);
+        close_all(&constant.spidx_err, &[0.161_869_670_930_293_28]);
+        close(constant.covariance[0][0], 0.000_419_708_825_242_374_8);
+        let quadratic = spectral_fit_order(&windows, 2);
+        close(quadratic.fluxd, 1.724_973_681_147_680_6);
+        close_all(
+            &quadratic.spidx,
+            &[
+                0.236_782_473_195_072_76,
+                5.519_995_877_479_235,
+                11.280_651_701_679_295,
+            ],
+        );
+        close_all(
+            &quadratic.covariance.concat(),
+            &[
+                0.001_468_159_866_913_015_5,
+                0.004_285_502_858_496_359,
+                -0.636_580_329_174_632_6,
+                0.004_285_502_858_496_359,
+                0.282_270_217_556_632_2,
+                -3.350_620_330_868_181_5,
+                -0.636_580_329_174_632_6,
+                -3.350_620_330_868_181_5,
+                388.624_633_701_836_73,
+            ],
+        );
+        // CASA's normal-equation residual rounds to a tiny nonzero error here.
+        assert!((quadratic.fluxd_err - 3.628_481_652_284_325_4e-8).abs() < 1e-7);
+        assert_eq!(spectral_fit_order(&windows[..1], 0).spidx, [0.]);
+        assert_eq!(spectral_fit_order(&windows, -1), spectral_fit(&windows));
+    }
 
     /// The transfer field's windows of a probe of CASA 6.7.6.14's
     /// `fluxscale`: three windows near 100, 110 and 125 GHz, with gains
