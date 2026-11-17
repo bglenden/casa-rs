@@ -178,15 +178,7 @@ impl Table {
             // because TableImpl stores Option<TableSchema>).
             let mut schema = self.inner.schema().cloned().unwrap();
             schema.add_column(col.clone())?;
-            self.inner.set_schema(Some(schema));
-
-            // Populate existing rows with the default value.
-            if let Some(value) = default {
-                for row in self.inner.rows_mut()? {
-                    row.push(RecordField::new(col.name(), value.clone()));
-                }
-            }
-            Ok(())
+            self.inner.install_added_column(schema, col.name(), default)
         })();
         self.finish_write_operation(auto_unlock, result)
     }

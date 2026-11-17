@@ -11,12 +11,13 @@ pub(crate) struct DirtyChanges {
     pub(crate) metadata: bool,
     /// Row count/order or schema changed, or a raw mutable row slice escaped.
     pub(crate) whole: bool,
+    pub(crate) added_columns: BTreeSet<String>,
     pub(crate) cells: HashMap<String, BTreeSet<usize>>,
 }
 
 impl DirtyChanges {
     fn is_empty(&self) -> bool {
-        !self.metadata && !self.whole && self.cells.is_empty()
+        !self.metadata && !self.whole && self.added_columns.is_empty() && self.cells.is_empty()
     }
 }
 
@@ -42,6 +43,22 @@ impl TableImpl {
 
     pub(crate) fn note_change(&mut self) {
         self.record_change(|dirty| dirty.whole = true);
+    }
+
+    pub(crate) fn note_column_added(&mut self, column: &str) {
+        self.record_change(|dirty| {
+            dirty.added_columns.insert(column.to_owned());
+        });
+    }
+
+    pub(crate) fn note_added_column_saved(&mut self, column: &str) {
+        if let Some(dirty) = &mut self.dirty {
+            dirty
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner)
+                .added_columns
+                .remove(column);
+        }
     }
 
     pub(crate) fn note_metadata_change(&mut self) {

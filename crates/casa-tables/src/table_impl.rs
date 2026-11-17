@@ -1963,6 +1963,26 @@ impl TableImpl {
 
     pub(crate) fn set_schema(&mut self, schema: Option<TableSchema>) {
         self.note_change();
+        self.install_schema(schema);
+    }
+
+    pub(crate) fn install_added_column(
+        &mut self,
+        schema: TableSchema,
+        column: &str,
+        default: Option<Value>,
+    ) -> Result<(), TableError> {
+        self.note_column_added(column);
+        self.install_schema(Some(schema));
+        if let Some(value) = default {
+            for row in &mut self.ensure_loaded_mut()?.rows {
+                row.push(casa_types::RecordField::new(column, value.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    fn install_schema(&mut self, schema: Option<TableSchema>) {
         self.loaded_scalar_columns = lazy_scalar_column_store(schema.as_ref());
         self.loaded_array_columns = lazy_array_column_store(schema.as_ref());
         self.buffered_array_cells = lazy_buffered_array_cell_store(schema.as_ref());

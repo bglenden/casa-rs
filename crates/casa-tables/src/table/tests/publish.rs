@@ -299,29 +299,34 @@ fn dropping_after_a_partial_save_flushes_the_unrelated_cell_in_place() {
 }
 
 #[test]
-fn a_locked_aipsio_flush_keeps_the_group_and_stored_byte_order() {
+fn a_locked_aipsio_full_flush_keeps_the_group_and_stored_byte_order() {
     use crate::EndianFormat;
     let dir = tempfile::tempdir().unwrap();
     let original = TableOptions::new(dir.path().join("be.table"))
         .with_endian_format(EndianFormat::BigEndian)
         .with_data_manager_group("big");
-    let schema = TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+    let schema = TableSchema::new(vec![ColumnSchema::record("meta")]).unwrap();
     let rows = vec![RecordValue::new(vec![RecordField::new(
-        "id",
-        Value::Scalar(ScalarValue::Int32(1)),
+        "meta",
+        Value::Record(RecordValue::default()),
     )])];
     Table::from_rows_with_schema(rows, schema)
         .unwrap()
         .save(original.clone())
         .unwrap();
-    // No data-manager or endian override was requested when opening.
+    // Record cells cannot use the AipsIO sparse writer; unlock exercises
+    // the layout-preserving full save with no overrides on the open.
     let options = TableOptions::new(original.path());
     let mut writer = handle(&options);
     assert!(writer.lock(LockType::Write, 1).unwrap());
+    let updated = Value::Record(RecordValue::new(vec![RecordField::new(
+        "entry",
+        Value::Scalar(ScalarValue::Int32(6)),
+    )]));
     writer
-        .cell_accessor_mut(0, "id")
+        .cell_accessor_mut(0, "meta")
         .unwrap()
-        .set(Value::Scalar(ScalarValue::Int32(6)))
+        .set(updated.clone())
         .unwrap();
     writer.unlock().unwrap();
     let reopened = Table::open(options).unwrap();
@@ -335,10 +340,53 @@ fn a_locked_aipsio_flush_keeps_the_group_and_stored_byte_order() {
             .unwrap()
             .unwrap()
             .declared_managers,
-        [("id".into(), "StManAipsIO".into(), "big".into())],
+        [("meta".into(), "StManAipsIO".into(), "big".into())],
     );
     assert_eq!(
-        reopened.cell_accessor(0, "id").unwrap().scalar().unwrap(),
-        &ScalarValue::Int32(6)
+        reopened.row(0).unwrap().get("meta"),
+        Some(&updated)
     );
+}
+
+#[test]
+fn saving_a_tiled_column_leaves_other_edits_for_unlock() {
+    for explicit in [false, true] {
+        let (_dir, options, mut table) = mixed_table_with_write_lock();
+        table
+            .cell_accessor_mut(0, "id")
+            .unwrap()
+            .set(Value::Scalar(ScalarValue::Int32(40)))
+            .unwrap();
+        mark(&mut table, "NEW");
+        table
+            .add_column(
+                ColumnSchema::array_variable("extra", PrimitiveType::Float32, Some(1)),
+                None,
+            )
+            .unwrap();
+        table
+            .prepare_write()
+            .add_tiled_shape_column("extra", &[], None)
+            .unwrap();
+        table
+            .cell_accessor_mut(0, "mark")
+            .unwrap()
+            .set(Value::Scalar(ScalarValue::Int32(21)))
+            .unwrap();
+        if explicit {
+            table.unlock().unwrap();
+        }
+        drop(table);
+        let reopened = Table::open(options).unwrap();
+        assert_eq!(reopened.data_manager_info().len(), 3);
+        assert_eq!(
+            reopened.cell_accessor(0, "id").unwrap().scalar().unwrap(),
+            &ScalarValue::Int32(40)
+        );
+        assert_eq!(
+            reopened.cell_accessor(0, "mark").unwrap().scalar().unwrap(),
+            &ScalarValue::Int32(21)
+        );
+        assert!(reopened.keywords().get("NEW").is_some());
+    }
 }

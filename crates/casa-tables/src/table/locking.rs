@@ -535,9 +535,11 @@ impl Table {
             return self.flush_full_locked_layout();
         };
         if self.is_named_memory_manager() {
-            return self.finish_memory_manager_write(dirty.metadata || dirty.whole);
+            return self.finish_memory_manager_write(
+                dirty.metadata || dirty.whole || !dirty.added_columns.is_empty(),
+            );
         }
-        if dirty.whole {
+        if dirty.whole || !dirty.added_columns.is_empty() {
             return self.flush_full_locked_layout();
         }
         let mut groups = std::collections::BTreeMap::<Vec<usize>, Vec<String>>::new();

@@ -1231,6 +1231,7 @@ impl Table {
                 seq_nr: target_seq_nr,
                 columns: vec![target_column.to_string()],
             });
+            self.inner.note_added_column_saved(target_column);
             self.inner.refresh_read_metadata(table_dat)
         })();
         self.finish_write_operation(auto_unlock, result)
@@ -1393,6 +1394,7 @@ impl Table {
                 seq_nr,
                 columns: vec![column.to_string()],
             });
+            self.inner.note_added_column_saved(column);
             self.inner.refresh_read_metadata(table_dat)
         })();
         self.finish_write_operation(auto_unlock, result)
