@@ -800,6 +800,8 @@ fn execute_apply_calwt_updates_weight_paths_without_seeded_corrected_data() {
     assert_eq!(corrected[[0, 1]], casa_types::Complex32::new(0.2, 0.0));
     assert_eq!(corrected[[1, 1]], casa_types::Complex32::new(0.0, 0.05));
 
+    // CASA resets from SIGMA=1 before applying; the seeded WEIGHT values
+    // 7 and 11 do not multiply the result. Old expectations scaled WEIGHT.
     let weight_spectrum = ms
         .main_table()
         .cell_accessor(0, "WEIGHT_SPECTRUM")
@@ -808,10 +810,10 @@ fn execute_apply_calwt_updates_weight_paths_without_seeded_corrected_data() {
     let ArrayValue::Float32(weight_spectrum) = weight_spectrum else {
         panic!("expected float32 WEIGHT_SPECTRUM");
     };
-    assert_eq!(weight_spectrum[[0, 0]], 700.0);
-    assert_eq!(weight_spectrum[[0, 1]], 700.0);
-    assert_eq!(weight_spectrum[[1, 0]], 17_600.0);
-    assert_eq!(weight_spectrum[[1, 1]], 17_600.0);
+    assert_eq!(weight_spectrum[[0, 0]], 100.0);
+    assert_eq!(weight_spectrum[[0, 1]], 100.0);
+    assert_eq!(weight_spectrum[[1, 0]], 1600.0);
+    assert_eq!(weight_spectrum[[1, 1]], 1600.0);
 
     let weight = ms
         .main_table()
@@ -821,8 +823,8 @@ fn execute_apply_calwt_updates_weight_paths_without_seeded_corrected_data() {
     let ArrayValue::Float32(weight) = weight else {
         panic!("expected float32 WEIGHT");
     };
-    assert_eq!(weight[[0]], 700.0);
-    assert_eq!(weight[[1]], 17_600.0);
+    assert_eq!(weight[[0]], 100.0);
+    assert_eq!(weight[[1]], 1600.0);
 }
 
 #[test]
@@ -873,6 +875,8 @@ fn execute_apply_calwt_updates_weight_spectrum_and_reduces_weight() {
 
     let ms = MeasurementSet::open(&ms_path).expect("reopen measurement set");
 
+    // CASA resets from SIGMA=1 before applying; the seeded WEIGHT values
+    // 7 and 11 do not multiply the result. Old expectations scaled WEIGHT.
     let weight_spectrum = ms
         .main_table()
         .cell_accessor(0, "WEIGHT_SPECTRUM")
@@ -881,10 +885,10 @@ fn execute_apply_calwt_updates_weight_spectrum_and_reduces_weight() {
     let ArrayValue::Float32(weight_spectrum) = weight_spectrum else {
         panic!("expected float32 WEIGHT_SPECTRUM");
     };
-    assert_eq!(weight_spectrum[[0, 0]], 700.0);
-    assert_eq!(weight_spectrum[[0, 1]], 700.0);
-    assert_eq!(weight_spectrum[[1, 0]], 17_600.0);
-    assert_eq!(weight_spectrum[[1, 1]], 17_600.0);
+    assert_eq!(weight_spectrum[[0, 0]], 100.0);
+    assert_eq!(weight_spectrum[[0, 1]], 100.0);
+    assert_eq!(weight_spectrum[[1, 0]], 1600.0);
+    assert_eq!(weight_spectrum[[1, 1]], 1600.0);
 
     let weight = ms
         .main_table()
@@ -895,8 +899,8 @@ fn execute_apply_calwt_updates_weight_spectrum_and_reduces_weight() {
         panic!("expected float32 WEIGHT");
     };
 
-    assert_eq!(weight[[0]], 700.0);
-    assert_eq!(weight[[1]], 17_600.0);
+    assert_eq!(weight[[0]], 100.0);
+    assert_eq!(weight[[1]], 1600.0);
 }
 
 #[test]

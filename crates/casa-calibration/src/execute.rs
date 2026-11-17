@@ -58,6 +58,10 @@ use crate::plan::{
     ApplyPlanRequest, ApplyRowPlan, plan_apply_with_timings,
 };
 
+mod gain_validity;
+use gain_validity::correcting_gain;
+mod weights;
+
 const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
 const PERF_DIR_ENV: &str = "CASA_RS_CALIBRATION_PERF_DIR";
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -603,6 +607,7 @@ pub(crate) fn evaluate_apply_rows(
                 data,
                 original_flags: Some(original_flags),
                 original_weight: unit_weight.as_ref(),
+                original_weight_spectrum: None,
                 has_weight_spectrum: any_calwt,
             },
             plan,
@@ -857,10 +862,11 @@ fn execute_apply_plan(
         .iter()
         .zip(&loaded_tables)
         .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
-    let has_weight_spectrum = ms
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"));
+    let first_row = plan.selected_rows.first().map(|row| row.row_index);
+    let has_weight_spectrum =
+        any_calwt && weights::has_spectrum(ms.main_table(), first_row, "WEIGHT_SPECTRUM")?;
+    let has_sigma_spectrum =
+        has_weight_spectrum && weights::has_spectrum(ms.main_table(), first_row, "SIGMA_SPECTRUM")?;
     let mut changed_columns: Vec<&'static str> = vec![VisibilityDataColumn::CorrectedData.name()];
     let row_loop_started_at = Instant::now();
     let mut geometry_cache = RowGeometryCache::default();
@@ -999,7 +1005,20 @@ fn execute_apply_plan(
         let weight_values = if any_calwt {
             Some(
                 ms.main_table()
-                    .column_accessor("WEIGHT")
+                    .column_accessor("SIGMA")
+                    .and_then(|column| column.array_cells_owned(&selected_row_indices))
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })?,
+            )
+        } else {
+            None
+        };
+        let weight_spectrum_values = if has_sigma_spectrum {
+            Some(
+                ms.main_table()
+                    .column_accessor("SIGMA_SPECTRUM")
                     .and_then(|column| column.array_cells_owned(&selected_row_indices))
                     .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                         path: ms_path.clone(),
@@ -1014,6 +1033,7 @@ fn execute_apply_plan(
         let mut data_values = data_values.into_iter();
         let mut flag_values = flag_values.map(Vec::into_iter);
         let mut weight_values = weight_values.map(Vec::into_iter);
+        let mut weight_spectrum_values = weight_spectrum_values.map(Vec::into_iter);
         let mut corrected_batch = Vec::with_capacity(planned_rows.len());
         let mut flag_batch = Vec::with_capacity(planned_rows.len());
         let mut weight_batch = Vec::with_capacity(planned_rows.len());
@@ -1041,11 +1061,28 @@ fn execute_apply_plan(
                 original_weight: weight_values
                     .as_mut()
                     .map(|values| {
-                        required_prefetched_array(
-                            values.next().flatten(),
-                            row.row_index,
-                            "WEIGHT",
-                            &ms_path,
+                        weights::from_sigma(
+                            required_prefetched_array(
+                                values.next().flatten(),
+                                row.row_index,
+                                "SIGMA",
+                                &ms_path,
+                            )?,
+                            "SIGMA",
+                        )
+                    })
+                    .transpose()?,
+                original_weight_spectrum: weight_spectrum_values
+                    .as_mut()
+                    .map(|values| {
+                        weights::from_sigma(
+                            required_prefetched_array(
+                                values.next().flatten(),
+                                row.row_index,
+                                "SIGMA_SPECTRUM",
+                                &ms_path,
+                            )?,
+                            "SIGMA_SPECTRUM",
                         )
                     })
                     .transpose()?,
@@ -1259,6 +1296,7 @@ struct ExecutionRowInputs<'a> {
     data: &'a ArrayValue,
     original_flags: Option<&'a ArrayValue>,
     original_weight: Option<&'a ArrayValue>,
+    original_weight_spectrum: Option<&'a ArrayValue>,
     has_weight_spectrum: bool,
 }
 
@@ -1266,6 +1304,7 @@ struct PrefetchedExecutionRowInputs {
     data: ArrayValue,
     original_flags: Option<ArrayValue>,
     original_weight: Option<ArrayValue>,
+    original_weight_spectrum: Option<ArrayValue>,
 }
 
 fn required_prefetched_array(
@@ -1703,6 +1742,7 @@ fn apply_row(
         data,
         original_flags,
         original_weight,
+        original_weight_spectrum,
         has_weight_spectrum,
     } = inputs;
     let ArrayValue::Complex32(data) = data else {
@@ -1791,7 +1831,18 @@ fn apply_row(
             });
         }
         if has_weight_spectrum {
-            weight_spectrum = Some(expand_weight_to_spectrum(weight_values, data.shape()[1]));
+            weight_spectrum = Some(match original_weight_spectrum {
+                Some(ArrayValue::Float32(values)) if values.shape() == data.shape() => {
+                    values.clone()
+                }
+                None => expand_weight_to_spectrum(weight_values, data.shape()[1]),
+                Some(other) => {
+                    return Err(ApplyExecutionError::UnsupportedParameterShape {
+                        path: "<measurement-set SIGMA_SPECTRUM>".into(),
+                        shape: other.shape().to_vec(),
+                    });
+                }
+            });
         }
     }
     if let Some(profile) = compute_profile.as_deref_mut() {
@@ -2057,22 +2108,20 @@ fn apply_row(
                     &sampling_context,
                 )?;
 
-                if gain1.flagged
-                    || gain2.flagged
-                    || gain1.value == Complex32::new(0.0, 0.0)
-                    || gain2.value == Complex32::new(0.0, 0.0)
+                let (value1, flag1) = correcting_gain(gain1.value, gain1.flagged);
+                let (value2, flag2) = correcting_gain(gain2.value, gain2.flagged);
+                if (flag1 || flag2)
+                    && plan.apply_mode == ApplyMode::CalFlag
+                    && !flags[[corr_index, chan_index]]
                 {
-                    if plan.apply_mode == ApplyMode::CalFlag && !flags[[corr_index, chan_index]] {
-                        flags[[corr_index, chan_index]] = true;
-                        newly_flagged_samples += 1;
-                    }
-                    continue;
+                    flags[[corr_index, chan_index]] = true;
+                    newly_flagged_samples += 1;
                 }
 
-                let denom = gain1.value * gain2.value.conj();
+                let denom = value1 * value2.conj();
                 corrected[[corr_index, chan_index]] /= denom;
                 if table_plan.calwt && loaded_table.supports_calwt {
-                    let factor = gain1.value.norm_sqr() * gain2.value.norm_sqr();
+                    let factor = value1.norm_sqr() * value2.norm_sqr();
                     if let Some(weight_spectrum) = weight_spectrum.as_mut() {
                         weight_spectrum[[corr_index, chan_index]] *= factor;
                     }
@@ -2159,14 +2208,14 @@ fn apply_row(
                 let samples = (0..weight_spectrum_values.shape()[1])
                     .map(|chan_index| weight_spectrum_values[[corr_index, chan_index]])
                     .collect::<Vec<_>>();
-                weight_values[[corr_index]] = median_f32(&samples);
+                weight_values[[corr_index]] = weights::lower_median(samples);
             }
         } else if let Some(implicit_weight_spectrum) = implicit_weight_spectrum.as_ref() {
             for corr_index in 0..weight_values.shape()[0] {
                 let samples = (0..implicit_weight_spectrum.shape()[1])
                     .map(|chan_index| implicit_weight_spectrum[[corr_index, chan_index]])
                     .collect::<Vec<_>>();
-                weight_values[[corr_index]] *= median_f32(&samples);
+                weight_values[[corr_index]] *= weights::lower_median(samples);
             }
         }
         if let Some(profile) = compute_profile {
@@ -2234,7 +2283,11 @@ struct FastGainSample {
 impl FastReceptorGains {
     fn sample(self, receptor: usize) -> (f32, bool) {
         let receptor = receptor.min(self.receptor_count.saturating_sub(1));
-        (self.values[receptor], self.flags[receptor])
+        let (value, flag) = correcting_gain(
+            Complex32::new(self.values[receptor], 0.),
+            self.flags[receptor],
+        );
+        (value.re, flag)
     }
 }
 
@@ -2256,11 +2309,13 @@ impl FastGainPair {
                 }
                 let receptor1 = receptors.0.min(ant1.receptor_count.saturating_sub(1));
                 let receptor2 = receptors.1.min(ant2.receptor_count.saturating_sub(1));
-                let gain1 = ant1.value_at(receptor1, 0);
-                let gain2 = ant2.value_at(receptor2, 0);
+                let (gain1, flag1) =
+                    correcting_gain(ant1.value_at(receptor1, 0), ant1.flag_at(receptor1, 0));
+                let (gain2, flag2) =
+                    correcting_gain(ant2.value_at(receptor2, 0), ant2.flag_at(receptor2, 0));
                 Some(FastGainSample {
                     denom: gain1 * gain2.conj(),
-                    flagged: ant1.flag_at(receptor1, 0) || ant2.flag_at(receptor2, 0),
+                    flagged: flag1 || flag2,
                 })
             }
             Self::GainCurve { ant1, ant2 } => {
@@ -2307,12 +2362,17 @@ impl FastGainPair {
                 } else {
                     chan_index.min(ant2.channel_count.saturating_sub(1))
                 };
-                let gain1 = ant1.value_at(receptor1, ant1_chan);
-                let gain2 = ant2.value_at(receptor2, ant2_chan);
+                let (gain1, flag1) = correcting_gain(
+                    ant1.value_at(receptor1, ant1_chan),
+                    ant1.flag_at(receptor1, ant1_chan),
+                );
+                let (gain2, flag2) = correcting_gain(
+                    ant2.value_at(receptor2, ant2_chan),
+                    ant2.flag_at(receptor2, ant2_chan),
+                );
                 Some(FastGainSample {
                     denom: gain1 * gain2.conj(),
-                    flagged: ant1.flag_at(receptor1, ant1_chan)
-                        || ant2.flag_at(receptor2, ant2_chan),
+                    flagged: flag1 || flag2,
                 })
             }
             Self::Antpos {
@@ -2375,16 +2435,15 @@ fn apply_complex_gain_pairs_fast(
             let Some(sample) = pair.scalar_sample(receptors) else {
                 continue;
             };
-            if fast_gain_sample_invalid(sample) {
-                if ctx.apply_mode == ApplyMode::CalFlag {
-                    flag_all_channels_generic(
-                        ctx.flags,
-                        corr_index,
-                        channel_count,
-                        ctx.newly_flagged_samples,
-                    );
-                }
-            } else {
+            if fast_gain_sample_invalid(sample) && ctx.apply_mode == ApplyMode::CalFlag {
+                flag_all_channels_generic(
+                    ctx.flags,
+                    corr_index,
+                    channel_count,
+                    ctx.newly_flagged_samples,
+                );
+            }
+            if sample.denom != Complex32::new(0., 0.) {
                 scalar_denom *= sample.denom;
             }
         }
@@ -2397,15 +2456,16 @@ fn apply_complex_gain_pairs_fast(
                 else {
                     continue;
                 };
-                if fast_gain_sample_invalid(sample) {
-                    if ctx.apply_mode == ApplyMode::CalFlag && !ctx.flags[[corr_index, chan_index]]
-                    {
-                        ctx.flags[[corr_index, chan_index]] = true;
-                        *ctx.newly_flagged_samples += 1;
-                    }
-                    continue;
+                if fast_gain_sample_invalid(sample)
+                    && ctx.apply_mode == ApplyMode::CalFlag
+                    && !ctx.flags[[corr_index, chan_index]]
+                {
+                    ctx.flags[[corr_index, chan_index]] = true;
+                    *ctx.newly_flagged_samples += 1;
                 }
-                denom *= sample.denom;
+                if sample.denom != Complex32::new(0., 0.) {
+                    denom *= sample.denom;
+                }
             }
             ctx.corrected[[corr_index, chan_index]] /= denom;
         }
@@ -2434,17 +2494,18 @@ fn apply_complex_gain_pairs_fast_fortran(
             let Some(sample) = pair.scalar_sample(receptors) else {
                 continue;
             };
-            if fast_gain_sample_invalid(sample) {
-                if let Some(flags) = flags.as_deref_mut() {
-                    flag_all_channels_fortran(
-                        flags,
-                        corr_index,
-                        corr_count,
-                        channel_count,
-                        newly_flagged_samples,
-                    );
-                }
-            } else {
+            if fast_gain_sample_invalid(sample)
+                && let Some(flags) = flags.as_deref_mut()
+            {
+                flag_all_channels_fortran(
+                    flags,
+                    corr_index,
+                    corr_count,
+                    channel_count,
+                    newly_flagged_samples,
+                );
+            }
+            if sample.denom != Complex32::new(0., 0.) {
                 scalar_denom *= sample.denom;
             }
         }
@@ -2457,16 +2518,16 @@ fn apply_complex_gain_pairs_fast_fortran(
                 else {
                     continue;
                 };
-                if fast_gain_sample_invalid(sample) {
-                    if let Some(flags) = flags.as_deref_mut()
-                        && !flags[offset]
-                    {
-                        flags[offset] = true;
-                        *newly_flagged_samples += 1;
-                    }
-                    continue;
+                if fast_gain_sample_invalid(sample)
+                    && let Some(flags) = flags.as_deref_mut()
+                    && !flags[offset]
+                {
+                    flags[offset] = true;
+                    *newly_flagged_samples += 1;
                 }
-                denom *= sample.denom;
+                if sample.denom != Complex32::new(0., 0.) {
+                    denom *= sample.denom;
+                }
             }
             corrected[offset] /= denom;
         }
@@ -2586,7 +2647,8 @@ fn build_fast_gain_pair(
                 reborrow_geometry_cache(&mut geometry_cache),
             )?;
             Ok(Some(FastGainPair::Antpos {
-                delay_delta_ns: delay1_ns - delay2_ns,
+                delay_delta_ns: if ant1.flagged { 0. } else { delay1_ns }
+                    - if ant2.flagged { 0. } else { delay2_ns },
                 flagged: ant1.flagged || ant2.flagged,
             }))
         }
@@ -2640,9 +2702,11 @@ fn build_fast_gain_pair(
                 path,
                 reborrow_geometry_cache(&mut geometry_cache),
             )?;
+            let (gain1, flag1) = correcting_gain(Complex32::new(gain1, 0.), ant1.flagged);
+            let (gain2, flag2) = correcting_gain(Complex32::new(gain2, 0.), ant2.flagged);
             Ok(Some(FastGainPair::Opacity {
-                denom: Complex32::new(gain1 * gain2, 0.0),
-                flagged: ant1.flagged || ant2.flagged,
+                denom: gain1 * gain2,
+                flagged: flag1 || flag2,
             }))
         }
         _ => Ok(None),
@@ -2857,6 +2921,7 @@ fn apply_row_prefetched(
             data: &inputs.data,
             original_flags: inputs.original_flags.as_ref(),
             original_weight: inputs.original_weight.as_ref(),
+            original_weight_spectrum: inputs.original_weight_spectrum.as_ref(),
             has_weight_spectrum,
         },
         plan,
@@ -4453,18 +4518,6 @@ fn open_append_file(path: &Path) -> Option<File> {
     OpenOptions::new().create(true).append(true).open(path).ok()
 }
 
-fn median_f32(values: &[f32]) -> f32 {
-    assert!(!values.is_empty(), "median requires at least one value");
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|left, right| left.total_cmp(right));
-    let middle = sorted.len() / 2;
-    if sorted.len() % 2 == 1 {
-        sorted[middle]
-    } else {
-        (sorted[middle - 1] + sorted[middle]) / 2.0
-    }
-}
-
 fn expand_weight_to_spectrum(weight: &ArrayD<f32>, channel_count: usize) -> ArrayD<f32> {
     let mut expanded = ArrayD::from_elem(IxDyn(&[weight.shape()[0], channel_count]).f(), 0.0_f32);
     for corr_index in 0..weight.shape()[0] {
@@ -5598,8 +5651,8 @@ mod tests {
         ])]);
         assert!(load_bpoly_cal_desc_map(path, &invalid_cal_desc).is_err());
 
-        assert_eq!(median_f32(&[3.0, 1.0, 2.0]), 2.0);
-        assert_eq!(median_f32(&[4.0, 1.0, 3.0, 2.0]), 2.5);
+        assert_eq!(weights::lower_median(vec![3.0, 1.0, 2.0]), 2.0);
+        assert_eq!(weights::lower_median(vec![4.0, 1.0, 3.0, 2.0]), 2.0);
         assert_eq!(
             expand_weight_to_spectrum(
                 &ArrayD::from_shape_vec(IxDyn(&[2]).f(), vec![1.5_f32, 2.5]).unwrap(),
