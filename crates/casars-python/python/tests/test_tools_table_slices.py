@@ -1,4 +1,8 @@
-"""CASA 6.7.6.14 table-tool cell slice cases on a small fixed-shape table."""
+"""The two getcellslice cases from CASA's test_tool_table.py at cee5117dce.
+
+A fixed-shape table supplies the same 3-by-4 array shape as the CASA image.
+The other 11 upstream cases are in test_tools_table_row_iter.py.
+"""
 
 import numpy as np
 import pytest
@@ -51,5 +55,6 @@ def test_getcellslice_whole_and_partial_cells(array_cell):
 )
 def test_getcellslice_reports_invalid_coordinates(array_cell, args, message):
     tb, _ = array_cell
+    kwargs = dict(zip(("columnname", "rownr", "blc", "trc", "incr"), args))
     with pytest.raises(RuntimeError, match=message):
-        tb.getcellslice(*args)
+        tb.getcellslice(**kwargs)
