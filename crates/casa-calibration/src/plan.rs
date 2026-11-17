@@ -493,6 +493,11 @@ pub fn plan_apply_with_timings(
         })?;
     let requested_channels = resolved_selection.channel_selections.clone();
     let selected_row_indices = resolved_selection.row_indices().collect::<Vec<_>>();
+    if selected_row_indices.is_empty() {
+        return Err(ApplyPlanError::Selection {
+            source: MsError::InvalidInput("selection produced no rows".into()),
+        });
+    }
     let selection_ns = selection_started_at.elapsed().as_nanos() as u64;
 
     let selected_rows_started_at = Instant::now();
