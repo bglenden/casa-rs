@@ -262,17 +262,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 - [tools/casa-compat/fluxscale_oracle.py](https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/tools/casa-compat/fluxscale_oracle.py)
 - [crates/casa-calibration/tests/fluxscale_casa_fixture.rs](https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/crates/casa-calibration/tests/fluxscale_casa_fixture.rs)
-- Revision: `03869e66e82c549c92c308b5d133619acd300454`; CASA: `6.7.6.14`.
-- Command: `python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/review-final-oracle --native-bin target/calibration-990/build/release/calibrate`.
+- Revision: `872a540581271d3fd58105928b2e8a3b7461ca0b`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/bucket-final-oracle --native-bin target/calibration-990/calibrate-bucket-872a54058`.
 - Receipt: `resources/casa-compat/evidence/fluxscale-20261117.json`.
 
 <a id="fluxscale-evidence-performance"></a>
 ##### performance
 
-**Matched public-Python performance — measured.** Full native 0.115–0.141 s versus CASA 5.685–5.784 s, about 35 MB peak RSS; read phase 38–45 ms. CPU and thousands of source bucket reads/seeks remain material, so performance acceptance stays open on #990. Alternating same-host, one-worker warm/cold full and incremental public-Python calls, validated equal products; separate fresh imports, RSS, estimator phases, user/system CPU and native table-reader software baseline.
+**Matched public-Python performance — measured.** Full native 0.110–0.114 s versus CASA 5.482–5.704 s; source MAIN reads 5,655→471, seeks 5,655→33. Controlled 300k read phase 0.122→0.088 s; full-workflow speedup not established. Full-output allocation/serialization remains materially CPU-bound; #990 remains open. Alternating same-host one-worker warm/cold public-Python calls with identical HISTORY input, validated equal products, fresh imports, RSS, phases and user/system CPU; native paired source-read diagnostic and raw data-I/O reference separately attributed.
 
 - [tools/perf/calibrate/fluxscale.py](https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/tools/perf/calibrate/fluxscale.py)
-- Revision: `03869e66e82c549c92c308b5d133619acd300454`; CASA: `6.7.6.14`.
+- Revision: `872a540581271d3fd58105928b2e8a3b7461ca0b`; CASA: `6.7.6.14`.
 - Command: `python tools/perf/calibrate/fluxscale.py --vis <oracle-ms> --gain <oracle-gain> --native-bin <release-calibrate> --repeat-input 1000 --repeats 5 --cache warm|cold --out <receipt>`.
 - Receipt: `resources/casa-compat/evidence/fluxscale-performance-20261117.json`.
 

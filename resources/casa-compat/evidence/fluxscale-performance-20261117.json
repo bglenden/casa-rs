@@ -1,8 +1,8 @@
 {
   "casa_version": "6.7.6.14",
-  "measurement_native_revision": "03869e66e82c549c92c308b5d133619acd300454",
+  "measurement_native_revision": "872a540581271d3fd58105928b2e8a3b7461ca0b",
   "measurement_table_reader_revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
-  "harness_revision": "45df6a4b5c219f664579835dd28282470b199481",
+  "harness_revision": "b602e142bd3d80a82379147861097210404df4b8",
   "worker_count": 1,
   "repeats": 5,
   "input_rows": 60000,
@@ -10,100 +10,100 @@
   "cache_policies": {
     "warm": {
       "raw_receipt": "resources/casa-compat/evidence/fluxscale-performance-warm-20261117.json",
-      "reader_median_seconds": 0.0754077609963133,
-      "main_rewrite_median_seconds": 0.7288616490041022,
+      "reader_median_seconds": 0.07488567599648377,
+      "main_rewrite_median_seconds": 0.6936617810060852,
       "rewrite_scope": "Native public table.copy valuecopy MAIN only; owning subtable references removed after all task timings"
     },
     "cold": {
       "raw_receipt": "resources/casa-compat/evidence/fluxscale-performance-cold-20261117.json",
-      "reader_median_seconds": 0.07552877499983879,
-      "main_rewrite_median_seconds": 0.7450316280010156,
+      "reader_median_seconds": 0.0852805980030098,
+      "main_rewrite_median_seconds": 0.7315389350042096,
       "rewrite_scope": "Native public table.copy valuecopy MAIN only; owning subtable references removed after all task timings"
     }
   },
   "phase_medians_seconds": {
     "warm": {
       "full": {
-        "fluxscale_read": 0.04459686,
-        "fluxscale_estimate": 0.004277676,
-        "fluxscale_write": 0.057323272,
-        "fluxscale_history": 0.006186652
+        "fluxscale_read": 0.03545906,
+        "fluxscale_estimate": 0.00464699,
+        "fluxscale_write": 0.063789815,
+        "fluxscale_history": 0.00526199
       },
       "incremental": {
-        "fluxscale_read": 0.042073845,
-        "fluxscale_estimate": 0.004594109,
-        "fluxscale_write": 0.005861205,
-        "fluxscale_history": 0.007379285
+        "fluxscale_read": 0.024248776,
+        "fluxscale_estimate": 0.004676968,
+        "fluxscale_write": 0.007079782,
+        "fluxscale_history": 0.007136757
       }
     },
     "cold": {
       "full": {
-        "fluxscale_read": 0.03756557,
-        "fluxscale_estimate": 0.004319089,
-        "fluxscale_write": 0.056287468,
-        "fluxscale_history": 0.008863005
+        "fluxscale_read": 0.030150386,
+        "fluxscale_estimate": 0.004300361,
+        "fluxscale_write": 0.056806893,
+        "fluxscale_history": 0.006515844
       },
       "incremental": {
-        "fluxscale_read": 0.045626511,
-        "fluxscale_estimate": 0.004544757,
-        "fluxscale_write": 0.008301991,
-        "fluxscale_history": 0.010029614
+        "fluxscale_read": 0.042051923,
+        "fluxscale_estimate": 0.004225789,
+        "fluxscale_write": 0.008047312,
+        "fluxscale_history": 0.006228076
       }
     }
   },
   "medians": {
     "warm": {
       "full": {
-        "casa": 5.784341737002251,
-        "native": 0.14087976700102445,
-        "speedup": 41.058711695343646
+        "casa": 5.481982549004897,
+        "native": 0.11395800299942493,
+        "speedup": 48.10528795448057
       },
       "incremental": {
-        "casa": 4.272438723004598,
-        "native": 0.08195501899899682,
-        "speedup": 52.13150793189243
+        "casa": 4.149408502998995,
+        "native": 0.05875302099593682,
+        "speedup": 70.62459823616483
       }
     },
     "cold": {
       "full": {
-        "casa": 5.68479658599972,
-        "native": 0.11490246900211787,
-        "speedup": 49.47497330013804
+        "casa": 5.7043577559961705,
+        "native": 0.11028281100152526,
+        "speedup": 51.724812817087845
       },
       "incremental": {
-        "casa": 4.111181751002732,
-        "native": 0.08499904299969785,
-        "speedup": 48.367388689509674
+        "casa": 4.255166581002413,
+        "native": 0.07286314300290542,
+        "speedup": 58.39943770793333
       }
     }
   },
   "fresh": {
     "warm": {
       "casa": {
-        "import_seconds": 1.8281009979982628,
-        "wall_seconds": 5.230092874997354,
-        "python_peak_kib": 305220,
+        "import_seconds": 1.8063395490025869,
+        "wall_seconds": 5.817666750001081,
+        "python_peak_kib": 305132,
         "native_peak_rss_kib": null
       },
       "native": {
-        "import_seconds": 0.02914676500222413,
-        "wall_seconds": 0.16504151999833994,
-        "python_peak_kib": 39236,
-        "native_peak_rss_kib": 33628
+        "import_seconds": 0.03565353100566426,
+        "wall_seconds": 0.14779328500299016,
+        "python_peak_kib": 39284,
+        "native_peak_rss_kib": 34164
       }
     },
     "cold": {
       "casa": {
-        "import_seconds": 1.691225991002284,
-        "wall_seconds": 5.976662547996966,
-        "python_peak_kib": 305156,
+        "import_seconds": 1.5872176280026906,
+        "wall_seconds": 5.756338197999867,
+        "python_peak_kib": 305320,
         "native_peak_rss_kib": null
       },
       "native": {
-        "import_seconds": 0.029113497002981603,
-        "wall_seconds": 0.15581385199766373,
-        "python_peak_kib": 39312,
-        "native_peak_rss_kib": 33492
+        "import_seconds": 0.03707347399904393,
+        "wall_seconds": 0.1483068599991384,
+        "python_peak_kib": 39380,
+        "native_peak_rss_kib": 34368
       }
     }
   },
@@ -111,52 +111,52 @@
     "warm": {
       "full": {
         "casa": {
-          "rows_per_second": 10372.831123752925,
-          "input_megabytes_per_second": 1.8387364515416875,
-          "input_plus_output_megabytes_per_second": 3.676973105503729
+          "rows_per_second": 10944.945457896678,
+          "input_megabytes_per_second": 1.940152108278902,
+          "input_plus_output_megabytes_per_second": 3.879776852602491
         },
         "native": {
-          "rows_per_second": 425895.0825746588,
-          "input_megabytes_per_second": 75.49614984756936,
-          "input_plus_output_megabytes_per_second": 157.75224841079125
+          "rows_per_second": 526509.7528982039,
+          "input_megabytes_per_second": 93.33157584424914,
+          "input_plus_output_megabytes_per_second": 195.02008998974955
         }
       },
       "incremental": {
         "casa": {
-          "rows_per_second": 14043.50159007194,
-          "input_megabytes_per_second": 2.489416628196906,
-          "input_plus_output_megabytes_per_second": 2.504427024871454
+          "rows_per_second": 14459.892285041316,
+          "input_megabytes_per_second": 2.5632279859437537,
+          "input_plus_output_megabytes_per_second": 2.5786834418126205
         },
         "native": {
-          "rows_per_second": 732108.9145343794,
-          "input_megabytes_per_second": 129.7770426986319,
-          "input_plus_output_megabytes_per_second": 130.92107269392906
+          "rows_per_second": 1021224.0831692623,
+          "input_megabytes_per_second": 181.02694669497157,
+          "input_plus_output_megabytes_per_second": 182.622762508536
         }
       }
     },
     "cold": {
       "full": {
         "casa": {
-          "rows_per_second": 10554.467357330866,
-          "input_megabytes_per_second": 1.8709341379414703,
-          "input_plus_output_megabytes_per_second": 3.7413597264641067
+          "rows_per_second": 10518.274373119504,
+          "input_megabytes_per_second": 1.8645184006595712,
+          "input_plus_output_megabytes_per_second": 3.728529995798931
         },
         "native": {
-          "rows_per_second": 522181.99070112314,
-          "input_megabytes_per_second": 92.56441652097101,
-          "input_plus_output_megabytes_per_second": 193.41707965901384
+          "rows_per_second": 544055.7731083784,
+          "input_megabytes_per_second": 96.44186526813232,
+          "input_plus_output_megabytes_per_second": 201.5191651189652
         }
       },
       "incremental": {
         "casa": {
-          "rows_per_second": 14594.343824708256,
-          "input_megabytes_per_second": 2.5870614933056344,
-          "input_plus_output_megabytes_per_second": 2.602660657702674
+          "rows_per_second": 14100.505551974293,
+          "input_megabytes_per_second": 2.4995214165022057,
+          "input_plus_output_megabytes_per_second": 2.5145927418614336
         },
         "native": {
-          "rows_per_second": 705890.3004380094,
-          "input_megabytes_per_second": 125.12940881037694,
-          "input_plus_output_megabytes_per_second": 126.23246828835639
+          "rows_per_second": 823461.5956328908,
+          "input_megabytes_per_second": 145.97064526266584,
+          "input_plus_output_megabytes_per_second": 147.25742752508157
         }
       }
     }
@@ -165,37 +165,37 @@
     "warm": {
       "full": {
         "casa": {
-          "median_seconds": 5.747950999999993,
-          "ratio_of_cpu_to_wall": 0.9937615671823912,
+          "median_seconds": 5.444127999999999,
+          "ratio_of_cpu_to_wall": 0.991781955059173,
           "breakdown_seconds": {
-            "user": 4.933553,
-            "system": 0.7582129999999996
+            "user": 4.650296000000001,
+            "system": 0.7541500000000001
           }
         },
         "native": {
-          "median_seconds": 0.14162500000000477,
-          "ratio_of_cpu_to_wall": 1.0052898511606347,
+          "median_seconds": 0.11373599999999584,
+          "ratio_of_cpu_to_wall": 1.0011067852642153,
           "breakdown_seconds": {
-            "user": 0.04852599999999896,
-            "system": 0.08787499999999948
+            "user": 0.0441590000000005,
+            "system": 0.07168399999999986
           }
         }
       },
       "incremental": {
         "casa": {
-          "median_seconds": 4.251304999999995,
-          "ratio_of_cpu_to_wall": 0.9950534754563454,
+          "median_seconds": 4.136122999999991,
+          "ratio_of_cpu_to_wall": 0.9954050890554351,
           "breakdown_seconds": {
-            "user": 3.5762539999999987,
-            "system": 0.6868149999999993
+            "user": 3.3974039999999945,
+            "system": 0.714385
           }
         },
         "native": {
-          "median_seconds": 0.08213399999999638,
-          "ratio_of_cpu_to_wall": 1.005009866555779,
+          "median_seconds": 0.05828400000000045,
+          "ratio_of_cpu_to_wall": 0.9942463651485982,
           "breakdown_seconds": {
-            "user": 0.03488200000000319,
-            "system": 0.04302700000000037
+            "user": 0.026078000000005375,
+            "system": 0.02832900000000116
           }
         }
       }
@@ -203,37 +203,37 @@
     "cold": {
       "full": {
         "casa": {
-          "median_seconds": 5.6545960000000015,
-          "ratio_of_cpu_to_wall": 0.9906025810541642,
+          "median_seconds": 5.645406000000001,
+          "ratio_of_cpu_to_wall": 0.99065045162163,
           "breakdown_seconds": {
-            "user": 4.868051000000001,
-            "system": 0.7865449999999998
+            "user": 4.868205,
+            "system": 0.7772009999999998
           }
         },
         "native": {
-          "median_seconds": 0.09694199999999853,
-          "ratio_of_cpu_to_wall": 0.9211422354208771,
+          "median_seconds": 0.09903500000000065,
+          "ratio_of_cpu_to_wall": 0.8980093914964767,
           "breakdown_seconds": {
-            "user": 0.0510079999999995,
-            "system": 0.052184999999999704
+            "user": 0.038902000000000214,
+            "system": 0.05967699999999976
           }
         }
       },
       "incremental": {
         "casa": {
-          "median_seconds": 4.077781000000002,
-          "ratio_of_cpu_to_wall": 0.9919806444644954,
+          "median_seconds": 4.220652999999999,
+          "ratio_of_cpu_to_wall": 0.9905219770942477,
           "breakdown_seconds": {
-            "user": 3.383077,
-            "system": 0.7117590000000007
+            "user": 3.513452000000001,
+            "system": 0.707662
           }
         },
         "native": {
-          "median_seconds": 0.07415699999999958,
-          "ratio_of_cpu_to_wall": 0.8784231760496648,
+          "median_seconds": 0.06249100000000141,
+          "ratio_of_cpu_to_wall": 0.825908776179546,
           "breakdown_seconds": {
-            "user": 0.03046000000000504,
-            "system": 0.04114500000000021
+            "user": 0.02757400000000132,
+            "system": 0.028212999999999155
           }
         }
       }
@@ -242,18 +242,18 @@
   "memory": {
     "warm": {
       "full": {
-        "native_peak_rss_kib": 33628
+        "native_peak_rss_kib": 34268
       },
       "incremental": {
-        "native_peak_rss_kib": 23460
+        "native_peak_rss_kib": 24420
       }
     },
     "cold": {
       "full": {
-        "native_peak_rss_kib": 33628
+        "native_peak_rss_kib": 34304
       },
       "incremental": {
-        "native_peak_rss_kib": 23456
+        "native_peak_rss_kib": 24492
       }
     }
   },
@@ -282,7 +282,7 @@
   "input_table_bytes": 10635880,
   "host": "Linux-6.18.57-x86_64-with-glibc2.41",
   "validation": "Public-Python returns and all fully defined MAIN columns, standard subtables and owning references compare against CASA before alternating timings. No skipped comparison. The 73-case oracle separately covers read-only big-endian input and both stale-control-count cases.",
-  "interpretation": "Packed arrays, inline G/T cells and coalesced scalars reduce the read phase to about 38\u201345 ms; zero-offset string arrays remove HISTORY seek/flush storms. Full native public-Python calls take 0.115\u20130.141 s versus CASA 5.685\u20135.784 s, with about 35 MB peak RSS. Performance acceptance remains open: user/system CPU is still material, and strace identifies 5,655 source MAIN bucket reads plus 5,655 seeks at 60,000 rows. The next correction is bounded buffering of those bucket reads, not more solver arithmetic. Separate native diagnostics at 300,000 rows take 0.490 s, split 0.232 s user / 0.227 s system. The unchanged Python table-reader/rewrite reference remains compiled at the separately recorded older revision; it is a software baseline, never a raw-disk floor.",
+  "interpretation": "Source bucket buffering reduces 60k MAIN reads 5,655\u2192471 and seeks 5,655\u219233 within the unchanged selected-read memory allowance. A controlled paired 300k warm comparison improves the read phase 0.122\u21920.088 s; full medians 0.401\u21920.409 s do not establish an overall speedup. The initial 35% warm full regression is not reproduced after fixing HISTORY state and draining writes outside timing; all initial samples are retained. Current matched public-Python 60k full 0.110\u20130.114 s versus CASA 5.482\u20135.704 s; incremental 0.059\u20130.073 s versus 4.149\u20134.255 s. CPU cost remains material, and #990 stays open. Current controlled callgrind places 41.5% of user-space instructions under full-output handling; next investigate redundant temporary array copies and sparse-update allocations using existing writers. Public table-reader/rewrite references remain attributed to the older compiled revision and are software baselines, never raw-disk floors.",
   "before_output_change": {
     "receipt": "https://github.com/bglenden/casa-rs/blob/ca619b7c08f65cdd65a71b322cf1f8e9ce7f2294/resources/casa-compat/evidence/fluxscale-performance-20261117.json",
     "native_revision": "e7f859f76413872af29fb54a28149e81bcab65e6",
@@ -459,8 +459,1459 @@
     }
   },
   "diagnostic_source_bucket_calls_60000_rows": {
-    "reads": 5655,
-    "seeks": 5655
+    "before": {
+      "reads": 5655,
+      "seeks": 5655
+    },
+    "after": {
+      "reads": 471,
+      "seeks": 33
+    }
   },
-  "diagnostic_callgrind_instructions_60000_rows": 499629839
+  "diagnostic_callgrind_instructions_60000_rows": 403025939,
+  "history_policy": "Identical input HISTORY restored before every public-Python call, outside timing; original HISTORY restored at benchmark exit.",
+  "diagnostic_callgrind_scope": "Current candidate, identical 60,000-row gains, fixed HISTORY state; full_output::save inclusive 167,251,230 instructions (41.5%), sparse array saver 61,321,020 (15.2%); inclusive costs overlap.",
+  "raw_io_reference": {
+    "warm": {
+      "read": [
+        {
+          "wall_seconds": 0.03828260400041472,
+          "cpu_seconds": 0.038290000000000005,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 0
+          }
+        },
+        {
+          "wall_seconds": 0.0044519430011860095,
+          "cpu_seconds": 0.004455000000000001,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 0
+          }
+        },
+        {
+          "wall_seconds": 0.004162825003731996,
+          "cpu_seconds": 0.004165000000000002,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 0
+          }
+        },
+        {
+          "wall_seconds": 0.0038910329967620783,
+          "cpu_seconds": 0.0038929999999999937,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 0
+          }
+        },
+        {
+          "wall_seconds": 0.0036157139984425157,
+          "cpu_seconds": 0.0036199999999999982,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 0
+          }
+        }
+      ],
+      "copy": [
+        {
+          "wall_seconds": 0.032648749998770654,
+          "cpu_seconds": 0.032654000000000016,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 10792960
+          }
+        },
+        {
+          "wall_seconds": 0.008621617998869624,
+          "cpu_seconds": 0.008623999999999993,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 10690560
+          }
+        },
+        {
+          "wall_seconds": 0.005286218001856469,
+          "cpu_seconds": 0.005288000000000015,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 10690560
+          }
+        },
+        {
+          "wall_seconds": 0.00394519299879903,
+          "cpu_seconds": 0.003948000000000007,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 10690560
+          }
+        },
+        {
+          "wall_seconds": 0.004195383000478614,
+          "cpu_seconds": 0.004199000000000008,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 10690560
+          }
+        }
+      ]
+    },
+    "cold": {
+      "read": [
+        {
+          "wall_seconds": 0.02602833599667065,
+          "cpu_seconds": 0.019319000000000003,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 10690560,
+            "write_bytes": 0
+          }
+        },
+        {
+          "wall_seconds": 0.011567120003746822,
+          "cpu_seconds": 0.005694999999999978,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 10690560,
+            "write_bytes": 0
+          }
+        },
+        {
+          "wall_seconds": 0.011193657002877444,
+          "cpu_seconds": 0.005697000000000008,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 10690560,
+            "write_bytes": 0
+          }
+        },
+        {
+          "wall_seconds": 0.011757341999327764,
+          "cpu_seconds": 0.005757000000000012,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 10690560,
+            "write_bytes": 0
+          }
+        },
+        {
+          "wall_seconds": 0.0105590859966469,
+          "cpu_seconds": 0.005471000000000004,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 10690560,
+            "write_bytes": 0
+          }
+        }
+      ],
+      "copy": [
+        {
+          "wall_seconds": 0.033669301999907475,
+          "cpu_seconds": 0.028161999999999993,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 10690560,
+            "write_bytes": 10690560
+          }
+        },
+        {
+          "wall_seconds": 0.009925764999934472,
+          "cpu_seconds": 0.00546000000000002,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 10690560,
+            "write_bytes": 10690560
+          }
+        },
+        {
+          "wall_seconds": 0.009431022001081146,
+          "cpu_seconds": 0.00451600000000002,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 10690560,
+            "write_bytes": 10690560
+          }
+        },
+        {
+          "wall_seconds": 0.009410711994860321,
+          "cpu_seconds": 0.004622000000000015,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 10690560,
+            "write_bytes": 10690560
+          }
+        },
+        {
+          "wall_seconds": 0.009078003997274209,
+          "cpu_seconds": 0.004490999999999967,
+          "bytes": 10633930,
+          "block_io": {
+            "read_bytes": 10690560,
+            "write_bytes": 10690560
+          }
+        }
+      ]
+    }
+  },
+  "paired_native_source_buffer_change": {
+    "method": "Five alternating fresh native CLI calls per engine, same CASA-written repeated gains, reference FLUX / transfer PHASE, all other task defaults, one worker; returns compared at rtol1e-9/atol1e-10. Preparation/deletion/eviction outside timing. Initial runs retain evolving HISTORY; focused confirmation resets identical HISTORY and fsyncs owned output/MS after timing. Native CLI diagnostics, not Python/CASA speedup measurements.",
+    "before_revision": "cb9895b55bb317b5fae6fd721b232bf00e0cf5ca",
+    "after_revision": "872a540581271d3fd58105928b2e8a3b7461ca0b",
+    "initial": {
+      "scope": "Paired native CLI diagnostic, no public-Python/CASA speedup claim",
+      "before_revision": "cb9895b55",
+      "after_revision": "872a54058",
+      "workers": 1,
+      "repeats": 5,
+      "cases": {
+        "60k-full-warm": {
+          "before": [
+            {
+              "wall_seconds": 0.12458831299591111,
+              "user_seconds": 0.040106,
+              "system_seconds": 0.08307300000000001,
+              "phases_seconds": {
+                "fluxscale_read": 0.028321068,
+                "fluxscale_estimate": 0.004303537,
+                "fluxscale_write": 0.066192785,
+                "fluxscale_history": 0.016919637
+              },
+              "read_bytes": 0,
+              "write_bytes": 12300288
+            },
+            {
+              "wall_seconds": 0.08215112800098723,
+              "user_seconds": 0.044375,
+              "system_seconds": 0.03562599999999999,
+              "phases_seconds": {
+                "fluxscale_read": 0.02096538,
+                "fluxscale_estimate": 0.004208325,
+                "fluxscale_write": 0.034116287,
+                "fluxscale_history": 0.015795581
+              },
+              "read_bytes": 0,
+              "write_bytes": 12288000
+            },
+            {
+              "wall_seconds": 0.0898226670033182,
+              "user_seconds": 0.04011300000000001,
+              "system_seconds": 0.047262000000000026,
+              "phases_seconds": {
+                "fluxscale_read": 0.021806844,
+                "fluxscale_estimate": 0.005480642,
+                "fluxscale_write": 0.038527004,
+                "fluxscale_history": 0.016204822
+              },
+              "read_bytes": 0,
+              "write_bytes": 12296192
+            },
+            {
+              "wall_seconds": 0.08026765900285682,
+              "user_seconds": 0.047368999999999994,
+              "system_seconds": 0.03164800000000001,
+              "phases_seconds": {
+                "fluxscale_read": 0.020758461,
+                "fluxscale_estimate": 0.003953645,
+                "fluxscale_write": 0.03325979,
+                "fluxscale_history": 0.015255285
+              },
+              "read_bytes": 0,
+              "write_bytes": 12300288
+            },
+            {
+              "wall_seconds": 0.10979910600144649,
+              "user_seconds": 0.05985399999999996,
+              "system_seconds": 0.044849999999999945,
+              "phases_seconds": {
+                "fluxscale_read": 0.020665223,
+                "fluxscale_estimate": 0.004073363,
+                "fluxscale_write": 0.037215538,
+                "fluxscale_history": 0.031131613
+              },
+              "read_bytes": 0,
+              "write_bytes": 12308480
+            }
+          ],
+          "after": [
+            {
+              "wall_seconds": 0.14601523199962685,
+              "user_seconds": 0.044510999999999995,
+              "system_seconds": 0.10012199999999999,
+              "phases_seconds": {
+                "fluxscale_read": 0.048981733,
+                "fluxscale_estimate": 0.004287473,
+                "fluxscale_write": 0.063437987,
+                "fluxscale_history": 0.017072536
+              },
+              "read_bytes": 0,
+              "write_bytes": 12288000
+            },
+            {
+              "wall_seconds": 0.08411025899840752,
+              "user_seconds": 0.05871699999999999,
+              "system_seconds": 0.024146,
+              "phases_seconds": {
+                "fluxscale_read": 0.017991225,
+                "fluxscale_estimate": 0.004229446,
+                "fluxscale_write": 0.036243019,
+                "fluxscale_history": 0.017218343
+              },
+              "read_bytes": 0,
+              "write_bytes": 12288000
+            },
+            {
+              "wall_seconds": 0.077687112003332,
+              "user_seconds": 0.03794799999999998,
+              "system_seconds": 0.037908,
+              "phases_seconds": {
+                "fluxscale_read": 0.016297861,
+                "fluxscale_estimate": 0.003909008,
+                "fluxscale_write": 0.033944581,
+                "fluxscale_history": 0.016378821
+              },
+              "read_bytes": 0,
+              "write_bytes": 12292096
+            },
+            {
+              "wall_seconds": 0.08174931399844354,
+              "user_seconds": 0.042596999999999996,
+              "system_seconds": 0.037878999999999996,
+              "phases_seconds": {
+                "fluxscale_read": 0.017313118,
+                "fluxscale_estimate": 0.004535793,
+                "fluxscale_write": 0.034514771,
+                "fluxscale_history": 0.017722565
+              },
+              "read_bytes": 0,
+              "write_bytes": 12304384
+            },
+            {
+              "wall_seconds": 0.0809086049994221,
+              "user_seconds": 0.050729000000000024,
+              "system_seconds": 0.029110999999999998,
+              "phases_seconds": {
+                "fluxscale_read": 0.019494065,
+                "fluxscale_estimate": 0.003999965,
+                "fluxscale_write": 0.034579128,
+                "fluxscale_history": 0.015565408
+              },
+              "read_bytes": 0,
+              "write_bytes": 12304384
+            }
+          ]
+        },
+        "60k-full-cold": {
+          "before": [
+            {
+              "wall_seconds": 0.1043357759990613,
+              "user_seconds": 0.053894999999999915,
+              "system_seconds": 0.03906399999999999,
+              "phases_seconds": {
+                "fluxscale_read": 0.034545989,
+                "fluxscale_estimate": 0.004183208,
+                "fluxscale_write": 0.038153016,
+                "fluxscale_history": 0.020033651
+              },
+              "read_bytes": 11550720,
+              "write_bytes": 12320768
+            },
+            {
+              "wall_seconds": 0.09247897200111765,
+              "user_seconds": 0.05650300000000008,
+              "system_seconds": 0.026146000000000003,
+              "phases_seconds": {
+                "fluxscale_read": 0.028432283,
+                "fluxscale_estimate": 0.003984141,
+                "fluxscale_write": 0.033553198,
+                "fluxscale_history": 0.019565362
+              },
+              "read_bytes": 11554816,
+              "write_bytes": 12320768
+            },
+            {
+              "wall_seconds": 0.10709683100139955,
+              "user_seconds": 0.05125299999999999,
+              "system_seconds": 0.04480899999999999,
+              "phases_seconds": {
+                "fluxscale_read": 0.030604626,
+                "fluxscale_estimate": 0.004323466,
+                "fluxscale_write": 0.04433084,
+                "fluxscale_history": 0.020772822
+              },
+              "read_bytes": 11558912,
+              "write_bytes": 12328960
+            },
+            {
+              "wall_seconds": 0.12359912299871212,
+              "user_seconds": 0.05212699999999992,
+              "system_seconds": 0.059826000000000046,
+              "phases_seconds": {
+                "fluxscale_read": 0.030882852,
+                "fluxscale_estimate": 0.004553238,
+                "fluxscale_write": 0.056044988,
+                "fluxscale_history": 0.024275957
+              },
+              "read_bytes": 11563008,
+              "write_bytes": 12333056
+            },
+            {
+              "wall_seconds": 0.09342664400173817,
+              "user_seconds": 0.04569500000000004,
+              "system_seconds": 0.03725600000000018,
+              "phases_seconds": {
+                "fluxscale_read": 0.028813231,
+                "fluxscale_estimate": 0.004047916,
+                "fluxscale_write": 0.034335852,
+                "fluxscale_history": 0.018919353
+              },
+              "read_bytes": 11571200,
+              "write_bytes": 12341248
+            }
+          ],
+          "after": [
+            {
+              "wall_seconds": 0.08999177299847361,
+              "user_seconds": 0.052576999999999985,
+              "system_seconds": 0.027276999999999996,
+              "phases_seconds": {
+                "fluxscale_read": 0.024450496,
+                "fluxscale_estimate": 0.004109487,
+                "fluxscale_write": 0.035450537,
+                "fluxscale_history": 0.018509938
+              },
+              "read_bytes": 11546624,
+              "write_bytes": 12316672
+            },
+            {
+              "wall_seconds": 0.10476820499752648,
+              "user_seconds": 0.052914999999999934,
+              "system_seconds": 0.04111500000000001,
+              "phases_seconds": {
+                "fluxscale_read": 0.038354808,
+                "fluxscale_estimate": 0.004102397,
+                "fluxscale_write": 0.035787184,
+                "fluxscale_history": 0.019252436
+              },
+              "read_bytes": 11554816,
+              "write_bytes": 12324864
+            },
+            {
+              "wall_seconds": 0.09236053500353592,
+              "user_seconds": 0.05207700000000004,
+              "system_seconds": 0.028362,
+              "phases_seconds": {
+                "fluxscale_read": 0.023211609,
+                "fluxscale_estimate": 0.004065762,
+                "fluxscale_write": 0.035199312,
+                "fluxscale_history": 0.02242153
+              },
+              "read_bytes": 11558912,
+              "write_bytes": 12324864
+            },
+            {
+              "wall_seconds": 0.11540626300120493,
+              "user_seconds": 0.045600000000000085,
+              "system_seconds": 0.057725000000000026,
+              "phases_seconds": {
+                "fluxscale_read": 0.026507559,
+                "fluxscale_estimate": 0.004376365,
+                "fluxscale_write": 0.051628694,
+                "fluxscale_history": 0.024764755
+              },
+              "read_bytes": 11567104,
+              "write_bytes": 12337152
+            },
+            {
+              "wall_seconds": 0.09872144600376487,
+              "user_seconds": 0.04424500000000009,
+              "system_seconds": 0.04055799999999987,
+              "phases_seconds": {
+                "fluxscale_read": 0.028475218,
+                "fluxscale_estimate": 0.004021506,
+                "fluxscale_write": 0.039060546,
+                "fluxscale_history": 0.019829428
+              },
+              "read_bytes": 11571200,
+              "write_bytes": 12337152
+            }
+          ]
+        },
+        "60k-incremental-warm": {
+          "before": [
+            {
+              "wall_seconds": 0.05467986599978758,
+              "user_seconds": 0.024680000000000035,
+              "system_seconds": 0.02874500000000002,
+              "phases_seconds": {
+                "fluxscale_read": 0.019737671,
+                "fluxscale_estimate": 0.004005433,
+                "fluxscale_write": 0.005026633,
+                "fluxscale_history": 0.019239189
+              },
+              "read_bytes": 0,
+              "write_bytes": 929792
+            },
+            {
+              "wall_seconds": 0.059482955999556,
+              "user_seconds": 0.04701599999999995,
+              "system_seconds": 0.011273000000000089,
+              "phases_seconds": {
+                "fluxscale_read": 0.021168041,
+                "fluxscale_estimate": 0.004522943,
+                "fluxscale_write": 0.005606435,
+                "fluxscale_history": 0.021282431
+              },
+              "read_bytes": 0,
+              "write_bytes": 929792
+            },
+            {
+              "wall_seconds": 0.060269041001447476,
+              "user_seconds": 0.042167000000000066,
+              "system_seconds": 0.016791,
+              "phases_seconds": {
+                "fluxscale_read": 0.02089241,
+                "fluxscale_estimate": 0.004238579,
+                "fluxscale_write": 0.005470954,
+                "fluxscale_history": 0.022550438
+              },
+              "read_bytes": 0,
+              "write_bytes": 942080
+            },
+            {
+              "wall_seconds": 0.05742517299950123,
+              "user_seconds": 0.03284500000000001,
+              "system_seconds": 0.023568000000000033,
+              "phases_seconds": {
+                "fluxscale_read": 0.021137084,
+                "fluxscale_estimate": 0.004265309,
+                "fluxscale_write": 0.005287151,
+                "fluxscale_history": 0.020053461
+              },
+              "read_bytes": 0,
+              "write_bytes": 942080
+            },
+            {
+              "wall_seconds": 0.15862501799711026,
+              "user_seconds": 0.09565699999999988,
+              "system_seconds": 0.06062700000000021,
+              "phases_seconds": {
+                "fluxscale_read": 0.074437948,
+                "fluxscale_estimate": 0.012746124,
+                "fluxscale_write": 0.009690835,
+                "fluxscale_history": 0.04282906
+              },
+              "read_bytes": 0,
+              "write_bytes": 954368
+            }
+          ],
+          "after": [
+            {
+              "wall_seconds": 0.057801322000159416,
+              "user_seconds": 0.052246000000000015,
+              "system_seconds": 0.004318999999999962,
+              "phases_seconds": {
+                "fluxscale_read": 0.018227503,
+                "fluxscale_estimate": 0.004242105,
+                "fluxscale_write": 0.005604823,
+                "fluxscale_history": 0.022872678
+              },
+              "read_bytes": 0,
+              "write_bytes": 925696
+            },
+            {
+              "wall_seconds": 0.056651500999578275,
+              "user_seconds": 0.047877999999999865,
+              "system_seconds": 0.007504999999999873,
+              "phases_seconds": {
+                "fluxscale_read": 0.01702234,
+                "fluxscale_estimate": 0.004276246,
+                "fluxscale_write": 0.005352487,
+                "fluxscale_history": 0.02261199
+              },
+              "read_bytes": 0,
+              "write_bytes": 933888
+            },
+            {
+              "wall_seconds": 0.051677010000275914,
+              "user_seconds": 0.03370200000000012,
+              "system_seconds": 0.017079999999999984,
+              "phases_seconds": {
+                "fluxscale_read": 0.01470535,
+                "fluxscale_estimate": 0.004077029,
+                "fluxscale_write": 0.005357576,
+                "fluxscale_history": 0.020822136
+              },
+              "read_bytes": 0,
+              "write_bytes": 933888
+            },
+            {
+              "wall_seconds": 0.05589619199599838,
+              "user_seconds": 0.054722999999999855,
+              "system_seconds": 0.0,
+              "phases_seconds": {
+                "fluxscale_read": 0.015017555,
+                "fluxscale_estimate": 0.004458377,
+                "fluxscale_write": 0.007524161,
+                "fluxscale_history": 0.022486212
+              },
+              "read_bytes": 0,
+              "write_bytes": 946176
+            },
+            {
+              "wall_seconds": 0.0547862309977063,
+              "user_seconds": 0.04109800000000008,
+              "system_seconds": 0.012421999999999933,
+              "phases_seconds": {
+                "fluxscale_read": 0.015469788,
+                "fluxscale_estimate": 0.004000956,
+                "fluxscale_write": 0.005048385,
+                "fluxscale_history": 0.022157503
+              },
+              "read_bytes": 0,
+              "write_bytes": 946176
+            }
+          ]
+        },
+        "60k-incremental-cold": {
+          "before": [
+            {
+              "wall_seconds": 0.09254986800078768,
+              "user_seconds": 0.053175000000000194,
+              "system_seconds": 0.02693399999999979,
+              "phases_seconds": {
+                "fluxscale_read": 0.035676914,
+                "fluxscale_estimate": 0.006007313,
+                "fluxscale_write": 0.013171045,
+                "fluxscale_history": 0.02781151
+              },
+              "read_bytes": 11132928,
+              "write_bytes": 962560
+            },
+            {
+              "wall_seconds": 0.07223116800014395,
+              "user_seconds": 0.04264099999999971,
+              "system_seconds": 0.01984600000000003,
+              "phases_seconds": {
+                "fluxscale_read": 0.030521329,
+                "fluxscale_estimate": 0.004425228,
+                "fluxscale_write": 0.0074501,
+                "fluxscale_history": 0.022604479
+              },
+              "read_bytes": 11137024,
+              "write_bytes": 962560
+            },
+            {
+              "wall_seconds": 0.07512500099983299,
+              "user_seconds": 0.025785999999999865,
+              "system_seconds": 0.03815999999999997,
+              "phases_seconds": {
+                "fluxscale_read": 0.031181877,
+                "fluxscale_estimate": 0.004231478,
+                "fluxscale_write": 0.00824274,
+                "fluxscale_history": 0.025080204
+              },
+              "read_bytes": 11145216,
+              "write_bytes": 974848
+            },
+            {
+              "wall_seconds": 0.08372863800468622,
+              "user_seconds": 0.052624000000000226,
+              "system_seconds": 0.019452000000000247,
+              "phases_seconds": {
+                "fluxscale_read": 0.031272703,
+                "fluxscale_estimate": 0.004904611,
+                "fluxscale_write": 0.008424029,
+                "fluxscale_history": 0.031668051
+              },
+              "read_bytes": 11149312,
+              "write_bytes": 978944
+            },
+            {
+              "wall_seconds": 0.07482158800121397,
+              "user_seconds": 0.051844,
+              "system_seconds": 0.01269100000000023,
+              "phases_seconds": {
+                "fluxscale_read": 0.031494753,
+                "fluxscale_estimate": 0.004482111,
+                "fluxscale_write": 0.007493234,
+                "fluxscale_history": 0.024542894
+              },
+              "read_bytes": 11157504,
+              "write_bytes": 983040
+            }
+          ],
+          "after": [
+            {
+              "wall_seconds": 0.08068839699990349,
+              "user_seconds": 0.0389609999999998,
+              "system_seconds": 0.026971000000000078,
+              "phases_seconds": {
+                "fluxscale_read": 0.028582188,
+                "fluxscale_estimate": 0.004672215,
+                "fluxscale_write": 0.007974491,
+                "fluxscale_history": 0.031639628
+              },
+              "read_bytes": 11132928,
+              "write_bytes": 958464
+            },
+            {
+              "wall_seconds": 0.08477004800079158,
+              "user_seconds": 0.025855000000000183,
+              "system_seconds": 0.04685000000000006,
+              "phases_seconds": {
+                "fluxscale_read": 0.027263293,
+                "fluxscale_estimate": 0.007079569,
+                "fluxscale_write": 0.01061443,
+                "fluxscale_history": 0.031819803
+              },
+              "read_bytes": 11137024,
+              "write_bytes": 966656
+            },
+            {
+              "wall_seconds": 0.08153959000628674,
+              "user_seconds": 0.039004999999999956,
+              "system_seconds": 0.031615999999999866,
+              "phases_seconds": {
+                "fluxscale_read": 0.028897487,
+                "fluxscale_estimate": 0.006126611,
+                "fluxscale_write": 0.01205136,
+                "fluxscale_history": 0.026834986
+              },
+              "read_bytes": 11141120,
+              "write_bytes": 970752
+            },
+            {
+              "wall_seconds": 0.06829068699880736,
+              "user_seconds": 0.042100000000000026,
+              "system_seconds": 0.01567799999999986,
+              "phases_seconds": {
+                "fluxscale_read": 0.025518116,
+                "fluxscale_estimate": 0.004395893,
+                "fluxscale_write": 0.00802768,
+                "fluxscale_history": 0.022889563
+              },
+              "read_bytes": 11153408,
+              "write_bytes": 987136
+            },
+            {
+              "wall_seconds": 0.06778520399529953,
+              "user_seconds": 0.03717900000000007,
+              "system_seconds": 0.019013999999999864,
+              "phases_seconds": {
+                "fluxscale_read": 0.024991342,
+                "fluxscale_estimate": 0.003999464,
+                "fluxscale_write": 0.007576478,
+                "fluxscale_history": 0.024493711
+              },
+              "read_bytes": 11153408,
+              "write_bytes": 983040
+            }
+          ]
+        },
+        "300k-full-warm": {
+          "before": [
+            {
+              "wall_seconds": 0.3730072200050927,
+              "user_seconds": 0.23529199999999983,
+              "system_seconds": 0.1361819999999998,
+              "phases_seconds": {
+                "fluxscale_read": 0.124609109,
+                "fluxscale_estimate": 0.042910694,
+                "fluxscale_write": 0.171711753,
+                "fluxscale_history": 0.021924041
+              },
+              "read_bytes": 0,
+              "write_bytes": 58560512
+            },
+            {
+              "wall_seconds": 0.35784885400062194,
+              "user_seconds": 0.22907399999999978,
+              "system_seconds": 0.12757700000000005,
+              "phases_seconds": {
+                "fluxscale_read": 0.110187001,
+                "fluxscale_estimate": 0.046430645,
+                "fluxscale_write": 0.170160233,
+                "fluxscale_history": 0.020388746
+              },
+              "read_bytes": 0,
+              "write_bytes": 58564608
+            },
+            {
+              "wall_seconds": 0.3936656369987759,
+              "user_seconds": 0.2551879999999995,
+              "system_seconds": 0.137343,
+              "phases_seconds": {
+                "fluxscale_read": 0.122064293,
+                "fluxscale_estimate": 0.042964174,
+                "fluxscale_write": 0.195690875,
+                "fluxscale_history": 0.022444788
+              },
+              "read_bytes": 0,
+              "write_bytes": 58580992
+            },
+            {
+              "wall_seconds": 0.5334573309955886,
+              "user_seconds": 0.24267100000000053,
+              "system_seconds": 0.28938099999999967,
+              "phases_seconds": {
+                "fluxscale_read": 0.132976423,
+                "fluxscale_estimate": 0.043994611,
+                "fluxscale_write": 0.325895789,
+                "fluxscale_history": 0.018607705
+              },
+              "read_bytes": 0,
+              "write_bytes": 58576896
+            },
+            {
+              "wall_seconds": 0.3912271529989084,
+              "user_seconds": 0.2554110000000005,
+              "system_seconds": 0.1337129999999993,
+              "phases_seconds": {
+                "fluxscale_read": 0.124784825,
+                "fluxscale_estimate": 0.040144041,
+                "fluxscale_write": 0.188291051,
+                "fluxscale_history": 0.022218922
+              },
+              "read_bytes": 0,
+              "write_bytes": 58585088
+            }
+          ],
+          "after": [
+            {
+              "wall_seconds": 0.5284344850006164,
+              "user_seconds": 0.2882410000000002,
+              "system_seconds": 0.23877199999999998,
+              "phases_seconds": {
+                "fluxscale_read": 0.132872363,
+                "fluxscale_estimate": 0.041256215,
+                "fluxscale_write": 0.322010097,
+                "fluxscale_history": 0.020742228
+              },
+              "read_bytes": 0,
+              "write_bytes": 58560512
+            },
+            {
+              "wall_seconds": 0.5785457180027151,
+              "user_seconds": 0.37341000000000024,
+              "system_seconds": 0.17722399999999983,
+              "phases_seconds": {
+                "fluxscale_read": 0.096937919,
+                "fluxscale_estimate": 0.043596277,
+                "fluxscale_write": 0.400686154,
+                "fluxscale_history": 0.023617988
+              },
+              "read_bytes": 0,
+              "write_bytes": 58572800
+            },
+            {
+              "wall_seconds": 0.3892258740015677,
+              "user_seconds": 0.26259200000000016,
+              "system_seconds": 0.12401700000000027,
+              "phases_seconds": {
+                "fluxscale_read": 0.121785076,
+                "fluxscale_estimate": 0.048310811,
+                "fluxscale_write": 0.182831038,
+                "fluxscale_history": 0.023056291
+              },
+              "read_bytes": 0,
+              "write_bytes": 58568704
+            },
+            {
+              "wall_seconds": 0.34681843100406695,
+              "user_seconds": 0.21777099999999994,
+              "system_seconds": 0.12671300000000008,
+              "phases_seconds": {
+                "fluxscale_read": 0.094573277,
+                "fluxscale_estimate": 0.045428129,
+                "fluxscale_write": 0.174225899,
+                "fluxscale_history": 0.021131293
+              },
+              "read_bytes": 0,
+              "write_bytes": 58585088
+            },
+            {
+              "wall_seconds": 0.661572109995177,
+              "user_seconds": 0.31498199999999965,
+              "system_seconds": 0.33129000000000053,
+              "phases_seconds": {
+                "fluxscale_read": 0.309665994,
+                "fluxscale_estimate": 0.045983246,
+                "fluxscale_write": 0.268577001,
+                "fluxscale_history": 0.021839417
+              },
+              "read_bytes": 0,
+              "write_bytes": 58580992
+            }
+          ]
+        },
+        "300k-full-cold": {
+          "before": [
+            {
+              "wall_seconds": 0.3819484720006585,
+              "user_seconds": 0.21330899999999975,
+              "system_seconds": 0.15484899999999957,
+              "phases_seconds": {
+                "fluxscale_read": 0.125720719,
+                "fluxscale_estimate": 0.040271371,
+                "fluxscale_write": 0.183431115,
+                "fluxscale_history": 0.02159634
+              },
+              "read_bytes": 53985280,
+              "write_bytes": 58593280
+            },
+            {
+              "wall_seconds": 0.3649676940040081,
+              "user_seconds": 0.259703,
+              "system_seconds": 0.09167300000000012,
+              "phases_seconds": {
+                "fluxscale_read": 0.12267266,
+                "fluxscale_estimate": 0.037534505,
+                "fluxscale_write": 0.17153326,
+                "fluxscale_history": 0.022773188
+              },
+              "read_bytes": 53985280,
+              "write_bytes": 58597376
+            },
+            {
+              "wall_seconds": 0.36320545700436924,
+              "user_seconds": 0.2128370000000004,
+              "system_seconds": 0.13619800000000026,
+              "phases_seconds": {
+                "fluxscale_read": 0.127607748,
+                "fluxscale_estimate": 0.03817287,
+                "fluxscale_write": 0.161700197,
+                "fluxscale_history": 0.023487672
+              },
+              "read_bytes": 53997568,
+              "write_bytes": 58617856
+            },
+            {
+              "wall_seconds": 0.3986318130046129,
+              "user_seconds": 0.26483599999999985,
+              "system_seconds": 0.11980500000000038,
+              "phases_seconds": {
+                "fluxscale_read": 0.138325264,
+                "fluxscale_estimate": 0.045207149,
+                "fluxscale_write": 0.178011548,
+                "fluxscale_history": 0.025529323
+              },
+              "read_bytes": 53997568,
+              "write_bytes": 58609664
+            },
+            {
+              "wall_seconds": 0.8696507579952595,
+              "user_seconds": 0.5148700000000002,
+              "system_seconds": 0.3101560000000001,
+              "phases_seconds": {
+                "fluxscale_read": 0.138629067,
+                "fluxscale_estimate": 0.061240936,
+                "fluxscale_write": 0.628199173,
+                "fluxscale_history": 0.026682461
+              },
+              "read_bytes": 54005760,
+              "write_bytes": 58613760
+            }
+          ],
+          "after": [
+            {
+              "wall_seconds": 0.4049523930007126,
+              "user_seconds": 0.23461800000000022,
+              "system_seconds": 0.15366999999999997,
+              "phases_seconds": {
+                "fluxscale_read": 0.13880492,
+                "fluxscale_estimate": 0.043065902,
+                "fluxscale_write": 0.177504931,
+                "fluxscale_history": 0.024523944
+              },
+              "read_bytes": 53981184,
+              "write_bytes": 58593280
+            },
+            {
+              "wall_seconds": 0.39375225199910346,
+              "user_seconds": 0.254003,
+              "system_seconds": 0.12354800000000044,
+              "phases_seconds": {
+                "fluxscale_read": 0.11527516,
+                "fluxscale_estimate": 0.054144577,
+                "fluxscale_write": 0.183671232,
+                "fluxscale_history": 0.028396701
+              },
+              "read_bytes": 53989376,
+              "write_bytes": 58605568
+            },
+            {
+              "wall_seconds": 0.5394716070004506,
+              "user_seconds": 0.3646950000000002,
+              "system_seconds": 0.13194599999999923,
+              "phases_seconds": {
+                "fluxscale_read": 0.093848133,
+                "fluxscale_estimate": 0.040464869,
+                "fluxscale_write": 0.368298806,
+                "fluxscale_history": 0.025462775
+              },
+              "read_bytes": 53989376,
+              "write_bytes": 58605568
+            },
+            {
+              "wall_seconds": 0.3708139860027586,
+              "user_seconds": 0.25204699999999924,
+              "system_seconds": 0.10085899999999981,
+              "phases_seconds": {
+                "fluxscale_read": 0.105769799,
+                "fluxscale_estimate": 0.040068003,
+                "fluxscale_write": 0.181782231,
+                "fluxscale_history": 0.026347172
+              },
+              "read_bytes": 54001664,
+              "write_bytes": 58609664
+            },
+            {
+              "wall_seconds": 0.36409798100066837,
+              "user_seconds": 0.2313470000000013,
+              "system_seconds": 0.1188589999999996,
+              "phases_seconds": {
+                "fluxscale_read": 0.107295046,
+                "fluxscale_estimate": 0.041697269,
+                "fluxscale_write": 0.176240891,
+                "fluxscale_history": 0.026730101
+              },
+              "read_bytes": 54001664,
+              "write_bytes": 58613760
+            }
+          ]
+        },
+        "300k-incremental-warm": {
+          "before": [
+            {
+              "wall_seconds": 0.20275540600414388,
+              "user_seconds": 0.14382600000000068,
+              "system_seconds": 0.05757799999999946,
+              "phases_seconds": {
+                "fluxscale_read": 0.11323855,
+                "fluxscale_estimate": 0.039803308,
+                "fluxscale_write": 0.012878036,
+                "fluxscale_history": 0.026349364
+              },
+              "read_bytes": 0,
+              "write_bytes": 1060864
+            },
+            {
+              "wall_seconds": 0.3660560130010708,
+              "user_seconds": 0.28402700000000003,
+              "system_seconds": 0.0807380000000002,
+              "phases_seconds": {
+                "fluxscale_read": 0.248494537,
+                "fluxscale_estimate": 0.060258753,
+                "fluxscale_write": 0.014686249,
+                "fluxscale_history": 0.031591274
+              },
+              "read_bytes": 0,
+              "write_bytes": 1064960
+            },
+            {
+              "wall_seconds": 0.28099420499347616,
+              "user_seconds": 0.1563099999999995,
+              "system_seconds": 0.11995500000000003,
+              "phases_seconds": {
+                "fluxscale_read": 0.151205622,
+                "fluxscale_estimate": 0.063617967,
+                "fluxscale_write": 0.017982751,
+                "fluxscale_history": 0.031098771
+              },
+              "read_bytes": 0,
+              "write_bytes": 1077248
+            },
+            {
+              "wall_seconds": 0.2543633500026772,
+              "user_seconds": 0.13967500000000044,
+              "system_seconds": 0.1128309999999999,
+              "phases_seconds": {
+                "fluxscale_read": 0.139805986,
+                "fluxscale_estimate": 0.041284005,
+                "fluxscale_write": 0.017813708,
+                "fluxscale_history": 0.043380056
+              },
+              "read_bytes": 0,
+              "write_bytes": 1077248
+            },
+            {
+              "wall_seconds": 0.20701827199809486,
+              "user_seconds": 0.15492900000000098,
+              "system_seconds": 0.05077600000000082,
+              "phases_seconds": {
+                "fluxscale_read": 0.110175912,
+                "fluxscale_estimate": 0.042834664,
+                "fluxscale_write": 0.013723335,
+                "fluxscale_history": 0.028764192
+              },
+              "read_bytes": 0,
+              "write_bytes": 1085440
+            }
+          ],
+          "after": [
+            {
+              "wall_seconds": 0.19713600400427822,
+              "user_seconds": 0.17186899999999916,
+              "system_seconds": 0.024061000000000554,
+              "phases_seconds": {
+                "fluxscale_read": 0.094081526,
+                "fluxscale_estimate": 0.04414742,
+                "fluxscale_write": 0.015581494,
+                "fluxscale_history": 0.032482201
+              },
+              "read_bytes": 0,
+              "write_bytes": 1069056
+            },
+            {
+              "wall_seconds": 0.29408688499825075,
+              "user_seconds": 0.15366299999999988,
+              "system_seconds": 0.13934400000000036,
+              "phases_seconds": {
+                "fluxscale_read": 0.188477865,
+                "fluxscale_estimate": 0.044863737,
+                "fluxscale_write": 0.01591452,
+                "fluxscale_history": 0.03174269
+              },
+              "read_bytes": 0,
+              "write_bytes": 1064960
+            },
+            {
+              "wall_seconds": 0.5343818610053859,
+              "user_seconds": 0.38968700000000034,
+              "system_seconds": 0.12075299999999967,
+              "phases_seconds": {
+                "fluxscale_read": 0.108512716,
+                "fluxscale_estimate": 0.050793791,
+                "fluxscale_write": 0.01625764,
+                "fluxscale_history": 0.337618061
+              },
+              "read_bytes": 0,
+              "write_bytes": 1081344
+            },
+            {
+              "wall_seconds": 0.1814031409958261,
+              "user_seconds": 0.12278599999999962,
+              "system_seconds": 0.05735699999999966,
+              "phases_seconds": {
+                "fluxscale_read": 0.080686415,
+                "fluxscale_estimate": 0.03709958,
+                "fluxscale_write": 0.014239955,
+                "fluxscale_history": 0.03026678
+              },
+              "read_bytes": 0,
+              "write_bytes": 1081344
+            },
+            {
+              "wall_seconds": 0.1810022440040484,
+              "user_seconds": 0.1484489999999994,
+              "system_seconds": 0.03127499999999994,
+              "phases_seconds": {
+                "fluxscale_read": 0.090288511,
+                "fluxscale_estimate": 0.042437393,
+                "fluxscale_write": 0.013046656,
+                "fluxscale_history": 0.025065592
+              },
+              "read_bytes": 0,
+              "write_bytes": 1081344
+            }
+          ]
+        },
+        "300k-incremental-cold": {
+          "before": [
+            {
+              "wall_seconds": 0.6202992729959078,
+              "user_seconds": 0.33616899999999994,
+              "system_seconds": 0.2683080000000002,
+              "phases_seconds": {
+                "fluxscale_read": 0.492847609,
+                "fluxscale_estimate": 0.04664348,
+                "fluxscale_write": 0.029771816,
+                "fluxscale_history": 0.037075762
+              },
+              "read_bytes": 50425856,
+              "write_bytes": 1097728
+            },
+            {
+              "wall_seconds": 0.24184543899900746,
+              "user_seconds": 0.144285,
+              "system_seconds": 0.08254099999999998,
+              "phases_seconds": {
+                "fluxscale_read": 0.142121684,
+                "fluxscale_estimate": 0.04172143,
+                "fluxscale_write": 0.01927216,
+                "fluxscale_history": 0.026957294
+              },
+              "read_bytes": 50429952,
+              "write_bytes": 1105920
+            },
+            {
+              "wall_seconds": 0.224217980998219,
+              "user_seconds": 0.13766200000000062,
+              "system_seconds": 0.07258500000000012,
+              "phases_seconds": {
+                "fluxscale_read": 0.127320762,
+                "fluxscale_estimate": 0.039115427,
+                "fluxscale_write": 0.016765435,
+                "fluxscale_history": 0.031161332
+              },
+              "read_bytes": 50438144,
+              "write_bytes": 1110016
+            },
+            {
+              "wall_seconds": 0.21776659500028472,
+              "user_seconds": 0.12861599999999918,
+              "system_seconds": 0.07518499999999939,
+              "phases_seconds": {
+                "fluxscale_read": 0.116800912,
+                "fluxscale_estimate": 0.041430724,
+                "fluxscale_write": 0.017264618,
+                "fluxscale_history": 0.032965608
+              },
+              "read_bytes": 50442240,
+              "write_bytes": 1114112
+            },
+            {
+              "wall_seconds": 0.24420976599503774,
+              "user_seconds": 0.15407199999999932,
+              "system_seconds": 0.07436799999999977,
+              "phases_seconds": {
+                "fluxscale_read": 0.145362998,
+                "fluxscale_estimate": 0.041855887,
+                "fluxscale_write": 0.016131511,
+                "fluxscale_history": 0.030212479
+              },
+              "read_bytes": 50446336,
+              "write_bytes": 1122304
+            }
+          ],
+          "after": [
+            {
+              "wall_seconds": 0.20277423500374425,
+              "user_seconds": 0.12942900000000002,
+              "system_seconds": 0.05571099999999962,
+              "phases_seconds": {
+                "fluxscale_read": 0.09749064,
+                "fluxscale_estimate": 0.044410395,
+                "fluxscale_write": 0.021006718,
+                "fluxscale_history": 0.030163579
+              },
+              "read_bytes": 50425856,
+              "write_bytes": 1093632
+            },
+            {
+              "wall_seconds": 0.21358888000395382,
+              "user_seconds": 0.1371380000000002,
+              "system_seconds": 0.06108500000000028,
+              "phases_seconds": {
+                "fluxscale_read": 0.103264318,
+                "fluxscale_estimate": 0.047274009,
+                "fluxscale_write": 0.022500763,
+                "fluxscale_history": 0.030568371
+              },
+              "read_bytes": 50429952,
+              "write_bytes": 1105920
+            },
+            {
+              "wall_seconds": 0.2950328500010073,
+              "user_seconds": 0.18702299999999994,
+              "system_seconds": 0.09015800000000063,
+              "phases_seconds": {
+                "fluxscale_read": 0.17957724,
+                "fluxscale_estimate": 0.049460081,
+                "fluxscale_write": 0.018087314,
+                "fluxscale_history": 0.036949266
+              },
+              "read_bytes": 50434048,
+              "write_bytes": 1105920
+            },
+            {
+              "wall_seconds": 0.19932217400491936,
+              "user_seconds": 0.14812500000000028,
+              "system_seconds": 0.037820999999999216,
+              "phases_seconds": {
+                "fluxscale_read": 0.100090704,
+                "fluxscale_estimate": 0.044813476,
+                "fluxscale_write": 0.016868219,
+                "fluxscale_history": 0.028086354
+              },
+              "read_bytes": 50442240,
+              "write_bytes": 1114112
+            },
+            {
+              "wall_seconds": 0.26189992199942935,
+              "user_seconds": 0.16810500000000062,
+              "system_seconds": 0.06995200000000068,
+              "phases_seconds": {
+                "fluxscale_read": 0.111917451,
+                "fluxscale_estimate": 0.052888645,
+                "fluxscale_write": 0.01876955,
+                "fluxscale_history": 0.067574018
+              },
+              "read_bytes": 50446336,
+              "write_bytes": 1118208
+            }
+          ]
+        }
+      }
+    },
+    "controlled": {
+      "scope": "Paired native CLI diagnostic, no public-Python/CASA speedup claim",
+      "before_revision": "cb9895b55",
+      "after_revision": "872a54058",
+      "workers": 1,
+      "repeats": 5,
+      "cases": {
+        "300k-full-warm": {
+          "before": [
+            {
+              "wall_seconds": 0.4958703029988101,
+              "user_seconds": 0.28320100000000015,
+              "system_seconds": 0.21122099999999988,
+              "phases_seconds": {
+                "fluxscale_read": 0.197802333,
+                "fluxscale_estimate": 0.085587717,
+                "fluxscale_write": 0.191041457,
+                "fluxscale_history": 0.006460658
+              },
+              "read_bytes": 28672,
+              "write_bytes": 58073088
+            },
+            {
+              "wall_seconds": 0.4012615659958101,
+              "user_seconds": 0.22756699999999985,
+              "system_seconds": 0.17278099999999985,
+              "phases_seconds": {
+                "fluxscale_read": 0.118041982,
+                "fluxscale_estimate": 0.038589769,
+                "fluxscale_write": 0.216909057,
+                "fluxscale_history": 0.008756235
+              },
+              "read_bytes": 0,
+              "write_bytes": 58044416
+            },
+            {
+              "wall_seconds": 0.3669366979956976,
+              "user_seconds": 0.21535599999999988,
+              "system_seconds": 0.15023799999999987,
+              "phases_seconds": {
+                "fluxscale_read": 0.12240457,
+                "fluxscale_estimate": 0.051857596,
+                "fluxscale_write": 0.173152529,
+                "fluxscale_history": 0.006921617
+              },
+              "read_bytes": 0,
+              "write_bytes": 58044416
+            },
+            {
+              "wall_seconds": 0.36031457900389796,
+              "user_seconds": 0.24801699999999993,
+              "system_seconds": 0.110379,
+              "phases_seconds": {
+                "fluxscale_read": 0.118719042,
+                "fluxscale_estimate": 0.043532301,
+                "fluxscale_write": 0.177094031,
+                "fluxscale_history": 0.007828032
+              },
+              "read_bytes": 0,
+              "write_bytes": 58048512
+            },
+            {
+              "wall_seconds": 0.7258135750016663,
+              "user_seconds": 0.3317730000000001,
+              "system_seconds": 0.37176300000000007,
+              "phases_seconds": {
+                "fluxscale_read": 0.34716323,
+                "fluxscale_estimate": 0.045652314,
+                "fluxscale_write": 0.315414632,
+                "fluxscale_history": 0.005272231
+              },
+              "read_bytes": 0,
+              "write_bytes": 58052608
+            }
+          ],
+          "after": [
+            {
+              "wall_seconds": 0.8018262309997226,
+              "user_seconds": 0.339457,
+              "system_seconds": 0.45335100000000006,
+              "phases_seconds": {
+                "fluxscale_read": 0.217089315,
+                "fluxscale_estimate": 0.039209321,
+                "fluxscale_write": 0.508600761,
+                "fluxscale_history": 0.010140867
+              },
+              "read_bytes": 0,
+              "write_bytes": 58044416
+            },
+            {
+              "wall_seconds": 0.40882891599903814,
+              "user_seconds": 0.23833799999999994,
+              "system_seconds": 0.16854100000000027,
+              "phases_seconds": {
+                "fluxscale_read": 0.088278723,
+                "fluxscale_estimate": 0.048016783,
+                "fluxscale_write": 0.248352007,
+                "fluxscale_history": 0.008936078
+              },
+              "read_bytes": 0,
+              "write_bytes": 58052608
+            },
+            {
+              "wall_seconds": 0.6290201609954238,
+              "user_seconds": 0.36557200000000023,
+              "system_seconds": 0.23098099999999988,
+              "phases_seconds": {
+                "fluxscale_read": 0.079022193,
+                "fluxscale_estimate": 0.041163661,
+                "fluxscale_write": 0.479382901,
+                "fluxscale_history": 0.011578338
+              },
+              "read_bytes": 0,
+              "write_bytes": 58044416
+            },
+            {
+              "wall_seconds": 0.33747065599891357,
+              "user_seconds": 0.2373890000000003,
+              "system_seconds": 0.09842900000000032,
+              "phases_seconds": {
+                "fluxscale_read": 0.102634705,
+                "fluxscale_estimate": 0.046123555,
+                "fluxscale_write": 0.169662915,
+                "fluxscale_history": 0.007070198
+              },
+              "read_bytes": 0,
+              "write_bytes": 58052608
+            },
+            {
+              "wall_seconds": 0.30520661100308644,
+              "user_seconds": 0.20660199999999973,
+              "system_seconds": 0.09744899999999967,
+              "phases_seconds": {
+                "fluxscale_read": 0.085496257,
+                "fluxscale_estimate": 0.037290471,
+                "fluxscale_write": 0.165096775,
+                "fluxscale_history": 0.006858553
+              },
+              "read_bytes": 0,
+              "write_bytes": 58044416
+            }
+          ]
+        }
+      },
+      "history_policy": "restore identical HISTORY before every call, outside timer",
+      "writeback_policy": "fsync owned outputs/MS after each timed call; outside CPU/wall timing"
+    }
+  }
 }
