@@ -202,7 +202,7 @@
 <a href=#202 id=202 data-nosnippet>202</a>                format_apply_table_selection(<span class="kw-2">&amp;</span>table.spec.apply_to)
 <a href=#203 id=203 data-nosnippet>203</a>            );
 <a href=#204 id=204 data-nosnippet>204</a>        }
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(gainfield) = <span class="kw-2">&amp;</span>table.resolved_gainfield {
+<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">for </span>gainfield <span class="kw">in </span><span class="kw-2">&amp;</span>table.resolved_gainfields {
 <a href=#206 id=206 data-nosnippet>206</a>            <span class="kw">let _ </span>= <span class="macro">writeln!</span>(
 <a href=#207 id=207 data-nosnippet>207</a>                out,
 <a href=#208 id=208 data-nosnippet>208</a>                <span class="string">"    gainfield={} {:?}"</span>,
@@ -277,7 +277,7 @@
 <a href=#277 id=277 data-nosnippet>277</a>                format_apply_table_selection(<span class="kw-2">&amp;</span>table.spec.apply_to)
 <a href=#278 id=278 data-nosnippet>278</a>            );
 <a href=#279 id=279 data-nosnippet>279</a>        }
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(gainfield) = <span class="kw-2">&amp;</span>table.resolved_gainfield {
+<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">for </span>gainfield <span class="kw">in </span><span class="kw-2">&amp;</span>table.resolved_gainfields {
 <a href=#281 id=281 data-nosnippet>281</a>            <span class="kw">let _ </span>= <span class="macro">writeln!</span>(
 <a href=#282 id=282 data-nosnippet>282</a>                out,
 <a href=#283 id=283 data-nosnippet>283</a>                <span class="string">"    gainfield={} {:?}"</span>,
