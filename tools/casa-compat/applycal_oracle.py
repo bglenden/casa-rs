@@ -168,6 +168,20 @@ def run(root, native_bin, only=None):
     tool.putcol('TIME', times+5.)
     tool.close()
 
+    scalar_time_gain = root/'time-scalar-t.gcal'
+    casa.gaincal(vis=str(source), caltable=str(scalar_time_gain), refant='A0', solint='int', gaintype='T', minsnr=0.)
+    tool.open(str(scalar_time_gain), nomodify=False)
+    fields, antennas, times = (tool.getcol(column) for column in ['FIELD_ID', 'ANTENNA1', 'TIME'])
+    values = tool.getcol('CPARAM')
+    for row, (field, antenna, epoch) in enumerate(zip(fields, antennas, times)):
+        amplitude = (2. if field == 0 else 4.) + .15*np.sin((epoch-times.min())/13.)
+        phase = (.3 if field == 0 else -.5) if antenna == 0 else 0.
+        values[:, :, row] = amplitude*np.exp(1.j*phase)
+    tool.putcol('CPARAM', values)
+    tool.putcol('FLAG', np.zeros_like(tool.getcol('FLAG')))
+    tool.putcol('TIME', times+5.)
+    tool.close()
+
     # Separate contexts and shifted grids make interpolation modifiers observable.
     observation_source, observation_gain = root/'source-observations.ms', root/'observations.gcal'
     for original, destination in [(chain_source, observation_source), (time_gain, observation_gain)]:
@@ -540,6 +554,11 @@ def run(root, native_bin, only=None):
     for method in ['LINEAR', 'aipslin', 'linear,aipslin', 'bogus']:
         case('chain-interpolation-invalid-'+method.replace(',', '-'), dict(interp=[method]), gain=time_gain, input_vis=chain_source)
     case('chain-frequency-unknown-linear-fallback', dict(interp=['linear,unknown']), gain=curved_bandpass, input_vis=shifted_source, precorrected=True)
+    case('chain-T-default', gain=scalar_time_gain, input_vis=chain_source, precorrected=True)
+    case('chain-T-nearest-fields', dict(gainfield=['0,1'], interp=['nearest']), gain=scalar_time_gain, input_vis=chain_source, precorrected=True)
+    case('chain-T-cubic', dict(interp=['cubic']), gain=scalar_time_gain, input_vis=chain_source, precorrected=True)
+    case('chain-T-PD', dict(interp=['linearPD']), gain=scalar_time_gain, input_vis=phase_delay_source, precorrected=True)
+    case('chain-T-B', dict(gaintable=[str(scalar_time_gain), str(curved_bandpass)], gainfield=['0,1', ''], interp=['cubic', 'linear,spline'], calwt=[True, True]), input_vis=shifted_source, precorrected=True)
     case('review-scalar-bandpass-PD', dict(interp=['linearPD']), gain=scalar_bandpass, input_vis=phase_delay_source, precorrected=True)
     case('review-nearest-perobs-scope', dict(gainfield=['nearest'], interp=['linearperobs']), gain=observation_gain, input_vis=observation_source, precorrected=True)
     case('review-nearest-field-tie', dict(gainfield=['nearest']), gain=tied_gain, input_vis=chain_source)

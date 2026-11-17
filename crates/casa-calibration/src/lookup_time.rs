@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Simulator time curves: local cubic stencils and retained natural splines.
+//! Shared calibration time curves: local cubic stencils and retained natural splines.
 //! Complex parameters use amplitude/phase; real parameters preserve their sign.
 use super::{
     ApplyExecutionError, ApplyInterpolationMode, CalibrationGrid, CalibrationSolution,
@@ -17,7 +17,7 @@ pub use context::TimeInterpolationOptions;
 pub(crate) use context::TimeQuery;
 use context::TimeScope;
 
-/// Amplitude/phase interpolation in time for simulator calibration tables.
+/// Amplitude/phase interpolation in time for calibration tables.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]

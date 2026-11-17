@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Simulator-only time segmentation and phase-delay context.
+//! Shared calibration time segmentation and phase-delay context.
 use super::*;
 use casa_tables::{
     RequiredScalarColumnDestination as Destination, RequiredScalarColumnValuesMut as Values, Table,
@@ -8,7 +8,7 @@ use casa_tables::{
 use std::collections::HashSet;
 use std::sync::Arc;
 
-/// Time lookup options used when imposing calibration errors on simulated DATA.
+/// Time lookup options shared by task application and simulated DATA.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimeInterpolationOptions {
     /// Amplitude/phase curve within each selected time series.
@@ -19,7 +19,7 @@ pub struct TimeInterpolationOptions {
     pub per_observation: bool,
     /// Partition by SCAN_NUMBER; takes precedence over per-observation lookup.
     pub per_scan: bool,
-    /// Number of OBSERVATION rows in the simulated MeasurementSet.
+    /// Number of OBSERVATION rows in the data MeasurementSet.
     pub observation_count: usize,
 }
 

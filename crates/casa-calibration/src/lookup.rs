@@ -50,12 +50,11 @@ pub(crate) use time::{TimePlan, TimeQuery};
 /// Which fields' solutions a row takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldSelection {
-    /// The row's field's, or the table's sole field's: the apply
-    /// executor's default.
+    /// Use the row's field, falling back to a table's sole field.
+    /// Traditional applycal selects its calibration fields separately.
     RowField,
-    /// Every field's, as one series in time: CASA's `Simulator::setapply`
-    /// ignores fields and does not partition the table by them (#893
-    /// review).
+    /// Merge every supplied calibration field into one time series, as
+    /// traditional applycal and CASA's simulator do by default.
     AnyField,
 }
 
