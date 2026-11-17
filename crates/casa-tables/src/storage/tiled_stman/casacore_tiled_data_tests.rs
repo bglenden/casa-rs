@@ -316,3 +316,56 @@ fn a_scalar_data_column_over_two_row_axes_is_refused_not_misread() {
     };
     assert!(refusal.contains("scalar"), "{refusal}");
 }
+
+/// Regression test for #1038: fresh lazy reads of a `TiledDataStMan` scalar
+/// `id` column map rows through `row_map`/`cube_map` without duplicating values
+/// or falling back to per-hypercube row counts.
+#[test]
+fn lazy_scalar_id_reads_match_row_map() {
+    for (prefix, row_count) in [("", ROWS), ("multi/", MULTI_ROWS)] {
+        let expected: Vec<Option<ScalarValue>> = (0..row_count)
+            .map(|row| Some(ScalarValue::Int32(if row < 2 { 10 } else { 20 })))
+            .collect();
+        for endian in ENDIANS {
+            let name = format!("{prefix}{endian}");
+            let path = fixture(&name);
+
+            let lazy_all = Table::open(TableOptions::new(&path)).expect("open lazy table");
+            assert_eq!(
+                lazy_all
+                    .column_accessor("id")
+                    .expect("id column")
+                    .scalar_cells_owned()
+                    .expect("scalar_cells_owned"),
+                expected,
+                "{name}: scalar_cells_owned"
+            );
+
+            let selected_rows = [row_count - 1, 0, 2, 1];
+            let lazy_rows = Table::open(TableOptions::new(&path)).expect("open lazy table");
+            assert_eq!(
+                lazy_rows
+                    .column_accessor("id")
+                    .expect("id column")
+                    .scalar_cells_owned_for_rows(&selected_rows)
+                    .expect("scalar_cells_owned_for_rows"),
+                selected_rows
+                    .iter()
+                    .map(|&row| expected[row].clone())
+                    .collect::<Vec<_>>(),
+                "{name}: scalar_cells_owned_for_rows"
+            );
+
+            let lazy_cell = Table::open(TableOptions::new(&path)).expect("open lazy table");
+            let ids = lazy_cell.column_accessor("id").expect("id column");
+            for (row, value) in expected.iter().enumerate() {
+                let expected_cell = Value::Scalar(value.clone().expect("defined id"));
+                assert_eq!(
+                    ids.get(row).expect("scalar_cell"),
+                    Some(&expected_cell),
+                    "{name}: row {row}"
+                );
+            }
+        }
+    }
+}

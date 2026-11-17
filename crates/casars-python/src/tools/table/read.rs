@@ -172,7 +172,11 @@ fn array_cells(table: &Table, column: &str, rows: &[usize]) -> Result<Vec<CasaVa
 }
 
 /// The scalar cells of `rows`.
-fn scalar_cells(table: &Table, column: &str, rows: &[usize]) -> Result<Vec<ScalarValue>, Fail> {
+pub(super) fn scalar_cells(
+    table: &Table,
+    column: &str,
+    rows: &[usize],
+) -> Result<Vec<ScalarValue>, Fail> {
     let cells = table
         .column_accessor(column)?
         .scalar_cells_owned_for_rows(rows)?;
@@ -284,9 +288,15 @@ impl Open {
                 .into_iter()
                 .map(|cell| values::scalar_column(vec![cell]))
                 .collect(),
-            ColumnType::Array(_) => array_cells(&root.table, column, &root_rows)?
+            ColumnType::Array(_) => root
+                .table
+                .column_accessor(column)?
+                .array_cells_owned_uncached(&root_rows)?
                 .into_iter()
-                .map(|cell| values::stack_rows(&[cell]))
+                .map(|cell| match cell {
+                    Some(array) => values::stack_rows(&[values::array(&array)]),
+                    None => Ok(CasaValue::Bool(false)),
+                })
                 .collect::<Result<Vec<_>, _>>()?,
         };
         Ok(CasaValue::record(

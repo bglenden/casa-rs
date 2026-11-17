@@ -20,6 +20,7 @@
 mod cache;
 mod cell_convert;
 mod cell_value;
+mod coliter;
 mod copy;
 mod create;
 mod create_multi_move;
@@ -29,6 +30,7 @@ mod keyword_value;
 mod new_column;
 mod read;
 mod registry;
+mod row;
 mod rownumbers;
 mod slices;
 mod state;
@@ -49,9 +51,11 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::convert::value::CasaValue;
 use crate::tools::{LogLine, emit, not_yet_implemented_in};
+pub(crate) use coliter::PyTableColIter;
 use copy::CopyRequest;
 use keyword_value::Incoming;
 use read::KeywordRef;
+pub(crate) use row::PyTableRowTool;
 use slices::Corners;
 use state::{Fail, LockRequest, State};
 use write::InfoUpdate;
@@ -182,6 +186,11 @@ impl PyTableTool {
     fn guard(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    /// A clone of the state handle so another constructor can detach the GIL.
+    pub(super) fn shared_state(&self) -> Arc<Mutex<State>> {
+        Arc::clone(&self.state)
+    }
 }
 
 /// A required text argument (a column name); CASA names the argument with
@@ -193,7 +202,11 @@ fn text(value: &Bound<'_, PyAny>, argument: &str) -> PyResult<String> {
 }
 
 /// An integer argument, or `default`.
-fn integer(value: Option<&Bound<'_, PyAny>>, argument: &str, default: i64) -> PyResult<i64> {
+pub(super) fn integer(
+    value: Option<&Bound<'_, PyAny>>,
+    argument: &str,
+    default: i64,
+) -> PyResult<i64> {
     value.map_or(Ok(default), |value| {
         value
             .extract()
@@ -226,7 +239,7 @@ fn column_names(value: &Bound<'_, PyAny>, argument: &str) -> PyResult<Vec<String
 }
 
 /// A flag argument, or `default`.
-fn flag(value: Option<&Bound<'_, PyAny>>, default: bool) -> PyResult<bool> {
+pub(super) fn flag(value: Option<&Bound<'_, PyAny>>, default: bool) -> PyResult<bool> {
     value.map_or(Ok(default), |value| value.extract())
 }
 
@@ -303,6 +316,23 @@ fn record_fields(value: &Bound<'_, PyAny>) -> PyResult<Vec<(String, Incoming)>> 
         fields.push((key.extract::<String>()?, Incoming::from_python(&item)?));
     }
     Ok(fields)
+}
+
+/// String column names for `getcoliter` (`str` or sequence of `str`; any other
+/// non-string argument yields `Vec::new()`).
+fn iter_column_names(value: &Bound<'_, PyAny>) -> Vec<String> {
+    if let Ok(name) = value.extract::<String>() {
+        return vec![name];
+    }
+    if let Ok(names) = value.extract::<Vec<String>>() {
+        return names;
+    }
+    if let Ok(list) = value.call_method0("tolist")
+        && let Ok(names) = list.extract::<Vec<String>>()
+    {
+        return names;
+    }
+    Vec::new()
 }
 
 /// `putinfo`'s record: the `type`, `subType` and `readme` it has.
@@ -1076,5 +1106,39 @@ impl PyTableTool {
         self.call(py, move |state, log| {
             state.putvarcol(column, fields, rows, log)
         })
+    }
+
+    /// Return a lazy row-by-row iterator over one or more columns.
+    #[pyo3(signature = (columnname, startrow = None, nrow = None, rowincr = None, torecord = None), text_signature = "($self, columnname, startrow=0, nrow=-1, rowincr=1, torecord=False)")]
+    fn getcoliter(
+        &self,
+        py: Python<'_>,
+        columnname: &Bound<'_, PyAny>,
+        startrow: Option<&Bound<'_, PyAny>>,
+        nrow: Option<&Bound<'_, PyAny>>,
+        rowincr: Option<&Bound<'_, PyAny>>,
+        torecord: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let columns = iter_column_names(columnname);
+        let rows = row_selection(startrow, nrow, rowincr)?;
+        let torecord = flag(torecord, false)?;
+        let iter = py.detach(|| coliter::create(&mut self.guard(), columns, rows, torecord))?;
+        Ok(Py::new(py, iter)?.into_any())
+    }
+
+    /// Return a `tablerow` accessor object over all or selected columns.
+    #[pyo3(signature = (columnnames = None, exclude = None), text_signature = "($self, columnnames=[], exclude=False)")]
+    fn row(
+        &self,
+        py: Python<'_>,
+        columnnames: Option<&Bound<'_, PyAny>>,
+        exclude: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let cols = row::parse_columnnames(columnnames)?;
+        let excl = flag(exclude, false)?;
+        let mut lines = Vec::new();
+        let row_tool = py.detach(|| row::create(&mut self.guard(), cols, excl, &mut lines));
+        emit(py, LOGGER, &lines)?;
+        Ok(Py::new(py, row_tool?)?.into_any())
     }
 }

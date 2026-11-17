@@ -301,9 +301,8 @@ MS_RENAMES = [("ANTENNA1", "ANT1"), ("DATA", "DATA2"), ("FLAG_ROW", "FR"), ("TIM
 MS_REMOVED = ["DATA", "FLAG_ROW"]
 
 
-#: Columns whose cells the dump does not read, each with the issue that says
-#: why: casa-rs's lazy read of a `TiledDataStMan` id column is wrong (#1038).
-UNREAD_CELLS = {("tiled_multi.table", "id"): "#1038"}
+#: Columns whose cells the dump does not read, each with the issue that says why.
+UNREAD_CELLS: dict[tuple[str, str], str] = {}
 
 
 def structure_dump(tool, path, table_name=""):

@@ -277,7 +277,7 @@ impl State {
             }
             table.put_cell_slice(&column, row, &slicer, &data)?;
             Ok(Persist::Rows {
-                column,
+                columns: vec![column],
                 rows: vec![row],
             })
         })
@@ -342,7 +342,7 @@ impl State {
                 return Ok(Persist::Nothing);
             }
             Ok(Persist::Rows {
-                column,
+                columns: vec![column],
                 rows: selected,
             })
         })

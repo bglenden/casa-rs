@@ -1021,6 +1021,8 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<tools::image::PyImageTool>()?;
     module.add_class::<tools::coordsys::PyCoordsys>()?;
     module.add_class::<tools::table::PyTableTool>()?;
+    module.add_class::<tools::table::PyTableColIter>()?;
+    module.add_class::<tools::table::PyTableRowTool>()?;
     module.add_class::<tools::msmetadata::PyMsMetadata>()?;
     module.add_class::<tools::ms::PyMsTool>()?;
     module.add_class::<tools::simutil::PySimutil>()?;

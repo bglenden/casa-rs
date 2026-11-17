@@ -6346,3 +6346,15 @@ casa-rs refuses overlapping listing/product paths before mutation and reports
 listing write errors. This preserves data and implements the requested file
 output rather than silently losing it. Source: `SolvableVisJones::fluxscale`,
 the `oListFile` stream blocks.
+
+## `tablerow.__getitem__` process abort in CASA 6.7.6.14
+
+In CASA 6.7.6.14, indexing a `tablerow` accessor via `r[rownr]` (including valid
+and out-of-range row indices, e.g. `r[0]` or `r[10]`) terminates Python with
+segmentation fault (signal 11, exit code 139) inside the SWIG `casac::tablerow`
+wrapper (`__getitem__`), even though `r.get(rownr)` and `len(r)` succeed.
+
+casa-rs implements `tablerow.__getitem__` safely under the GIL-detached Rust
+table accessor, supporting negative indices, slices, and sequences of row
+indices, and raising `IndexError` cleanly on out-of-range indices.
+[Table tool issue #1028](https://github.com/bglenden/casa-rs/issues/1028)

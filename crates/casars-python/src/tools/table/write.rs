@@ -17,7 +17,7 @@ use casa_types::{RecordField, RecordValue, Value};
 
 use super::keyword_value::Incoming;
 use super::read::KeywordRef;
-use super::state::{Fail, State, no_table};
+use super::state::{Fail, RootOpen, State, no_table};
 use crate::convert::value::CasaValue;
 
 type Reply = Result<CasaValue, Fail>;
@@ -34,15 +34,20 @@ pub(super) enum Target {
     /// The table's rows or columns, as the casacore operation named here
     /// refuses a table not open for update.
     Structure(&'static str),
+    /// A `tablerow` handle writing to a read-only table raises a `RuntimeError`.
+    RowProxy,
 }
 
 /// What a change leaves to write to the disk.
 pub(super) enum Persist {
     /// The table's keywords and info.
     Metadata,
-    /// The cells of `rows` in `column`, in place in the column's storage
+    /// The cells of `rows` in `columns`, in place in each column's storage
     /// manager.
-    Rows { column: String, rows: Vec<usize> },
+    Rows {
+        columns: Vec<String>,
+        rows: Vec<usize>,
+    },
     /// Nothing: the call selected no cell.
     Nothing,
     /// The change has written itself to the disk (a structural change in
@@ -215,123 +220,141 @@ impl State {
         let name = open.name.display().to_string();
         let row_map = open.row_map.clone();
         let mut root = open.root();
-        if !root.writable {
-            if matches!(target, Target::Cells) {
-                return Ok(CasaValue::Bool(false));
-            }
-            return runtime(match target {
-                Target::Cells => String::new(),
-                Target::TableKeywords => {
-                    format!("Table::rwKeywordSet cannot be used: table {name} is not writable")
-                }
-                Target::ColumnKeywords => {
-                    format!(
-                        "TableColumn::rwKeywordSet cannot be used: table {name} is not writable"
-                    )
-                }
-                Target::Info => format!("Table {name} is not writable"),
-                Target::Structure(operation) => {
-                    format!("Invalid Table operation: {operation}; table {name} is not writable")
-                }
-            });
-        }
-        // A memory table has no disk or lock file; changes stay in its handle.
-        if root.table.is_memory() {
-            change(&mut root.table, row_map.as_deref())?;
-            return Ok(CasaValue::Bool(true));
-        }
-        if root.table.is_reference_table()? {
-            return Err(Fail::Unsupported(
-                "writing through an opened reference table is not yet implemented in casa-rs \
-                 (#1028)"
-                    .to_string(),
-            ));
-        }
-        let automatic = root.lock.automatic();
-        let attempts = root.lock.attempts();
-        if automatic {
-            if !root.table.lock(LockType::Write, attempts)? {
-                return runtime(format!("Table {name} could not be write locked"));
-            }
-        } else if !root.table.has_lock(LockType::Write) {
-            return runtime(format!(
-                "ColumnSet::doLock: table {name} should be locked when using UserLocking"
-            ));
-        }
-        // Whether the change wrote itself and the handle holds what it wrote.
-        let mut written = false;
-        let saved = change(&mut root.table, row_map.as_deref()).and_then(|persist| match persist {
-            Persist::Nothing => Ok(()),
-            Persist::Done => {
-                written = true;
-                Ok(())
-            }
-            Persist::Metadata => root
-                .table
-                .save_metadata_only(TableOptions::new(&root.name))
-                .map_err(Fail::from),
-            Persist::Rows { column, mut rows } => {
-                rows.sort_unstable();
-                rows.dedup();
-                let partial = root
-                    .table
-                    .prepare_write()
-                    .save_selected_rows(&[column.as_str()], &rows);
-                match partial {
-                    // StManAipsIO keeps its table in one file and writes it
-                    // in full, as casacore does. A table that is one such
-                    // group is written in full with the group's name and
-                    // byte order kept, which is the layout it has. Any
-                    // other table must not be rewritten (it would lose its
-                    // managers), so the refusal stands.
-                    Err(TableError::Storage(message))
-                        if message.starts_with("partial in-place save does not support") =>
-                    {
-                        match root.table.single_rewrite_options()? {
-                            Some(options) => root.table.save(options).map_err(Fail::from),
-                            None => Err(Fail::from(TableError::Storage(message))),
-                        }
-                    }
-                    other => other.map_err(Fail::from),
-                }
-            }
-        });
-        // A table that holds the write lock and has changes it has not
-        // flushed is written in full, as StManAipsIO, when it is closed or
-        // dropped: a `user` table closed without an unlock, a `permanent`
-        // one always (a `casa-tables` defect, #1035; this reload is the
-        // workaround and goes with its fix). The change is on disk, or part
-        // of it is if the save failed part way; either way the table is
-        // reloaded as the disk has it, so that nothing is left to flush, and
-        // what reached the disk is still published when the lock is
-        // released. A reload that fails marks the table clean all the same
-        // (`resync_or_discard`): the full write must never be left to a
-        // drop. An automatic table releases through
-        // `unlock_metadata_only_or_discard`, which does the same when the
-        // release fails. The release comes last whatever else went wrong,
-        // so an error never leaves the write lock held with changes. A
-        // change that wrote itself needs no reload: the handle is what it
-        // wrote (a full save marks it flushed), and a reload under the lock
-        // would read the row count last published, which a removal of rows
-        // has lowered.
-        let reloaded = if saved.is_err() || (!automatic && !written) {
-            root.table.resync_or_discard().map_err(Fail::from)
-        } else {
-            Ok(())
-        };
-        let released = if automatic {
-            root.table
-                .unlock_metadata_only_or_discard()
-                .map_err(Fail::from)
-        } else {
-            Ok(())
-        };
-        saved?;
-        reloaded?;
-        released?;
-        Ok(CasaValue::Bool(true))
+        write_root(&mut root, &name, target, row_map.as_deref(), change)
     }
+}
 
+/// Applies `change` directly to `root` and persists what it modified under
+/// the table's lock policy. Shared by `State::write_with` and `PyTableRowTool::put`.
+pub(super) fn write_root(
+    root: &mut RootOpen,
+    name: &str,
+    target: Target,
+    row_map: Option<&[usize]>,
+    change: impl FnOnce(&mut Table, Option<&[usize]>) -> Result<Persist, Fail>,
+) -> Reply {
+    if !root.writable {
+        if matches!(target, Target::Cells) {
+            return Ok(CasaValue::Bool(false));
+        }
+        return runtime(match target {
+            Target::Cells => String::new(),
+            Target::TableKeywords => {
+                format!("Table::rwKeywordSet cannot be used: table {name} is not writable")
+            }
+            Target::ColumnKeywords => {
+                format!("TableColumn::rwKeywordSet cannot be used: table {name} is not writable")
+            }
+            Target::Info => format!("Table {name} is not writable"),
+            Target::Structure(operation) => {
+                format!("Invalid Table operation: {operation}; table {name} is not writable")
+            }
+            Target::RowProxy => "TableRowProxy: the given TableRow is not writable".into(),
+        });
+    }
+    // A memory table has no disk or lock file; changes stay in its handle.
+    if root.table.is_memory() {
+        change(&mut root.table, row_map)?;
+        return Ok(CasaValue::Bool(true));
+    }
+    if root.table.is_reference_table()? {
+        return Err(Fail::Unsupported(
+            "writing through an opened reference table is not yet implemented in casa-rs (#1028)"
+                .to_string(),
+        ));
+    }
+    let automatic = root.lock.automatic();
+    let attempts = root.lock.attempts();
+    if automatic {
+        if !root.table.lock(LockType::Write, attempts)? {
+            return runtime(format!("Table {name} could not be write locked"));
+        }
+    } else if !root.table.has_lock(LockType::Write) {
+        return runtime(format!(
+            "ColumnSet::doLock: table {name} should be locked when using UserLocking"
+        ));
+    }
+    // Whether the change wrote itself and the handle holds what it wrote.
+    let mut written = false;
+    let saved = change(&mut root.table, row_map).and_then(|persist| match persist {
+        Persist::Nothing => Ok(()),
+        Persist::Done => {
+            written = true;
+            Ok(())
+        }
+        Persist::Metadata => root
+            .table
+            .save_metadata_only(TableOptions::new(&root.name))
+            .map_err(Fail::from),
+        Persist::Rows {
+            mut columns,
+            mut rows,
+        } => {
+            columns.sort_unstable();
+            columns.dedup();
+            rows.sort_unstable();
+            rows.dedup();
+            let col_refs: Vec<&str> = columns.iter().map(String::as_str).collect();
+            let partial = root
+                .table
+                .prepare_write()
+                .save_selected_rows(&col_refs, &rows);
+            match partial {
+                // StManAipsIO keeps its table in one file and writes it
+                // in full, as casacore does. A table that is one such
+                // group is written in full with the group's name and
+                // byte order kept, which is the layout it has. Any
+                // other table must not be rewritten (it would lose its
+                // managers), so the refusal stands.
+                Err(TableError::Storage(message))
+                    if message.starts_with("partial in-place save does not support") =>
+                {
+                    match root.table.single_rewrite_options()? {
+                        Some(options) => root.table.save(options).map_err(Fail::from),
+                        None => Err(Fail::from(TableError::Storage(message))),
+                    }
+                }
+                other => other.map_err(Fail::from),
+            }
+        }
+    });
+    // A table that holds the write lock and has changes it has not
+    // flushed is written in full, as StManAipsIO, when it is closed or
+    // dropped: a `user` table closed without an unlock, a `permanent`
+    // one always (a `casa-tables` defect, #1035; this reload is the
+    // workaround and goes with its fix). The change is on disk, or part
+    // of it is if the save failed part way; either way the table is
+    // reloaded as the disk has it, so that nothing is left to flush, and
+    // what reached the disk is still published when the lock is
+    // released. A reload that fails marks the table clean all the same
+    // (`resync_or_discard`): the full write must never be left to a
+    // drop. An automatic table releases through
+    // `unlock_metadata_only_or_discard`, which does the same when the
+    // release fails. The release comes last whatever else went wrong,
+    // so an error never leaves the write lock held with changes. A
+    // change that wrote itself needs no reload: the handle is what it
+    // wrote (a full save marks it flushed), and a reload under the lock
+    // would read the row count last published, which a removal of rows
+    // has lowered.
+    let reloaded = if saved.is_err() || (!automatic && !written) {
+        root.table.resync_or_discard().map_err(Fail::from)
+    } else {
+        Ok(())
+    };
+    let released = if automatic {
+        root.table
+            .unlock_metadata_only_or_discard()
+            .map_err(Fail::from)
+    } else {
+        Ok(())
+    };
+    saved?;
+    reloaded?;
+    released?;
+    Ok(CasaValue::Bool(true))
+}
+
+impl State {
     /// `putkeyword(keyword, value, makesubrecord)`.
     pub(super) fn putkeyword(
         &mut self,

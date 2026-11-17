@@ -84,10 +84,8 @@ pub(super) fn record(fields: &RecordValue, owner: &Path) -> CasaValue {
     )
 }
 
-/// A column of no rows: an empty array of the column's type, whatever its
-/// cells' shape.
-pub(super) fn empty_column(data_type: Option<PrimitiveType>) -> CasaValue {
-    let shape = vec![0];
+/// An empty typed array of `shape` (whose product is `0`).
+pub(super) fn empty_array_of(data_type: Option<PrimitiveType>, shape: Vec<usize>) -> CasaValue {
     match data_type {
         Some(PrimitiveType::String) => CasaValue::TextArray {
             shape,
@@ -110,6 +108,12 @@ pub(super) fn empty_column(data_type: Option<PrimitiveType>) -> CasaValue {
             values: Vec::new(),
         },
     }
+}
+
+/// A column of no rows: an empty array of the column's type, whatever its
+/// cells' shape.
+pub(super) fn empty_column(data_type: Option<PrimitiveType>) -> CasaValue {
+    empty_array_of(data_type, vec![0])
 }
 
 /// The scalar cells of a column as one array, as `getcol` returns them.
