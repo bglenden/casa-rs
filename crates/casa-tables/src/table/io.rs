@@ -2190,14 +2190,29 @@ fn collect_sparse_array_group_values_from_current_cells(
         let Some(pending_values) = table.inner.pending_array_cells(&col_desc.col_name) else {
             return Ok(None);
         };
-        let pending_by_row: std::collections::HashMap<usize, &ArrayValue> = pending_values
-            .iter()
-            .map(|(row_index, value)| (*row_index, value))
-            .collect();
         let mut values = Vec::with_capacity(row_indices.len());
-        for &row_index in row_indices {
-            if let Some(value) = pending_by_row.get(&row_index) {
-                values.push((row_index, Some((*value).clone())));
+        if row_indices.windows(2).all(|pair| pair[0] < pair[1])
+            && pending_values.windows(2).all(|pair| pair[0].0 < pair[1].0)
+        {
+            let mut slot = 0;
+            for &row_index in row_indices {
+                while slot < pending_values.len() && pending_values[slot].0 < row_index {
+                    slot += 1;
+                }
+                if slot < pending_values.len() && pending_values[slot].0 == row_index {
+                    values.push((row_index, Some(pending_values[slot].1.clone())));
+                }
+            }
+        } else {
+            // Unsorted pending updates can repeat a row: the last value wins.
+            let pending_by_row: std::collections::HashMap<usize, &ArrayValue> = pending_values
+                .iter()
+                .map(|(row_index, value)| (*row_index, value))
+                .collect();
+            for &row_index in row_indices {
+                if let Some(value) = pending_by_row.get(&row_index) {
+                    values.push((row_index, Some((*value).clone())));
+                }
             }
         }
         columns.push(Some(values));

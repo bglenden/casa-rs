@@ -1827,11 +1827,15 @@ impl TableImpl {
             }
             return Ok(Some(value));
         }
-        self.pending_array_cells
-            .by_column
-            .entry(column.to_string())
-            .or_default()
-            .insert(row_index, value);
+        if let Some(pending) = self.pending_array_cells.by_column.get_mut(column) {
+            pending.insert(row_index, value);
+        } else {
+            self.pending_array_cells
+                .by_column
+                .entry(column.to_string())
+                .or_default()
+                .insert(row_index, value);
+        }
         Ok(None)
     }
 
