@@ -2094,6 +2094,7 @@ fn apply_row_all_channels(
             let ant1 = bandpass::prepare(
                 ant1,
                 &cal_spw.channel_frequencies_hz,
+                table_plan.interp,
                 data_spw,
                 row,
                 row.antenna1,
@@ -2103,6 +2104,7 @@ fn apply_row_all_channels(
             let ant2 = bandpass::prepare(
                 ant2,
                 &cal_spw.channel_frequencies_hz,
+                table_plan.interp,
                 data_spw,
                 row,
                 row.antenna2,

@@ -15,6 +15,8 @@ import json
 import os
 from pathlib import Path
 import resource
+import subprocess
+import sys
 import time
 
 import numpy as np
@@ -427,14 +429,13 @@ def run(root, native_bin):
         case('chain-gainfield-'+name, dict(gainfield=[selector]), gain=time_gain, input_vis=chain_source, precorrected=True)
     case('chain-gainfield-scalar', dict(gainfield='FLUX'), gain=time_gain, input_vis=chain_source, precorrected=True)
     for method in ['nearest', 'linear', 'cubic', 'nearestperobs', 'linearperobs',
-                   'nearestperscan', 'linearperscan', 'linearPD']:
+                   'nearestperscan', 'linearperscan', 'linearperobsperscan', 'linearPD']:
         case('chain-time-'+method, dict(interp=[method]), gain=time_gain, input_vis=chain_source, precorrected=True)
     case('chain-spwmap-identity', dict(spwmap=[0]), gain=time_gain, input_vis=chain_source, precorrected=True)
     case('chain-spwmap-too-long', dict(spwmap=[0, 0]), gain=time_gain, input_vis=chain_source, precorrected=True)
     case('chain-two-tables', dict(gaintable=[str(time_gain), str(constant)], gainfield=['0,1', ''], interp=['linear', 'nearest'], calwt=[True, False]), gain=time_gain, input_vis=chain_source, precorrected=True)
     case('chain-spwmap-remap', dict(spwmap=[1]), gain=unavailable, input_vis=chain_source, precorrected=True)
-    for method in ['nearest', 'linear', 'cubic', 'nearestperobs', 'linearperobs',
-                   'nearestperscan', 'linearperscan', 'linearperobsperscan']:
+    for method in ['nearest', 'linear', 'cubic', 'nearestperobs', 'linearperobs']:
         case('chain-observations-'+method, dict(interp=[method]), gain=observation_gain, input_vis=observation_source, precorrected=True)
     case('chain-observations-mismatch', dict(interp=['linearperobs']), gain=observation_gain, input_vis=chain_source, precorrected=True)
     for method in ['nearestPD', 'linearPD', 'cubicPD']:
@@ -447,6 +448,41 @@ def run(root, native_bin):
     for method in ['LINEAR', 'aipslin', 'linear,aipslin', 'bogus']:
         case('chain-interpolation-invalid-'+method.replace(',', '-'), dict(interp=[method]), gain=time_gain, input_vis=chain_source)
     case('chain-frequency-unknown-linear-fallback', dict(interp=['linear,unknown']), gain=curved_bandpass, input_vis=shifted_source, precorrected=True)
+    # CASA crashes when perscan is combined with multiple observation IDs.
+    # Its documented/source partition is only by scan. Compare native results
+    # to the same samples/scan series under CASA's working one-observation control.
+    result['casa_crash_controls'] = {}
+    for method in ['nearestperscan', 'linearperscan', 'linearperobsperscan', 'spline']:
+        crash_vis = root/('crash-'+method+'.ms')
+        copy_ms(observation_source if method != 'spline' else chain_source, crash_vis)
+        arguments = dict(vis=str(crash_vis), gaintable=[str(observation_gain if method != 'spline' else time_gain)], interp=[method], flagbackup=False)
+        probe = subprocess.run([sys.executable, '-c',
+            'import json,resource,sys; resource.setrlimit(resource.RLIMIT_CORE,(0,0)); '
+            'from casatasks import applycal; applycal(**json.load(sys.stdin))'],
+            input=json.dumps(arguments), text=True, capture_output=True, timeout=45)
+        assert probe.returncode == -11, (method, probe.returncode, probe.stderr)
+        record = dict(casa_returncode=probe.returncode, casa_arguments=arguments,
+                      casa_stderr=probe.stderr, corrected_casa_crash=True)
+        if method != 'spline':
+            native_vis = root/('native-control-'+method+'.ms')
+            copy_ms(observation_source, native_vis)
+            preload = os.environ.pop('LD_PRELOAD', None)
+            try:
+                native.applycal(vis=str(native_vis), gaintable=[str(observation_gain)], interp=[method], flagbackup=False)
+            finally:
+                if preload is not None:
+                    os.environ['LD_PRELOAD'] = preload
+            reference_vis = root/('chain-time-'+method+'.casa.ms')
+            native_columns = contents(native_vis)
+            equal(reference_vis, native_vis, [column for column in native_columns if column != 'OBSERVATION_ID'])
+            np.testing.assert_array_equal(native_columns['OBSERVATION_ID'], contents(observation_source)['OBSERVATION_ID'])
+            record.update(native_matches_casa_single_observation_control=True,
+                          reference_vis=str(reference_vis), native_vis=str(native_vis))
+        else:
+            record['native_reference'] = 'apply_execute::spline_time_apply_matches_the_closed_form_natural_curve'
+        result['casa_crash_controls'][method] = record
+        (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
+    return result
     return result
 
 

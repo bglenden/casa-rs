@@ -3,67 +3,39 @@
 
 use super::*;
 
-// CTPatchedInterp::resampleInFreq masks flagged channels, interpolates
-// amplitude and unwrapped phase, and uses nearest valid values at the edges.
-fn resample(grid: &GainGrid, input: &[f64], output: &[f64]) -> GainGrid {
-    let shape = IxDyn(&[grid.receptor_count, output.len()]);
-    let mut values = ArrayD::from_elem(shape.clone().f(), Complex32::new(0., 0.));
-    let mut flags = ArrayD::from_elem(shape.f(), true);
-    for receptor in 0..grid.receptor_count {
-        let mut points = (0..grid.channel_count)
-            .filter(|&channel| !grid.flag_at(receptor, channel))
-            .map(|channel| (input[channel], grid.value_at(receptor, channel)))
-            .collect::<Vec<_>>();
-        points.sort_by(|left, right| left.0.total_cmp(&right.0));
-        let mut phases = points.iter().map(|point| point.1.arg()).collect::<Vec<_>>();
-        for index in 1..phases.len() {
-            while phases[index] - phases[index - 1] > std::f32::consts::PI {
-                phases[index] -= std::f32::consts::TAU;
-            }
-            while phases[index] - phases[index - 1] < -std::f32::consts::PI {
-                phases[index] += std::f32::consts::TAU;
-            }
-        }
-        for (channel, &frequency) in output.iter().enumerate() {
-            let Some(value) = sample(&points, &phases, frequency) else {
-                continue;
-            };
-            values[[receptor, channel]] = value;
-            flags[[receptor, channel]] = false;
-        }
+// Share CTPatchedInterp's curves, flag registration, phase unwrapping and
+// short-axis rules with simulator application.
+fn resample(
+    grid: &GainGrid,
+    input: &[f64],
+    output: &[f64],
+    mode: crate::FrequencyInterpolation,
+    relative: bool,
+) -> Result<GainGrid, ApplyExecutionError> {
+    fn relative_axis(axis: &[f64]) -> Vec<f64> {
+        let center = axis.iter().sum::<f64>() / axis.len() as f64;
+        let sideband = if axis.first() > axis.last() { -1. } else { 1. };
+        axis.iter()
+            .map(|frequency| (frequency - center) * sideband)
+            .collect()
     }
-    GainGrid {
-        receptor_count: grid.receptor_count,
-        channel_count: output.len(),
-        values,
-        flags,
-    }
-}
-
-fn sample(points: &[(f64, Complex32)], phases: &[f32], frequency: f64) -> Option<Complex32> {
-    let first = points.first()?;
-    let last = points.last().expect("nonempty points");
-    if frequency <= first.0 {
-        return Some(first.1);
-    }
-    if frequency >= last.0 {
-        return Some(last.1);
-    }
-    let upper = points.partition_point(|point| point.0 < frequency);
-    if points[upper].0 == frequency {
-        return Some(points[upper].1);
-    }
-    let lower = upper - 1;
-    let fraction = ((frequency - points[lower].0) / (points[upper].0 - points[lower].0)) as f32;
-    let amplitude =
-        points[lower].1.norm() + fraction * (points[upper].1.norm() - points[lower].1.norm());
-    let phase = phases[lower] + fraction * (phases[upper] - phases[lower]);
-    Some(Complex32::from_polar(amplitude, phase))
+    let (relative_input, relative_output);
+    let (input, output) = if relative {
+        relative_input = relative_axis(input);
+        relative_output = relative_axis(output);
+        (relative_input.as_slice(), relative_output.as_slice())
+    } else {
+        (input, output)
+    };
+    crate::ComplexSolution::of(grid)
+        .resample_frequency(input, output, mode)
+        .map(crate::ComplexSolution::into_gain_grid)
 }
 
 pub(super) fn prepare(
     grid: Arc<CalibrationGrid>,
     input: &[f64],
+    interpolation: ApplyInterpolationMode,
     output: &crate::plan::SpectralWindowPlan,
     row: &ApplyRowPlan,
     antenna_id: i32,
@@ -95,7 +67,15 @@ pub(super) fn prepare(
         gain,
         input,
         &output.channel_frequencies_hz,
-    )));
+        interpolation.frequency_mode(),
+        matches!(
+            interpolation,
+            ApplyInterpolationMode::Casa {
+                relative_frequency: true,
+                ..
+            }
+        ),
+    )?));
     if let Some(cache) = cache {
         cache.insert_materialized_grid(key, prepared.clone());
     }
@@ -164,7 +144,14 @@ mod tests {
                 values: ArrayD::from_shape_vec(IxDyn(&[1, 3]), samples).unwrap(),
                 flags: ArrayD::from_shape_vec(IxDyn(&[1, 3]), vec![false, true, false]).unwrap(),
             };
-            let result = resample(&gain, &frequencies, &[0., 1., 2., 3., 4.]);
+            let result = resample(
+                &gain,
+                &frequencies,
+                &[0., 1., 2., 3., 4.],
+                crate::FrequencyInterpolation::Linear,
+                false,
+            )
+            .unwrap();
             let expected = [
                 Complex32::new(1., 0.),
                 Complex32::new(1., 0.),
@@ -188,7 +175,14 @@ mod tests {
                 Some(vec![100.])
             );
             gain.flags.fill(true);
-            let missing = resample(&gain, &frequencies, &[2.]);
+            let missing = resample(
+                &gain,
+                &frequencies,
+                &[2.],
+                crate::FrequencyInterpolation::Linear,
+                false,
+            )
+            .unwrap();
             assert!(missing.flags.iter().all(|flag| *flag));
             assert!(
                 missing
@@ -212,7 +206,14 @@ mod tests {
             values: ArrayD::from_shape_vec(IxDyn(&[1, 3]), values).unwrap(),
             flags: ArrayD::from_shape_vec(IxDyn(&[1, 3]), vec![false, true, false]).unwrap(),
         };
-        let result = resample(&grid, &[1., 2., 3.], &[2.]);
+        let result = resample(
+            &grid,
+            &[1., 2., 3.],
+            &[2.],
+            crate::FrequencyInterpolation::Linear,
+            false,
+        )
+        .unwrap();
         assert!((result.values[[0, 0]] - Complex32::new(-1., 0.)).norm() < 1e-6);
         assert!(!result.flags[[0, 0]]);
     }

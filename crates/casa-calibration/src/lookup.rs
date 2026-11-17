@@ -147,7 +147,7 @@ pub struct ComplexSolution {
 }
 
 impl ComplexSolution {
-    fn of(grid: &GainGrid) -> Self {
+    pub(crate) fn of(grid: &GainGrid) -> Self {
         let (receptors, channels) = (grid.receptor_count, grid.channel_count);
         let mut values = Vec::with_capacity(receptors * channels);
         let mut flags = Vec::with_capacity(receptors * channels);
@@ -170,6 +170,17 @@ impl ComplexSolution {
             channels,
             values,
             flags,
+        }
+    }
+
+    pub(crate) fn into_gain_grid(self) -> GainGrid {
+        let shape = ndarray::IxDyn(&[self.receptors, self.channels]);
+        GainGrid {
+            receptor_count: self.receptors,
+            channel_count: self.channels,
+            values: ndarray::ArrayD::from_shape_vec(shape.clone(), self.values)
+                .expect("gain dimensions"),
+            flags: ndarray::ArrayD::from_shape_vec(shape, self.flags).expect("flag dimensions"),
         }
     }
 
