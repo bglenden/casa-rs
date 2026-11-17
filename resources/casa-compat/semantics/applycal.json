@@ -5,7 +5,7 @@
   "audit_revision": "f1688b90405d89c94fc7a1c03a32420351e47d3b",
   "parameters": {
     "vis": {
-      "scope": "179 current same-input MAIN/API/state cases match CASA; one explicit nearest-field ambiguity correction has separately verified error/setup state. Full path/coercion forms and remaining errors stay on #1518.",
+      "scope": "Ordinary MeasurementSets and rejected path forms are compared. A two-partition CASA Multi-MS is a confirmed remaining integration gap.",
       "evidence": [
         "oracle",
         "source"
@@ -27,7 +27,7 @@
       "status": "Partial"
     },
     "spw": {
-      "scope": "Ranges, strides, overlapping channel ranges, selected fields, both endians, existing/new corrected data and descending MS grids now agree in common modes. Remaining selection domains and mode combinations stay open.",
+      "scope": "CASA window and channel grammar serves applycal, including wildcard selection, channels, strides, descending and compressed windows. Whole-window selections stay implicit.",
       "evidence": [
         "oracle",
         "source"
@@ -60,7 +60,7 @@
       "status": "Partial"
     },
     "timerange": {
-      "scope": "Native time selection exists; full CASA grammar, boundaries and combinations remain in #1518.",
+      "scope": "The shared CASA time grammar handles exact, range, duration, bound, wildcard and explicit buffer forms. The task wrapper removes a literal outer bracket pair before parsing.",
       "evidence": [
         "oracle",
         "source"
@@ -82,7 +82,7 @@
       "status": "Partial"
     },
     "antenna": {
-      "scope": "Native antenna/baseline selection exists; full grammar, baseline forms and public-state comparisons remain.",
+      "scope": "The shared CASA baseline grammar serves applycal, including lists, negation, distances and combinations with other selectors.",
       "evidence": [
         "oracle",
         "source"
@@ -93,7 +93,7 @@
       "status": "Partial"
     },
     "scan": {
-      "scope": "Native scan selection exists; remaining grammar, combinations and errors need CASA evidence.",
+      "scope": "CASA numeric scan lists, ranges and comparisons use the shared grammar on applycal.",
       "evidence": [
         "oracle",
         "source"
@@ -104,7 +104,7 @@
       "status": "Partial"
     },
     "observation": {
-      "scope": "Native observation selection exists; all supported forms and combinations remain to be compared.",
+      "scope": "Scalar strings and integer observation IDs are kept in their original form for HISTORY and parsed by the shared observation grammar.",
       "evidence": [
         "oracle",
         "source"
@@ -148,7 +148,7 @@
       "status": "Partial"
     },
     "gaintable": {
-      "scope": "Common G/T/B chain selection, interpolation and mapping now have same-input CASA evidence; native BPOLY/K and flagged-gain checks remain. Full supported-family/chain, scalar/list/coercion and error domains are unfinished; later families retain their named owners.",
+      "scope": "Traditional and library paths exercise supported Jones families. G/T/B/BPOLY/K, Antpos, opacity and gain-curve tables retain their coefficient, flag and weight behavior.",
       "evidence": [
         "oracle",
         "source"
@@ -192,7 +192,7 @@
       "status": "Partial"
     },
     "calwt": {
-      "scope": "Reset from SIGMA/SIGMA_SPECTRUM, repeated-call idempotence, selected spectral lower median, unchanged disabled weights and BPOLY-disabled scaling. B uses unflagged full-band power. Complete family/chain/state domains remain. Missing antenna/context slices retain the available baseline partner's correction and weight scale.",
+      "scope": "Per-table weights, single-value broadcast and short-list failure state are compared. Opacity and gain-curve terms now calibrate weights for their physical correction.",
       "evidence": [
         "oracle",
         "source"
@@ -241,8 +241,8 @@
       "id": "common-application",
       "title": "Apply chains while preserving unselected data and calibrated weight semantics",
       "status": "Partial",
-      "scope": "Common G/T/B traditional and callibrary chains, file selection/context/hardware maps, all six modes, HISTORY, standalone linear/circular parang and intent/UV selection are delivered in bounded batches. Full 21-parameter/common-engine acceptance remains on #1518.",
-      "gap": "Remaining callable/coercion/error/selection and supported BPOLY/K/routine-prior/mixed-chain/state/interchange domains remain. Detailed performance tuning and final qualification follow functionality equivalence under owner direction on #979.",
+      "scope": "Ordinary-MS chains for supported G/T/B/BPOLY/K, Antpos, opacity and gain curves, task selectors and variant inputs, callibrary, six modes, backup, HISTORY and standalone parang.",
+      "gap": "CASA applies a Multi-MS to its referenced partitions. Native ordinary-MS mutation cannot add CORRECTED_DATA to the aggregate table. Partition execution, backup and per-partition HISTORY are still tracked by #1518. Final performance qualification follows functionality on #979.",
       "evidence": [
         "oracle",
         "performance"
@@ -254,12 +254,12 @@
     "oracle": {
       "kind": "Same-input public-Python MAIN/API/state comparison with explicit CASA-bug control",
       "state": "passed",
-      "scope": "280 exercised scenarios: 278 matching same-input cases and two documented CASA corrections. Complete MAIN/HISTORY/return/error/backup comparisons, with separate crash/control evidence below. Debug native CLI and rebuilt extension for functional evidence only.",
-      "result": "278 same-input MAIN/API/state cases match CASA; two additional scenarios verify corrected nearest-field ambiguity and joint observation/scan mapping. Three native scan controls and four isolated CASA crash probes are separate. Full #1518 acceptance remains unfinished.",
+      "scope": "392 ordinary-MS public task scenarios and separate crash controls.",
+      "result": "390 ordinary MeasurementSet scenarios match CASA MAIN, return, flags, weights, backup and HISTORY values. Two further scenarios verify explicit CASA bug corrections. Five isolated crash probes, four working CASA controls and a separate natural spline law pass. The partitioned Multi-MS path remains on #1518.",
       "casa_version": "6.7.6.14",
-      "revision": "fc438e722b751a997a1f1b4d01b4c06b82a5f9ee",
-      "command": "python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/callibrary-reviewed --native-bin target/calibration-1518/calibrate-callibrary-review-debug",
-      "receipt": "resources/casa-compat/evidence/applycal-20261117.json",
+      "revision": "b8cb2b507709c1057edeb230db29ef38cddf0b21",
+      "command": "python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/family-reviewed --native-bin target/calibration-1518/calibrate-family-reviewed-debug",
+      "receipt": "resources/casa-compat/evidence/applycal-families-20261117.json",
       "links": [
         "tools/casa-compat/applycal_oracle.py",
         "crates/casa-calibration/tests/apply_channels.rs",
@@ -278,14 +278,14 @@
         "crates/casa-calibration/tests/callib.rs",
         "crates/casa-task-runtime/src/invocation.rs"
       ],
-      "source_revision": "fc438e722b751a997a1f1b4d01b4c06b82a5f9ee"
+      "source_revision": "b8cb2b507709c1057edeb230db29ef38cddf0b21"
     },
     "source": {
       "kind": "Independent CASA source inspection",
       "state": "inspected",
-      "scope": "Calibrater::correct2, task_applycal.py/mstools.write_history, PJones::syncMeta2/calcOneJones, Jones flag propagation/inversion, VisEquation::collapse2, SIGMA reset, CTPatchedInterp frequency interpolation, BJones::calcWtScale and BPOLY::setApply. BPOLY loading samples only planned applicable SPW grids. MSStateGram/MSStateIndex and task selection activation, literal scalar text and selection-error setup. Traditional field-selected CT availability, CTTimeInterp1 relative Float time and context/frequency dispatch, full SPW-map rules and compressed valid-grid copies. CalLibraryGram/CalLibraryParse/CLPatchPanel typed grammar, task defaults/paths, slice/context/hardware map arrangement and first-buffer metadata. CalLibraryGram/CalLibraryParse/CLPatchPanel typed grammar, task defaults/paths, slice/context/hardware map arrangement and first-buffer metadata.",
+      "scope": "Calibrater::correct2, task_applycal.py/mstools.write_history, PJones::syncMeta2/calcOneJones, Jones flag propagation/inversion, VisEquation::collapse2, SIGMA reset, CTPatchedInterp frequency interpolation, BJones::calcWtScale and BPOLY::setApply. BPOLY loading samples only planned applicable SPW grids. MSStateGram/MSStateIndex and task selection activation, literal scalar text and selection-error setup. Traditional field-selected CT availability, CTTimeInterp1 relative Float time and context/frequency dispatch, full SPW-map rules and compressed valid-grid copies. CalLibraryGram/CalLibraryParse/CLPatchPanel typed grammar, task defaults/paths, slice/context/hardware map arrangement and first-buffer metadata. CalLibraryGram/CalLibraryParse/CLPatchPanel typed grammar, task defaults/paths, slice/context/hardware map arrangement and first-buffer metadata. KAntPosJones and EGainCurve coefficient flag rules, physical FPARAM time interpolation, and applycal-specific use of the existing CASA selector grammars and variant setup.",
       "result": "All six modes, full task history, inverse linear-feed rotation and flags, trial validation and unavailable solver priors follow source laws, alongside the delivered channel/weight conventions. Review found an unavailable-BPOLY grid error; ordinary/strict/trial application and solver preapply regressions fail before and pass after the fix. Intent grammar, inactive argument retention, rejected-call corrected-column initialization/backups and empty-selection errors follow independent source and CASA comparisons. The two reviewed STATE-bound edge cases are fixed with independently failing-before CASA comparisons and native regressions. Reviewed chain regressions restore missing-side flagged identity, whole-table context admission before nearest-field slicing and default all-field series. Shared frequency math and constant-payload reuse preserve these equations. Task-library maps and missing-context/antenna semantics follow independent source laws and public CASA comparisons. The joint observation/scan correction matches explicit independently constrained CASA slices. Task-library maps, buffer-first observation, wildcard arranged-key collisions, literal table record identities, record type errors and delayed interpolation admission follow independent source laws and public CASA comparisons. The joint observation/scan correction matches explicit independently constrained CASA slices.",
-      "revision": "fc438e722b751a997a1f1b4d01b4c06b82a5f9ee",
+      "revision": "b8cb2b507709c1057edeb230db29ef38cddf0b21",
       "links": [
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/Calibrater.cc",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalTables/CTPatchedInterp.cc",
@@ -309,9 +309,12 @@
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalLibrary/CalLibraryGram.yy",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalLibrary/CalLibraryGram.ll",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalLibrary/CalLibraryParse.cc",
-        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalTables/CLPatchPanel.cc"
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalTables/CLPatchPanel.cc",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/KJones.cc",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/EJones.cc",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/stdcasa/StdCasa/CasacSupport.cc"
       ],
-      "source_revision": "fc438e722b751a997a1f1b4d01b4c06b82a5f9ee"
+      "source_revision": "b8cb2b507709c1057edeb230db29ef38cddf0b21"
     },
     "performance": {
       "kind": "Matched public-Python performance",
@@ -330,13 +333,13 @@
     "casa-bug-controls": {
       "kind": "CASA crash and evident-intent corrections with independent controls",
       "state": "passed",
-      "scope": "Four isolated CASA signal-11 probes, three native-versus-working-CASA scan controls, independent natural-spline task law, explicit corrected ambiguity expectations, and joint library-map verification against independently constrained CASA slices. Separate from the 278 matching cases.",
-      "result": "All controls pass. Native preserves valid observation/scan contexts, corrects per-scan/spline crashes and restores the disabled nearest-field ambiguity guard.",
+      "scope": "Five isolated probes and four working CASA control comparisons. The spline uses an independent natural curve.",
+      "result": "BPOLY nearest uses the field-independent CASA control. Per-scan crash controls, nearest-field ambiguity and joint library-map corrections retain their separate checks.",
       "casa_version": "6.7.6.14",
-      "revision": "fc438e722b751a997a1f1b4d01b4c06b82a5f9ee",
-      "source_revision": "fc438e722b751a997a1f1b4d01b4c06b82a5f9ee",
-      "command": "python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/callibrary-reviewed --native-bin target/calibration-1518/calibrate-callibrary-review-debug",
-      "receipt": "resources/casa-compat/evidence/applycal-20261117.json",
+      "revision": "b8cb2b507709c1057edeb230db29ef38cddf0b21",
+      "source_revision": "b8cb2b507709c1057edeb230db29ef38cddf0b21",
+      "command": "python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/family-reviewed --native-bin target/calibration-1518/calibrate-family-reviewed-debug",
+      "receipt": "resources/casa-compat/evidence/applycal-families-20261117.json",
       "links": [
         "tools/casa-compat/applycal_oracle.py",
         "crates/casa-calibration/tests/apply_execute.rs",
