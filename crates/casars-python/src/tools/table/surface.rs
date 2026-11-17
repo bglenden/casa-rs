@@ -52,7 +52,7 @@ const METHODS: &[Method] = &[
             param("showtaql", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("clearlocks", &[], R::Any, Yes),
     method("close", &[], R::Any, Yes),
@@ -476,7 +476,7 @@ const METHODS: &[Method] = &[
             param("style", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "removecolkeyword",
@@ -576,7 +576,7 @@ const METHODS: &[Method] = &[
         "taql",
         &[param("taqlcommand", K::Text, Text("TaQL expression"))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "testincrstman",

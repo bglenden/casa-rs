@@ -40,6 +40,7 @@
 //! covers the practical subset used by most astronomy pipelines.
 
 pub mod ast;
+pub mod calc;
 pub mod error;
 mod lexer;
 pub mod token;
@@ -54,9 +55,12 @@ pub mod format;
 pub mod functions;
 mod meas_udf;
 
-pub use ast::Statement;
+pub use ast::{IndexStyle, Statement};
+pub use calc::{CalcOutput, evaluate_calc};
 pub use error::TaqlError;
-pub use exec::TaqlResult;
+pub use exec::{
+    TaqlExecution, TaqlResult, execute_for_tool, execute_readonly_for_tool, execute_with_rows,
+};
 
 /// Parses a TaQL query string into an AST [`Statement`].
 ///

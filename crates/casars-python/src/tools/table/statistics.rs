@@ -201,6 +201,9 @@ impl State {
         if nrows == 0 {
             return Err(Fail::Runtime("Table has zero rows, cannot continue".into()));
         }
+        if !open.column_allowed(column) {
+            return Err(Fail::Runtime(format!("Table column {column} is unknown")));
+        }
         let desc = root
             .table
             .schema()

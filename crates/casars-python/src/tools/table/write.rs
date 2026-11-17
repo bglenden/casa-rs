@@ -409,6 +409,11 @@ impl State {
         if matches!(&key, KeywordRef::Whole) {
             return Ok(CasaValue::Bool(false));
         }
+        if let Some(open) = self.open.as_ref()
+            && !open.column_allowed(&column)
+        {
+            return runtime(format!("Table column {column} is unknown"));
+        }
         self.write(Target::ColumnKeywords, log, move |table| {
             edit_column(table, &column, |keywords| put(keywords, &key, value, false))
         })
@@ -421,6 +426,11 @@ impl State {
         fields: Vec<(String, Incoming)>,
         log: &mut Vec<crate::tools::LogLine>,
     ) -> Reply {
+        if let Some(open) = self.open.as_ref()
+            && !open.column_allowed(&column)
+        {
+            return runtime(format!("Table column {column} is unknown"));
+        }
         self.write(Target::ColumnKeywords, log, move |table| {
             edit_column(table, &column, |keywords| {
                 for (name, value) in fields {
@@ -438,6 +448,11 @@ impl State {
         key: KeywordRef,
         log: &mut Vec<crate::tools::LogLine>,
     ) -> Reply {
+        if let Some(open) = self.open.as_ref()
+            && !open.column_allowed(&column)
+        {
+            return runtime(format!("Table column {column} is unknown"));
+        }
         self.write(Target::ColumnKeywords, log, move |table| {
             edit_column(table, &column, |keywords| {
                 remove(keywords, &key, |name| {

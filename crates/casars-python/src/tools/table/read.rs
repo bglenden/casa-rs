@@ -151,10 +151,6 @@ fn table_column<'a>(
         .ok_or_else(|| Fail::Runtime(refusal()))
 }
 
-fn table_known<'a>(table: &'a Table, name: &str) -> Result<&'a ColumnSchema, Fail> {
-    table_column(table, name, || format!("Table column {name} is unknown"))
-}
-
 /// The array cells of `rows`, each as casatools returns it.
 fn array_cells(table: &Table, column: &str, rows: &[usize]) -> Result<Vec<CasaValue>, Fail> {
     let cells = table
@@ -197,7 +193,7 @@ impl Open {
     /// A column of the table, or CASA's "unknown" refusal.
     pub(super) fn known(&self, name: &str) -> Result<(), Fail> {
         let root = self.root();
-        table_known(&root.table, name).map(|_| ())
+        self.table_known(&root.table, name).map(|_| ())
     }
 
     fn undefined(row: usize, column: &str) -> Fail {
@@ -212,9 +208,25 @@ impl Open {
             .map_or_else(|| table.row_count(), Vec::len)
     }
 
+    fn table_column<'a>(
+        &self,
+        table: &'a Table,
+        name: &str,
+        refusal: impl FnOnce() -> String,
+    ) -> Result<&'a ColumnSchema, Fail> {
+        if !self.column_allowed(name) {
+            return Err(Fail::Runtime(refusal()));
+        }
+        table_column(table, name, refusal)
+    }
+
+    fn table_known<'a>(&self, table: &'a Table, name: &str) -> Result<&'a ColumnSchema, Fail> {
+        self.table_column(table, name, || format!("Table column {name} is unknown"))
+    }
+
     fn getcell(&self, column: &str, row: i64) -> Reply {
         let root = self.root();
-        let schema = table_column(&root.table, column, || {
+        let schema = self.table_column(&root.table, column, || {
             format!("TableProxy::getCell: column {column} does not exist")
         })?;
         let nrows = self.view_row_count(&root.table);
@@ -238,7 +250,7 @@ impl Open {
 
     fn getcol(&self, column: &str, start: i64, count: i64, incr: i64) -> Reply {
         let root = self.root();
-        let schema = table_column(&root.table, column, || {
+        let schema = self.table_column(&root.table, column, || {
             format!("TableProxy::getColumn: column {column} does not exist")
         })?;
         let rows = rows(
@@ -267,7 +279,7 @@ impl Open {
 
     fn getvarcol(&self, column: &str, start: i64, count: i64, incr: i64) -> Reply {
         let root = self.root();
-        let schema = table_column(&root.table, column, || {
+        let schema = self.table_column(&root.table, column, || {
             format!("TableProxy::getVarColumn: column {column} does not exist")
         })?;
         let rows = rows(
@@ -308,7 +320,7 @@ impl Open {
 
     fn getcolshapestring(&self, column: &str, start: i64, count: i64, incr: i64) -> Reply {
         let root = self.root();
-        let schema = table_column(&root.table, column, || {
+        let schema = self.table_column(&root.table, column, || {
             format!("TableProxy::getColumnShapeString: column {column} does not exist")
         })?;
         let contract = match schema.column_type() {
@@ -345,7 +357,7 @@ impl Open {
 
     fn iscelldefined(&self, column: &str, row: i64) -> Reply {
         let root = self.root();
-        table_known(&root.table, column)?;
+        self.table_known(&root.table, column)?;
         let nrows = self.view_row_count(&root.table);
         let row = usize::try_from(row)
             .ok()
@@ -363,7 +375,7 @@ impl Open {
 
     fn colarraytype(&self, column: &str) -> Reply {
         let root = self.root();
-        let schema = table_known(&root.table, column)?;
+        let schema = self.table_known(&root.table, column)?;
         match schema.column_type() {
             ColumnType::Array(contract) => {
                 let direct = if schema.options().direct {
@@ -416,25 +428,19 @@ impl State {
 
     /// `ncols()`.
     pub(super) fn ncols(&self, log: &mut Vec<LogLine>) -> CasaValue {
-        let columns = self.table(log).and_then(|open| {
-            open.root()
-                .table
-                .schema()
-                .map(|schema| schema.columns().len())
-        });
+        let columns = self
+            .table(log)
+            .map(|open| open.visible_columns(&open.root().table).len());
         CasaValue::Int(columns.unwrap_or(0) as i64)
     }
 
     /// `colnames()`.
     pub(super) fn colnames(&self, log: &mut Vec<LogLine>) -> CasaValue {
-        let names = self.table(log).and_then(|open| {
-            open.root().table.schema().map(|schema| {
-                schema
-                    .columns()
-                    .iter()
-                    .map(|column| column.name().to_string())
-                    .collect::<Vec<_>>()
-            })
+        let names = self.table(log).map(|open| {
+            open.visible_columns(&open.root().table)
+                .into_iter()
+                .map(|column| column.name().to_string())
+                .collect::<Vec<_>>()
         });
         texts(names.unwrap_or_default())
     }
@@ -489,7 +495,7 @@ impl State {
         };
         let root = open.root();
         let scalar = !matches!(
-            table_known(&root.table, column)?.column_type(),
+            open.table_known(&root.table, column)?.column_type(),
             ColumnType::Array(_)
         );
         Ok(CasaValue::Bool(scalar))
@@ -502,7 +508,7 @@ impl State {
         };
         let root = open.root();
         let variable = matches!(
-            table_known(&root.table, column)?.column_type(),
+            open.table_known(&root.table, column)?.column_type(),
             ColumnType::Array(casa_tables::ArrayShapeContract::Variable { .. })
         );
         Ok(CasaValue::Bool(variable))
@@ -515,7 +521,7 @@ impl State {
         };
         let root = open.root();
         Ok(CasaValue::Text(
-            data_type_name(table_known(&root.table, column)?).into(),
+            data_type_name(open.table_known(&root.table, column)?).into(),
         ))
     }
 
@@ -639,7 +645,7 @@ impl State {
             return Ok(texts([]));
         };
         let root = open.root();
-        table_known(&root.table, column)?;
+        open.table_known(&root.table, column)?;
         Ok(root
             .table
             .column_keywords(column)
@@ -652,7 +658,7 @@ impl State {
             return Ok(empty_array());
         };
         let root = open.root();
-        table_known(&root.table, column)?;
+        open.table_known(&root.table, column)?;
         Ok(root
             .table
             .column_keywords(column)
@@ -670,7 +676,7 @@ impl State {
             return Ok(CasaValue::empty_record());
         };
         let root = open.root();
-        let schema = table_known(&root.table, column)?;
+        let schema = open.table_known(&root.table, column)?;
         let manager = root
             .table
             .data_manager_info()
@@ -786,11 +792,9 @@ impl State {
         };
         let root = open.root();
         if root.table.is_memory() {
-            let mut columns: Vec<String> = root
-                .table
-                .schema()
+            let mut columns: Vec<String> = open
+                .visible_columns(&root.table)
                 .into_iter()
-                .flat_map(|schema| schema.columns())
                 .map(|column| column.name().to_string())
                 .collect();
             if columns.is_empty() {
@@ -824,7 +828,7 @@ impl State {
         let source_table = ref_root.as_ref().unwrap_or(&root.table);
         let managers = source_table.data_manager_info();
         let mut entries = Vec::with_capacity(managers.len());
-        for (position, manager) in managers.iter().enumerate() {
+        for manager in managers {
             let mut spec = source_table
                 .data_manager_spec(manager.seq_nr)?
                 .ok_or_else(|| {
@@ -855,10 +859,18 @@ impl State {
                         .collect(),
                 );
             }
-            let mut columns = manager.columns.clone();
+            let mut columns: Vec<String> = manager
+                .columns
+                .iter()
+                .filter(|col| open.column_allowed(col))
+                .cloned()
+                .collect();
+            if columns.is_empty() {
+                continue;
+            }
             columns.sort();
             entries.push((
-                format!("*{}", position + 1),
+                format!("*{}", entries.len() + 1),
                 CasaValue::record([
                     ("COLUMNS", CasaValue::Texts(columns)),
                     ("NAME", CasaValue::Text(manager.name.clone())),
@@ -882,7 +894,7 @@ impl State {
             return Ok(empty_array());
         };
         let root = open.root();
-        table_known(&root.table, column)?;
+        open.table_known(&root.table, column)?;
         let found = root
             .table
             .column_keywords(column)
@@ -913,7 +925,7 @@ impl State {
             return Ok(texts([]));
         };
         let root = open.root();
-        table_known(&root.table, column)?;
+        open.table_known(&root.table, column)?;
         let empty = RecordValue::new(Vec::new());
         let record = root.table.column_keywords(column).unwrap_or(&empty);
         Open::keyword_names(record, key, &format!("Keyword in column {column}"))

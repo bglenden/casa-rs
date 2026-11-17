@@ -40,6 +40,14 @@ impl<'src> Lexer<'src> {
         self.peeked.as_ref().unwrap().as_ref().map(|(t, _)| t)
     }
 
+    /// Peeks at a copy of the next token and its byte span without consuming it.
+    pub fn peek_with_span(&mut self) -> Option<(Token, Range<usize>)> {
+        if self.peeked.is_none() {
+            self.peeked = Some(self.advance());
+        }
+        self.peeked.as_ref().unwrap().clone()
+    }
+
     /// Consumes and returns the next token and its span.
     pub fn next_token(&mut self) -> Option<(Token, Range<usize>)> {
         if let Some(peeked) = self.peeked.take() {

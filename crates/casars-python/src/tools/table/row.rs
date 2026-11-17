@@ -365,9 +365,9 @@ pub(super) fn create(
         .table
         .schema()
         .ok_or_else(|| runtime_err("table has no schema"))?;
-    let schema_cols: Vec<String> = schema
-        .columns()
-        .iter()
+    let schema_cols: Vec<String> = open
+        .visible_columns(&root.table)
+        .into_iter()
         .map(|col| col.name().to_string())
         .collect();
     let selected = if exclude {
@@ -381,7 +381,7 @@ pub(super) fn create(
     } else {
         let mut seen = HashSet::with_capacity(columnnames.len());
         for name in &columnnames {
-            if schema.column(name).is_none() {
+            if !open.column_allowed(name) || schema.column(name).is_none() {
                 return Err(runtime_err(format!("Table column {name} is unknown")));
             }
             if !seen.insert(name.as_str()) {

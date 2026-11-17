@@ -108,8 +108,22 @@ impl State {
                 values::record(&description.private_keywords, &root.name),
             ),
         ];
+        let visible_cols = open.columns.clone();
         drop(root);
-        for (name, declared_type, declared_group) in description.declared_managers {
+        let managers: Vec<(String, String, String)> = match visible_cols {
+            Some(order) => order
+                .into_iter()
+                .filter_map(|col| {
+                    description
+                        .declared_managers
+                        .iter()
+                        .find(|(name, _, _)| name == &col)
+                        .cloned()
+                })
+                .collect(),
+            None => description.declared_managers,
+        };
+        for (name, declared_type, declared_group) in managers {
             let mut column = self.getcoldesc(&name, log)?;
             if !actual && let CasaValue::Record(ref mut parts) = column {
                 for (key, value) in parts {

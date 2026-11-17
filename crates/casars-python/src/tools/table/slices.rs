@@ -127,6 +127,9 @@ fn require_array_column(table: &Table, column: &str, what: &str) -> Result<(), F
 
 impl Open {
     fn getcellslice(&self, column: &str, row: i64, corners: &Corners) -> Reply {
+        if !self.column_allowed(column) {
+            return runtime(format!("Table column {column} is unknown"));
+        }
         let root = self.root();
         require_array_column(&root.table, column, "getCellSlice")?;
         let nrows = self
@@ -148,6 +151,9 @@ impl Open {
     }
 
     fn getcolslice(&self, column: &str, corners: &Corners, selection: (i64, i64, i64)) -> Reply {
+        if !self.column_allowed(column) {
+            return runtime(format!("Table column {column} is unknown"));
+        }
         let root = self.root();
         require_array_column(&root.table, column, "getColumnSlice")?;
         let nrows = self
@@ -246,6 +252,11 @@ impl State {
         corners: Corners,
         log: &mut Vec<LogLine>,
     ) -> Reply {
+        if let Some(open) = self.open.as_ref()
+            && !open.column_allowed(&column)
+        {
+            return Err(put_column_error(&format!("column {column} does not exist")));
+        }
         self.write_with(Target::Cells, log, move |table, row_map| {
             let wide = wide_of(value)?;
             let array_column = table
@@ -292,6 +303,11 @@ impl State {
         selection: (i64, i64, i64),
         log: &mut Vec<LogLine>,
     ) -> Reply {
+        if let Some(open) = self.open.as_ref()
+            && !open.column_allowed(&column)
+        {
+            return Err(put_column_error(&format!("column {column} does not exist")));
+        }
         self.write_with(Target::Cells, log, move |table, row_map| {
             let wide = wide_of(value)?;
             let array_column = table
