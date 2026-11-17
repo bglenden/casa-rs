@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "task": "fluxscale",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "50182477cabf77d75728015a6d40bdb2559eebd5",
+  "parameters": {
+    "vis": {
+      "status": "Implemented",
+      "scope": "Scalar MS path; FIELD grammar and ANTENNA metadata resolve against the MS, and successful calls append HISTORY.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "products"
+      ]
+    },
+    "caltable": {
+      "status": "Implemented",
+      "scope": "G/T Jones complex, single-channel gains; flagged samples and unequal intervals, undefined/type errors and duplicate timestamps.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "estimate"
+      ]
+    },
+    "fluxtable": {
+      "status": "Implemented",
+      "scope": "Full gains or incremental corrections with all scientific columns, owning subtables and atomic publication.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "products"
+      ]
+    },
+    "reference": {
+      "status": "Implemented",
+      "scope": "Scalar/vector FIELD grammar, numeric IDs, names, regex and quoted punctuation; equal reference-field means and missing solutions.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "transfer": {
+      "status": "Implemented",
+      "scope": "Scalar/vector FIELD grammar; empty selects non-reference solved fields; unselected fields remain in full products.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "listfile": {
+      "status": "Implemented",
+      "scope": "Fluxes, errors, counts and fitted spectra written to the requested text file; overlapping scientific input/output paths are refused.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "products"
+      ]
+    },
+    "append": {
+      "status": "Implemented",
+      "scope": "Creates a new table or appends sorted full/incremental products, preserves metadata, and supports cross-engine append.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "products"
+      ]
+    },
+    "refspwmap": {
+      "status": "Implemented",
+      "scope": "Singleton broadcast, per-window mapping, negative sentinel and Python bool-to-int coercion; empty vector safely means identity.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "estimate"
+      ]
+    },
+    "gainthreshold": {
+      "status": "Implemented",
+      "scope": "Disabled negative/default threshold, Float32 median boundaries and CASA antenna/time/scan threshold-population semantics.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "estimate"
+      ]
+    },
+    "antenna": {
+      "status": "Implemented",
+      "scope": "Names, IDs, ranges, baseline expressions and partial !antenna restrictions combined with time/scan.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "timerange": {
+      "status": "Implemented",
+      "scope": "Shared CASA time grammar including partial dates and ranges, evaluated against the selected logical rows.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "scan": {
+      "status": "Implemented",
+      "scope": "Numeric ranges, unions and comparisons, including partial antenna/time combinations.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "incremental": {
+      "status": "Implemented",
+      "scope": "One correction per field/window/antenna with CASA time/grid, metadata, reference identity and PARAMERR/SNR conventions.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "products"
+      ]
+    },
+    "fitorder": {
+      "status": "Implemented",
+      "scope": "Constant, linear and higher determined polynomial fits with covariance and errors; negative fallback, bounded degree and padded results.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "fits"
+      ]
+    },
+    "display": {
+      "status": "Implemented",
+      "scope": "CASA 6.7.6.14 plotting hooks are empty; True is verified to produce the same scientific output without a plot.",
+      "evidence": [
+        "oracle"
+      ],
+      "behaviors": [
+        "products"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "estimate",
+      "title": "Transfer flux and uncertainties",
+      "status": "Implemented",
+      "scope": "Unit time weights, per-antenna/polarization means, equal reference-field weighting, median ratios, CASA flux error and solution count.",
+      "gap": "The original 4.8% discrepancy is corrected. CASA and native return 1.014581621096799 Jy, 0.03767496546937333 Jy error and 10 solutions.",
+      "evidence": [
+        "oracle"
+      ]
+    },
+    {
+      "id": "selection",
+      "title": "Selections and reference populations",
+      "status": "Implemented",
+      "scope": "Reference/transfer FIELD grammar and antenna/time/scan combinations change estimation while preserving unselected full-product rows.",
+      "gap": "Fourteen captured same-input selector fixtures and the public-Python oracle cover the independent source-derived populations.",
+      "evidence": [
+        "oracle"
+      ]
+    },
+    {
+      "id": "products",
+      "title": "Products, public Python state and exchange",
+      "status": "Implemented",
+      "scope": "All 15 names/order/defaults, positional/keyword calls, return/error policy, full/incremental/append tables, listing and successful/failed MS HISTORY.",
+      "gap": "CASA reads native products and both engines append each other's products. Native computation does not require CASA.",
+      "evidence": [
+        "oracle"
+      ]
+    },
+    {
+      "id": "fits",
+      "title": "Multi-window spectral fits",
+      "status": "Implemented",
+      "scope": "Fitted reference frequency, flux/errors, coefficient/errors and covariance for orders 0 through 4, retaining stricter existing linear tests.",
+      "gap": "CASA crashes and underdetermined/zero-degree-of-freedom defects are corrected under the standing CASA-bug policy.",
+      "evidence": [
+        "oracle"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "safe-spectral-orders",
+      "state": "Previously agreed",
+      "record": "Fluxscale negative and underdetermined spectral-fit orders",
+      "inputs": "Negative order, too few valid windows for requested degree, or an exactly determined fit.",
+      "casa": "Can segfault, fit the wrong degree, return unstable coefficients/negative covariance, or invent roundoff uncertainty.",
+      "ours": "Use advertised negative-order fallback; cap degree at nvalid-1, pad requested vectors and retain zero residual uncertainty at zero residual degrees of freedom.",
+      "rationale": "Implement identifiable fits and CASA's advertised fallback while retaining existing strict linear-fit behavior.",
+      "impact": "Determined fits agree; invalid memory access and unstable underdetermined artifacts are corrected.",
+      "owner_decision": "Standing owner rule in AGENTS.md: correct CASA crashes, out-of-bounds writes, corrupt data or behavior contradicting evident intent.",
+      "evidence": [
+        "oracle"
+      ]
+    },
+    {
+      "id": "initialized-history-and-empty-map",
+      "state": "Previously agreed",
+      "record": "Fluxscale history can contain uninitialized object identifiers",
+      "inputs": "Successful MS HISTORY writes or refspwmap=[].",
+      "casa": "Does not initialize OBJECT_ID; indexes an empty map and segfaults.",
+      "ours": "Initialize OBJECT_ID=0 and treat the empty map as identity.",
+      "rationale": "Avoid uninitialized scientific provenance and invalid memory access.",
+      "impact": "Stable provenance; empty mapping is safe.",
+      "owner_decision": "Standing owner rule in AGENTS.md: correct CASA crashes, out-of-bounds writes, corrupt data or behavior contradicting evident intent.",
+      "evidence": [
+        "oracle"
+      ]
+    },
+    {
+      "id": "preserve-scientific-files",
+      "state": "Previously agreed",
+      "record": "Fluxscale listfile can overwrite scientific table files",
+      "inputs": "A listing path inside the input MS, input caltable or output product, or a failed listing stream.",
+      "casa": "Can truncate a scientific table file or report success despite an unchecked stream failure.",
+      "ours": "Refuse overlapping paths before mutation and report listing write failures.",
+      "rationale": "Preserve scientific data and fulfill the requested text output.",
+      "impact": "Potentially destructive paths are refused; ordinary listing paths work.",
+      "owner_decision": "Standing owner rule in AGENTS.md: correct CASA crashes, out-of-bounds writes, corrupt data or behavior contradicting evident intent.",
+      "evidence": [
+        "oracle"
+      ]
+    }
+  ],
+  "evidence": {
+    "oracle": {
+      "kind": "Scientific, Python API/state and interchange comparison",
+      "state": "passed",
+      "scope": "67 same-argument public-Python cases on the same CASA-made G/T gains, plus 3 documented spectral-order corrections checked against identifiable CASA fits; captured original/selector fixtures and independent C++ readback.",
+      "result": "70 cases passed, zero comparison failures; all 15 owned parameters have implemented behavior.",
+      "casa_version": "6.7.6.14",
+      "revision": "8d4d6a51316d7566b5ab4c4758f615363424ee19",
+      "command": "python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/final-orders --native-bin target/calibration-990/build/release/calibrate",
+      "receipt": "resources/casa-compat/evidence/fluxscale-20261117.json",
+      "links": [
+        "tools/casa-compat/fluxscale_oracle.py",
+        "crates/casa-calibration/tests/fluxscale_casa_fixture.rs"
+      ]
+    },
+    "performance": {
+      "kind": "Matched public-Python performance",
+      "state": "measured",
+      "scope": "Alternating same-host, one-worker warm/cold full and incremental calls, equal validated products; separate fresh imports and peak memory, estimator phases and native table-reader floor.",
+      "result": "Full output is 6.3\u20136.5\u00d7 faster and incremental output 25.2\u201327.0\u00d7 faster than CASA across warm/cold policies. Estimation takes about 7 ms; table I/O dominates, with CPU decoding/serialization and the native reader/rewrite references reported explicitly.",
+      "casa_version": "6.7.6.14",
+      "revision": "e7f859f76413872af29fb54a28149e81bcab65e6",
+      "command": "python tools/perf/calibrate/fluxscale.py --vis <oracle-ms> --gain <oracle-gain> --native-bin <release-calibrate> --repeat-input 1000 --repeats 5 --cache warm|cold --out <receipt>",
+      "receipt": "resources/casa-compat/evidence/fluxscale-performance-20261117.json",
+      "links": [
+        "tools/perf/calibrate/fluxscale.py"
+      ]
+    }
+  }
+}
