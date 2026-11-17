@@ -95,6 +95,10 @@ impl CallibraryContextMap {
     Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 pub struct CallibraryOptions {
+    /// Literal caltable record key, before process-directory path resolution.
+    pub table_name: String,
+    /// Raw time/frequency strings retained for file output; validation follows slice selection.
+    pub interpolation: Option<(String, String)>,
     /// MS slice to which this library instance contributes.
     pub selection: casa_ms::MsSelection,
     /// Explicit data FIELD_ID to calibration FIELD_ID map.
@@ -125,7 +129,7 @@ pub fn load_apply_specs_from_callib(
         source,
     })?;
     let mut specs = Vec::new();
-    let mut calwt_by_table = BTreeMap::<PathBuf, bool>::new();
+    let mut calwt_by_table = BTreeMap::<String, bool>::new();
 
     let entries =
         parser::parse(&contents).map_err(|(line_number, reason)| CallibError::ParseLine {
@@ -152,12 +156,18 @@ pub fn load_apply_specs_from_callib(
                 reason,
             }
         })?;
-        if let Some(existing) = calwt_by_table.get(&spec.path) {
+        let literal = spec
+            .callibrary
+            .as_ref()
+            .expect("file options")
+            .table_name
+            .clone();
+        if let Some(existing) = calwt_by_table.get(&literal) {
             // CalLibraryParse retains the first table-level calwt when
             // subsequent lines add slices of the same physical table.
             spec.calwt = *existing;
         } else {
-            calwt_by_table.insert(spec.path.clone(), spec.calwt);
+            calwt_by_table.insert(literal, spec.calwt);
         }
         specs.push(spec);
     }
@@ -203,7 +213,8 @@ fn parse_callib_entry(
     let caltable = values
         .remove("caltable")
         .ok_or_else(|| "missing required caltable= directive".to_string())?;
-    let caltable_path = resolve_callib_path(base_dir, &strip_quotes(&caltable));
+    let table_name = strip_quotes(&caltable);
+    let caltable_path = resolve_callib_path(base_dir, &table_name);
     let calwt = values
         .remove("calwt")
         .map(|value| parse_bool(&value))
@@ -247,7 +258,18 @@ fn parse_callib_entry(
         Some(value) => (parse_gainfield_selector(&value)?, Vec::new()),
         None => (None, Vec::new()),
     };
+    let time = values
+        .remove("tinterp")
+        .map(|v| strip_quotes(&v))
+        .unwrap_or_default();
+    let frequency = values
+        .remove("finterp")
+        .map(|v| strip_quotes(&v))
+        .unwrap_or_default();
+    let interp = parse_interp(&time, &frequency);
     let callibrary = Some(CallibraryOptions {
+        table_name,
+        interpolation: Some((time, frequency)),
         selection,
         reach,
         field_map,
@@ -263,10 +285,6 @@ fn parse_callib_entry(
         .map(|value| parse_int_array(&value, "spwmap"))
         .transpose()?
         .unwrap_or_default();
-    let interp = parse_interp(
-        values.remove("tinterp").as_deref(),
-        values.remove("finterp").as_deref(),
-    )?;
 
     for (key, _) in values {
         tracing::warn!(
@@ -298,11 +316,21 @@ fn parse_context_map(value: Option<String>, kind: &str) -> Result<CallibraryCont
 }
 
 fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> String {
+    let literal = spec
+        .callibrary
+        .as_ref()
+        .map(|library| library.table_name.as_str())
+        .filter(|name| !name.is_empty());
+    let name = literal
+        .map(str::to_string)
+        .unwrap_or_else(|| format_callib_path(base_dir, &spec.path));
+    let quoted = if name.contains('\'') {
+        format!("\"{name}\"")
+    } else {
+        format!("'{name}'")
+    };
     let mut parts = vec![
-        format!(
-            "caltable='{}'",
-            escape_callib_string(&format_callib_path(base_dir, &spec.path))
-        ),
+        format!("caltable={quoted}"),
         format!("calwt={}", if spec.calwt { "T" } else { "F" }),
     ];
 
@@ -381,6 +409,19 @@ fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> Stri
         ));
     }
 
+    if let Some((time, frequency)) = spec
+        .callibrary
+        .as_ref()
+        .and_then(|library| library.interpolation.as_ref())
+    {
+        if !time.is_empty() {
+            parts.push(format!("tinterp='{time}'"));
+        }
+        if !frequency.is_empty() {
+            parts.push(format!("finterp='{frequency}'"));
+        }
+        return parts.join(" ");
+    }
     match spec.interp {
         ApplyInterpolationMode::Nearest => parts.push("tinterp='nearest'".to_string()),
         ApplyInterpolationMode::Linear => parts.push("tinterp='linear'".to_string()),
@@ -506,17 +547,41 @@ fn parse_int_array(value: &str, label: &str) -> Result<Vec<i32>, String> {
         .collect()
 }
 
-fn parse_interp(
-    tinterp: Option<&str>,
-    finterp: Option<&str>,
-) -> Result<ApplyInterpolationMode, String> {
-    let time = tinterp.map(strip_quotes).unwrap_or_default();
-    let frequency = finterp.map(strip_quotes).unwrap_or_default();
-    if frequency.is_empty() {
-        ApplyInterpolationMode::parse_casa(&time)
+fn parse_interp(time: &str, frequency: &str) -> ApplyInterpolationMode {
+    // CTTimeInterp1 selects a recognized substring. CLPatchPanel frequency
+    // interpolation falls back to linear, including the old aipslin spelling.
+    let time_curve = if time.contains("nearest") {
+        "nearest"
+    } else if time.is_empty() || time.contains("linear") {
+        "linear"
+    } else if time.contains("cubic") {
+        "cubic"
+    } else if time.contains("spline") {
+        "spline"
     } else {
-        ApplyInterpolationMode::parse_casa(&format!("{time},{frequency}"))
-    }
+        return ApplyInterpolationMode::Invalid;
+    };
+    let frequency_curve = if frequency.contains("nearest") {
+        "nearest"
+    } else if frequency.contains("linear") {
+        "linear"
+    } else if frequency.contains("cubic") {
+        "cubic"
+    } else if frequency.contains("spline") {
+        "spline"
+    } else {
+        "linear"
+    };
+    ApplyInterpolationMode::parse_casa(&format!(
+        "{time_curve}{},{frequency_curve}{}",
+        if time.contains("PD") { "PD" } else { "" },
+        if frequency.contains("flag") {
+            "flag"
+        } else {
+            ""
+        }
+    ))
+    .expect("canonical library interpolation")
 }
 
 #[cfg(test)]
@@ -529,7 +594,7 @@ mod tests {
     };
 
     #[test]
-    fn interpolation_round_trip_keeps_the_effective_curve_and_modifiers() {
+    fn interpolation_file_round_trip_keeps_raw_controls_and_effective_library_mode() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("interpolation.callib");
         for value in [
@@ -541,7 +606,11 @@ mod tests {
             spec.interp = ApplyInterpolationMode::parse_casa(value).unwrap();
             spec.callibrary = Some(crate::CallibraryOptions::default());
             save_apply_specs_to_callib(&path, &[spec.clone()]).unwrap();
-            assert_eq!(load_apply_specs_from_callib(&path).unwrap(), vec![spec]);
+            let text = std::fs::read_to_string(&path).unwrap();
+            let loaded = load_apply_specs_from_callib(&path).unwrap();
+            assert_eq!(loaded[0].interp, spec.interp.for_callibrary());
+            save_apply_specs_to_callib(&path, &loaded).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         }
     }
 
@@ -571,7 +640,8 @@ caltable='bandpass.bcal' calwt=F spwmap=[0,0] tinterp='nearest' finterp='linear'
         assert_eq!(selection.spw.as_deref(), Some("0,2"));
         assert_eq!(selection.observation.as_deref(), Some("3"));
         assert_eq!(specs[0].gainfield, Some(GainFieldSelector::Nearest));
-        assert_eq!(specs[0].interp, ApplyInterpolationMode::Nearest);
+        // An omitted CLPatchPanel frequency mode is linear.
+        assert_eq!(specs[0].interp, ApplyInterpolationMode::NearestLinear);
         assert_eq!(specs[1].spwmap, vec![0, 0]);
         assert_eq!(specs[1].interp, ApplyInterpolationMode::NearestLinear);
     }

@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import resource
+import shutil
 import re
 import subprocess
 import sys
@@ -585,8 +586,20 @@ def run(root, native_bin, only=None):
         case('review-compressed-grid-'+method, dict(interp=['linear,'+method]), gain=compressed_bandpass, input_vis=compressed_source, precorrected=True)
     # Callibrary task parsing uses CalLibraryGram/CLPatchPanel, distinct from
     # the private Python helper's read/eval implementation.
+    mixed_observations = root/'source-mixed-observations.ms'
+    copy_ms(observation_source, mixed_observations)
+    tool.open(str(mixed_observations), nomodify=False)
+    tool.putcol('OBSERVATION_ID', (np.arange(tool.nrows()) % 2).astype(np.int32))
+    tool.close()
+    quoted_gain = root/"O'Brien.gcal"
+    shutil.copytree(time_gain, quoted_gain)
     callib_cases = [
         ('default', '', chain_source, time_gain),
+        ('review-observation-buffer', " obsmap='self'", mixed_observations, observation_gain),
+        ('review-observation-buffer-short', ' obsmap=[0]', mixed_observations, observation_gain),
+        ('review-empty-invalid-time', " field='FLUX' tinterp='invalid'", chain_source, time_gain),
+        ('review-active-invalid-time', " field='PHASE' tinterp='invalid'", chain_source, time_gain),
+        ('review-frequency-aipslin', " finterp='aipslin'", shifted_source, curved_bandpass),
         ('T-default', '', chain_source, scalar_time_gain),
         ('B-default', " tinterp='linear' finterp='cubicflag'", shifted_source, flagged_curved_bandpass),
         ('empty-slice', " field='FLUX'", chain_source, time_gain),
@@ -642,7 +655,15 @@ def run(root, native_bin, only=None):
             control = root/'library-joint-control.txt'
             control.write_text(f"caltable='{gain}' obs='0' scan='1' obsmap='self' scanmap='self'\ncaltable='{gain}' obs='1' scan='2' obsmap='self' scanmap='self'\n")
         case('callib-'+name, dict(docallib=True, callib=str(path)), gain=gain, input_vis=input_vis, precorrected=True, casa_control_callib=control)
+    case('review-buffer-traditional-perobs', dict(interp=['linearperobs']), gain=observation_gain, input_vis=mixed_observations, precorrected=True)
     grammar_cases = [
+        ('review-array-reach', "caltable='{table}' reach=[1]\n"),
+        ('review-array-finterp', "caltable='{table}' finterp=[1]\n"),
+        ('review-array-after-string', "caltable='{table}' antmap='unused' antmap=[0]\n"),
+        ('review-empty-caltable', "caltable='' field='PHASE'\ncaltable='{table}'\n"),
+        ('review-alias-entries', "caltable='{table}'\ncaltable='{table_alias}'\n"),
+        ('review-apostrophe-path', 'caltable="{quoted_table}"\n'),
+        ('review-wildcard-overlap', "caltable='{table}' field='FLUX'\ncaltable='{table}' scan='2'\n"),
         ('empty-file', ''),
         ('comments-only', '# an empty library\n'),
         ('quoted-calwt', "caltable='{table}' calwt='False'\n"),
@@ -664,7 +685,7 @@ def run(root, native_bin, only=None):
     ]
     for name, text in grammar_cases:
         path = root/('library-grammar-'+name+'.txt')
-        path.write_text(text.format(table=time_gain))
+        path.write_text(text.format(table=time_gain, table_alias=str(time_gain.parent)+'/./'+time_gain.name, quoted_table=quoted_gain))
         case('callib-grammar-'+name, dict(docallib=True, callib=str(path)), gain=time_gain, input_vis=source, precorrected=True)
     for directive in ['obsmap=[999,0]', 'scanmap=[0,999,1]', 'fldmap=[999,0]', 'antmap=[999]']:
         path = root/('library-missing-'+directive.split('=')[0]+'.txt')

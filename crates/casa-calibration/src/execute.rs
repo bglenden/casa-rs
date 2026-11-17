@@ -5055,6 +5055,7 @@ mod tests {
                 row_index: 4,
                 field_id: 5,
                 observation_id: 6,
+                calibration_observation_id: 6,
                 scan_number: 1,
                 data_desc_id: 7,
                 data_spw_id: 2,

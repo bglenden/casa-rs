@@ -173,8 +173,8 @@ pub(super) fn lookup(
         observation: table
             .callibrary
             .as_ref()
-            .map_or(row.observation_id, |library| {
-                library.observation_map.map(row.observation_id)
+            .map_or(row.calibration_observation_id, |library| {
+                library.observation_map.map(row.calibration_observation_id)
             }),
         scan: table
             .callibrary

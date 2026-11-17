@@ -2,6 +2,10 @@
 //! Resolve CLPatchPanel data slices against the globally selected MS.
 use super::*;
 use std::collections::HashMap;
+#[path = "plan_callibrary_keys.rs"]
+mod keys;
+pub(super) use keys::PatchGroup;
+pub(super) type PlannedTable = (ApplyCalibrationTablePlan, Vec<PatchGroup>);
 
 pub(super) fn selected_rows(
     ms: &MeasurementSet,
@@ -62,12 +66,12 @@ pub(super) fn arrange_contexts(
     ms: &MeasurementSet,
     plan: &mut ApplyCalibrationTablePlan,
     selected: &[ApplyRowPlan],
-) -> Result<(), ApplyPlanError> {
+) -> Result<Vec<PatchGroup>, ApplyPlanError> {
     let Some(library) = &plan.spec.callibrary else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if plan.summary.table_subtype == "BPOLY" {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let table = Table::open(TableOptions::new(&plan.spec.path)).map_err(|source| {
         ApplyPlanError::OpenSubtable {
@@ -122,6 +126,7 @@ pub(super) fn arrange_contexts(
                 .unwrap_or(id)
         })
         .collect::<BTreeSet<_>>();
+    let groups = keys::groups(ms, plan, selected, &contexts)?;
     let mut active = Vec::new();
     let mut unavailable = Vec::new();
     for row in selected.iter().filter(|row| plan.applies_to(row)) {
@@ -142,7 +147,7 @@ pub(super) fn arrange_contexts(
             .expect("mapped applicable row")
             .calibration_spw_id;
         let key = (
-            library.observation_map.map(row.observation_id),
+            library.observation_map.map(row.calibration_observation_id),
             library.scan_map.map(row.scan_number),
             field,
             window,
@@ -161,30 +166,50 @@ pub(super) fn arrange_contexts(
     plan.unavailable_row_indices = unavailable;
     plan.applicable_selected_row_count = active.len();
     plan.applicable_row_indices = Some(active);
-    Ok(())
+    Ok(groups)
 }
 
 /// Multiple slices of one table may cover disjoint data, but CLPatchPanel
 /// refuses to assign the same calibration table to the same MS context twice.
-pub(super) fn validate_overlaps(
-    tables: &[ApplyCalibrationTablePlan],
-    rows: &[ApplyRowPlan],
-) -> Result<(), ApplyPlanError> {
-    let mut seen = std::collections::HashSet::new();
-    for table in tables
-        .iter()
-        .filter(|table| table.spec.callibrary.is_some())
-    {
-        for row in rows.iter().filter(|row| table.applies_to(row)) {
-            if table
-                .unavailable_row_indices
-                .binary_search(&row.row_index)
-                .is_err()
-                && !seen.insert((&table.spec.path, row.row_index))
-            {
-                return Err(ApplyPlanError::Callibrary { message: "Attempted duplicate MSCalPatchKey: overlapping slices of one calibration table".into() });
+pub(super) fn validate_overlaps(tables: &[PlannedTable]) -> Result<(), ApplyPlanError> {
+    let mut deployed = HashMap::<String, Vec<&PatchGroup>>::new();
+    for (table, groups) in tables {
+        let Some(library) = &table.spec.callibrary else {
+            continue;
+        };
+        let literal = if library.table_name.is_empty() {
+            table.spec.path.display().to_string()
+        } else {
+            library.table_name.clone()
+        };
+        let previous = deployed.entry(literal).or_default();
+        for group in groups {
+            if previous.iter().any(|prior| keys::overlap(prior, group)) {
+                return Err(ApplyPlanError::Callibrary { message: "Attempted duplicate MSCalPatchKey: overlapping wildcard contexts of one calibration table".into() });
             }
         }
+        previous.extend(groups);
+    }
+    Ok(())
+}
+
+/// Keep physical IDs in the row plan, alongside the scalar metadata VisCal sees.
+pub(super) fn buffer_observations(
+    ms: &MeasurementSet,
+    rows: &mut [ApplyRowPlan],
+) -> Result<(), ApplyPlanError> {
+    let ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+    let arrays = load_i32_column_rows(ms.main_table(), "ARRAY_ID", &ids)?;
+    let mut first = HashMap::new();
+    for (index, row) in rows.iter_mut().enumerate() {
+        let key = (
+            value_at_i32(&arrays, index, "ARRAY_ID")?,
+            row.scan_number,
+            row.field_id,
+            row.data_desc_id,
+            row.time_seconds.to_bits(),
+        );
+        row.calibration_observation_id = *first.entry(key).or_insert(row.observation_id);
     }
     Ok(())
 }

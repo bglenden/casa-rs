@@ -28,7 +28,10 @@ pub(super) fn parse(contents: &str) -> Result<Vec<Entry>, (usize, String)> {
     while index < tokens.len() {
         let (line, token) = &tokens[index];
         if matches!(token, Token::End) {
-            if values.contains_key("caltable") {
+            if values
+                .get("caltable")
+                .is_some_and(|name: &String| name.len() > 2)
+            {
                 entries.push(Entry {
                     line: *line,
                     values: std::mem::take(&mut values),
@@ -49,12 +52,30 @@ pub(super) fn parse(contents: &str) -> Result<Vec<Entry>, (usize, String)> {
         match value {
             Token::String(value) if key == "caltable" || PARAMETERS.contains(&key.as_str()) => {
                 // addStringParam changes embedded single quotes to double quotes.
-                values.insert(key.clone(), format!("\"{}\"", value.replace('\'', "\"")));
+                values.insert(
+                    key.clone(),
+                    format!(
+                        "\"{}\"",
+                        if key == "caltable" {
+                            value.clone()
+                        } else {
+                            value.replace('\'', "\"")
+                        }
+                    ),
+                );
             }
             Token::Bool(value) if key == "calwt" => {
                 values.insert(key.clone(), value.to_string());
             }
             Token::Array(ids) if PARAMETERS.contains(&key.as_str()) => {
+                if !["antmap", "fldmap", "obsmap", "scanmap", "spwmap"].contains(&key.as_str())
+                    || values.get(key).is_some_and(|value| !value.starts_with('['))
+                {
+                    return Err((
+                        *line,
+                        format!("record field {key} has a string type, not an integer array"),
+                    ));
+                }
                 values.insert(
                     key.clone(),
                     format!(
@@ -74,7 +95,7 @@ pub(super) fn parse(contents: &str) -> Result<Vec<Entry>, (usize, String)> {
         index += 3;
     }
     // CalLibraryTools appends a newline even to an unterminated final file line.
-    if values.contains_key("caltable") {
+    if values.get("caltable").is_some_and(|name| name.len() > 2) {
         entries.push(Entry {
             line: contents.lines().count().max(1),
             values,
