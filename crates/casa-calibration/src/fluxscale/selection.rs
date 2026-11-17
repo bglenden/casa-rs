@@ -15,6 +15,8 @@ use casa_types::ArrayValue;
 use super::{FluxScaleError, FluxScaleOptions, GainSampleRow};
 
 pub(super) struct SampleMasks {
+    /// Rows visited by CTIter before partial per-antenna suppression.
+    pub(super) logical: Vec<bool>,
     pub(super) data: Vec<bool>,
     pub(super) threshold: Vec<bool>,
 }
@@ -22,6 +24,7 @@ pub(super) struct SampleMasks {
 impl SampleMasks {
     pub(super) fn all(count: usize) -> Self {
         Self {
+            logical: vec![true; count],
             data: vec![true; count],
             threshold: vec![true; count],
         }
@@ -46,6 +49,7 @@ pub(super) fn sample_masks(
         for (index, row) in rows.iter().enumerate() {
             masks.data[index] = fields.contains(&row.field_id);
             masks.threshold[index] = masks.data[index];
+            masks.logical[index] = masks.data[index];
         }
         return Ok(masks);
     }
@@ -103,6 +107,10 @@ pub(super) fn sample_masks(
             })
             .collect::<Vec<_>>();
         return Ok(SampleMasks {
+            logical: rows
+                .iter()
+                .map(|row| fields.contains(&row.field_id))
+                .collect(),
             threshold: data.clone(),
             data,
         });
@@ -134,6 +142,7 @@ pub(super) fn sample_masks(
             .collect()
     };
     Ok(SampleMasks {
+        logical: selected.clone(),
         data: selected,
         threshold,
     })

@@ -6335,3 +6335,14 @@ the current timestamp and implementation version as process-specific metadata.
 CASA 6.7.6.14 also accepts `refspwmap=[]` at the Python boundary but indexes
 element zero unconditionally in `SolvableVisJones::fluxscale`, causing a
 segfault. Native empty mapping means identity, as `refspwmap=[-1]` does.
+
+## Fluxscale listfile can overwrite scientific table files
+
+CASA 6.7.6.14 opens `listfile` with `ofstream` truncation without checking
+whether it names a file inside the input MS, input caltable or output product.
+Such a path can overwrite a scientific table file. Stream failures are also
+unchecked, so the task can report success without producing the listing.
+casa-rs refuses overlapping listing/product paths before mutation and reports
+listing write errors. This preserves data and implements the requested file
+output rather than silently losing it. Source: `SolvableVisJones::fluxscale`,
+the `oListFile` stream blocks.

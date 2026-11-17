@@ -281,8 +281,6 @@ pub(crate) fn fluxscale_with_output_mode(
             reason: error.to_string(),
         }
     })?;
-    validate_input_table(&input, &request.input_table)?;
-
     let field_root = request
         .options
         .measurement_set
@@ -297,58 +295,71 @@ pub(crate) fn fluxscale_with_output_mode(
         })?;
     }
     let field_info = load_field_info(field_root)?;
-    let spw_info = load_spw_info(&request.input_table)?;
-    let rows = input::read(&input, &request.input_table)?;
-
     let reference_field_ids = resolve_field_selectors(&request.reference_fields, &field_info)?;
-    let transfer_field_ids = resolve_transfer_fields(
-        &request.transfer_fields,
-        &reference_field_ids,
-        &field_info,
-        &rows,
-    )?;
-    let selected_fields = reference_field_ids
-        .union(&transfer_field_ids)
-        .copied()
-        .collect();
-    let masks = selection::sample_masks(
-        &request.input_table,
-        &rows,
-        &request.options,
-        &selected_fields,
-    )?;
+    let transfer_selection = if request.transfer_fields.is_empty() {
+        None
+    } else {
+        Some(resolve_field_selectors(
+            &request.transfer_fields,
+            &field_info,
+        )?)
+    };
+    // CASA records its table/type entry after FIELD grammar validation, even
+    // when later selection or estimation fails. Batch successful task history
+    // at the CLI; on error preserve this initial entry before returning.
+    let result = (|| {
+        validate_input_table(&input, &request.input_table)?;
+        let spw_info = load_spw_info(&request.input_table)?;
+        let rows = input::read(&input, &request.input_table)?;
+        let transfer_field_ids =
+            resolve_transfer_fields(transfer_selection.as_ref(), &reference_field_ids, &rows)?;
+        let selected_fields = reference_field_ids
+            .union(&transfer_field_ids)
+            .copied()
+            .collect();
+        let masks = selection::sample_masks(
+            &request.input_table,
+            &rows,
+            &request.options,
+            &selected_fields,
+        )?;
 
-    drop(input_phase);
-    let compute_phase = crate::timing::Phase::start("fluxscale_estimate");
-    let estimates = stats::derive_selected_estimates(
-        &rows,
-        &reference_field_ids,
-        &transfer_field_ids,
-        request.gainthreshold,
-        &request.refspwmap,
-        &masks,
-    )?;
+        drop(input_phase);
+        let compute_phase = crate::timing::Phase::start("fluxscale_estimate");
+        let estimates = stats::derive_selected_estimates(
+            &rows,
+            &reference_field_ids,
+            &transfer_field_ids,
+            request.gainthreshold,
+            &request.refspwmap,
+            &masks,
+        )?;
 
-    drop(compute_phase);
-    let write_phase = crate::timing::Phase::start("fluxscale_write");
-    write_scaled_output(request, &input, &rows, &estimates, mode, &masks)?;
-    drop(write_phase);
-    let report = build_report(
-        request,
-        &transfer_field_ids,
-        &field_info,
-        &spw_info,
-        &estimates,
-        &rows,
-        &masks,
-    );
-    if let Some(path) = &request.options.listfile {
-        listing::write(path, request, &report)?;
+        drop(compute_phase);
+        let write_phase = crate::timing::Phase::start("fluxscale_write");
+        write_scaled_output(request, &input, &rows, &estimates, mode, &masks)?;
+        drop(write_phase);
+        let report = build_report(
+            request,
+            &transfer_field_ids,
+            &field_info,
+            &spw_info,
+            &estimates,
+            &rows,
+            &masks,
+        );
+        if let Some(path) = &request.options.listfile {
+            listing::write(path, request, &report)?;
+        }
+        if request.options.display {
+            tracing::debug!("CASA fluxscale display hooks do not produce a plot");
+        }
+        Ok(report)
+    })();
+    if result.is_err() && input.info().table_type == crate::constants::TABLE_INFO_TYPE {
+        history::record_failure(request, &input.info().sub_type);
     }
-    if request.options.display {
-        tracing::debug!("CASA fluxscale display hooks do not produce a plot");
-    }
-    Ok(report)
+    result
 }
 
 fn validate_request(request: &FluxScaleRequest) -> Result<(), FluxScaleError> {
@@ -460,19 +471,18 @@ fn resolve_field_selectors(
 }
 
 fn resolve_transfer_fields(
-    selectors: &[String],
+    selection: Option<&BTreeSet<i32>>,
     reference_field_ids: &BTreeSet<i32>,
-    field_info: &HashMap<i32, FieldInfo>,
     rows: &[GainSampleRow],
 ) -> Result<BTreeSet<i32>, FluxScaleError> {
     let solved_fields = rows.iter().map(|row| row.field_id).collect::<BTreeSet<_>>();
-    let mut transfer = if selectors.is_empty() {
+    let mut transfer = if let Some(selection) = selection {
+        selection.clone()
+    } else {
         solved_fields
             .difference(reference_field_ids)
             .copied()
             .collect::<BTreeSet<_>>()
-    } else {
-        resolve_field_selectors(selectors, field_info)?
     };
     transfer.retain(|field_id| {
         !reference_field_ids.contains(field_id) && solved_fields.contains(field_id)
@@ -661,6 +671,11 @@ fn build_report(
     let mut spw_ids = BTreeSet::new();
 
     for field_id in transfer_field_ids {
+        // The public CASA result omits a transfer field with no successful
+        // window, while retaining its unscaled rows in the output product.
+        if !estimates.keys().any(|(field, _)| field == field_id) {
+            continue;
+        }
         let mut spw_results = BTreeMap::new();
         let mut windows = Vec::new();
         for &spw_id in spw_info.keys() {
@@ -729,7 +744,7 @@ fn build_report(
         .map(|spw_id| {
             if !rows
                 .iter()
-                .zip(&masks.data)
+                .zip(&masks.logical)
                 .any(|(row, selected)| *selected && row.spw_id == *spw_id)
             {
                 return -1.;

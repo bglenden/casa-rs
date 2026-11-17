@@ -25,6 +25,25 @@ fn append(
     request: &FluxScaleRequest,
     report: &FluxScaleReport,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    append_messages(request, messages(task, request, report), 2)
+}
+
+pub(super) fn record_failure(request: &FluxScaleRequest, caltype: &str) {
+    let _phase = crate::timing::Phase::start("fluxscale_history");
+    let message = format!(
+        "Table {} is of type: {caltype}",
+        request.input_table.display()
+    );
+    if let Err(error) = append_messages(request, vec![message], 1) {
+        tracing::warn!("updating fluxscale HISTORY: {error}");
+    }
+}
+
+fn append_messages(
+    request: &FluxScaleRequest,
+    messages: Vec<String>,
+    calibrater_count: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
     let Some(vis) = &request.options.measurement_set else {
         return Ok(());
     };
@@ -40,8 +59,8 @@ fn append(
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs_f64()
         + 40_587. * 86_400.;
-    for (index, message) in messages(task, request, report).into_iter().enumerate() {
-        let calibrater = index < 2;
+    for (index, message) in messages.into_iter().enumerate() {
+        let calibrater = index < calibrater_count;
         let mut row = RecordValue::new(Vec::new());
         for (column, text) in [
             ("APPLICATION", if calibrater { "calibrater" } else { "ms" }),

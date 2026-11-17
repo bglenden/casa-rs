@@ -295,8 +295,10 @@ impl StManArrayFileReader {
         let target = u64::try_from(offset).map_err(|_| {
             StorageError::FormatMismatch("negative indirect array offset".to_string())
         })?;
-        if self.pos != target {
-            if let Some(gap) = target.checked_sub(self.pos).filter(|gap| *gap < 8) {
+        // Any failed seek/header read leaves the physical cursor uncertain.
+        let previous = std::mem::replace(&mut self.pos, u64::MAX);
+        if previous != target {
+            if let Some(gap) = target.checked_sub(previous).filter(|gap| *gap < 8) {
                 // Aligned records commonly leave only a few padding bytes.
                 // Preserve the buffered payload rather than seeking the file.
                 self.file.seek_relative(gap as i64)?;
@@ -339,7 +341,9 @@ impl StManArrayFileReader {
         if total == 0 {
             return Ok(Some(make_empty_array(dt, &shape)));
         }
-        let data_position = self.pos;
+        // Typed reads can fail after consuming part of a cell, including
+        // strings that seek internally. Restore knowledge only on success.
+        let data_position = std::mem::replace(&mut self.pos, u64::MAX);
         let array_value = self.read_typed_data(dt, total, &shape)?;
         // String payloads seek internally; other cells have a known length.
         self.pos = if dt == CasacoreDataType::TpString {
@@ -829,112 +833,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn aligned_numeric_records_keep_canonical_bytes_across_header_flush() {
-        // Canonical v0 records at 16, 32 and 48: one float, three packed
-        // booleans, one double. Padding is zero, as in a newly extended file.
-        for (big_endian, hex) in [
-            (
-                false,
-                "00000000 4000000000000000 00000000 01000000 01000000 00000040 00000000 01000000 03000000 05 00000000000000 01000000 01000000 0000000000000840",
-            ),
-            (
-                true,
-                "00000000 0000000000000040 00000000 00000001 00000001 40000000 00000000 00000001 00000003 05 00000000000000 00000001 00000001 4008000000000000",
-            ),
-        ] {
-            let dir = TempDir::new().unwrap();
-            let path = dir.path().join("canonical.arr");
-            let values = [
-                (
-                    Value::Array(ArrayValue::from_f32_vec(vec![2.])),
-                    CasacoreDataType::TpFloat,
-                ),
-                (
-                    Value::Array(ArrayValue::from_bool_vec(vec![true, false, true])),
-                    CasacoreDataType::TpBool,
-                ),
-                (
-                    Value::Array(ArrayValue::from_f64_vec(vec![3.])),
-                    CasacoreDataType::TpDouble,
-                ),
-            ];
-            let mut writer = StManArrayFileWriter::create(&path, big_endian, 0).unwrap();
-            for (index, (value, dtype)) in values.iter().enumerate() {
-                assert_eq!(
-                    writer.write_array(value, *dtype).unwrap(),
-                    [16, 32, 48][index]
-                );
-                if index == 0 {
-                    writer.finish().unwrap();
-                }
-            }
-            writer.finish().unwrap();
-            let expected = hex
-                .split_whitespace()
-                .flat_map(|word| {
-                    word.as_bytes().chunks(2).map(|pair| {
-                        u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap()
-                    })
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(std::fs::read(&path).unwrap(), expected);
-            let mut reader = StManArrayFileReader::open(&path, big_endian).unwrap();
-            for ((value, dtype), offset) in values.iter().zip([16, 32, 48]) {
-                assert_eq!(
-                    reader.read_array_at(offset, *dtype).unwrap().as_ref(),
-                    Some(value)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn buffered_alignment_preserves_string_indirection_and_refcount_versions() {
-        for big_endian in [false, true] {
-            for version in [0, 1] {
-                let dir = TempDir::new().unwrap();
-                let path = dir.path().join("mixed.arr");
-                let values = [
-                    (
-                        Value::Array(ArrayValue::from_f32_vec(vec![2.5])),
-                        CasacoreDataType::TpFloat,
-                    ),
-                    (
-                        Value::Array(ArrayValue::from_string_vec(vec![
-                            String::new(),
-                            "alpha".into(),
-                        ])),
-                        CasacoreDataType::TpString,
-                    ),
-                    (
-                        Value::Array(ArrayValue::from_complex32_vec(vec![
-                            casa_types::Complex32::new(2., 3.),
-                        ])),
-                        CasacoreDataType::TpComplex,
-                    ),
-                    (
-                        Value::Array(ArrayValue::from_bool_vec(vec![true, false, true])),
-                        CasacoreDataType::TpBool,
-                    ),
-                ];
-                let mut writer = StManArrayFileWriter::create(&path, big_endian, version).unwrap();
-                let offsets = values
-                    .iter()
-                    .map(|(value, dtype)| writer.write_array(value, *dtype).unwrap())
-                    .collect::<Vec<_>>();
-                writer.finish().unwrap();
-                let mut reader = StManArrayFileReader::open(&path, big_endian).unwrap();
-                for ((value, dtype), offset) in values.iter().zip(offsets) {
-                    assert_eq!(
-                        reader.read_array_at(offset, *dtype).unwrap().as_ref(),
-                        Some(value)
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
     fn shape_read_does_not_read_a_missing_payload() {
         for big_endian in [false, true] {
             for version in [0, 1] {
@@ -1387,3 +1285,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod buffer_tests;

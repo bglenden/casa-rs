@@ -189,3 +189,99 @@ fn fluxscale_incremental_emits_one_correction_per_antenna_field_window_at_casa_r
         );
     }
 }
+
+#[test]
+fn partial_antenna_samples_do_not_move_the_casa_incremental_reference_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let gain = fixture(&dir.path().join("sparse.gcal"));
+    let mut table = Table::open(TableOptions::new(&gain)).unwrap();
+    let mut removed = Vec::new();
+    for index in 0..table.row_count() {
+        let integer = |name| match table
+            .cell_accessor(index, name)
+            .and_then(|cell| cell.value())
+            .unwrap()
+        {
+            Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
+            other => panic!("unexpected {name}: {other:?}"),
+        };
+        let field = integer("FIELD_ID");
+        let antenna = integer("ANTENNA1");
+        let Some(Value::Scalar(ScalarValue::Float64(time))) = table
+            .cell_accessor(index, "TIME")
+            .and_then(|cell| cell.value())
+            .unwrap()
+        else {
+            panic!("TIME type")
+        };
+        let time = *time;
+        if field == 1 && time == 5_084_545_995.296_027 && antenna != 0 {
+            removed.push(index);
+        }
+        table
+            .cell_accessor_mut(index, "ANTENNA2")
+            .unwrap()
+            .set(Value::Scalar(ScalarValue::Int32(-1)))
+            .unwrap();
+        table
+            .cell_accessor_mut(index, "FLAG")
+            .unwrap()
+            .set(Value::Array(casa_types::ArrayValue::from_bool_vec(
+                vec![false; 2],
+            )))
+            .unwrap();
+    }
+    table.remove_rows(&removed).unwrap();
+    table.save(TableOptions::new(&gain)).unwrap();
+    let mut request = request(&gain, &dir.path().join("sparse.fluxcal"));
+    request.incremental = true;
+    request.options.antenna = "!0".into();
+    request.options.scan = "2".into();
+    let report = fluxscale(&request).unwrap();
+    // Captured independently by partial-sparse-time in fluxscale_oracle.py.
+    assert!((report.fields[&1].spw_results[&0].fluxd[0] - 0.961_900_323_327_529_4).abs() < 1e-6);
+    let output = Table::open(TableOptions::new(request.output_table)).unwrap();
+    for index in 0..output.row_count() {
+        assert_eq!(
+            output
+                .cell_accessor(index, "TIME")
+                .unwrap()
+                .value()
+                .unwrap(),
+            Some(&Value::Scalar(ScalarValue::Float64(5_084_545_995.296_027)))
+        );
+    }
+}
+
+#[test]
+fn unmatched_transfer_field_does_not_discard_another_fields_valid_flux() {
+    let dir = tempfile::tempdir().unwrap();
+    let rows = [(0, 0, 2.), (1, 0, 4.), (2, 1, 3.)].map(|(field, antenna, amplitude)| {
+        common::SyntheticGainSolutionRow {
+            time_seconds: 10. * field as f64,
+            field_id: field,
+            spectral_window_id: 0,
+            antenna_id: antenna,
+            gains: vec![Complex32::new(amplitude, 0.); 2],
+            flags: vec![false; 2],
+        }
+    });
+    let gain = common::create_apply_gain_caltable(
+        &dir.path().join("disjoint.gcal"),
+        &["FLUX", "PHASE", "OTHER"],
+        &rows,
+    );
+    let mut request = request(&gain, &dir.path().join("disjoint.fluxcal"));
+    request.transfer_fields = vec!["PHASE".into(), "OTHER".into()];
+    let report = fluxscale(&request).unwrap();
+    assert_eq!(report.fields.len(), 1);
+    assert_eq!(report.fields[&1].spw_results[&0].fluxd[0], 4.);
+    assert_eq!(report.fields[&1].spw_results[&0].num_sol[0], 2.);
+    let output = Table::open(TableOptions::new(request.output_table)).unwrap();
+    assert_eq!(output.row_count(), 3);
+    let untouched = output.cell_accessor(2, "CPARAM").unwrap().array().unwrap();
+    assert_eq!(
+        untouched,
+        &casa_types::ArrayValue::from_complex32_vec(vec![Complex32::new(3., 0.); 2])
+    );
+}

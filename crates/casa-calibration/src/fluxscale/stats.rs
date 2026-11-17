@@ -22,7 +22,7 @@ pub(super) fn derive_selected_estimates(
     masks: &super::selection::SampleMasks,
 ) -> Result<HashMap<(i32, i32), FluxScaleEstimate>, FluxScaleError> {
     let mut timestamps = HashSet::with_capacity(rows.len());
-    for (row, selected) in rows.iter().zip(&masks.data) {
+    for (row, selected) in rows.iter().zip(&masks.logical) {
         if *selected
             && !timestamps.insert((
                 row.field_id,
@@ -96,14 +96,13 @@ pub(super) fn derive_selected_estimates(
             },
         );
     }
-    for &field_id in transfer_fields {
-        if !estimates.keys().any(|(field, _)| *field == field_id) {
-            let spw_id = rows
-                .iter()
-                .find(|row| row.field_id == field_id)
-                .map_or(-1, |row| row.spw_id);
-            return Err(FluxScaleError::MissingGainSamples { field_id, spw_id });
-        }
+    if estimates.is_empty() {
+        let field_id = transfer_fields.iter().copied().next().unwrap_or(-1);
+        let spw_id = rows
+            .iter()
+            .find(|row| row.field_id == field_id)
+            .map_or(-1, |row| row.spw_id);
+        return Err(FluxScaleError::MissingGainSamples { field_id, spw_id });
     }
     Ok(estimates)
 }

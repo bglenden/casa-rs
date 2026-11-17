@@ -144,7 +144,7 @@ pub(super) fn populate(
 fn reference_time(rows: &[GainSampleRow], masks: &SampleMasks) -> f64 {
     let mut selected = rows
         .iter()
-        .zip(&masks.data)
+        .zip(&masks.logical)
         .filter_map(|(row, selected)| selected.then_some(row))
         .collect::<Vec<_>>();
     selected.sort_by(|a, b| {

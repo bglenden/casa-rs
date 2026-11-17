@@ -14,6 +14,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 
 import numpy as np
@@ -94,6 +95,19 @@ def compare(a, b, context='return'):
         np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-7, equal_nan=True, err_msg=context)
     else:
         np.testing.assert_array_equal(a, b, err_msg=context)
+
+
+def compare_listing(left, right):
+    number = re.compile(r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?|[-+]?(?:inf|nan)', re.I)
+    lines = lambda text: [line.lstrip('# ').strip() for line in text.splitlines() if line.strip()]
+    a, b = lines(left), lines(right)
+    assert len(a) == len(b), (a, b)
+    for x, y in zip(a, b):
+        assert re.sub(r'\s+', '', number.sub('<n>', x)) == re.sub(r'\s+', '', number.sub('<n>', y)), (x, y)
+        # Both text writers print six significant digits, separately from the
+        # stricter floating return/caltable comparisons.
+        np.testing.assert_allclose([float(v) for v in number.findall(x)],
+                                   [float(v) for v in number.findall(y)], rtol=2e-5, atol=1e-7)
 
 
 def invoke(module, args, positional=False):
@@ -196,23 +210,33 @@ def run(root, native_bin):
             try:
                 value = invoke(module, effective, positional)
             except (AssertionError, ValueError, RuntimeError, TypeError, OSError) as error:
-                assert reject, (name, label, str(error))
                 records.append(dict(error=type(error).__name__, message=str(error)))
             else:
-                assert not reject, (name, label, 'accepted invalid arguments')
                 records.append(dict(value=plain(value)))
+                if effective.get('listfile'):
+                    records[-1]['listing'] = Path(effective['listfile']).read_text()
             _, records[-1]['history'] = history(dataset, history_start)
+            if ('error' in records[-1]) != reject:
+                results['comparison_failures'].append(dict(case=name, message=f'{label}: expected rejection={reject}, got {records[-1].get("message", "success")}'))
         assert before == snapshot(source), f'{name}: input gain table changed'
-        if not reject:
+        if not reject and all('value' in record for record in records):
             try:
                 compare(records[0]['value'], records[1]['value'], name)
                 a, b = contents(paths[0]), contents(paths[1])
                 assert a.keys() == b.keys(), (name, a.keys(), b.keys())
                 equal(*paths)
+                for column in ['TIME', 'INTERVAL']:
+                    np.testing.assert_allclose(a[column], b[column], rtol=0, atol=1e-4,
+                                               err_msg=f'{name}/{column}')
                 metadata(*paths)
-                compare_history(records[0]['history'], records[1]['history'], paths, name)
+                if records[0].get('listing') is not None:
+                    compare_listing(records[0]['listing'], records[1]['listing'])
             except AssertionError as error:
                 results['comparison_failures'].append(dict(case=name, message=str(error)))
+        try:
+            compare_history(records[0]['history'], records[1]['history'], paths, name)
+        except AssertionError as error:
+            results['comparison_failures'].append(dict(case=name, message=str(error)))
         results['cases'][name] = dict(arguments=plain(extra or {}), casa=records[0], native=records[1])
         (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
         failed = any(item['case'] == name for item in results['comparison_failures'])
@@ -231,6 +255,29 @@ def run(root, native_bin):
     stamp = lambda time: qa.time(qa.quantity(float(time), 's'), form='ymd', prec=10)[0]
     unique = sorted(set(times))
     timerange = stamp(unique[1]) + '~' + stamp(unique[-2])
+    # Partial antenna restrictions suppress amplitude samples after CTIter has
+    # assigned its reference time/frequency and checked timestamp uniqueness.
+    sparse = root/'sparse.gcal'
+    shutil.copytree(selected, sparse)
+    tool = table()
+    tool.open(str(sparse), nomodify=False)
+    ids, ants, stamps = (tool.getcol(name) for name in ['FIELD_ID', 'ANTENNA1', 'TIME'])
+    tool.putcol('ANTENNA2', np.full(tool.nrows(), -1, dtype=np.int32))
+    tool.putcol('FLAG', np.zeros_like(tool.getcol('FLAG')))
+    tool.removerows(np.flatnonzero((ids == 1) & (stamps == min(stamps[ids == 1])) & (ants != 0)).tolist())
+    tool.close()
+    case('partial-sparse-time', dict(antenna='!0', scan='2', incremental=True), source=sparse)
+    suppressed_duplicate = root/'suppressed-duplicate.gcal'
+    shutil.copytree(sparse, suppressed_duplicate)
+    tool.open(str(suppressed_duplicate), nomodify=False)
+    ids = np.flatnonzero(tool.getcol('FIELD_ID') == 1)
+    row = {name: tool.getcell(name, int(ids[0])) for name in tool.colnames() if tool.iscelldefined(name, int(ids[0]))}
+    last = tool.nrows()
+    tool.addrows(1)
+    for name, value in row.items():
+        tool.putcell(name, last, value)
+    tool.close()
+    case('partial-suppressed-duplicate', dict(antenna='!0', scan='2'), source=suppressed_duplicate, reject=True)
     for name, extra in [
         ('antenna-id', dict(antenna='0')), ('antenna-name', dict(antenna='A0')),
         ('antenna-range', dict(antenna='0~2')), ('antenna-negated', dict(antenna='!0')),
@@ -299,12 +346,27 @@ def run(root, native_bin):
     tool.close()
     case('multiple-references', dict(reference=['FLUX', 'REF2']), source=reference_gain, dataset=reference_vis)
     case('output-field-subset', source=reference_gain, dataset=reference_vis)
+    unmatched = root/'unmatched.gcal'
+    shutil.copytree(reference_gain, unmatched)
+    tool.open(str(unmatched), nomodify=False)
+    ids, ants = tool.getcol('FIELD_ID'), tool.getcol('ANTENNA1')
+    tool.putcol('FLAG', np.zeros_like(tool.getcol('FLAG')))
+    tool.removerows(np.flatnonzero(((ids != 2) & (ants != 0)) | ((ids == 2) & (ants != 1))).tolist())
+    tool.close()
+    case('unmatched-transfer', dict(transfer=['PHASE', 'REF2']), source=unmatched, dataset=reference_vis)
     for parent in [reference_vis, reference_gain]:
         tool.open(str(parent/'FIELD'), nomodify=False)
         tool.putcell('NAME', 2, '')
         tool.close()
     case('blank-reference-token', dict(reference=['', 'FLUX']), source=reference_gain, dataset=reference_vis, reject=True)
     multi_vis, multi_gain = multi_window(vis, selected, root)
+    case('listfile-mapped', dict(listfile=str(root/'mapped.txt'), refspwmap=[0]), source=multi_gain, dataset=multi_vis)
+    sparse_vis, sparse_gain = multi_window(vis, sparse, root, name='sparse-windows')
+    tool.open(str(sparse_gain), nomodify=False)
+    spws, scans, ants = (tool.getcol(name) for name in ['SPECTRAL_WINDOW_ID', 'SCAN_NUMBER', 'ANTENNA1'])
+    tool.removerows(np.flatnonzero((spws == 2) & ((scans != 1) | (ants != 0))).tolist())
+    tool.close()
+    case('partial-frequency', dict(antenna='!0', scan='2'), source=sparse_gain, dataset=sparse_vis)
     for name, extra in [
         ('fit-zero', dict(fitorder=0)), ('fit-one', dict(fitorder=1)), ('fit-two', dict(fitorder=2)),
         ('map-broadcast', dict(refspwmap=[0])), ('map-vector', dict(refspwmap=[0, 0, 1])),
@@ -320,6 +382,7 @@ def run(root, native_bin):
     tool.removerows(np.flatnonzero(tool.getcol('SPECTRAL_WINDOW_ID') == 2).tolist())
     tool.close()
     case('missing-window', source=two_gain, dataset=multi_vis)
+    case('listfile-missing', dict(listfile=str(root/'missing.txt')), source=two_gain, dataset=multi_vis)
     for name, extra in [
         ('vis-list', dict(vis=[str(vis)])),
         ('bad-reference', dict(reference='999')), ('empty-reference', dict(reference=[])),

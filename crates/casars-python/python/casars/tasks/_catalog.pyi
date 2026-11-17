@@ -594,7 +594,7 @@ def bandpass(
     ...
 
 def fluxscale(
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    vis: StrPath = ...,
     caltable: StrPath = ...,
     fluxtable: StrPath = ...,
     reference: str | list[str] | tuple[str, ...] = ...,

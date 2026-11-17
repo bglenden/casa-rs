@@ -170,8 +170,18 @@ def main():
             readers.append(dict(wall_seconds=wall, cpu_seconds=sum(after_cpu.values())-sum(before_cpu.values()),
                                 block_io={key: after_io[key]-before_io[key] for key in before_io}))
         evidence['reader_runs'] = readers
-        # A decoded/re-encoded full-table rewrite, without calibration, provides
-        # the existing public table I/O cost as well as the reader-only floor.
+        args.out.write_text(json.dumps(evidence, indent=2)+'\n')
+        # Measure MAIN decode/encode without calibration. Subtable value-copy
+        # belongs to the separate table-tool backlog; remove only references
+        # from this disposable input after all task measurements are complete.
+        from casatools import table as casa_table
+        tool = casa_table()
+        tool.open(str(gain), nomodify=False)
+        for name, value in tool.getkeywords().items():
+            if isinstance(value, str) and value.startswith('Table: '):
+                tool.removekeyword(name)
+        tool.close()
+        evidence['rewrite_scope'] = 'Native public table.copy valuecopy MAIN only; owning subtable references removed after all task timings'
         rewrites = []
         for index in range(args.repeats):
             destination = root/f'rewrite-{index}'

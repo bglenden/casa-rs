@@ -45,12 +45,11 @@ pub(super) fn write(
             } else {
                 format!(" (ref SpW={reference})")
             };
-            let _ = write!(
-                text,
-                "# Flux density for {} in SpW={spw} (freq={} Hz){mapped} is: ",
-                field.field_name,
-                number(report.frequencies_hz[index])
-            );
+            let _ = write!(text, "# Flux density for {} in SpW={spw}", field.field_name,);
+            if result.fluxd[0] >= 0. {
+                let _ = write!(text, " (freq={} Hz)", number(report.frequencies_hz[index]));
+            }
+            let _ = write!(text, "{mapped} is: ");
             if result.fluxd[0] < 0. {
                 text.push_str("INSUFFICIENT DATA\n");
             } else {
