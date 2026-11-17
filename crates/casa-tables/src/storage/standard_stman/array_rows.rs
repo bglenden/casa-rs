@@ -184,7 +184,7 @@ pub(super) fn read<R: ReadCell>(
     } else {
         return Ok(None);
     };
-    // Decode only selected rows. Read-ahead retains at most 64 KiB of encoded
+    // Decode only selected rows. Read-ahead retains at most 32 KiB of encoded
     // source bytes plus one bucket, independently of gaps in the selection.
     let mut requests = selected_rows
         .iter()
