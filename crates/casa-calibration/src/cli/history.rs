@@ -1,0 +1,149 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! The applycal task's `mstools.write_history` provenance.
+
+use std::path::Path;
+
+use casa_provider_contracts::{ParameterValue, python_repr};
+use casa_tables::{Table, TableOptions};
+use casa_task_runtime::TaskInvocation;
+use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+
+pub(super) fn record_applycal(task: &TaskInvocation<'_>, vis: &Path) {
+    let _phase = crate::timing::Phase::start("applycal_history");
+    if let Err(error) = append(task, vis) {
+        // CASA catches HISTORY errors after correction and reports a warning.
+        tracing::warn!("updating applycal HISTORY: {error}");
+    }
+}
+
+fn append(task: &TaskInvocation<'_>, vis: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let path = vis.join("HISTORY");
+    #[cfg(unix)]
+    let mut table = Table::open_with_lock(
+        TableOptions::new(&path),
+        casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait),
+    )?;
+    #[cfg(not(unix))]
+    let mut table = Table::open(TableOptions::new(&path))?;
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs_f64()
+        + 40_587. * 86_400.;
+    for message in messages(task) {
+        let mut row = RecordValue::new(Vec::new());
+        for (name, value) in [
+            ("APPLICATION", "ms"),
+            ("ORIGIN", "applycal"),
+            ("PRIORITY", "INFO"),
+            ("MESSAGE", &message),
+        ] {
+            row.upsert(name, Value::Scalar(ScalarValue::String(value.into())));
+        }
+        row.upsert("TIME", Value::Scalar(ScalarValue::Float64(time)));
+        row.upsert("OBJECT_ID", Value::Scalar(ScalarValue::Int32(0)));
+        row.upsert("OBSERVATION_ID", Value::Scalar(ScalarValue::Int32(-1)));
+        for name in ["APP_PARAMS", "CLI_COMMAND"] {
+            row.upsert(
+                name,
+                Value::Array(ArrayValue::from_string_vec(vec![String::new()])),
+            );
+        }
+        table.add_row(row)?;
+    }
+    table.save(TableOptions::new(path))?;
+    Ok(())
+}
+
+fn value(task: &TaskInvocation<'_>, name: &str) -> Option<ParameterValue> {
+    task.session().states().get(name)?.value.clone()
+}
+
+fn messages(task: &TaskInvocation<'_>) -> Vec<String> {
+    let mut messages = vec![
+        "taskname=applycal".into(),
+        format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
+    ];
+    let mut bindings = task
+        .session()
+        .bundle()
+        .surface
+        .bindings()
+        .iter()
+        .filter(|binding| binding.order < 21)
+        .collect::<Vec<_>>();
+    bindings.sort_by_key(|binding| binding.order);
+    for binding in bindings {
+        if let Some(value) = effective(task, &binding.name) {
+            let text = match value {
+                ParameterValue::String(text) => format!("\"{text}\""),
+                value => python_repr(&value),
+            };
+            messages.push(format!("{:<11} = {text}", binding.name));
+        }
+    }
+    messages
+}
+
+fn effective(task: &TaskInvocation<'_>, name: &str) -> Option<ParameterValue> {
+    let mut current = value(task, name)?;
+    // The provider uses an MS-path vector and "none" selector sentinels;
+    // CASA's public applycal parameters and HISTORY use a path and empty strings.
+    if name == "vis"
+        && let ParameterValue::Array(paths) = &current
+        && paths.len() == 1
+    {
+        return Some(paths[0].clone());
+    }
+    if matches!(
+        name,
+        "field"
+            | "spw"
+            | "intent"
+            | "timerange"
+            | "uvrange"
+            | "antenna"
+            | "scan"
+            | "observation"
+            | "msselect"
+    ) && current == ParameterValue::String("none".into())
+    {
+        current = ParameterValue::String(String::new());
+    }
+
+    if name == "applymode" && current == ParameterValue::String(String::new()) {
+        return Some(ParameterValue::String("calflag".into()));
+    }
+    if value(task, "docallib") == Some(ParameterValue::Bool(true)) {
+        return Some(current);
+    }
+    let tables = match value(task, "gaintable") {
+        Some(ParameterValue::Array(tables)) => tables,
+        _ => Vec::new(),
+    };
+    if let ParameterValue::Array(values) = &mut current {
+        match name {
+            "calwt" if values.len() == 1 => {
+                let count = if tables == [ParameterValue::String(String::new())] {
+                    0
+                } else {
+                    tables.len()
+                };
+                *values = vec![values[0].clone(); count];
+            }
+            "spwmap" if !values.is_empty() && !matches!(values[0], ParameterValue::Array(_)) => {
+                current = ParameterValue::Array(vec![current]);
+            }
+            "interp" => {
+                for (table, value) in tables.iter().zip(values) {
+                    if table != &ParameterValue::String(String::new())
+                        && value == &ParameterValue::String(String::new())
+                    {
+                        *value = ParameterValue::String("linear".into());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(current)
+}

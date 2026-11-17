@@ -95,20 +95,49 @@ def run(root, native_bin):
     tool.putcol('CHAN_FREQ', tool.getcol('CHAN_FREQ')[::-1, :])
     tool.putcol('CHAN_WIDTH', -tool.getcol('CHAN_WIDTH')[::-1, :])
     tool.close()
+    unavailable = root/'unavailable.gcal'
+    copy_ms(constant, unavailable)
+    tool.open(str(unavailable), nomodify=False)
+    tool.putcol('SPECTRAL_WINDOW_ID', np.ones_like(tool.getcol('SPECTRAL_WINDOW_ID')))
+    tool.close()
+    tool.open(str(unavailable/'SPECTRAL_WINDOW'), nomodify=False)
+    tool.addrows(1)
+    for column in tool.colnames():
+        if tool.iscelldefined(column, 0):
+            tool.putcell(column, 1, tool.getcell(column, 0))
+    tool.close()
     tool.open(str(source), nomodify=False)
     if 'CORRECTED_DATA' in tool.colnames():
         tool.removecols(['CORRECTED_DATA'])
     tool.close()
+    polarized_sources = {}
+    for basis, correlations in [('linear', 'XX XY YX YY'), ('circular', 'RR RL LR LL')]:
+        path = root/('source-'+basis+'.ms')
+        make_cal_ms(str(path), stokes=correlations)
+        tool.open(str(path), nomodify=False)
+        data = tool.getcol('DATA')
+        for corr, value in enumerate([1.+.2j, .3+.4j, -.2+.5j, 2.-.1j]):
+            data[corr, :, :] = value*(np.arange(data.shape[1])+1)[:, None]
+        tool.putcol('DATA', data)
+        flags = tool.getcol('FLAG')
+        flags[1, 2, 0] = True
+        flags[2, 3, 1] = True
+        tool.putcol('FLAG', flags)
+        if 'CORRECTED_DATA' in tool.colnames():
+            tool.removecols(['CORRECTED_DATA'])
+        tool.close()
+        polarized_sources[basis] = path
+
     result = dict(casa_version=casa.version_string(), signature=str(reference), cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
-    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False):
+    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None):
         records, paths = {}, {}
         before_gain = snapshot(gain)
         for engine, module in [('casa', casa), ('native', native)]:
             path = root/f'{name}.{engine}.ms'
             paths[engine] = path
-            copy_ms(source, path, endian)
+            copy_ms(input_vis or source, path, endian)
             if descending_ms:
                 tool.open(str(path/'SPECTRAL_WINDOW'), nomodify=False)
                 tool.putcol('CHAN_FREQ', tool.getcol('CHAN_FREQ')[::-1, :])
@@ -146,6 +175,7 @@ def run(root, native_bin):
             preload = os.environ.pop('LD_PRELOAD', None) if engine == 'native' else None
             cpu_start = sum(resource.getrusage(kind).ru_utime+resource.getrusage(kind).ru_stime
                             for kind in [resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN])
+            epoch_start = time.time()
             start = time.perf_counter()
             try:
                 with contextlib.redirect_stderr(captured):
@@ -153,11 +183,12 @@ def run(root, native_bin):
                         value = module.applycal(**arguments)
                 record = dict(value=plain(value))
             except (ValueError, TypeError, RuntimeError, OSError) as error:
-                record = dict(error=type(error).__name__, message=str(error))
+                record = dict(error=type(error).__name__, exception_bases=[kind.__name__ for kind in type(error).__mro__], message=str(error))
             finally:
                 if preload is not None:
                     os.environ['LD_PRELOAD'] = preload
             record['wall_seconds'] = time.perf_counter()-start
+            record['epoch_bounds'] = [epoch_start, time.time()]
             record['cpu_seconds'] = sum(resource.getrusage(kind).ru_utime+resource.getrusage(kind).ru_stime
                                         for kind in [resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN])-cpu_start
             record['stderr'] = captured.getvalue()
@@ -180,9 +211,29 @@ def run(root, native_bin):
         def compare_return():
             assert records['casa'].get('value') == records['native'].get('value')
             assert ('error' in records['casa']) == ('error' in records['native']), records
+            if 'error' in records['casa']:
+                # casars.TaskExecutionError subclasses RuntimeError; callers'
+                # CASA exception handlers must still catch the native exception.
+                assert records['casa']['error'] in records['native']['exception_bases'], records
         def compare_history():
             left, right = records['casa']['history'], records['native']['history']
             assert len(left['TIME']) == len(right['TIME']), (len(left['TIME']), len(right['TIME']))
+            for column in ['APPLICATION', 'ORIGIN', 'PRIORITY', 'OBSERVATION_ID', 'OBJECT_ID', 'APP_PARAMS', 'CLI_COMMAND']:
+                np.testing.assert_array_equal(left[column], right[column], err_msg=column)
+            normalized = {}
+            for engine, record in records.items():
+                bounds = np.asarray(record['epoch_bounds']) + 40587.*86400.
+                times = np.asarray(record['history']['TIME'])
+                assert np.all(np.isfinite(times))
+                assert np.all((times >= bounds[0]-1.) & (times <= bounds[1]+1.)), (engine, times, bounds)
+                messages = []
+                for message in record['history']['MESSAGE']:
+                    if message.startswith('version: '):
+                        assert message.startswith('version: 6.7.6-14 ' if engine == 'casa' else 'version: casa-rs '), message
+                        message = '<implementation version>'
+                    messages.append(message.replace(str(paths[engine]), '<vis>'))
+                normalized[engine] = messages
+            assert normalized['casa'] == normalized['native'], normalized
         def compare_backup():
             assert len(records['casa']['flag_versions']) == len(records['native']['flag_versions'])
         for component, operation in [('return', compare_return), ('MAIN', compare_main),
@@ -196,6 +247,8 @@ def run(root, native_bin):
     case('default')
     case('no-calwt', dict(calwt=False))
     case('repeat-apply', repetitions=2)
+    case('chain-history', dict(gaintable=[str(constant), str(constant)], calwt=[True], interp=['', 'nearest'], spwmap=[0]))
+    case('blank-applymode', dict(applymode=''))
     case('weight-from-sigma', weight_seed=(3., 2.))
     case('spectral-sigma', spectral_sigma=True)
     case('calonly', dict(applymode='calonly'))
@@ -225,7 +278,18 @@ def run(root, native_bin):
     case('solved-gains', gain=solved)
     for mode in ['calflagstrict', 'flagonly', 'flagonlystrict']:
         case(mode, dict(applymode=mode), gain=solved)
+        case(mode+'-existing', dict(applymode=mode, flagbackup=True), gain=solved, precorrected=True)
+        case(mode+'-channels', dict(applymode=mode, spw='0:0~6^2'), gain=solved, precorrected=True, spectral_sigma=True)
+    for mode in ['calflag', 'calonly', 'calflagstrict', 'flagonly', 'flagonlystrict', 'trial']:
+        case('unavailable-'+mode, dict(applymode=mode), gain=unavailable, precorrected=True, weight_seed=(3., 2.), spectral_sigma=True)
+    case('unavailable-new', gain=unavailable)
     case('parang-alone', dict(gaintable=[], parang=True))
+    case('parang-alone-trial', dict(gaintable=[], parang=True, applymode='trial'))
+    for basis, input_vis in polarized_sources.items():
+        case('parang-'+basis, dict(gaintable=[], parang=True), input_vis=input_vis)
+        case('parang-'+basis+'-channels', dict(gaintable=[], parang=True, spw='0:0~6^2'), input_vis=input_vis, precorrected=True)
+        for mode in ['trial', 'flagonly']:
+            case('parang-'+basis+'-'+mode, dict(gaintable=[], parang=True, applymode=mode), input_vis=input_vis)
     return result
 
 

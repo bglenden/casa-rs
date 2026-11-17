@@ -53,12 +53,7 @@ pub(super) fn task_request(
 
 fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFailure> {
     let calibration_tables = chain(task, Chain::Apply)?;
-    if calibration_tables.is_empty() {
-        // CASA's Calibrater::correct fails with nothing to apply; the
-        // parallactic-angle correction alone is not implemented yet.
-        if task.flag("parang")? {
-            return Err(not_yet("parang", "True with no gaintable"));
-        }
+    if calibration_tables.is_empty() && !task.flag("parang")? {
         return Err(TaskFailure::validation(
             "applycal has nothing to apply; set gaintable, or docallib and callib",
         )
@@ -423,6 +418,9 @@ fn has_model_column(ms: &MeasurementSet) -> bool {
 fn applymode(task: &TaskInvocation<'_>) -> Result<ApplyMode, TaskFailure> {
     match task.required_text("applymode")?.as_str() {
         "" | "calflag" => Ok(ApplyMode::CalFlag),
+        "calflagstrict" => Ok(ApplyMode::CalFlagStrict),
+        "flagonly" => Ok(ApplyMode::FlagOnly),
+        "flagonlystrict" => Ok(ApplyMode::FlagOnlyStrict),
         "calonly" => Ok(ApplyMode::CalOnly),
         "trial" => Ok(ApplyMode::Trial),
         other => Err(not_yet("applymode", other)),
