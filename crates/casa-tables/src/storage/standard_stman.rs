@@ -39,6 +39,8 @@ use super::table_control::ColumnDescContents;
 use super::{ColumnSources, RequiredScalarColumnData, StorageError};
 
 mod array_updates;
+mod bucket_reader;
+use bucket_reader::ReadBuckets;
 mod column_writer;
 pub(crate) use array_updates::save_ssm_array_rows_in_place;
 mod index;
@@ -1148,6 +1150,7 @@ pub(crate) fn read_ssm_required_scalar_columns_rows_reusing(
         .copied()
         .filter(|first| index_numbers.iter().all(|value| value == first));
     if contiguous_rows && let Some(index_nr) = shared_index_nr {
+        let mut buckets = ReadBuckets::new(file)?;
         let index = indices.get(index_nr as usize).ok_or_else(|| {
             StorageError::FormatMismatch(format!(
                 "SSM required scalar columns reference missing index {index_nr}"
@@ -1162,7 +1165,7 @@ pub(crate) fn read_ssm_required_scalar_columns_rows_reusing(
                         "SSM index has no bucket for row {row_index}"
                     ))
                 })?;
-            let bucket = read_bucket(&mut file, &header, bucket_nr)?;
+            let bucket = buckets.read(&header, bucket_nr)?;
             let row_in_bucket = row_index - bucket_start as usize;
             let row_count =
                 (bucket_end as usize - row_index + 1).min(selected_rows.len() - out_start);
@@ -1181,7 +1184,7 @@ pub(crate) fn read_ssm_required_scalar_columns_rows_reusing(
                 })?;
                 copy_ssm_required_scalar_range(
                     output,
-                    &bucket,
+                    bucket,
                     column_offset,
                     row_in_bucket,
                     out_start,
