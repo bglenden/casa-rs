@@ -76,7 +76,7 @@ pub fn save_next_partition_flag_backup(
     )]);
     table
         .save_with_bindings(
-            TableOptions::new(&flag_version_table_path(path, &name))
+            TableOptions::new(flag_version_table_path(path, &name))
                 .with_data_manager(DataManagerKind::StandardStMan),
             &bindings,
         )
