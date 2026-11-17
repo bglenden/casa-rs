@@ -194,10 +194,13 @@ impl Column {
     }
 
     pub fn value(&self, fits: &mut Reader, cols: &[Self], row: i64) -> Result<Value> {
+        if self.primitive == PrimitiveType::String {
+            return Ok(Value::Scalar(ScalarValue::String(self.text(fits, row)?)));
+        }
         let available = self.row_length(fits, row)?;
         let row_shape = self
             .row_shape
-            .map(|shape| cols[shape].text(fits, row, cols[shape].repeat))
+            .map(|shape| cols[shape].text(fits, row))
             .transpose()?
             .map(|shape| parse_shape(&shape))
             .transpose()?;
@@ -257,9 +260,6 @@ impl Column {
                     .map(|[re, im]| Complex64::new(re, im))
                     .collect::<Vec<_>>()
             ),
-            PrimitiveType::String => {
-                Value::Scalar(ScalarValue::String(self.text(fits, row, available)?))
-            }
             _ => unreachable!("FITS description constrains the primitive type"),
         })
     }
@@ -352,7 +352,8 @@ impl Column {
         Ok(data.into_iter().map(|value| value == 1).collect())
     }
 
-    fn text(&self, fits: &mut Reader, row: i64, width: usize) -> Result<String> {
+    fn text(&self, fits: &mut Reader, row: i64) -> Result<String> {
+        let width = self.row_length(fits, row)?;
         if width == 0 {
             return Ok(String::new());
         }

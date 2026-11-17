@@ -150,3 +150,21 @@ def test_fromfits_second_hdu_ascii_and_heap(tmp_path):
     assert heap_tab.getcoldesc("DATA")["ndim"] == -1
     np.testing.assert_array_equal(heap_tab.getcell("DATA", 0), [1, 2, 3])
     np.testing.assert_array_equal(heap_tab.getcell("DATA", 1), [7])
+
+
+def test_variable_length_tdim_text_uses_each_heap_record(tmp_path):
+    source = tmp_path / "heap_tdim.fits"
+    primary = _fits_header([("SIMPLE", True), ("BITPIX", 8), ("NAXIS", 0), ("EXTEND", True)])
+    dims = b"(2,2)(4)"
+    header = _fits_header([
+        ("XTENSION", "BINTABLE"), ("BITPIX", 8), ("NAXIS", 2), ("NAXIS1", 24),
+        ("NAXIS2", 2), ("PCOUNT", len(dims)), ("GCOUNT", 1), ("TFIELDS", 2),
+        ("TTYPE1", "DATA"), ("TFORM1", "4E"),
+        ("TTYPE2", "TDIM1"), ("TFORM2", "1PA"),
+    ])
+    rows = struct.pack(">4fii4fii", 1, 2, 3, 4, 5, 0, 5, 6, 7, 8, 3, 5)
+    source.write_bytes(primary + header + (rows + dims).ljust(2880, b"\0"))
+    out = table().fromfits(str(tmp_path / "shape.table"), str(source))
+    np.testing.assert_array_equal(out.getcell("DATA", 0), [[1, 3], [2, 4]])
+    np.testing.assert_array_equal(out.getcell("DATA", 1), [5, 6, 7, 8])
+    assert list(out.getcol("TDIM1")) == ["(2,2)", "(4)"]
