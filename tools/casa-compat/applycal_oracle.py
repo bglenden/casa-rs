@@ -165,6 +165,46 @@ def run(root, native_bin):
     tool.putcol('TIME', times+5.)
     tool.close()
 
+    # Separate contexts and shifted grids make interpolation modifiers observable.
+    observation_source, observation_gain = root/'source-observations.ms', root/'observations.gcal'
+    for original, destination in [(chain_source, observation_source), (time_gain, observation_gain)]:
+        copy_ms(original, destination)
+        tool.open(str(destination/'OBSERVATION'), nomodify=False)
+        tool.addrows(1)
+        for column in tool.colnames():
+            if tool.iscelldefined(column, 0):
+                tool.putcell(column, 1, tool.getcell(column, 0))
+        tool.close()
+        tool.open(str(destination), nomodify=False)
+        tool.putcol('OBSERVATION_ID', (tool.getcol('SCAN_NUMBER') == 2).astype(np.int32))
+        tool.close()
+    shifted_source = root/'source-shifted.ms'
+    copy_ms(chain_source, shifted_source)
+    tool.open(str(shifted_source/'SPECTRAL_WINDOW'), nomodify=False)
+    frequencies = tool.getcol('CHAN_FREQ')
+    tool.putcol('CHAN_FREQ', frequencies + .35*(frequencies[1]-frequencies[0]))
+    tool.close()
+    phase_delay_source = root/'source-phase-delay.ms'
+    copy_ms(chain_source, phase_delay_source)
+    tool.open(str(phase_delay_source/'SPECTRAL_WINDOW'), nomodify=False)
+    tool.putcol('CHAN_FREQ', tool.getcol('CHAN_FREQ')*2.)
+    tool.putcol('REF_FREQUENCY', tool.getcol('REF_FREQUENCY')*2.)
+    tool.close()
+    curved_bandpass, flagged_curved_bandpass = root/'curved.bcal', root/'curved-flagged.bcal'
+    for destination, flagged in [(curved_bandpass, False), (flagged_curved_bandpass, True)]:
+        copy_ms(channelized, destination)
+        tool.open(str(destination), nomodify=False)
+        values = tool.getcol('CPARAM')
+        x = np.arange(values.shape[1])
+        values[:] = (1.5+.1*x+.025*x*x)[None, :, None]
+        values[:, :, tool.getcol('ANTENNA1') == 0] *= np.exp(1.j*(.12*x+.03*x*x))[None, :, None]
+        tool.putcol('CPARAM', values)
+        flags = np.zeros_like(tool.getcol('FLAG'))
+        if flagged:
+            flags[:, [3, 6], :] = True
+        tool.putcol('FLAG', flags)
+        tool.close()
+
     result = dict(casa_version=casa.version_string(), signature=str(reference), cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
@@ -392,6 +432,21 @@ def run(root, native_bin):
     case('chain-spwmap-identity', dict(spwmap=[0]), gain=time_gain, input_vis=chain_source, precorrected=True)
     case('chain-spwmap-too-long', dict(spwmap=[0, 0]), gain=time_gain, input_vis=chain_source, precorrected=True)
     case('chain-two-tables', dict(gaintable=[str(time_gain), str(constant)], gainfield=['0,1', ''], interp=['linear', 'nearest'], calwt=[True, False]), gain=time_gain, input_vis=chain_source, precorrected=True)
+    case('chain-spwmap-remap', dict(spwmap=[1]), gain=unavailable, input_vis=chain_source, precorrected=True)
+    for method in ['nearest', 'linear', 'cubic', 'nearestperobs', 'linearperobs',
+                   'nearestperscan', 'linearperscan', 'linearperobsperscan']:
+        case('chain-observations-'+method, dict(interp=[method]), gain=observation_gain, input_vis=observation_source, precorrected=True)
+    case('chain-observations-mismatch', dict(interp=['linearperobs']), gain=observation_gain, input_vis=chain_source, precorrected=True)
+    for method in ['nearestPD', 'linearPD', 'cubicPD']:
+        case('chain-phase-delay-'+method, dict(interp=[method]), gain=time_gain, input_vis=phase_delay_source, precorrected=True)
+    case('chain-phase-delay-channel-selection', dict(interp=['linearPD'], spw='0:1~3'), gain=time_gain, input_vis=phase_delay_source, precorrected=True)
+    for method in ['nearest', 'linear', 'cubic', 'spline', 'nearestflag', 'linearflag', 'cubicflag', 'splineflag']:
+        case('chain-frequency-'+method, dict(interp=['linear,'+method]), gain=flagged_curved_bandpass if 'flag' in method else curved_bandpass, input_vis=shifted_source, precorrected=True)
+    case('chain-frequency-descending', dict(interp=['linear,cubic']), gain=curved_bandpass, input_vis=shifted_source, descending_ms=True, precorrected=True)
+    case('chain-frequency-relative', dict(interp=['linear,linearrel']), gain=curved_bandpass, input_vis=phase_delay_source, precorrected=True)
+    for method in ['LINEAR', 'aipslin', 'linear,aipslin', 'bogus']:
+        case('chain-interpolation-invalid-'+method.replace(',', '-'), dict(interp=[method]), gain=time_gain, input_vis=chain_source)
+    case('chain-frequency-unknown-linear-fallback', dict(interp=['linear,unknown']), gain=curved_bandpass, input_vis=shifted_source, precorrected=True)
     return result
 
 
