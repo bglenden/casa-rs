@@ -2078,7 +2078,13 @@ fn apply_row_all_channels(
                 &cal_spw.channel_frequencies_hz
             },
             cal_ref_frequency_hz: cal_spw_reference_frequency_hz(cal_spw),
-            interp: table_plan.interp,
+            // Prepared B gains already occupy the full MS grid. Temporal
+            // interpolation happened at lookup; sample original bins directly.
+            interp: if is_bandpass {
+                ApplyInterpolationMode::Nearest
+            } else {
+                table_plan.interp
+            },
             path: &loaded_table.path,
             engine: loaded_table.engine.as_deref(),
         };

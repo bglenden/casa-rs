@@ -199,4 +199,21 @@ mod tests {
             assert_eq!(mean_power(&gain, 0), 1.);
         }
     }
+    #[test]
+    fn bandpass_phase_wrap_interpolates_through_pi_instead_of_zero() {
+        let values = vec![
+            Complex32::from_polar(1., 170_f32.to_radians()),
+            Complex32::new(100., 0.),
+            Complex32::from_polar(1., -170_f32.to_radians()),
+        ];
+        let grid = GainGrid {
+            receptor_count: 1,
+            channel_count: 3,
+            values: ArrayD::from_shape_vec(IxDyn(&[1, 3]), values).unwrap(),
+            flags: ArrayD::from_shape_vec(IxDyn(&[1, 3]), vec![false, true, false]).unwrap(),
+        };
+        let result = resample(&grid, &[1., 2., 3.], &[2.]);
+        assert!((result.values[[0, 0]] - Complex32::new(-1., 0.)).norm() < 1e-6);
+        assert!(!result.flags[[0, 0]]);
+    }
 }

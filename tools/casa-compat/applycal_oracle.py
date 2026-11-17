@@ -83,7 +83,9 @@ def run(root, native_bin):
         copy_ms(channelized, destination)
     tool.open(str(phase_bandpass), nomodify=False)
     phases = np.deg2rad([0., 10., 20., 170., -170., -160., -150., -140.])
-    tool.putcol('CPARAM', gains*np.exp(1.j*phases)[None, :, None])
+    phase_gains = np.ones_like(gains)
+    phase_gains[:, :, tool.getcol('ANTENNA1') == 0] *= np.exp(1.j*phases)[None, :, None]
+    tool.putcol('CPARAM', phase_gains)
     tool.close()
     tool.open(str(descending_bandpass), nomodify=False)
     tool.putcol('CPARAM', gains[:, ::-1, :])
@@ -100,13 +102,18 @@ def run(root, native_bin):
     result = dict(casa_version=casa.version_string(), signature=str(reference), cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
-    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc'):
+    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False):
         records, paths = {}, {}
         before_gain = snapshot(gain)
         for engine, module in [('casa', casa), ('native', native)]:
             path = root/f'{name}.{engine}.ms'
             paths[engine] = path
             copy_ms(source, path, endian)
+            if descending_ms:
+                tool.open(str(path/'SPECTRAL_WINDOW'), nomodify=False)
+                tool.putcol('CHAN_FREQ', tool.getcol('CHAN_FREQ')[::-1, :])
+                tool.putcol('CHAN_WIDTH', -tool.getcol('CHAN_WIDTH')[::-1, :])
+                tool.close()
             if precorrected:
                 tool.open(str(path), nomodify=False)
                 descriptor = tool.getcoldesc('DATA')
@@ -182,7 +189,7 @@ def run(root, native_bin):
                                      ('HISTORY', compare_history), ('flagbackup', compare_backup)]:
             check(component, operation)
         result['cases'][name] = dict(arguments=plain(extra or {}), repetitions=repetitions,
-                                    weight_seed=weight_seed, spectral_sigma=spectral_sigma, endian=endian, records=records)
+                                    weight_seed=weight_seed, spectral_sigma=spectral_sigma, endian=endian, descending_ms=descending_ms, records=records)
         (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
         print(name, 'FAILED' if any(item['case'] == name for item in result['failures']) else 'passed', flush=True)
 
@@ -210,6 +217,8 @@ def run(root, native_bin):
     case('channels-bandpass-spectral', dict(spw='0:2~6^2'), gain=channelized, precorrected=True, spectral_sigma=True)
     case('channels-bandpass-phase', dict(spw='0:2~6^2'), gain=phase_bandpass, precorrected=True, spectral_sigma=True)
     case('channels-bandpass-descending', dict(spw='0:2~6^2'), gain=descending_bandpass, precorrected=True)
+    for calwt in [False, True]:
+        case('channels-bandpass-ms-descending-'+str(calwt), dict(spw='0:0~6^2', interp=['nearest,linear'], calwt=calwt), gain=channelized, precorrected=True, descending_ms=True)
     for endian in ['big', 'little']:
         case('channels-'+endian, dict(spw='0:0~6^2'), precorrected=True, spectral_sigma=True, endian=endian)
     case('flagbackup', dict(flagbackup=True))

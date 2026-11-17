@@ -242,3 +242,112 @@ fn selected_bandpass_channel_uses_its_original_grid_position() {
         assert!((corrected[[1, 1]].im - 0.5).abs() < 1e-6);
     }
 }
+
+#[test]
+fn descending_ms_bandpass_is_independent_of_calwt_after_frequency_resampling() {
+    use casa_calibration::ApplyInterpolationMode;
+    use casa_ms::schema::SubtableId;
+    use casa_tables::{Table, TableOptions};
+    use casa_types::ScalarValue;
+    for calwt in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = common::create_apply_fixture_ms(dir.path(), false);
+        let mut ms = MeasurementSet::open(&path).unwrap();
+        ms.subtable_mut(SubtableId::SpectralWindow)
+            .unwrap()
+            .cell_accessor_mut(0, "CHAN_FREQ")
+            .unwrap()
+            .set(Value::Array(ArrayValue::from_f64_vec(vec![1.001e9, 1.0e9])))
+            .unwrap();
+        ms.save().unwrap();
+        drop(ms);
+        let rows = [0, 1].map(|antenna| common::SyntheticGainSolutionRow {
+            time_seconds: 100.,
+            field_id: 0,
+            spectral_window_id: 0,
+            antenna_id: antenna,
+            gains: vec![Complex32::new(1., 0.); 2],
+            flags: vec![false; 2],
+        });
+        let gain = common::create_apply_gain_caltable(
+            &dir.path().join("bandpass.bcal"),
+            &["TARGET0"],
+            &rows,
+        );
+        let mut table = Table::open(TableOptions::new(&gain)).unwrap();
+        let mut info = table.info().clone();
+        info.sub_type = "B Jones".into();
+        table.set_info(info);
+        table.keywords_mut().upsert(
+            "VisCal",
+            Value::Scalar(ScalarValue::String("B Jones".into())),
+        );
+        for (column, element, value) in [
+            (
+                "CPARAM",
+                PrimitiveType::Complex32,
+                ArrayValue::Complex32(ArrayD::from_elem(IxDyn(&[2, 2]), Complex32::new(1., 0.))),
+            ),
+            (
+                "FLAG",
+                PrimitiveType::Bool,
+                ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[2, 2]), false)),
+            ),
+        ] {
+            table.remove_column(column).unwrap();
+            table
+                .add_column(
+                    ColumnSchema::array_variable(column, element, Some(2)),
+                    Some(Value::Array(value)),
+                )
+                .unwrap();
+        }
+        table
+            .cell_accessor_mut(0, "CPARAM")
+            .unwrap()
+            .set(Value::Array(ArrayValue::Complex32(
+                ArrayD::from_shape_vec(
+                    IxDyn(&[2, 2]),
+                    vec![
+                        Complex32::new(2., 0.),
+                        Complex32::new(4., 0.),
+                        Complex32::new(2., 0.),
+                        Complex32::new(4., 0.),
+                    ],
+                )
+                .unwrap(),
+            )))
+            .unwrap();
+        table.save(TableOptions::new(&gain)).unwrap();
+        drop(table);
+        let mut spec = ApplyCalibrationTableSpec::new(gain);
+        spec.calwt = calwt;
+        spec.interp = ApplyInterpolationMode::NearestLinear;
+        execute_apply_from_path(
+            &path,
+            &ApplyPlanRequest {
+                selection: MsSelection::new().spw_selector("0:1").unwrap(),
+                apply_mode: ApplyMode::CalFlag,
+                parang: false,
+                calibration_tables: vec![spec],
+            },
+        )
+        .unwrap();
+        let ms = MeasurementSet::open(&path).unwrap();
+        let ArrayValue::Complex32(corrected) = ms
+            .main_table()
+            .cell_accessor(0, "CORRECTED_DATA")
+            .unwrap()
+            .array()
+            .unwrap()
+        else {
+            panic!("CORRECTED_DATA")
+        };
+        // Selected original channel 1 is at 1 GHz: antenna amplitudes 2 and 1.
+        // Channel 0 is unselected; both results are independent of calwt.
+        assert_eq!(corrected[[0, 0]], Complex32::new(1., 0.));
+        assert_eq!(corrected[[1, 0]], Complex32::new(0., 1.));
+        assert_eq!(corrected[[0, 1]], Complex32::new(1., 0.));
+        assert_eq!(corrected[[1, 1]], Complex32::new(0., 1.));
+    }
+}
