@@ -1,0 +1,294 @@
+{
+  "schema_version": 1,
+  "task": "applycal",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "3028d0d08178c35f5d175310376c5893dbd88b82",
+  "parameters": {
+    "vis": {
+      "scope": "Mutable MS paths; current 30 common-mode cases agree on all defined MAIN columns. Successful HISTORY is missing; error mutation and all path/coercion forms remain.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "field": {
+      "scope": "Default and PHASE field selection preserve unselected rows. Complete FIELD grammar and combinations remain to be CASA compared.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "spw": {
+      "scope": "Ranges, strides, overlapping channel ranges, selected fields, both endians, existing/new corrected data and descending MS grids now agree in common modes. Remaining selection domains and mode combinations stay open.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "intent": {
+      "scope": "Default-only runtime refusal; implement every CASA-supported non-default intent selector under #1518.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ]
+    },
+    "selectdata": {
+      "scope": "Native selection gate exists; inactive detailed arguments and coercions still need full public-CASA comparison.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "timerange": {
+      "scope": "Native time selection exists; full CASA grammar, boundaries and combinations remain in #1518.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "uvrange": {
+      "scope": "Default-only runtime refusal; implement CASA-supported UV distance selectors under #1518.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ]
+    },
+    "antenna": {
+      "scope": "Native antenna/baseline selection exists; full grammar, baseline forms and public-state comparisons remain.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "scan": {
+      "scope": "Native scan selection exists; remaining grammar, combinations and errors need CASA evidence.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "observation": {
+      "scope": "Native observation selection exists; all supported forms and combinations remain to be compared.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "msselect": {
+      "scope": "Native TaQL selection exists; full CASA-supported forms, errors and mutation scope remain.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "docallib": {
+      "scope": "Shared Rust callibrary support exists; complete activation/inactive-argument semantics and state need evidence.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "callib": {
+      "scope": "Shared Rust parsing exists; full per-slice selection/reach/observation/antenna maps and CASA behavior remain.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "gaintable": {
+      "scope": "Same-input scalar G and channelized B cases, native BPOLY/K checks and flagged-gain handling. Complete existing-family domains/chains, list/scalar forms and errors remain; future families retain their named owners.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "gainfield": {
+      "scope": "Existing exact/nearest mapping and native tests; full CASA field grammar, list alignment and boundary behavior remain.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "interp": {
+      "scope": "Existing nearest/linear time modes and nearest,linear; B default frequency interpolation masks flagged samples and uses amplitude/unwrapped phase. Prepared grids are indexed directly, including descending MS bins. Complete interpolation domains remain.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "spwmap": {
+      "scope": "Existing explicit maps and native planning checks; full CASA mapping domains/chains and errors remain.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "calwt": {
+      "scope": "Reset from SIGMA/SIGMA_SPECTRUM, repeated-call idempotence, selected spectral lower median, unchanged disabled weights and BPOLY-disabled scaling. B uses unflagged full-band power. Complete family/chain/state domains remain.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "parang": {
+      "scope": "Native geometry term exists; valid four-correlation CASA cases and the invalid two-correlation error mutation remain.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "applymode": {
+      "scope": "CalFlag, CalOnly and Trial common MAIN behavior compared. calflagstrict, flagonly and flagonlystrict remain unsupported; full HISTORY/state/error behavior remains.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    },
+    "flagbackup": {
+      "scope": "Existing shared backup integration and fresh backup-count comparison; full version contents/metadata and API/error combinations remain.",
+      "evidence": [
+        "oracle",
+        "source"
+      ],
+      "behaviors": [
+        "common-application"
+      ],
+      "status": "Partial"
+    }
+  },
+  "behaviors": [
+    {
+      "id": "common-application",
+      "title": "Apply chains while preserving unselected data and calibrated weight semantics",
+      "status": "Partial",
+      "scope": "Current G/B common modes and selected-channel corrections are delivered; full 21-parameter/common-engine acceptance remains on #1518.",
+      "gap": "Strict/flag-only modes, HISTORY, full callibrary/interpolation/mapping/selection domains, valid parang and API/state/errors remain. Performance is a failure to correct.",
+      "evidence": [
+        "oracle",
+        "performance"
+      ]
+    }
+  ],
+  "decisions": [],
+  "evidence": {
+    "oracle": {
+      "kind": "Same-input public-Python MAIN/API/state comparison",
+      "state": "failed",
+      "scope": "Full 34-case corpus, no skipped comparisons; bidirectional native/CASA readback and both byte orders for selected array writes.",
+      "result": "30 common-mode MAIN comparisons pass; full 34-case gate fails: 33 HISTORY, 3 unsupported-mode returns, and 4 MAIN comparisons.",
+      "casa_version": "6.7.6.14",
+      "revision": "3028d0d08178c35f5d175310376c5893dbd88b82",
+      "command": "python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/review-final --native-bin target/calibration-1518/calibrate-review-final",
+      "receipt": "resources/casa-compat/evidence/applycal-20261117.json",
+      "links": [
+        "tools/casa-compat/applycal_oracle.py",
+        "crates/casa-calibration/tests/apply_channels.rs",
+        "crates/casa-calibration/tests/apply_weights.rs",
+        "crates/casa-calibration/tests/apply_flagged_gains.rs"
+      ]
+    },
+    "source": {
+      "kind": "Independent CASA source inspection",
+      "state": "inspected",
+      "scope": "Calibrater::selectChannel/correct2, JonesDiag inversion, SIGMA reset, CTPatchedInterp frequency interpolation, BJones::calcWtScale and BPOLY::setApply.",
+      "result": "Original-channel writeback, flagged-solution handling, lower selected spectral median, amplitude/phase resampling and full-band B power follow the source.",
+      "revision": "3028d0d08178c35f5d175310376c5893dbd88b82",
+      "links": [
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/Calibrater.cc",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalTables/CTPatchedInterp.cc",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/StandardVisCal.cc"
+      ]
+    },
+    "performance": {
+      "kind": "Matched public-Python performance",
+      "state": "failed",
+      "scope": "175 MB, 12000 rows, 6144000 complex samples; same MAIN products, one worker, 5 alternating public-Python pairs per cache policy. Full API/HISTORY equivalence remains unfinished and these timings are not acceptance.",
+      "result": "Warm native 0.683143288 s vs CASA 0.282755591 s; cold 0.752097765 vs 0.382432721 s. Slower and materially CPU limited; profiling/correction required.",
+      "casa_version": "6.7.6.14",
+      "revision": "66850cc503f318931b56fb93e8ad2572aa151c0c",
+      "command": "python tools/perf/calibrate/applycal.py --vis <175MB-MS> --gain <constant.gcal> --native-bin <66850cc50-release> --out <receipt> --repeats 5 --cache warm|cold",
+      "receipt": "resources/casa-compat/evidence/applycal-performance-20261117.json",
+      "links": [
+        "tools/perf/calibrate/applycal.py"
+      ]
+    }
+  }
+}
