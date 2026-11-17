@@ -21,10 +21,9 @@ pub(super) fn load(
     // without copying a full parameter grid for each baseline.
     for (&(_, window, _), rows) in &table.solutions {
         if let std::collections::hash_map::Entry::Vacant(entry) = table.missing_grids.entry(window)
+            && let Some(row) = rows.first()
         {
-            if let Some(row) = rows.first() {
-                entry.insert(flagged(&row.grid));
-            }
+            entry.insert(flagged(&row.grid));
         }
     }
     let nearest_field = matches!(plan.spec.gainfield, Some(crate::GainFieldSelector::Nearest));

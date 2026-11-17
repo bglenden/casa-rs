@@ -361,10 +361,24 @@ def run(root, native_bin, only=None):
         def compare_main():
             a, b = contents(paths['casa']), contents(paths['native'])
             assert a.keys() == b.keys(), (a.keys(), b.keys())
+            if name == 'review-nearest-field-tie':
+                # Sort::Ascending=-1 enables NoDuplicates in CASA's mistaken
+                # options mask, so its explicit ambiguity guard never fires.
+                # Native honors that evident intent and refuses before correction.
+                original = contents(input_vis or source)
+                for column in original:
+                    np.testing.assert_array_equal(b[column], original[column], err_msg=column)
+                np.testing.assert_array_equal(b['CORRECTED_DATA'], b['DATA'])
+                return
             equal(paths['casa'], paths['native'])
             for column in ['TIME', 'INTERVAL', 'TIME_CENTROID']:
                 np.testing.assert_allclose(a[column], b[column], rtol=0, atol=1e-4, err_msg=column)
         def compare_return():
+            if name == 'review-nearest-field-tie':
+                assert 'error' not in records['casa']
+                assert 'RuntimeError' in records['native']['exception_bases']
+                assert 'minimum angular distance' in records['native']['message']
+                return
             assert records['casa'].get('value') == records['native'].get('value')
             assert ('error' in records['casa']) == ('error' in records['native']), records
             if 'error' in records['casa']:
@@ -373,6 +387,9 @@ def run(root, native_bin, only=None):
                 assert records['casa']['error'] in records['native']['exception_bases'], records
         def compare_history():
             left, right = records['casa']['history'], records['native']['history']
+            if name == 'review-nearest-field-tie':
+                assert len(left['TIME']) == 23 and len(right['TIME']) == 0
+                return
             assert len(left['TIME']) == len(right['TIME']), (len(left['TIME']), len(right['TIME']))
             for column in ['APPLICATION', 'ORIGIN', 'PRIORITY', 'OBSERVATION_ID', 'OBJECT_ID', 'APP_PARAMS', 'CLI_COMMAND']:
                 np.testing.assert_array_equal(left[column], right[column], err_msg=column)
@@ -397,6 +414,8 @@ def run(root, native_bin, only=None):
             check(component, operation)
         result['cases'][name] = dict(arguments=plain(extra or {}), repetitions=repetitions,
                                     weight_seed=weight_seed, spectral_sigma=spectral_sigma, endian=endian, descending_ms=descending_ms, records=records)
+        if name == 'review-nearest-field-tie':
+            result['cases'][name]['casa_bug_correction'] = 'Restore the explicit nearest-field ambiguity guard disabled by Sort::Ascending (-1) in genSort options; native rejects without applying an arbitrary tied gain.'
         (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
         print(name, 'FAILED' if any(item['case'] == name for item in result['failures']) else 'passed', flush=True)
 

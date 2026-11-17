@@ -114,10 +114,9 @@ pub(super) fn selected_spectral_windows(
         let spws = load_i32_column_rows(&table, "SPECTRAL_WINDOW_ID", &indices)?;
         for (field, window) in fields.into_iter().zip(spws) {
             if field.is_some_and(|field| selected.iter().any(|selected| selected.field_id == field))
+                && let Some(window) = window
             {
-                if let Some(window) = window {
-                    windows.insert(window);
-                }
+                windows.insert(window);
             }
         }
     }

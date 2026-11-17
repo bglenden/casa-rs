@@ -745,7 +745,7 @@ fn value_parsers_cover_their_edges() {
     assert!(
         read::parse_interp_value("bogus")
             .unwrap_err()
-            .contains("is unsupported")
+            .contains("unknown time interpolation")
     );
     assert_eq!(
         read::parse_interp_value("").unwrap(),

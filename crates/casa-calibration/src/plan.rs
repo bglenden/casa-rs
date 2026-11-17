@@ -861,17 +861,17 @@ fn resolve_spw_mapping(
 ) -> Result<Vec<ApplySpwMapping>, ApplyPlanError> {
     let automatic = spec.spwmap.first() == Some(&-999);
     let identity = spec.spwmap.is_empty() || spec.spwmap == [-1];
-    if !automatic && !identity {
-        if let Some(&invalid) = spec
+    if !automatic
+        && !identity
+        && let Some(&invalid) = spec
             .spwmap
             .iter()
             .find(|&&window| window < 0 || window as usize >= calibration_window_count)
-        {
-            return Err(ApplyPlanError::MissingCalibrationSpectralWindow {
-                path: spec.path.display().to_string(),
-                calibration_spw_id: invalid,
-            });
-        }
+    {
+        return Err(ApplyPlanError::MissingCalibrationSpectralWindow {
+            path: spec.path.display().to_string(),
+            calibration_spw_id: invalid,
+        });
     }
     let first = if automatic {
         Some(
