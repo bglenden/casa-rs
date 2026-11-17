@@ -573,8 +573,6 @@ def applycal(
     """Apply one or more calibration tables to a MeasurementSet.
 
     CASA's ``applycal``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #979:
-    ``intent``, ``uvrange``.
     """
     return _call_casa(applycal, locals())
 
