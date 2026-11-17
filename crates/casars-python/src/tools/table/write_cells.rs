@@ -172,13 +172,13 @@ fn distinct(rows: &[usize]) -> Vec<usize> {
 }
 
 /// The elements of `data` at `indices`.
-fn take(data: &Data, indices: &[usize]) -> Data {
+fn take(data: &Data, indices: impl Iterator<Item = usize>) -> Data {
     match data {
-        Data::Bools(values) => Data::Bools(indices.iter().map(|i| values[*i]).collect()),
-        Data::Ints(values) => Data::Ints(indices.iter().map(|i| values[*i]).collect()),
-        Data::Floats(values) => Data::Floats(indices.iter().map(|i| values[*i]).collect()),
-        Data::Complexes(values) => Data::Complexes(indices.iter().map(|i| values[*i]).collect()),
-        Data::Texts(values) => Data::Texts(indices.iter().map(|i| values[*i].clone()).collect()),
+        Data::Bools(values) => Data::Bools(indices.map(|i| values[i]).collect()),
+        Data::Ints(values) => Data::Ints(indices.map(|i| values[i]).collect()),
+        Data::Floats(values) => Data::Floats(indices.map(|i| values[i]).collect()),
+        Data::Complexes(values) => Data::Complexes(indices.map(|i| values[i]).collect()),
+        Data::Texts(values) => Data::Texts(indices.map(|i| values[i].clone()).collect()),
     }
 }
 
@@ -221,10 +221,10 @@ pub(super) fn split_rows(
     let per_row: usize = cell_shape.as_ref().map_or(1, |cell| cell.iter().product());
     Ok((0..nrows)
         .map(|row| {
-            let indices: Vec<usize> = (0..per_row).map(|element| element * nrows + row).collect();
+            let indices = (0..per_row).map(|element| element * nrows + row);
             Wide {
                 shape: cell_shape.clone(),
-                data: take(&wide.data, &indices),
+                data: take(&wide.data, indices),
             }
         })
         .collect())

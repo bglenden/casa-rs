@@ -330,6 +330,24 @@ where
         let [_, baselines, _, products] = self.shape;
         let held_channels = self.channels.len();
         let whole = assigned == extent.iter().product::<usize>();
+        // A complete, unpadded chunk can borrow the held values if it is
+        // contiguous across the window's time, baseline, channel and
+        // product axes. Publication still happens at the window's flush.
+        if whole
+            && extent == shape
+            && start[3] == 0
+            && extent[3] == products
+            && start[2] == self.channels.start
+            && extent[2] == held_channels
+            && (extent[0] == 1 || (start[1] == 0 && extent[1] == baselines))
+        {
+            let offset =
+                ((start[0] - held.times.start) * baselines + start[1]) * held_channels * products;
+            return self
+                .array
+                .store_chunk_opt(&indices, &held.values[offset..offset + assigned], options)
+                .map_err(storage);
+        }
         let mut chunk: Vec<T> = if whole {
             vec![self.fill; shape.iter().product()]
         } else {

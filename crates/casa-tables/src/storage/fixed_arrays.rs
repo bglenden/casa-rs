@@ -5,6 +5,57 @@ use super::*;
 use crate::table::SelectedArray2DCells;
 
 impl CompositeStorage {
+    pub(crate) fn load_uniform_2d_from_plain(
+        &self,
+        path: &Path,
+        metadata: &RetainedTableReadMetadata,
+        column: &str,
+        rows: &[usize],
+    ) -> Result<Option<ArrayValue>, StorageError> {
+        let table = &metadata.table_dat;
+        let Some(entry) = table
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+        else {
+            return Ok(None);
+        };
+        if rows.is_empty()
+            || !table
+                .column_set
+                .data_managers
+                .iter()
+                .any(|dm| dm.seq_nr == entry.dm_seq_nr && dm.type_name == "TiledShapeStMan")
+            || table
+                .column_set
+                .data_managers
+                .iter()
+                .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            return Ok(None);
+        }
+        let bound: Vec<_> = table
+            .column_set
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| candidate.dm_seq_nr == entry.dm_seq_nr)
+            .map(|(index, _)| &table.table_desc.columns[index])
+            .collect();
+        let Some(bound_index) = bound.iter().position(|desc| desc.col_name == column) else {
+            return Ok(None);
+        };
+        metadata.tiled.load_uniform_2d(
+            path,
+            entry.dm_seq_nr,
+            &bound,
+            &table.table_desc,
+            bound_index,
+            rows,
+        )
+    }
+
     pub(crate) fn load_fixed_2d_from_plain(
         &self,
         path: &Path,

@@ -5352,6 +5352,51 @@ fn add_variable_shape_tiled_column_in_place_persists_defined_rows_only() {
 }
 
 #[test]
+fn packed_tiled_cells_preserve_order_and_refuse_shape_changes() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "DATA",
+        PrimitiveType::Complex32,
+        Some(2),
+    )])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    for (row, channels) in [3, 4, 3].into_iter().enumerate() {
+        let data = ArrayD::from_shape_fn(vec![2, channels], |index| {
+            casa_types::Complex32::new(row as f32, (index[0] + 2 * index[1]) as f32)
+        });
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "DATA",
+                Value::Array(ArrayValue::Complex32(data)),
+            )]))
+            .unwrap();
+    }
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("packed.tab");
+    let options = TableOptions::new(&path).with_data_manager(DataManagerKind::TiledShapeStMan);
+    table.save(options).unwrap();
+    let reopened = Table::open(TableOptions::new(&path)).unwrap();
+    let column = reopened.column_accessor("DATA").unwrap();
+    let Some(ArrayValue::Complex32(packed)) = column.packed_2d_cells_uncached(&[2, 0, 2]).unwrap()
+    else {
+        panic!("expected a packed tiled read");
+    };
+    assert_eq!(packed.shape(), &[2, 3, 3]);
+    for (index, row) in [2, 0, 2].into_iter().enumerate() {
+        for channel in 0..3 {
+            for corr in 0..2 {
+                assert_eq!(
+                    packed[[corr, channel, index]],
+                    casa_types::Complex32::new(row as f32, (corr + 2 * channel) as f32)
+                );
+            }
+        }
+    }
+    assert!(column.packed_2d_cells_uncached(&[0, 1]).unwrap().is_none());
+    assert!(!reopened.inner.has_loaded_rows());
+}
+
+#[test]
 fn clone_tiled_array_column_in_place_preserves_source_values_and_allows_sparse_patch() {
     let schema = TableSchema::new(vec![ColumnSchema::array_variable(
         "DATA",
