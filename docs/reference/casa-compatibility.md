@@ -65,13 +65,13 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `3028d0d08178c35f5d175310376c5893dbd88b82`. Status counts: Default only: 2, Implemented: 0, Not implemented: 0, Partial: 19, Unassessed: 0.
+Audit baseline: `0fbb69b2a11850f27a9037ccbd7ad096f1cde330`. Status counts: Default only: 2, Implemented: 0, Not implemented: 0, Partial: 19, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
 | CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
 |---|---|---|---|---|---|
-| `vis` | `''` | `''`; `vis` → `measurement_set` | Partial | Mutable MS paths; current 30 common-mode cases agree on all defined MAIN columns. Successful HISTORY is missing; error mutation and all path/coercion forms remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Partial | Mutable MS paths; all 58 current cases agree on MAIN, task HISTORY and observed error/trial mutation. Full path/coercion forms and error domains remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `field` | `''` | `''`; `field` → `field` | Partial | Default and PHASE field selection preserve unselected rows. Complete FIELD grammar and combinations remain to be CASA compared. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `spw` | `''` | `''`; `spw` → `spw` | Partial | Ranges, strides, overlapping channel ranges, selected fields, both endians, existing/new corrected data and descending MS grids now agree in common modes. Remaining selection domains and mode combinations stay open. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `intent` | `''` | `''`; `intent` → `intent` | Default only | Default-only runtime refusal; implement every CASA-supported non-default intent selector under #1518. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string`; Non-default refused when always (#979) | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
@@ -89,8 +89,8 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `interp` | `[]` | `[]`; `interp` → `interp` | Partial | Existing nearest/linear time modes and nearest,linear; B default frequency interpolation masks flagged samples and uses amplitude/unwrapped phase. Prepared grids are indexed directly, including descending MS bins. Complete interpolation domains remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `spwmap` | `[]` | `[]`; `spwmap` → `spwmap` | Partial | Existing explicit maps and native planning checks; full CASA mapping domains/chains and errors remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: list[list[`integer`], length 0..many], length 0..many | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `calwt` | `[True]` | `[True]`; `calwt` → `calwt` | Partial | Reset from SIGMA/SIGMA_SPECTRUM, repeated-call idempotence, selected spectral lower median, unchanged disabled weights and BPOLY-disabled scaling. B uses unflagged full-band power. Complete family/chain/state domains remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: list[`bool`], length 0..many; scalar allowed | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
-| `parang` | `False` | `False`; `parang` → `parang` | Partial | Native geometry term exists; valid four-correlation CASA cases and the invalid two-correlation error mutation remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `bool` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
-| `applymode` | `''` | `''`; `applymode` → `applymode` | Partial | CalFlag, CalOnly and Trial common MAIN behavior compared. calflagstrict, flagonly and flagonlystrict remain unsupported; full HISTORY/state/error behavior remains. [common-application](#applycal-behavior-common-application)<br>Catalog domain: ``, `calflag`, `calflagstrict`, `calonly`, `flagonly`, `flagonlystrict`, `trial` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
+| `parang` | `False` | `False`; `parang` → `parang` | Partial | Standalone circular and full four-correlation linear feed rotation, selected channels, input-flag propagation, trial/flag-only modes and invalid two-linear-correlation error/state match CASA. Full chain/geometry/domain combinations remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `bool` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
+| `applymode` | `''` | `''`; `applymode` → `applymode` | Partial | All six modes are implemented and CASA-compared, including unavailable SPWs, preserved flag-only data/weights, selected channels, new/existing corrected data and trial validation without publication. Full parameter/error combinations remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: ``, `calflag`, `calflagstrict`, `calonly`, `flagonly`, `flagonlystrict`, `trial` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `flagbackup` | `True` | `True`; `flagbackup` → `flagbackup` | Partial | Existing shared backup integration and fresh backup-count comparison; full version contents/metadata and API/error combinations remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `bool` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 
 #### applycal interacting modes and task behavior
@@ -98,9 +98,9 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 <a id="applycal-behavior-common-application"></a>
 ##### Apply chains while preserving unselected data and calibrated weight semantics
 
-**Partial** — Current G/B common modes and selected-channel corrections are delivered; full 21-parameter/common-engine acceptance remains on #1518.
+**Partial** — G/B common modes, all six apply modes, task HISTORY and standalone linear/circular parang are delivered in bounded batches; full 21-parameter/common-engine acceptance remains on #1518.
 
-Strict/flag-only modes, HISTORY, full callibrary/interpolation/mapping/selection domains, valid parang and API/state/errors remain. Performance is a failure to correct.
+Full selection/callibrary/interpolation/mapping/coercion/error and existing-family/state/interchange domains remain. Detailed performance tuning and final qualification follow functionality equivalence under owner direction on #979.
 
 Evidence: [oracle](#applycal-evidence-oracle), [performance](#applycal-evidence-performance).
 
@@ -113,31 +113,37 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="applycal-evidence-oracle"></a>
 ##### oracle
 
-**Same-input public-Python MAIN/API/state comparison — failed.** 30 common-mode MAIN comparisons pass; full 34-case gate fails: 33 HISTORY, 3 unsupported-mode returns, and 4 MAIN comparisons. Full 34-case corpus, no skipped comparisons; bidirectional native/CASA readback and both byte orders for selected array writes.
+**Same-input public-Python MAIN/API/state comparison — passed.** All 58 current MAIN/API/state comparisons pass; full 21-parameter value-domain acceptance remains unfinished on #1518. Full current 58-case corpus with no skipped comparisons: MAIN, complete HISTORY, return/error catchability and backup counts; bidirectional native/CASA readback and both byte orders for selected array writes.
 
-- [tools/casa-compat/applycal_oracle.py](https://github.com/bglenden/casa-rs/blob/3028d0d08178c35f5d175310376c5893dbd88b82/tools/casa-compat/applycal_oracle.py)
-- [crates/casa-calibration/tests/apply_channels.rs](https://github.com/bglenden/casa-rs/blob/3028d0d08178c35f5d175310376c5893dbd88b82/crates/casa-calibration/tests/apply_channels.rs)
-- [crates/casa-calibration/tests/apply_weights.rs](https://github.com/bglenden/casa-rs/blob/3028d0d08178c35f5d175310376c5893dbd88b82/crates/casa-calibration/tests/apply_weights.rs)
-- [crates/casa-calibration/tests/apply_flagged_gains.rs](https://github.com/bglenden/casa-rs/blob/3028d0d08178c35f5d175310376c5893dbd88b82/crates/casa-calibration/tests/apply_flagged_gains.rs)
-- Revision: `3028d0d08178c35f5d175310376c5893dbd88b82`; CASA: `6.7.6.14`.
-- Command: `python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/review-final --native-bin target/calibration-1518/calibrate-review-final`.
+- [tools/casa-compat/applycal_oracle.py](https://github.com/bglenden/casa-rs/blob/123b78520093196bcdfce31397c8da5ef415e285/tools/casa-compat/applycal_oracle.py)
+- [crates/casa-calibration/tests/apply_channels.rs](https://github.com/bglenden/casa-rs/blob/123b78520093196bcdfce31397c8da5ef415e285/crates/casa-calibration/tests/apply_channels.rs)
+- [crates/casa-calibration/tests/apply_weights.rs](https://github.com/bglenden/casa-rs/blob/123b78520093196bcdfce31397c8da5ef415e285/crates/casa-calibration/tests/apply_weights.rs)
+- [crates/casa-calibration/tests/apply_flagged_gains.rs](https://github.com/bglenden/casa-rs/blob/123b78520093196bcdfce31397c8da5ef415e285/crates/casa-calibration/tests/apply_flagged_gains.rs)
+- [crates/casa-calibration/tests/apply_modes.rs](https://github.com/bglenden/casa-rs/blob/123b78520093196bcdfce31397c8da5ef415e285/crates/casa-calibration/tests/apply_modes.rs)
+- [crates/casa-calibration/tests/gain_solve.rs](https://github.com/bglenden/casa-rs/blob/123b78520093196bcdfce31397c8da5ef415e285/crates/casa-calibration/tests/gain_solve.rs)
+- Revision: `123b78520093196bcdfce31397c8da5ef415e285`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/modes-final-123b78520 --native-bin target/calibration-1518/calibrate-modes-123b78520`.
 - Receipt: `resources/casa-compat/evidence/applycal-20261117.json`.
 
 <a id="applycal-evidence-source"></a>
 ##### source
 
-**Independent CASA source inspection — inspected.** Original-channel writeback, flagged-solution handling, lower selected spectral median, amplitude/phase resampling and full-band B power follow the source. Calibrater::selectChannel/correct2, JonesDiag inversion, SIGMA reset, CTPatchedInterp frequency interpolation, BJones::calcWtScale and BPOLY::setApply.
+**Independent CASA source inspection — inspected.** All six modes, full task history, inverse linear-feed rotation and flags, trial validation and unavailable solver priors follow source laws, alongside the delivered channel/weight conventions. Review found an unavailable-BPOLY grid error; ordinary/strict/trial application and solver preapply regressions fail before and pass after the fix. Calibrater::correct2, task_applycal.py/mstools.write_history, PJones::syncMeta2/calcOneJones, Jones flag propagation/inversion, VisEquation::collapse2, SIGMA reset, CTPatchedInterp frequency interpolation, BJones::calcWtScale and BPOLY::setApply. BPOLY loading samples only planned applicable SPW grids.
 
 - [https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/Calibrater.cc](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/Calibrater.cc)
 - [https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalTables/CTPatchedInterp.cc](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalTables/CTPatchedInterp.cc)
 - [https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/StandardVisCal.cc](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/StandardVisCal.cc)
+- [https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/VisEquation.cc](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/VisEquation.cc)
+- [https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatasks/src/private/task_applycal.py](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatasks/src/private/task_applycal.py)
+- [crates/casa-calibration/tests/apply_modes.rs](https://github.com/bglenden/casa-rs/blob/0fbb69b2a11850f27a9037ccbd7ad096f1cde330/crates/casa-calibration/tests/apply_modes.rs)
+- [crates/casa-calibration/tests/gain_solve.rs](https://github.com/bglenden/casa-rs/blob/0fbb69b2a11850f27a9037ccbd7ad096f1cde330/crates/casa-calibration/tests/gain_solve.rs)
 
 <a id="applycal-evidence-performance"></a>
 ##### performance
 
 **Matched public-Python performance — failed.** Scalar gain reuse reduces compute median 0.228→0.077 s warm and 0.213→0.076 s cold. Full native 0.661 s warm/0.624 s cold versus CASA 0.259/0.349 s: still slower and CPU-limited. Gross repeated sampling is corrected; detailed tuning and final qualification follow functionality equivalence under owner direction on #979. 175 MB, 12000 rows, 6144000 complex samples; same MAIN products, one worker, 5 alternating public-Python pairs per cache policy. Full API/HISTORY equivalence remains unfinished and these timings are not acceptance.
 
-- [tools/perf/calibrate/applycal.py](https://github.com/bglenden/casa-rs/blob/3028d0d08178c35f5d175310376c5893dbd88b82/tools/perf/calibrate/applycal.py)
+- [tools/perf/calibrate/applycal.py](https://github.com/bglenden/casa-rs/blob/665d698e0dd5e0e169edcd9f069f518b69e4108e/tools/perf/calibrate/applycal.py)
 - Revision: `665d698e0dd5e0e169edcd9f069f518b69e4108e`; CASA: `6.7.6.14`.
 - Command: `python tools/perf/calibrate/applycal.py --vis <175MB-MS> --gain <constant.gcal> --native-bin <66850cc50-release> --out <receipt> --repeats 5 --cache warm|cold`.
 - Receipt: `resources/casa-compat/evidence/applycal-performance-20261117.json`.

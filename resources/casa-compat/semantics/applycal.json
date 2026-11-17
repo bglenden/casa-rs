@@ -2,10 +2,10 @@
   "schema_version": 1,
   "task": "applycal",
   "casa_version": "6.7.6.14",
-  "audit_revision": "3028d0d08178c35f5d175310376c5893dbd88b82",
+  "audit_revision": "0fbb69b2a11850f27a9037ccbd7ad096f1cde330",
   "parameters": {
     "vis": {
-      "scope": "Mutable MS paths; current 30 common-mode cases agree on all defined MAIN columns. Successful HISTORY is missing; error mutation and all path/coercion forms remain.",
+      "scope": "Mutable MS paths; all 58 current cases agree on MAIN, task HISTORY and observed error/trial mutation. Full path/coercion forms and error domains remain.",
       "evidence": [
         "oracle",
         "source"
@@ -201,7 +201,7 @@
       "status": "Partial"
     },
     "parang": {
-      "scope": "Native geometry term exists; valid four-correlation CASA cases and the invalid two-correlation error mutation remain.",
+      "scope": "Standalone circular and full four-correlation linear feed rotation, selected channels, input-flag propagation, trial/flag-only modes and invalid two-linear-correlation error/state match CASA. Full chain/geometry/domain combinations remain.",
       "evidence": [
         "oracle",
         "source"
@@ -212,7 +212,7 @@
       "status": "Partial"
     },
     "applymode": {
-      "scope": "CalFlag, CalOnly and Trial common MAIN behavior compared. calflagstrict, flagonly and flagonlystrict remain unsupported; full HISTORY/state/error behavior remains.",
+      "scope": "All six modes are implemented and CASA-compared, including unavailable SPWs, preserved flag-only data/weights, selected channels, new/existing corrected data and trial validation without publication. Full parameter/error combinations remain.",
       "evidence": [
         "oracle",
         "source"
@@ -239,8 +239,8 @@
       "id": "common-application",
       "title": "Apply chains while preserving unselected data and calibrated weight semantics",
       "status": "Partial",
-      "scope": "Current G/B common modes and selected-channel corrections are delivered; full 21-parameter/common-engine acceptance remains on #1518.",
-      "gap": "Strict/flag-only modes, HISTORY, full callibrary/interpolation/mapping/selection domains, valid parang and API/state/errors remain. Performance is a failure to correct.",
+      "scope": "G/B common modes, all six apply modes, task HISTORY and standalone linear/circular parang are delivered in bounded batches; full 21-parameter/common-engine acceptance remains on #1518.",
+      "gap": "Full selection/callibrary/interpolation/mapping/coercion/error and existing-family/state/interchange domains remain. Detailed performance tuning and final qualification follow functionality equivalence under owner direction on #979.",
       "evidence": [
         "oracle",
         "performance"
@@ -251,30 +251,37 @@
   "evidence": {
     "oracle": {
       "kind": "Same-input public-Python MAIN/API/state comparison",
-      "state": "failed",
-      "scope": "Full 34-case corpus, no skipped comparisons; bidirectional native/CASA readback and both byte orders for selected array writes.",
-      "result": "30 common-mode MAIN comparisons pass; full 34-case gate fails: 33 HISTORY, 3 unsupported-mode returns, and 4 MAIN comparisons.",
+      "state": "passed",
+      "scope": "Full current 58-case corpus with no skipped comparisons: MAIN, complete HISTORY, return/error catchability and backup counts; bidirectional native/CASA readback and both byte orders for selected array writes.",
+      "result": "All 58 current MAIN/API/state comparisons pass; full 21-parameter value-domain acceptance remains unfinished on #1518.",
       "casa_version": "6.7.6.14",
-      "revision": "3028d0d08178c35f5d175310376c5893dbd88b82",
-      "command": "python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/review-final --native-bin target/calibration-1518/calibrate-review-final",
+      "revision": "123b78520093196bcdfce31397c8da5ef415e285",
+      "command": "python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/modes-final-123b78520 --native-bin target/calibration-1518/calibrate-modes-123b78520",
       "receipt": "resources/casa-compat/evidence/applycal-20261117.json",
       "links": [
         "tools/casa-compat/applycal_oracle.py",
         "crates/casa-calibration/tests/apply_channels.rs",
         "crates/casa-calibration/tests/apply_weights.rs",
-        "crates/casa-calibration/tests/apply_flagged_gains.rs"
-      ]
+        "crates/casa-calibration/tests/apply_flagged_gains.rs",
+        "crates/casa-calibration/tests/apply_modes.rs",
+        "crates/casa-calibration/tests/gain_solve.rs"
+      ],
+      "source_revision": "123b78520093196bcdfce31397c8da5ef415e285"
     },
     "source": {
       "kind": "Independent CASA source inspection",
       "state": "inspected",
-      "scope": "Calibrater::selectChannel/correct2, JonesDiag inversion, SIGMA reset, CTPatchedInterp frequency interpolation, BJones::calcWtScale and BPOLY::setApply.",
-      "result": "Original-channel writeback, flagged-solution handling, lower selected spectral median, amplitude/phase resampling and full-band B power follow the source.",
-      "revision": "3028d0d08178c35f5d175310376c5893dbd88b82",
+      "scope": "Calibrater::correct2, task_applycal.py/mstools.write_history, PJones::syncMeta2/calcOneJones, Jones flag propagation/inversion, VisEquation::collapse2, SIGMA reset, CTPatchedInterp frequency interpolation, BJones::calcWtScale and BPOLY::setApply. BPOLY loading samples only planned applicable SPW grids.",
+      "result": "All six modes, full task history, inverse linear-feed rotation and flags, trial validation and unavailable solver priors follow source laws, alongside the delivered channel/weight conventions. Review found an unavailable-BPOLY grid error; ordinary/strict/trial application and solver preapply regressions fail before and pass after the fix.",
+      "revision": "0fbb69b2a11850f27a9037ccbd7ad096f1cde330",
       "links": [
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/Calibrater.cc",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalTables/CTPatchedInterp.cc",
-        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/StandardVisCal.cc"
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/StandardVisCal.cc",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/VisEquation.cc",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatasks/src/private/task_applycal.py",
+        "crates/casa-calibration/tests/apply_modes.rs",
+        "crates/casa-calibration/tests/gain_solve.rs"
       ]
     },
     "performance": {
@@ -288,7 +295,8 @@
       "receipt": "resources/casa-compat/evidence/applycal-performance-20261117.json",
       "links": [
         "tools/perf/calibrate/applycal.py"
-      ]
+      ],
+      "source_revision": "665d698e0dd5e0e169edcd9f069f518b69e4108e"
     }
   }
 }
