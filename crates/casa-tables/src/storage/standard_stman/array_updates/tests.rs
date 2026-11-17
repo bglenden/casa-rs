@@ -14,7 +14,7 @@ fn address(header: &SsmHeader, index: &SsmIndex, column: u32, row: usize) -> usi
 
 #[test]
 fn replacements_preserve_aliases_undefined_cells_and_other_bucket_bytes() {
-    for big_endian in [false, true] {
+    for (big_endian, undefined_row) in [(false, 2000), (true, 2000), (false, 3990), (true, 3990)] {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("table.f0");
         let array_path = root.path().join("table.f0i");
@@ -68,7 +68,7 @@ fn replacements_preserve_aliases_undefined_cells_and_other_bucket_bytes() {
                 &blob,
                 &descs,
                 vec![
-                    Some(vec![(1, Some(replacement.clone())), (2000, None)]),
+                    Some(vec![(1, Some(replacement.clone())), (undefined_row, None)]),
                     None,
                     None,
                 ],
@@ -80,7 +80,7 @@ fn replacements_preserve_aliases_undefined_cells_and_other_bucket_bytes() {
         assert_eq!(before.len(), after.len());
         for (offset, (a, b)) in before.iter().zip(&after).enumerate() {
             if !(at(0, 1)..at(0, 1) + 8).contains(&offset)
-                && !(at(0, 2000)..at(0, 2000) + 8).contains(&offset)
+                && !(at(0, undefined_row)..at(0, undefined_row) + 8).contains(&offset)
             {
                 assert_eq!(a, b, "unmodified bucket byte {offset}");
             }
@@ -96,7 +96,7 @@ fn replacements_preserve_aliases_undefined_cells_and_other_bucket_bytes() {
             for (row, found) in values.into_iter().enumerate() {
                 let expected = match (column, row) {
                     (0, 1) => Some(Value::Array(replacement.clone())),
-                    (0, 2000) => None,
+                    (0, row) if row == undefined_row => None,
                     (1, 3999) => records[1].get("A").cloned(),
                     _ => records[row]
                         .get(if column == 0 { "A" } else { "B" })
