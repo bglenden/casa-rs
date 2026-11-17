@@ -120,7 +120,15 @@ impl WholeCellRead<'_> {
         &self,
         shape: [usize; 2],
     ) -> Result<Option<SelectedArray2DCells>, StorageError> {
-        let cells = self.cells()?;
+        let Some(cells) = self.storage.load_selected_array_cells(
+            self.table_path,
+            self.table_dat,
+            self.column,
+            self.selected_rows,
+        )?
+        else {
+            return Ok(None);
+        };
         if cells
             .iter()
             .any(|cell| cell.as_ref().is_none_or(|cell| cell.shape() != shape))

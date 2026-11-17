@@ -72,26 +72,21 @@ complex!(Complex32, 64, read_f32);
 complex!(Complex64, 128, read_f64);
 
 impl StManArrayFileReader {
-    /// Read exactly `expected` axes into a reusable cell. A different or
-    /// undefined shape returns false before reading any payload. Failed I/O
-    /// invalidates the cursor just as the general array reader does.
-    pub(crate) fn read_fixed_shape_into<T: CanonicalArrayElement>(
+    /// Append one whole cell after checking its stored shape. A different or
+    /// undefined shape returns false before allocation or payload decoding.
+    /// Failed I/O invalidates the cursor as the general array reader does.
+    pub(crate) fn append_fixed_shape<T: CanonicalArrayElement>(
         &mut self,
         offset: i64,
         expected: &[usize],
         shape: &mut Vec<usize>,
-        values: &mut [T],
+        values: &mut Vec<T>,
     ) -> Result<bool, StorageError> {
         let count = expected
             .iter()
-            .try_fold(1usize, |size, &dim| size.checked_mul(dim));
-        if count != Some(values.len()) {
-            return Err(StorageError::FormatMismatch(
-                "fixed array destination size mismatch".into(),
-            ));
-        }
-        let bytes = values
-            .len()
+            .try_fold(1usize, |size, &dim| size.checked_mul(dim))
+            .ok_or_else(|| StorageError::FormatMismatch("fixed array size overflow".into()))?;
+        let bytes = count
             .checked_mul(T::BITS)
             .ok_or_else(|| {
                 StorageError::FormatMismatch("fixed array payload size overflow".into())
@@ -100,8 +95,13 @@ impl StManArrayFileReader {
         if !self.read_shape_into(offset, shape)? || shape.as_slice() != expected {
             return Ok(false);
         }
+        let start = values.len();
+        values.try_reserve(count).map_err(|error| {
+            StorageError::FormatMismatch(format!("cannot allocate fixed array payload: {error}"))
+        })?;
+        values.resize(start + count, T::default());
         let position = std::mem::replace(&mut self.pos, u64::MAX);
-        T::read(&mut self.file, self.bo, values)?;
+        T::read(&mut self.file, self.bo, &mut values[start..])?;
         self.pos = position + bytes as u64;
         Ok(true)
     }
@@ -131,18 +131,13 @@ mod tests {
                 let mut shape = Vec::new();
                 assert!(
                     reader
-                        .read_fixed_shape_into(
-                            first,
-                            &[2],
-                            &mut shape,
-                            &mut [Complex64::default(); 2]
-                        )
+                        .append_fixed_shape(first, &[2], &mut shape, &mut Vec::<Complex64>::new())
                         .is_err()
                 );
-                let mut found = [false; 2];
+                let mut found = Vec::<bool>::new();
                 assert!(
                     reader
-                        .read_fixed_shape_into(second, &[2], &mut shape, &mut found)
+                        .append_fixed_shape(second, &[2], &mut shape, &mut found)
                         .unwrap()
                 );
                 assert_eq!(found, [true, false]);

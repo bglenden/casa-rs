@@ -9,7 +9,7 @@ use tempfile::TempDir;
 
 #[test]
 fn fluxscale_scales_transfer_gains_and_reports_flux_density() {
-    check_scaled_product(None);
+    check_scaled_product(None, false);
 }
 
 #[cfg(unix)]
@@ -19,11 +19,106 @@ fn fluxscale_copies_readonly_standard_tables_in_both_byte_orders() {
         casa_tables::EndianFormat::BigEndian,
         casa_tables::EndianFormat::LittleEndian,
     ] {
-        check_scaled_product(Some(endian));
+        check_scaled_product(Some(endian), false);
     }
 }
 
-fn check_scaled_product(endian: Option<casa_tables::EndianFormat>) {
+#[test]
+fn fluxscale_retains_the_incremental_storage_gain_reader_fallback() {
+    check_scaled_product(None, true);
+}
+
+fn use_incremental_gain_storage(input_table: &std::path::Path) {
+    use casa_tables::{ColumnBinding, ColumnOptions, ColumnSchema, DataManagerKind, TableSchema};
+    use casa_types::PrimitiveType;
+    let mut table = Table::open(TableOptions::new(&input_table)).unwrap();
+    let mut columns = table.schema().unwrap().columns().to_vec();
+    for column in &mut columns {
+        let primitive = match column.name() {
+            "CPARAM" => PrimitiveType::Complex32,
+            "FLAG" => PrimitiveType::Bool,
+            _ => continue,
+        };
+        *column = ColumnSchema::array_fixed(column.name(), primitive, vec![2, 1])
+            .with_options(ColumnOptions {
+                direct: true,
+                undefined: false,
+            })
+            .unwrap();
+    }
+    let mut variable = table.schema().unwrap().columns().to_vec();
+    for column in &mut variable {
+        if matches!(column.name(), "CPARAM" | "FLAG") {
+            *column =
+                ColumnSchema::array_variable(column.name(), column.data_type().unwrap(), None);
+        }
+    }
+    table
+        .set_schema(TableSchema::new(variable).unwrap())
+        .unwrap();
+    for row in 0..table.row_count() {
+        let gains = match table
+            .column_accessor("CPARAM")
+            .unwrap()
+            .get(row)
+            .unwrap()
+            .unwrap()
+        {
+            Value::Array(ArrayValue::Complex32(values)) => values.iter().copied().collect(),
+            _ => unreachable!(),
+        };
+        let flags = match table
+            .column_accessor("FLAG")
+            .unwrap()
+            .get(row)
+            .unwrap()
+            .unwrap()
+        {
+            Value::Array(ArrayValue::Bool(values)) => values.iter().copied().collect(),
+            _ => unreachable!(),
+        };
+        table
+            .column_accessor_mut("CPARAM")
+            .unwrap()
+            .set(
+                row,
+                Value::Array(ArrayValue::Complex32(
+                    ndarray::ArrayD::from_shape_vec(vec![2, 1], gains).unwrap(),
+                )),
+            )
+            .unwrap();
+        table
+            .column_accessor_mut("FLAG")
+            .unwrap()
+            .set(
+                row,
+                Value::Array(ArrayValue::Bool(
+                    ndarray::ArrayD::from_shape_vec(vec![2, 1], flags).unwrap(),
+                )),
+            )
+            .unwrap();
+    }
+    table
+        .set_schema(TableSchema::new(columns).unwrap())
+        .unwrap();
+    let bindings = ["CPARAM", "FLAG"]
+        .into_iter()
+        .map(|name| {
+            (
+                name.to_string(),
+                ColumnBinding {
+                    data_manager: DataManagerKind::IncrementalStMan,
+                    tile_shape: None,
+                },
+            )
+        })
+        .collect();
+    table
+        .save_with_bindings(TableOptions::new(&input_table), &bindings)
+        .unwrap();
+}
+
+fn check_scaled_product(endian: Option<casa_tables::EndianFormat>, ism: bool) {
     let dir = TempDir::new().expect("tempdir");
     let input_table = common::create_apply_gain_caltable(
         &dir.path().join("input.gcal"),
@@ -47,6 +142,9 @@ fn check_scaled_product(endian: Option<casa_tables::EndianFormat>) {
             },
         ],
     );
+    if ism {
+        use_incremental_gain_storage(&input_table);
+    }
     if let Some(endian) = endian {
         Table::open(TableOptions::new(&input_table))
             .unwrap()
@@ -68,8 +166,12 @@ fn check_scaled_product(endian: Option<casa_tables::EndianFormat>) {
             }
         }
     }
-    let main_files =
-        ["table.f0", "table.f0i"].map(|name| std::fs::read(input_table.join(name)).unwrap());
+    let main_files = std::fs::read_dir(&input_table)
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("table.f"))
+        .map(|entry| (entry.file_name(), std::fs::read(entry.path()).unwrap()))
+        .collect::<Vec<_>>();
     let output_table = dir.path().join("scaled.gcal");
 
     let report = fluxscale(&FluxScaleRequest {
@@ -84,11 +186,11 @@ fn check_scaled_product(endian: Option<casa_tables::EndianFormat>) {
         incremental: false,
     })
     .expect("run fluxscale");
-    for (name, expected) in ["table.f0", "table.f0i"].into_iter().zip(main_files) {
+    for (name, expected) in main_files {
         assert_eq!(
-            std::fs::read(input_table.join(name)).unwrap(),
+            std::fs::read(input_table.join(&name)).unwrap(),
             expected,
-            "source {name} changed"
+            "source {name:?} changed"
         );
     }
 

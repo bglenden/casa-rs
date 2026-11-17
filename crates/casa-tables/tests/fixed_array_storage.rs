@@ -183,6 +183,13 @@ fn whole_cell_reads_do_not_slice_extra_channels_or_hide_undefined_cells() {
         .save(TableOptions::new(root.path()).with_data_manager(DataManagerKind::StandardStMan))
         .unwrap();
     let mut table = Table::open(TableOptions::new(root.path())).unwrap();
+    assert!(
+        table
+            .column_accessor("DATA")
+            .unwrap()
+            .array_cells_fixed_2d_typed_uncached(&[0], [usize::MAX, 1])
+            .is_err()
+    );
     for rows in [&[0, 1][..], &[0, 2][..], &[][..]] {
         assert!(
             table

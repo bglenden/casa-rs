@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Packed fixed-shape reads reuse bucket registration and one cell buffer.
+//! Shape-validated whole cells grow one flat buffer in source row order.
 
 use super::array_rows::ReadCell;
 use super::*;
@@ -9,9 +9,9 @@ use casa_types::{Complex32, Complex64};
 
 struct FixedCells<T> {
     shape: [usize; 2],
-    rows: usize,
     values: Vec<T>,
-    cell: Vec<T>,
+    order: Vec<usize>,
+    ordered: bool,
     stored_shape: Vec<usize>,
 }
 
@@ -35,19 +35,19 @@ impl<T: CanonicalArrayElement> ReadCell for FixedCells<T> {
                 )))
             };
         };
-        if !reader.read_fixed_shape_into(
+        if !reader.append_fixed_shape(
             offset,
             &self.shape,
             &mut self.stored_shape,
-            &mut self.cell,
+            &mut self.values,
         )? {
             return Ok(None);
         }
-        let width = self.shape[0];
-        for (channel, values) in self.cell.chunks_exact(width).enumerate() {
-            let start = (channel * self.rows + slot) * width;
-            self.values[start..start + width].copy_from_slice(values);
-        }
+        self.order.try_reserve(1).map_err(|error| {
+            StorageError::FormatMismatch(format!("cannot allocate fixed array row order: {error}"))
+        })?;
+        self.ordered &= slot == self.order.len();
+        self.order.push(slot);
         Ok(Some(()))
     }
     fn direct(
@@ -75,14 +75,21 @@ fn read<T: CanonicalArrayElement>(
         .ok_or_else(|| {
             StorageError::FormatMismatch("fixed array shape is empty or overflows".into())
         })?;
-    let total = count.checked_mul(rows.len()).ok_or_else(|| {
-        StorageError::FormatMismatch("fixed selected array size overflows".into())
-    })?;
+    let total = count
+        .checked_mul(rows.len())
+        .filter(|&total| {
+            total
+                .checked_mul(std::mem::size_of::<T>())
+                .is_some_and(|bytes| bytes <= isize::MAX as usize)
+        })
+        .ok_or_else(|| {
+            StorageError::FormatMismatch("fixed selected array size overflows".into())
+        })?;
     let mut cells = FixedCells {
         shape,
-        rows: rows.len(),
-        values: vec![T::default(); total],
-        cell: vec![T::default(); count],
+        values: Vec::new(),
+        order: Vec::new(),
+        ordered: true,
         stored_shape: Vec::with_capacity(2),
     };
     let Some(defined) = array_rows::read(path, blob, descs, column, rows, &mut cells)? else {
@@ -91,11 +98,30 @@ fn read<T: CanonicalArrayElement>(
     if defined.iter().any(Option::is_none) {
         return Ok(None);
     }
+    let values = if shape[1] == 1 && cells.ordered {
+        cells.values
+    } else {
+        // Allocate the transposed result only after all stored shapes match.
+        let mut values = Vec::new();
+        values.try_reserve_exact(total).map_err(|error| {
+            StorageError::FormatMismatch(format!("cannot allocate packed fixed arrays: {error}"))
+        })?;
+        values.resize(total, T::default());
+        for (source_row, slot) in cells.order.into_iter().enumerate() {
+            for channel in 0..shape[1] {
+                let source = (source_row * shape[1] + channel) * shape[0];
+                let target = (channel * rows.len() + slot) * shape[0];
+                values[target..target + shape[0]]
+                    .copy_from_slice(&cells.values[source..source + shape[0]]);
+            }
+        }
+        values
+    };
     Ok(Some(SelectedArray2D::new(
         rows.len(),
         shape[0],
         shape[1],
-        cells.values,
+        values,
     )))
 }
 

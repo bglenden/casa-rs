@@ -1962,8 +1962,10 @@ impl<'a> TableColumn<'a> {
     /// Read whole 2-D cells of exactly `shape`, packed `[channel][row][axis0]`,
     /// without populating the table cache. This never truncates extra channels.
     ///
-    /// StandardStMan indirect arrays reuse one cell buffer; other managers
-    /// hold the selected whole cells while packing. Returns `None` for an
+    /// StandardStMan indirect arrays grow a flat block after validating each
+    /// stored shape; channel transposition or reordered rows require a second
+    /// block. Other managers hold the selected whole cells while packing.
+    /// Returns `None` for an unsupported layout, an
     /// undefined/differently-shaped cell, an empty selection/shape, or a table
     /// already materialized or holding pending writes. I/O errors propagate.
     pub fn array_cells_fixed_2d_typed_uncached(
