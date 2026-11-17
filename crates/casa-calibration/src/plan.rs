@@ -35,10 +35,36 @@ use crate::summary::{CalibrationTableError, summarize_table};
 pub enum ApplyMode {
     /// Apply calibrations and propagate flags.
     CalFlag,
+    /// Apply calibrations and also flag selections without available calibration.
+    CalFlagStrict,
+    /// Update flags without changing corrected data or weights.
+    FlagOnly,
+    /// Update only flags, including selections without available calibration.
+    FlagOnlyStrict,
     /// Apply calibrations without changing data flags.
     CalOnly,
     /// Build and report the plan without mutating the MeasurementSet.
     Trial,
+}
+
+impl ApplyMode {
+    /// Whether this mode writes corrected visibilities and calibrated weights.
+    pub const fn writes_corrected_data(self) -> bool {
+        matches!(self, Self::CalFlag | Self::CalFlagStrict | Self::CalOnly)
+    }
+
+    /// Whether calibration flags are written back to the MeasurementSet.
+    pub const fn writes_flags(self) -> bool {
+        matches!(
+            self,
+            Self::CalFlag | Self::CalFlagStrict | Self::FlagOnly | Self::FlagOnlyStrict
+        )
+    }
+
+    /// Whether a selection without calibration must be flagged instead of skipped.
+    pub const fn is_strict(self) -> bool {
+        matches!(self, Self::CalFlagStrict | Self::FlagOnlyStrict)
+    }
 }
 
 /// Supported first-wave interpolation modes.
@@ -448,11 +474,12 @@ pub fn plan_apply_with_timings(
             other => ApplyPlanError::Selection { source: other },
         })?;
 
-    let requires_corrected_data_column = match ms.data_column(VisibilityDataColumn::CorrectedData) {
-        Ok(_) => false,
-        Err(MsError::ColumnNotPresent(_)) => true,
-        Err(other) => return Err(ApplyPlanError::Selection { source: other }),
-    };
+    let requires_corrected_data_column = request.apply_mode.writes_corrected_data()
+        && match ms.data_column(VisibilityDataColumn::CorrectedData) {
+            Ok(_) => false,
+            Err(MsError::ColumnNotPresent(_)) => true,
+            Err(other) => return Err(ApplyPlanError::Selection { source: other }),
+        };
 
     let selection_started_at = Instant::now();
     let resolved_selection =
@@ -758,12 +785,20 @@ fn build_table_plan(
         &available_calibration_spw_ids,
         &applicable_data_spw_ids,
     )?;
+    let available_mappings = spw_mapping
+        .iter()
+        .filter(|mapping| available_calibration_spw_ids.contains(&mapping.calibration_spw_id))
+        .cloned()
+        .collect::<Vec<_>>();
     let calibration_spectral_windows = if is_bpoly {
-        let mapped_cal_spw_ids =
-            unique_i32(spw_mapping.iter().map(|mapping| mapping.calibration_spw_id));
+        let mapped_cal_spw_ids = unique_i32(
+            available_mappings
+                .iter()
+                .map(|mapping| mapping.calibration_spw_id),
+        );
         load_ms_spectral_windows(ms, &mapped_cal_spw_ids)?
     } else {
-        load_caltable_spectral_windows(&summary, &spw_mapping)?
+        load_caltable_spectral_windows(&summary, &available_mappings)?
     };
 
     Ok(ApplyCalibrationTablePlan {
@@ -1049,7 +1084,11 @@ fn resolve_spw_mapping(
                         data_spw_id,
                     })?
             };
-            if !available_calibration_spw_ids.contains(&calibration_spw_id) {
+            // An absent identity-mapped window is handled by correct2's
+            // skip/STRICT behavior; an explicitly invalid map remains an error.
+            if !spec.spwmap.is_empty()
+                && !available_calibration_spw_ids.contains(&calibration_spw_id)
+            {
                 return Err(ApplyPlanError::MissingCalibrationSpectralWindow {
                     path: spec.path.display().to_string(),
                     calibration_spw_id,
@@ -1358,13 +1397,23 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
-        match resolve_spw_mapping(
+        let missing_identity = resolve_spw_mapping(
             &ApplyCalibrationTableSpec {
                 spwmap: vec![],
                 ..spec.clone()
             },
             &[5],
             &[3],
+        )
+        .unwrap();
+        assert_eq!(missing_identity[0].calibration_spw_id, 3);
+        match resolve_spw_mapping(
+            &ApplyCalibrationTableSpec {
+                spwmap: vec![3],
+                ..spec.clone()
+            },
+            &[5],
+            &[0],
         )
         .unwrap_err()
         {

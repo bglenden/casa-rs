@@ -58,6 +58,8 @@ use crate::plan::{
     ApplyPlanRequest, ApplyRowPlan, plan_apply_with_timings,
 };
 
+mod availability;
+use availability::execute as execute_apply_plan;
 mod gain_validity;
 use gain_validity::correcting_gain;
 mod bandpass;
@@ -556,11 +558,12 @@ pub(crate) fn evaluate_apply_rows(
         None
     };
 
-    let any_calwt = plan
-        .calibration_tables
-        .iter()
-        .zip(&loaded_tables)
-        .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
+    let any_calwt = plan.apply_mode.writes_corrected_data()
+        && plan
+            .calibration_tables
+            .iter()
+            .zip(&loaded_tables)
+            .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
     let mut evaluated_rows = HashMap::new();
     let mut main_rows = ms
         .main_table()
@@ -753,7 +756,7 @@ fn save_apply_flag_backup(
     plan: &ApplyPlan,
     options: ApplyExecutionOptions,
 ) -> Result<Option<String>, ApplyExecutionError> {
-    if !options.flag_backup || plan.apply_mode != ApplyMode::CalFlag {
+    if !options.flag_backup || !plan.apply_mode.writes_flags() {
         return Ok(None);
     }
     save_next_flag_backup(ms, "applycal")
@@ -812,7 +815,7 @@ pub fn execute_apply(
     clippy::too_many_lines,
     reason = "predates the function-length limit; #705"
 )]
-fn execute_apply_plan(
+fn execute_apply_available(
     ms: &mut MeasurementSet,
     plan: ApplyPlan,
     perf_tracer: Option<&mut CalibrationPerfTracer>,
@@ -825,11 +828,16 @@ fn execute_apply_plan(
         .iter()
         .map(|row| row.row_index)
         .collect::<BTreeSet<_>>();
-    let corrected_data_creation = ensure_corrected_data_column(ms, Some(&selected_row_indices))
-        .map_err(|source| ApplyExecutionError::CreateCorrectedData {
-            path: ms_path.clone(),
-            source,
-        })?;
+    let corrected_data_creation = if plan.apply_mode.writes_corrected_data() {
+        ensure_corrected_data_column(ms, Some(&selected_row_indices)).map_err(|source| {
+            ApplyExecutionError::CreateCorrectedData {
+                path: ms_path.clone(),
+                source,
+            }
+        })?
+    } else {
+        CorrectedDataCreation { created: false }
+    };
     let created_corrected_data_column = corrected_data_creation.created;
     let ensure_corrected_data_ns = ensure_corrected_data_started_at.elapsed().as_nanos() as u64;
 
@@ -867,22 +875,27 @@ fn execute_apply_plan(
     let mut row_fetch_ns = 0_u64;
     let mut row_compute_ns = 0_u64;
     let mut row_writeback_ns = 0_u64;
-    let any_calwt = plan
-        .calibration_tables
-        .iter()
-        .zip(&loaded_tables)
-        .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
+    let any_calwt = plan.apply_mode.writes_corrected_data()
+        && plan
+            .calibration_tables
+            .iter()
+            .zip(&loaded_tables)
+            .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
     let first_row = plan.selected_rows.first().map(|row| row.row_index);
     let has_weight_spectrum =
         any_calwt && weights::has_spectrum(ms.main_table(), first_row, "WEIGHT_SPECTRUM")?;
     let has_sigma_spectrum =
         has_weight_spectrum && weights::has_spectrum(ms.main_table(), first_row, "SIGMA_SPECTRUM")?;
-    let mut changed_columns: Vec<&'static str> = vec![VisibilityDataColumn::CorrectedData.name()];
+    let mut changed_columns: Vec<&'static str> = if plan.apply_mode.writes_corrected_data() {
+        vec![VisibilityDataColumn::CorrectedData.name()]
+    } else {
+        Vec::new()
+    };
     let row_loop_started_at = Instant::now();
     let mut geometry_cache = RowGeometryCache::default();
     let mut row_compute_profile =
         calibration_profile_enabled().then(ApplyRowComputeProfile::default);
-    if plan.apply_mode == ApplyMode::CalFlag {
+    if plan.apply_mode.writes_flags() {
         changed_columns.push("FLAG");
     }
     if any_calwt {
@@ -976,7 +989,7 @@ fn execute_apply_plan(
         path: ms_path.clone(),
         source: MsError::InvalidInput(source.to_string()),
     })?;
-    let batch_rows = write_plan.batch_rows();
+    let batch_rows = write_plan.batch_rows().max(1);
     let mut write_session = MeasurementSetWriteSession::start_selected_row_mutation(ms, write_plan)
         .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
             path: ms_path.clone(),
@@ -999,7 +1012,7 @@ fn execute_apply_plan(
                 path: ms_path.clone(),
                 source: MsError::from(source),
             })?;
-        let flag_values = if plan.apply_mode == ApplyMode::CalFlag {
+        let flag_values = if plan.apply_mode.writes_flags() {
             Some(
                 ms.main_table()
                     .column_accessor("FLAG")
@@ -1041,7 +1054,10 @@ fn execute_apply_plan(
         let partial_channels = planned_rows
             .iter()
             .any(|row| plan.channel_selections.contains_key(&row.data_spw_id));
-        let preserved_corrected_values = if partial_channels && !created_corrected_data_column {
+        let preserved_corrected_values = if partial_channels
+            && plan.apply_mode.writes_corrected_data()
+            && !created_corrected_data_column
+        {
             Some(
                 ms.main_table()
                     .column_accessor("CORRECTED_DATA")
@@ -1153,8 +1169,10 @@ fn execute_apply_plan(
                 row_compute_profile.as_mut(),
             )?;
             row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
-            corrected_batch.push(result.corrected_data);
-            if plan.apply_mode == ApplyMode::CalFlag {
+            if plan.apply_mode.writes_corrected_data() {
+                corrected_batch.push(result.corrected_data);
+            }
+            if plan.apply_mode.writes_flags() {
                 flag_batch.push(result.updated_flags.unwrap_or_else(|| {
                     prefetched
                         .original_flags
@@ -1188,11 +1206,15 @@ fn execute_apply_plan(
             updated_row_count += 1;
         }
 
-        let mut columns = vec![MeasurementSetMutationColumnBatch {
-            name: VisibilityDataColumn::CorrectedData.name().to_string(),
-            values: MeasurementSetMutationColumnValues::Arrays(corrected_batch),
-        }];
-        if plan.apply_mode == ApplyMode::CalFlag {
+        let mut columns = if plan.apply_mode.writes_corrected_data() {
+            vec![MeasurementSetMutationColumnBatch {
+                name: VisibilityDataColumn::CorrectedData.name().to_string(),
+                values: MeasurementSetMutationColumnValues::Arrays(corrected_batch),
+            }]
+        } else {
+            Vec::new()
+        };
+        if plan.apply_mode.writes_flags() {
             columns.push(MeasurementSetMutationColumnBatch {
                 name: "FLAG".to_string(),
                 values: MeasurementSetMutationColumnValues::Arrays(flag_batch),
@@ -1836,7 +1858,7 @@ fn apply_row_all_channels(
     }
 
     let mut corrected = data.clone();
-    let mut flags = if plan.apply_mode == ApplyMode::CalFlag {
+    let mut flags = if plan.apply_mode.writes_flags() {
         flag_array
             .ok_or_else(|| ApplyExecutionError::MutateMeasurementSet {
                 path: "<measurement-set FLAG>".to_string(),
@@ -1850,11 +1872,12 @@ fn apply_row_all_channels(
         ArrayD::from_elem(IxDyn(&[0]).f(), false)
     };
     let mut newly_flagged_samples = 0;
-    let any_calwt = plan
-        .calibration_tables
-        .iter()
-        .zip(loaded_tables)
-        .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
+    let any_calwt = plan.apply_mode.writes_corrected_data()
+        && plan
+            .calibration_tables
+            .iter()
+            .zip(loaded_tables)
+            .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
     let mut weight = match original_weight {
         Some(ArrayValue::Float32(weight)) => Some(weight.clone()),
         Some(other) => {
@@ -1920,6 +1943,9 @@ fn apply_row_all_channels(
         if !table_plan.spec.apply_to.matches(row) {
             continue;
         }
+        let calibrate_weights = plan.apply_mode.writes_corrected_data()
+            && table_plan.calwt
+            && loaded_table.supports_calwt;
         if let Some(profile) = compute_profile.as_deref_mut() {
             profile.table_applications += 1;
         }
@@ -2008,7 +2034,7 @@ fn apply_row_all_channels(
         }
 
         let (Some(ant1), Some(ant2)) = (ant1, ant2) else {
-            if plan.apply_mode == ApplyMode::CalFlag {
+            if plan.apply_mode.writes_flags() {
                 if !fast_gain_pairs.is_empty() {
                     let fast_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
                     apply_complex_gain_pairs_fast(
@@ -2044,7 +2070,7 @@ fn apply_row_all_channels(
         };
 
         let is_bandpass = table_plan.summary.table_subtype == "B Jones";
-        let bandpass_weights = (is_bandpass && table_plan.calwt && loaded_table.supports_calwt)
+        let bandpass_weights = (is_bandpass && calibrate_weights)
             .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types))
             .flatten();
         let (ant1, ant2) = if is_bandpass {
@@ -2090,7 +2116,7 @@ fn apply_row_all_channels(
         };
 
         let materialize_started_at = compute_profile.as_ref().map(|_| Instant::now());
-        if !(table_plan.calwt && loaded_table.supports_calwt)
+        if !(calibrate_weights)
             && let Some(pair) = build_fast_gain_pair(
                 table_index,
                 &ant1,
@@ -2145,7 +2171,6 @@ fn apply_row_all_channels(
         if let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) =
             (ant1.as_ref(), ant2.as_ref())
         {
-            let calibrate_weights = table_plan.calwt && loaded_table.supports_calwt;
             let scalar_weights =
                 !is_bandpass && first.channel_count == 1 && second.channel_count == 1;
             if !calibrate_weights || scalar_weights {
@@ -2221,7 +2246,7 @@ fn apply_row_all_channels(
                 let (value1, flag1) = correcting_gain(gain1.value, gain1.flagged);
                 let (value2, flag2) = correcting_gain(gain2.value, gain2.flagged);
                 if (flag1 || flag2)
-                    && plan.apply_mode == ApplyMode::CalFlag
+                    && plan.apply_mode.writes_flags()
                     && !flags[[corr_index, chan_index]]
                 {
                     flags[[corr_index, chan_index]] = true;
@@ -2230,7 +2255,7 @@ fn apply_row_all_channels(
 
                 let denom = value1 * value2.conj();
                 corrected[[corr_index, chan_index]] /= denom;
-                if table_plan.calwt && loaded_table.supports_calwt {
+                if calibrate_weights {
                     let factor = bandpass_weights.as_ref().map_or_else(
                         || value1.norm_sqr() * value2.norm_sqr(),
                         |factors| factors[corr_index],
@@ -2343,7 +2368,7 @@ fn apply_row_all_channels(
     let row_became_fully_flagged = flags_changed && flags.iter().all(|flag| *flag);
     Ok(ExecutionRowResult {
         corrected_data: ArrayValue::Complex32(corrected),
-        updated_flags: (plan.apply_mode == ApplyMode::CalFlag && flags_changed)
+        updated_flags: (plan.apply_mode.writes_flags() && flags_changed)
             .then_some(ArrayValue::Bool(flags)),
         updated_weight: any_calwt.then(|| ArrayValue::Float32(weight.expect("calwt weight"))),
         updated_weight_spectrum: weight_spectrum.map(ArrayValue::Float32),
@@ -2521,13 +2546,13 @@ fn apply_complex_gain_pairs_fast(
     let channel_count = shape[1];
     ensure_fast_pair_frequency_coverage(pairs, ctx.data_channels.frequencies_hz, channel_count)?;
     let corrected_is_fortran = ctx.corrected.ndim() == 2 && ctx.corrected.strides()[0] == 1;
-    let flags_are_fortran = ctx.apply_mode != ApplyMode::CalFlag
-        || (ctx.flags.ndim() == 2 && ctx.flags.strides()[0] == 1);
+    let flags_are_fortran =
+        !ctx.apply_mode.writes_flags() || (ctx.flags.ndim() == 2 && ctx.flags.strides()[0] == 1);
     if corrected_is_fortran
         && flags_are_fortran
         && let Some(corrected) = ctx.corrected.as_slice_memory_order_mut()
     {
-        let flags = (ctx.apply_mode == ApplyMode::CalFlag)
+        let flags = (ctx.apply_mode.writes_flags())
             .then(|| ctx.flags.as_slice_memory_order_mut())
             .flatten();
         return apply_complex_gain_pairs_fast_fortran(
@@ -2552,7 +2577,7 @@ fn apply_complex_gain_pairs_fast(
             let Some(sample) = pair.scalar_sample(receptors) else {
                 continue;
             };
-            if fast_gain_sample_invalid(sample) && ctx.apply_mode == ApplyMode::CalFlag {
+            if fast_gain_sample_invalid(sample) && ctx.apply_mode.writes_flags() {
                 flag_all_channels_generic(
                     ctx.flags,
                     corr_index,
@@ -2573,7 +2598,7 @@ fn apply_complex_gain_pairs_fast(
                     continue;
                 };
                 if fast_gain_sample_invalid(sample)
-                    && ctx.apply_mode == ApplyMode::CalFlag
+                    && ctx.apply_mode.writes_flags()
                     && !ctx.flags[[corr_index, chan_index]]
                 {
                     ctx.flags[[corr_index, chan_index]] = true;

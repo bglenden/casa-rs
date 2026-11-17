@@ -130,18 +130,15 @@ fn applymode_takes_casas_values() {
         ("", ApplyMode::CalFlag),
         ("calflag", ApplyMode::CalFlag),
         ("calonly", ApplyMode::CalOnly),
+        ("calflagstrict", ApplyMode::CalFlagStrict),
+        ("flagonly", ApplyMode::FlagOnly),
+        ("flagonlystrict", ApplyMode::FlagOnlyStrict),
         ("trial", ApplyMode::Trial),
     ] {
         let CalibrationTaskRequest::ExecuteApply(apply) = mode(value).expect(value) else {
             panic!("an apply");
         };
         assert_eq!(apply.apply_mode, expected, "{value}");
-    }
-    for value in ["calflagstrict", "flagonly", "flagonlystrict"] {
-        assert!(
-            refused(mode(value), "applymode").contains("#979"),
-            "{value}"
-        );
     }
 }
 

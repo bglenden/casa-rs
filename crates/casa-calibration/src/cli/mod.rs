@@ -22,6 +22,7 @@
 //! [`CalibrationTaskResult`]: crate::CalibrationTaskResult
 
 mod casa_read;
+mod history;
 mod read;
 mod render;
 
@@ -99,6 +100,11 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         ) = (&request, &result)
     {
         crate::fluxscale::history::record(task, request, report);
+    }
+    if task.surface() == "applycal"
+        && let CalibrationTaskRequest::ExecuteApply(request) = &request
+    {
+        history::record_applycal(task, &request.measurement_set);
     }
     let value = casa_value(task.surface(), &applied, &result);
     let rendered = render::render(report.format, &result).map_err(TaskFailure::execution)?;

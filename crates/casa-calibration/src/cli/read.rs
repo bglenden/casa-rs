@@ -307,6 +307,9 @@ fn parse_bool_literal(value: &str) -> Result<bool, String> {
 fn parse_apply_mode(value: &str) -> Result<ApplyMode, String> {
     match value {
         "calflag" => Ok(ApplyMode::CalFlag),
+        "calflagstrict" => Ok(ApplyMode::CalFlagStrict),
+        "flagonly" => Ok(ApplyMode::FlagOnly),
+        "flagonlystrict" => Ok(ApplyMode::FlagOnlyStrict),
         "calonly" => Ok(ApplyMode::CalOnly),
         "trial" => Ok(ApplyMode::Trial),
         other => Err(format!(

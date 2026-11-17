@@ -423,6 +423,9 @@ fn has_model_column(ms: &MeasurementSet) -> bool {
 fn applymode(task: &TaskInvocation<'_>) -> Result<ApplyMode, TaskFailure> {
     match task.required_text("applymode")?.as_str() {
         "" | "calflag" => Ok(ApplyMode::CalFlag),
+        "calflagstrict" => Ok(ApplyMode::CalFlagStrict),
+        "flagonly" => Ok(ApplyMode::FlagOnly),
+        "flagonlystrict" => Ok(ApplyMode::FlagOnlyStrict),
         "calonly" => Ok(ApplyMode::CalOnly),
         "trial" => Ok(ApplyMode::Trial),
         other => Err(not_yet("applymode", other)),
