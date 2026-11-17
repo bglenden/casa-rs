@@ -121,37 +121,42 @@
 <a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(ParameterValue::String(<span class="string">"calflag"</span>.into()));
 <a href=#122 id=122 data-nosnippet>122</a>    }
 <a href=#123 id=123 data-nosnippet>123</a>    <span class="kw">if </span>value(task, <span class="string">"docallib"</span>) == <span class="prelude-val">Some</span>(ParameterValue::Bool(<span class="bool-val">true</span>)) {
-<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(current);
-<a href=#125 id=125 data-nosnippet>125</a>    }
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">let </span>tables = <span class="kw">match </span>value(task, <span class="string">"gaintable"</span>) {
-<a href=#127 id=127 data-nosnippet>127</a>        <span class="prelude-val">Some</span>(ParameterValue::Array(tables)) =&gt; tables,
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">_ </span>=&gt; Vec::new(),
-<a href=#129 id=129 data-nosnippet>129</a>    };
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">if let </span>ParameterValue::Array(values) = <span class="kw-2">&amp;mut </span>current {
-<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">match </span>name {
-<a href=#132 id=132 data-nosnippet>132</a>            <span class="string">"calwt" </span><span class="kw">if </span>values.len() == <span class="number">1 </span>=&gt; {
-<a href=#133 id=133 data-nosnippet>133</a>                <span class="kw">let </span>count = <span class="kw">if </span>tables == [ParameterValue::String(String::new())] {
-<a href=#134 id=134 data-nosnippet>134</a>                    <span class="number">0
-<a href=#135 id=135 data-nosnippet>135</a>                </span>} <span class="kw">else </span>{
-<a href=#136 id=136 data-nosnippet>136</a>                    tables.len()
-<a href=#137 id=137 data-nosnippet>137</a>                };
-<a href=#138 id=138 data-nosnippet>138</a>                <span class="kw-2">*</span>values = <span class="macro">vec!</span>[values[<span class="number">0</span>].clone(); count];
-<a href=#139 id=139 data-nosnippet>139</a>            }
-<a href=#140 id=140 data-nosnippet>140</a>            <span class="string">"spwmap" </span><span class="kw">if </span>!values.is_empty() &amp;&amp; !<span class="macro">matches!</span>(values[<span class="number">0</span>], ParameterValue::Array(<span class="kw">_</span>)) =&gt; {
-<a href=#141 id=141 data-nosnippet>141</a>                current = ParameterValue::Array(<span class="macro">vec!</span>[current]);
-<a href=#142 id=142 data-nosnippet>142</a>            }
-<a href=#143 id=143 data-nosnippet>143</a>            <span class="string">"interp" </span>=&gt; {
-<a href=#144 id=144 data-nosnippet>144</a>                <span class="kw">for </span>(table, value) <span class="kw">in </span>tables.iter().zip(values) {
-<a href=#145 id=145 data-nosnippet>145</a>                    <span class="kw">if </span>table != <span class="kw-2">&amp;</span>ParameterValue::String(String::new())
-<a href=#146 id=146 data-nosnippet>146</a>                        &amp;&amp; value == <span class="kw-2">&amp;</span>ParameterValue::String(String::new())
-<a href=#147 id=147 data-nosnippet>147</a>                    {
-<a href=#148 id=148 data-nosnippet>148</a>                        <span class="kw-2">*</span>value = ParameterValue::String(<span class="string">"linear"</span>.into());
-<a href=#149 id=149 data-nosnippet>149</a>                    }
-<a href=#150 id=150 data-nosnippet>150</a>                }
-<a href=#151 id=151 data-nosnippet>151</a>            }
-<a href=#152 id=152 data-nosnippet>152</a>            <span class="kw">_ </span>=&gt; {}
-<a href=#153 id=153 data-nosnippet>153</a>        }
-<a href=#154 id=154 data-nosnippet>154</a>    }
-<a href=#155 id=155 data-nosnippet>155</a>    <span class="prelude-val">Some</span>(current)
-<a href=#156 id=156 data-nosnippet>156</a>}
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="comment">// CASA wraps a flat spwmap only in its active traditional branch.
+<a href=#125 id=125 data-nosnippet>125</a>        </span><span class="kw">return </span><span class="prelude-val">Some</span>(<span class="kw">if </span>name == <span class="string">"spwmap" </span>{
+<a href=#126 id=126 data-nosnippet>126</a>            task.session().given(name).cloned().unwrap_or(current)
+<a href=#127 id=127 data-nosnippet>127</a>        } <span class="kw">else </span>{
+<a href=#128 id=128 data-nosnippet>128</a>            current
+<a href=#129 id=129 data-nosnippet>129</a>        });
+<a href=#130 id=130 data-nosnippet>130</a>    }
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">let </span>tables = <span class="kw">match </span>value(task, <span class="string">"gaintable"</span>) {
+<a href=#132 id=132 data-nosnippet>132</a>        <span class="prelude-val">Some</span>(ParameterValue::Array(tables)) =&gt; tables,
+<a href=#133 id=133 data-nosnippet>133</a>        <span class="kw">_ </span>=&gt; Vec::new(),
+<a href=#134 id=134 data-nosnippet>134</a>    };
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">if let </span>ParameterValue::Array(values) = <span class="kw-2">&amp;mut </span>current {
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">match </span>name {
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="string">"calwt" </span><span class="kw">if </span>values.len() == <span class="number">1 </span>=&gt; {
+<a href=#138 id=138 data-nosnippet>138</a>                <span class="kw">let </span>count = <span class="kw">if </span>tables == [ParameterValue::String(String::new())] {
+<a href=#139 id=139 data-nosnippet>139</a>                    <span class="number">0
+<a href=#140 id=140 data-nosnippet>140</a>                </span>} <span class="kw">else </span>{
+<a href=#141 id=141 data-nosnippet>141</a>                    tables.len()
+<a href=#142 id=142 data-nosnippet>142</a>                };
+<a href=#143 id=143 data-nosnippet>143</a>                <span class="kw-2">*</span>values = <span class="macro">vec!</span>[values[<span class="number">0</span>].clone(); count];
+<a href=#144 id=144 data-nosnippet>144</a>            }
+<a href=#145 id=145 data-nosnippet>145</a>            <span class="string">"spwmap" </span><span class="kw">if </span>!values.is_empty() &amp;&amp; !<span class="macro">matches!</span>(values[<span class="number">0</span>], ParameterValue::Array(<span class="kw">_</span>)) =&gt; {
+<a href=#146 id=146 data-nosnippet>146</a>                current = ParameterValue::Array(<span class="macro">vec!</span>[current]);
+<a href=#147 id=147 data-nosnippet>147</a>            }
+<a href=#148 id=148 data-nosnippet>148</a>            <span class="string">"interp" </span>=&gt; {
+<a href=#149 id=149 data-nosnippet>149</a>                <span class="kw">for </span>(table, value) <span class="kw">in </span>tables.iter().zip(values) {
+<a href=#150 id=150 data-nosnippet>150</a>                    <span class="kw">if </span>table != <span class="kw-2">&amp;</span>ParameterValue::String(String::new())
+<a href=#151 id=151 data-nosnippet>151</a>                        &amp;&amp; value == <span class="kw-2">&amp;</span>ParameterValue::String(String::new())
+<a href=#152 id=152 data-nosnippet>152</a>                    {
+<a href=#153 id=153 data-nosnippet>153</a>                        <span class="kw-2">*</span>value = ParameterValue::String(<span class="string">"linear"</span>.into());
+<a href=#154 id=154 data-nosnippet>154</a>                    }
+<a href=#155 id=155 data-nosnippet>155</a>                }
+<a href=#156 id=156 data-nosnippet>156</a>            }
+<a href=#157 id=157 data-nosnippet>157</a>            <span class="kw">_ </span>=&gt; {}
+<a href=#158 id=158 data-nosnippet>158</a>        }
+<a href=#159 id=159 data-nosnippet>159</a>    }
+<a href=#160 id=160 data-nosnippet>160</a>    <span class="prelude-val">Some</span>(current)
+<a href=#161 id=161 data-nosnippet>161</a>}
 </code></pre></div></section></main></body></html>

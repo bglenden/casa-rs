@@ -3838,6 +3838,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#callibrary-joint-scan-maps-mark-other-observations-unavailable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Callibrary joint scan maps mark other observations unavailable
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9819,6 +9830,28 @@ did not add a <code>NULL</code> column keyword for its <code>TNULL2 = -32768</co
 <code>FITSTabular::nullsFromHDU</code> looks up each indexed card with a
 zero-based column index. casa-rs preserves both the unscaled integer
 cell and the matching null marker so readers can interpret it. See #1028.</p>
+<h2 id="callibrary-joint-scan-maps-mark-other-observations-unavailable">Callibrary joint scan maps mark other observations unavailable<a class="headerlink" href="#callibrary-joint-scan-maps-mark-other-observations-unavailable" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-17</li>
+<li>Status: corrected under the standing evident-intent rule (#1518)</li>
+<li>Affected code: CASA 6.7.6.14 <code>CLPatchPanel</code> MS constructor, missing-scan catch.</li>
+</ul>
+<p>With scan 1 in observation 0 and scan 2 in observation 1 in both the MS and
+G table, <code>obsmap='self' scanmap='self'</code> skips all calibration. The constructor
+tries each requested scan within each calibration observation. When a scan
+is absent in the current observation, it calls <code>recordBadMSIndices(reqMSobs,
+theseMSscan, ...)</code>, marking that scan bad in every requested observation,
+including the observation where the scan exists. With an existing corrected
+column, CASA leaves its values and weights unchanged; ordinary calflag adds
+no flags. This contradicts the explicitly independent observation/scan maps.</p>
+<p>casa-rs checks availability within the actual joint mapped context and
+calibrates its valid buffers. The public task oracle retains the raw CASA
+result and compares native output to an independent CASA control with two
+explicit library slices, <code>obs='0' scan='1'</code> and <code>obs='1' scan='2'</code>, retaining
+both self maps and the identical input MS/calibration table. That control
+matches native corrected data, flags and weight/sigma columns. Missing joint
+contexts still use the ordinary unavailable-calibration rules. No tolerance
+is relaxed, and this correction is separate from same-input task matches.</p>
 
 
 
