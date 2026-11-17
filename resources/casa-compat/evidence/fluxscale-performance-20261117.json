@@ -2472,5 +2472,12 @@
       "seeks": 159,
       "writes": 76
     }
+  },
+  "owner_decision": {
+    "date": "2026-11-17",
+    "state": "approved",
+    "scope": "Fluxscale-specific residual CPU use at these measured 60k/300k full/incremental workflows. Scientific/API acceptance and the rest of the calibration programme are unchanged.",
+    "quote": "Approve the measured fluxscale performance exception",
+    "issue": "https://github.com/bglenden/casa-rs/issues/990#issuecomment-6936731069"
   }
 }

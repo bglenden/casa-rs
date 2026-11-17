@@ -258,16 +258,17 @@
     },
     "performance": {
       "kind": "Matched public-Python performance",
-      "state": "measured",
+      "state": "owner decision",
       "scope": "Five alternating public-Python/CASA full/incremental runs, warm/cold, 60k and 300k equal-product inputs, fixed HISTORY; phases, user/system CPU, throughput, memory and fresh imports. Controlled native before/after and raw data-I/O reference separately attributed.",
-      "result": "60k full native 0.099\u20130.120 s versus CASA 5.190\u20135.616 s; 300k 0.539\u20130.603 s versus 27.113\u201327.436 s. Output bucket I/O and temporary allocations are reduced, but CPU remains material: #990 stays open pending correction or an explicit measured owner tradeoff.",
+      "result": "60k full native 0.099\u20130.120 s versus CASA 5.190\u20135.616 s; 300k 0.539\u20130.603 s versus 27.113\u201327.436 s (45\u201350\u00d7), ~122 MB RSS. CPU/wall remains ~1.00 warm and 0.95\u20130.97 cold. The owner explicitly approved this measured fluxscale-specific CPU-performance exception on 2026-11-17; #990 is complete. This is not an I/O-limited measurement claim or an exception for other calibration tasks.",
       "casa_version": "6.7.6.14",
       "revision": "3968a2bcb6e86252da9ce8899cf59d8d7d466e03",
       "command": "python tools/perf/calibrate/fluxscale.py --vis <oracle-ms> --gain <oracle-gain> --native-bin <release-calibrate> --repeat-input 1000 --repeats 5 --cache warm|cold --out <receipt>",
       "receipt": "resources/casa-compat/evidence/fluxscale-performance-20261117.json",
       "links": [
         "tools/perf/calibrate/fluxscale.py"
-      ]
+      ],
+      "owner_decision": "2026-11-17, owner in conversation: \u201cApprove the measured fluxscale performance exception.\u201d Scope: residual CPU use at the recorded fluxscale measurements; no scientific/API or programme-wide waiver."
     }
   }
 }

@@ -269,7 +269,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="fluxscale-evidence-performance"></a>
 ##### performance
 
-**Matched public-Python performance — measured.** 60k full native 0.099–0.120 s versus CASA 5.190–5.616 s; 300k 0.539–0.603 s versus 27.113–27.436 s. Output bucket I/O and temporary allocations are reduced, but CPU remains material: #990 stays open pending correction or an explicit measured owner tradeoff. Five alternating public-Python/CASA full/incremental runs, warm/cold, 60k and 300k equal-product inputs, fixed HISTORY; phases, user/system CPU, throughput, memory and fresh imports. Controlled native before/after and raw data-I/O reference separately attributed.
+**Matched public-Python performance — owner decision.** 60k full native 0.099–0.120 s versus CASA 5.190–5.616 s; 300k 0.539–0.603 s versus 27.113–27.436 s (45–50×), ~122 MB RSS. CPU/wall remains ~1.00 warm and 0.95–0.97 cold. The owner explicitly approved this measured fluxscale-specific CPU-performance exception on 2026-11-17; #990 is complete. This is not an I/O-limited measurement claim or an exception for other calibration tasks. Five alternating public-Python/CASA full/incremental runs, warm/cold, 60k and 300k equal-product inputs, fixed HISTORY; phases, user/system CPU, throughput, memory and fresh imports. Controlled native before/after and raw data-I/O reference separately attributed.
 
 - [tools/perf/calibrate/fluxscale.py](https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/tools/perf/calibrate/fluxscale.py)
 - Revision: `3968a2bcb6e86252da9ce8899cf59d8d7d466e03`; CASA: `6.7.6.14`.
