@@ -411,21 +411,35 @@ mod tests {
     }
 
     #[test]
-    fn an_inactive_value_is_not_sent() {
-        let mut session =
-            ParameterSession::defaults(builtin_surface_bundle("applycal").unwrap()).unwrap();
-        session
-            .set("vis", ParameterValue::String("in.ms".into()))
-            .unwrap();
-        session
-            .set("antenna", ParameterValue::String("A0".into()))
-            .unwrap();
-        session
-            .set("selectdata", ParameterValue::Bool(false))
-            .unwrap();
-        let values = request(&session).values;
-        assert_eq!(values["selectdata"], serde_json::json!(false));
-        assert!(!values.contains_key("antenna"), "{values:?}");
+    fn inactive_values_are_omitted_but_applycal_keeps_disabled_selectors_for_history() {
+        for surface in ["gaincal", "applycal"] {
+            let mut session =
+                ParameterSession::defaults(builtin_surface_bundle(surface).unwrap()).unwrap();
+            session
+                .set("vis", ParameterValue::String("in.ms".into()))
+                .unwrap();
+            if surface == "gaincal" {
+                session
+                    .set("caltable", ParameterValue::String("gain.cal".into()))
+                    .unwrap();
+            }
+            session
+                .set("antenna", ParameterValue::String("A0".into()))
+                .unwrap();
+            session
+                .set("selectdata", ParameterValue::Bool(false))
+                .unwrap();
+            let values = request(&session).values;
+            assert_eq!(values["selectdata"], serde_json::json!(false));
+            // CASA task_applycal retains disabled input arguments in HISTORY;
+            // its Rust task body applies the selection gate. Generic inactive
+            // bindings still remain absent from the provider request.
+            assert_eq!(
+                values.get("antenna"),
+                (surface == "applycal").then_some(&serde_json::json!("A0")),
+                "{surface}"
+            );
+        }
     }
 
     #[test]
