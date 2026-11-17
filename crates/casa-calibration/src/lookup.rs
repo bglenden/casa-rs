@@ -44,8 +44,8 @@ mod fringe;
 mod real;
 #[path = "lookup_time.rs"]
 mod time;
-use time::TimePlan;
 pub use time::{TimeInterpolation, TimeInterpolationOptions};
+pub(crate) use time::{TimePlan, TimeQuery};
 
 /// Which fields' solutions a row takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -455,7 +455,7 @@ impl CalibrationTableLookup {
                 };
                 Ok(Some(Arc::clone(&candidates[nearest].grid)))
             }
-            ApplyInterpolationMode::Linear => {
+            _ => {
                 let last = candidates.len() - 1;
                 let lower = through.checked_sub(1).unwrap_or(after.min(last));
                 let upper = after.min(last).max(lower);

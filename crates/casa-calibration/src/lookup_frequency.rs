@@ -4,7 +4,9 @@ use crate::interpolation::{Curve, sample, spline_derivatives, unwrap_phase};
 use crate::{ApplyExecutionError, CalibrationTableLookup, ComplexSolution};
 
 /// Frequency interpolation for a complex calibration grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum FrequencyInterpolation {
     /// Nearest valid frequency sample, with nearest endpoint extrapolation.
     Nearest,

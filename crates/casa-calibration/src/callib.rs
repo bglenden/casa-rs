@@ -278,6 +278,32 @@ fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> Stri
             parts.push("tinterp='nearest'".to_string());
             parts.push("finterp='linear'".to_string());
         }
+        ApplyInterpolationMode::Casa {
+            time,
+            frequency,
+            per_observation,
+            per_scan,
+            phase_delay,
+            relative_frequency,
+        } => {
+            let mut time = format!("{time:?}").to_ascii_lowercase();
+            if per_observation {
+                time.push_str("perobs");
+            }
+            if per_scan {
+                time.push_str("perscan");
+            }
+            if phase_delay {
+                time.push_str("PD");
+            }
+            let mut frequency = format!("{frequency:?}").to_ascii_lowercase();
+            if relative_frequency {
+                frequency.push_str("rel");
+            }
+            parts.push(format!("tinterp='{time}'"));
+            parts.push(format!("finterp='{frequency}'"));
+        }
+        ApplyInterpolationMode::Invalid => parts.push("tinterp='invalid'".to_string()),
     }
 
     parts.join(" ")

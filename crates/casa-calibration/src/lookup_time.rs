@@ -4,6 +4,7 @@
 use super::{
     ApplyExecutionError, ApplyInterpolationMode, CalibrationGrid, CalibrationSolution,
     CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection, GainGrid,
+    LoadedCalibrationTable, across_fields,
 };
 use crate::interpolation::{Curve, sample_polar, spline_derivatives, unwrap_phase};
 use casa_types::Complex32;
@@ -13,10 +14,13 @@ use std::path::Path;
 #[path = "lookup_context.rs"]
 mod context;
 pub use context::TimeInterpolationOptions;
-use context::{TimeQuery, TimeScope};
+pub(crate) use context::TimeQuery;
+use context::TimeScope;
 
 /// Amplitude/phase interpolation in time for simulator calibration tables.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum TimeInterpolation {
     /// Nearest time, clamped to the endpoint outside the table's time range.
     Nearest,
@@ -80,7 +84,7 @@ impl CalibrationTableLookup {
 
 type TimeSeries = HashMap<(i32, i32, i32), Vec<CalibrationSolution>>;
 
-pub(super) struct TimePlan {
+pub(crate) struct TimePlan {
     mode: TimeInterpolation,
     real: bool,
     scope: TimeScope,
@@ -128,7 +132,7 @@ fn relative(time: f64, reference: f64) -> f64 {
 }
 
 impl TimePlan {
-    fn solution(
+    pub(crate) fn solution(
         &self,
         path: &Path,
         query: TimeQuery,

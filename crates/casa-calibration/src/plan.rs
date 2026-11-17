@@ -71,23 +71,9 @@ impl ApplyMode {
     }
 }
 
-/// Supported first-wave interpolation modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum ApplyInterpolationMode {
-    /// Nearest-neighbor lookup.
-    Nearest,
-    /// Linear interpolation on the primary solve axis.
-    Linear,
-    /// Nearest in time, linear in frequency.
-    NearestLinear,
-}
-
-impl ApplyInterpolationMode {
-    /// Returns `true` when the mode depends on frequency-grid metadata.
-    pub fn uses_frequency_axis(self) -> bool {
-        matches!(self, Self::NearestLinear)
-    }
-}
+#[path = "plan_interpolation.rs"]
+mod interpolation;
+pub use interpolation::ApplyInterpolationMode;
 
 /// Explicit `gainfield` selector accepted by the planner.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -190,6 +176,8 @@ pub struct ApplyRowPlan {
     pub field_id: i32,
     /// OBSERVATION_ID from MAIN.
     pub observation_id: i32,
+    /// SCAN_NUMBER from MAIN.
+    pub scan_number: i32,
     /// DATA_DESC_ID from MAIN.
     pub data_desc_id: i32,
     /// SPECTRAL_WINDOW_ID resolved through DATA_DESCRIPTION.
@@ -590,6 +578,7 @@ fn build_selected_rows(
     let data_desc_ids = load_i32_column_rows(table, "DATA_DESC_ID", row_indices)?;
     let field_ids = load_i32_column_rows(table, "FIELD_ID", row_indices)?;
     let observation_ids = load_i32_column_rows(table, "OBSERVATION_ID", row_indices)?;
+    let scan_numbers = load_i32_column_rows(table, "SCAN_NUMBER", row_indices)?;
     let antenna1s = load_i32_column_rows(table, "ANTENNA1", row_indices)?;
     let antenna2s = load_i32_column_rows(table, "ANTENNA2", row_indices)?;
     let feed1s = load_i32_column_rows(table, "FEED1", row_indices)?;
@@ -619,6 +608,7 @@ fn build_selected_rows(
                 row_index,
                 field_id: value_at_i32(&field_ids, selected_idx, "FIELD_ID")?,
                 observation_id: value_at_i32(&observation_ids, selected_idx, "OBSERVATION_ID")?,
+                scan_number: value_at_i32(&scan_numbers, selected_idx, "SCAN_NUMBER")?,
                 data_desc_id,
                 data_spw_id: dd
                     .spectral_window_id(ddid_index)
@@ -737,6 +727,12 @@ fn build_table_plan(
     spec: &ApplyCalibrationTableSpec,
     selected_rows: &[ApplyRowPlan],
 ) -> Result<ApplyCalibrationTablePlan, ApplyPlanError> {
+    if spec.interp == ApplyInterpolationMode::Invalid {
+        return Err(ApplyPlanError::UnsupportedCalibrationTable {
+            path: spec.path.display().to_string(),
+            reason: "unknown or deprecated CASA interpolation type".to_string(),
+        });
+    }
     let summary = summarize_table(&spec.path).map_err(|source| {
         ApplyPlanError::SummarizeCalibrationTable {
             path: spec.path.display().to_string(),
