@@ -12,7 +12,7 @@
 //! This separation keeps trial mode, parity diagnostics, and multithreaded
 //! execution deterministic.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -272,10 +272,21 @@ pub struct ApplyPlan {
     pub selected_data_desc_ids: Vec<i32>,
     /// Unique SPECTRAL_WINDOW_IDs represented by `selected_rows`.
     pub selected_data_spw_ids: Vec<i32>,
+    /// Nontrivial per-SPW channel selections; absent windows use all channels.
+    pub channel_selections: BTreeMap<i32, ApplyChannelSelection>,
     /// Unique selected MS spectral windows and their grids.
     pub measurement_set_spectral_windows: Vec<SpectralWindowPlan>,
     /// Per-table resolved plans in request order.
     pub calibration_tables: Vec<ApplyCalibrationTablePlan>,
+}
+
+/// Selected data-channel grid for one MeasurementSet spectral window.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ApplyChannelSelection {
+    /// Original channel indices in increasing order, with overlaps removed.
+    pub indices: Vec<usize>,
+    /// The frequencies of those same channels, in Hz.
+    pub frequencies_hz: Vec<f64>,
 }
 
 /// Timing breakdown for constructing an apply plan.
@@ -444,15 +455,17 @@ pub fn plan_apply_with_timings(
     };
 
     let selection_started_at = Instant::now();
-    let selected_row_indices = resolve_calibration_selection(ms, &request.selection)
-        .map_err(|error| ApplyPlanError::Selection {
-            source: match error {
-                casa_ms::MsSelectionError::Domain(source) => source,
-                other => MsError::InvalidInput(other.to_string()),
-            },
-        })?
-        .row_indices()
-        .collect::<Vec<_>>();
+    let resolved_selection =
+        resolve_calibration_selection(ms, &request.selection).map_err(|error| {
+            ApplyPlanError::Selection {
+                source: match error {
+                    casa_ms::MsSelectionError::Domain(source) => source,
+                    other => MsError::InvalidInput(other.to_string()),
+                },
+            }
+        })?;
+    let requested_channels = resolved_selection.channel_selections.clone();
+    let selected_row_indices = resolved_selection.row_indices().collect::<Vec<_>>();
     let selection_ns = selection_started_at.elapsed().as_nanos() as u64;
 
     let selected_rows_started_at = Instant::now();
@@ -465,6 +478,37 @@ pub fn plan_apply_with_timings(
 
     let ms_spw_started_at = Instant::now();
     let measurement_set_spectral_windows = load_ms_spectral_windows(ms, &selected_data_spw_ids)?;
+    let mut channel_selections = BTreeMap::new();
+    for spw in &measurement_set_spectral_windows {
+        if let Some(selection) = requested_channels.get(&spw.spw_id) {
+            let mut indices = selection
+                .indices(spw.channel_frequencies_hz.len())
+                .map_err(|source| ApplyPlanError::Selection { source })?;
+            indices.sort_unstable();
+            indices.dedup();
+            if indices.is_empty() {
+                return Err(ApplyPlanError::Selection {
+                    source: MsError::InvalidInput(format!(
+                        "SPW {} has no selected channels",
+                        spw.spw_id
+                    )),
+                });
+            }
+            if indices.len() != spw.channel_frequencies_hz.len() {
+                let frequencies_hz = indices
+                    .iter()
+                    .map(|&channel| spw.channel_frequencies_hz[channel])
+                    .collect();
+                channel_selections.insert(
+                    spw.spw_id,
+                    ApplyChannelSelection {
+                        indices,
+                        frequencies_hz,
+                    },
+                );
+            }
+        }
+    }
     let measurement_set_spectral_windows_ns = ms_spw_started_at.elapsed().as_nanos() as u64;
 
     let calibration_tables_started_at = Instant::now();
@@ -487,6 +531,7 @@ pub fn plan_apply_with_timings(
             selected_data_desc_ids,
             selected_data_spw_ids,
             measurement_set_spectral_windows,
+            channel_selections,
             calibration_tables,
         },
         ApplyPlanTimings {

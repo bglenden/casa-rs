@@ -1,0 +1,760 @@
+{
+  "native_revision": "66850cc503f318931b56fb93e8ad2572aa151c0c",
+  "casa_version": "6.7.6.14",
+  "scope": "175 MB, 12000 rows, 6144000 complex samples; same MAIN products, one worker, 5 alternating public-Python pairs per cache policy. Full API/HISTORY equivalence remains unfinished and these timings are not acceptance.",
+  "result": "Warm native 0.683143288 s vs CASA 0.282755591 s; cold 0.752097765 vs 0.382432721 s. Slower and materially CPU limited; profiling/correction required.",
+  "diagnostic": {
+    "source_revision": "66850cc503f318931b56fb93e8ad2572aa151c0c",
+    "command": "CASA_RS_CALIBRATION_PROFILE=1 ... calibrate applycal --vis <identical-copy> --gaintable <constant.gcal> --no-flagbackup --no-save-last --format json",
+    "compute_seconds": 0.228,
+    "generic_sample_seconds": 0.189,
+    "weight_finalize_seconds": 0.021,
+    "note": "Separate untimed-diagnostic workload; read/write phase variability is not a comparative speedup. CLI reply is 4104945 bytes."
+  },
+  "warm": {
+    "casa_version": "6.7.6.14",
+    "host": "Linux-6.18.57-x86_64-with-glibc2.41",
+    "cache": "warm",
+    "input_rows": 12000,
+    "input_complex_samples": 6144000,
+    "input_data_bytes": 49152000,
+    "input_ms_bytes": 175431884,
+    "worker_environment": {
+      "RAYON_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1"
+    },
+    "validation_scope": "Every defined MAIN column and absolute times; HISTORY/API state is a separate oracle gate",
+    "runs": {
+      "casa": [
+        {
+          "wall_seconds": 0.25935457400919404,
+          "cpu_seconds": 0.25793200000000027,
+          "user_seconds": 0.2284689999999996,
+          "system_seconds": 0.029463000000000683,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 24576
+          },
+          "native_peak_rss_kib": null
+        },
+        {
+          "wall_seconds": 0.28829991800012067,
+          "cpu_seconds": 0.28698900000000194,
+          "user_seconds": 0.2665140000000008,
+          "system_seconds": 0.020475000000000243,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 24576
+          },
+          "native_peak_rss_kib": null
+        },
+        {
+          "wall_seconds": 0.2827555909898365,
+          "cpu_seconds": 0.2808419999999998,
+          "user_seconds": 0.23890600000000006,
+          "system_seconds": 0.04193599999999975,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 24576
+          },
+          "native_peak_rss_kib": null
+        },
+        {
+          "wall_seconds": 0.27698045200668275,
+          "cpu_seconds": 0.2758039999999973,
+          "user_seconds": 0.2536360000000002,
+          "system_seconds": 0.022167999999998855,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 24576
+          },
+          "native_peak_rss_kib": null
+        },
+        {
+          "wall_seconds": 0.33964914600073826,
+          "cpu_seconds": 0.3387129999999985,
+          "user_seconds": 0.2819280000000006,
+          "system_seconds": 0.056784999999997865,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 24576
+          },
+          "native_peak_rss_kib": null
+        }
+      ],
+      "native": [
+        {
+          "wall_seconds": 0.9469463139976142,
+          "cpu_seconds": 0.953600999999999,
+          "user_seconds": 0.5852079999999988,
+          "system_seconds": 0.3683930000000002,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 24576
+          },
+          "native_peak_rss_kib": 306116,
+          "native_trace": {
+            "kind": "apply_completed",
+            "monotonic_ns": 841702992,
+            "ms_path": "/workspace/casa-rs-cal1518/target/calibration-1518/applycal-perf-7mqpd9xa/native.ms",
+            "apply_mode": "CalFlag",
+            "selected_row_count": 12000,
+            "calibration_table_count": 1,
+            "parang": false,
+            "created_corrected_data_column": false,
+            "updated_row_count": 12000,
+            "flagged_row_count": 0,
+            "flagged_sample_count": 0,
+            "planning_ns": 13115913,
+            "planning_selection_ns": 7913884,
+            "planning_selected_rows_ns": 4037506,
+            "planning_measurement_set_spectral_windows_ns": 149823,
+            "planning_calibration_table_plans_ns": 934190,
+            "open_measurement_set_ns": 907710,
+            "row_field_index_lookup_ns": 0,
+            "ensure_corrected_data_ns": 48722,
+            "correlation_lookup_ns": 28313,
+            "calibration_load_ns": 352985,
+            "row_loop_ns": 824820556,
+            "row_read_total_ns": 387197713,
+            "row_fetch_ns": 387197382,
+            "row_compute_ns": 224772117,
+            "row_read_overhead_ns": 331,
+            "row_writeback_ns": 197463686,
+            "save_ns": 765308,
+            "execute_apply_plan_ns": 826020471,
+            "execute_apply_plan_unattributed_ns": 15391627,
+            "drop_ns": 1249849,
+            "total_ns": 841799425
+          }
+        },
+        {
+          "wall_seconds": 0.6256275120103965,
+          "cpu_seconds": 0.6241190000000003,
+          "user_seconds": 0.5040610000000001,
+          "system_seconds": 0.12005800000000022,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 24576
+          },
+          "native_peak_rss_kib": 306388,
+          "native_trace": {
+            "kind": "apply_completed",
+            "monotonic_ns": 532774085,
+            "ms_path": "/workspace/casa-rs-cal1518/target/calibration-1518/applycal-perf-7mqpd9xa/native.ms",
+            "apply_mode": "CalFlag",
+            "selected_row_count": 12000,
+            "calibration_table_count": 1,
+            "parang": false,
+            "created_corrected_data_column": false,
+            "updated_row_count": 12000,
+            "flagged_row_count": 0,
+            "flagged_sample_count": 0,
+            "planning_ns": 15089639,
+            "planning_selection_ns": 8470821,
+            "planning_selected_rows_ns": 4800341,
+            "planning_measurement_set_spectral_windows_ns": 202101,
+            "planning_calibration_table_plans_ns": 1526401,
+            "open_measurement_set_ns": 875032,
+            "row_field_index_lookup_ns": 0,
+            "ensure_corrected_data_ns": 49845,
+            "correlation_lookup_ns": 34441,
+            "calibration_load_ns": 306446,
+            "row_loop_ns": 513826211,
+            "row_read_total_ns": 137234822,
+            "row_fetch_ns": 137234612,
+            "row_compute_ns": 231467654,
+            "row_read_overhead_ns": 210,
+            "row_writeback_ns": 133200347,
+            "save_ns": 690711,
+            "execute_apply_plan_ns": 514912361,
+            "execute_apply_plan_unattributed_ns": 11928095,
+            "drop_ns": 1723058,
+            "total_ns": 532899322
+          }
+        },
+        {
+          "wall_seconds": 0.6831432879989734,
+          "cpu_seconds": 0.6827059999999996,
+          "user_seconds": 0.5361859999999989,
+          "system_seconds": 0.14652000000000065,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 24576
+          },
+          "native_peak_rss_kib": 306120,
+          "native_trace": {
+            "kind": "apply_completed",
+            "monotonic_ns": 593610985,
+            "ms_path": "/workspace/casa-rs-cal1518/target/calibration-1518/applycal-perf-7mqpd9xa/native.ms",
+            "apply_mode": "CalFlag",
+            "selected_row_count": 12000,
+            "calibration_table_count": 1,
+            "parang": false,
+            "created_corrected_data_column": false,
+            "updated_row_count": 12000,
+            "flagged_row_count": 0,
+            "flagged_sample_count": 0,
+            "planning_ns": 14501939,
+            "planning_selection_ns": 9049589,
+            "planning_selected_rows_ns": 4363251,
+            "planning_measurement_set_spectral_windows_ns": 176992,
+            "planning_calibration_table_plans_ns": 816897,
+            "open_measurement_set_ns": 1088629,
+            "row_field_index_lookup_ns": 0,
+            "ensure_corrected_data_ns": 49022,
+            "correlation_lookup_ns": 29924,
+            "calibration_load_ns": 380012,
+            "row_loop_ns": 575585927,
+            "row_read_total_ns": 159655803,
+            "row_fetch_ns": 159655402,
+            "row_compute_ns": 244374769,
+            "row_read_overhead_ns": 401,
+            "row_writeback_ns": 163383904,
+            "save_ns": 692824,
+            "execute_apply_plan_ns": 576742627,
+            "execute_apply_plan_unattributed_ns": 8176369,
+            "drop_ns": 1103021,
+            "total_ns": 593708890
+          }
+        },
+        {
+          "wall_seconds": 0.6579119550005998,
+          "cpu_seconds": 0.6586280000000002,
+          "user_seconds": 0.4946079999999995,
+          "system_seconds": 0.16402000000000072,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 24576
+          },
+          "native_peak_rss_kib": 306176,
+          "native_trace": {
+            "kind": "apply_completed",
+            "monotonic_ns": 563065876,
+            "ms_path": "/workspace/casa-rs-cal1518/target/calibration-1518/applycal-perf-7mqpd9xa/native.ms",
+            "apply_mode": "CalFlag",
+            "selected_row_count": 12000,
+            "calibration_table_count": 1,
+            "parang": false,
+            "created_corrected_data_column": false,
+            "updated_row_count": 12000,
+            "flagged_row_count": 0,
+            "flagged_sample_count": 0,
+            "planning_ns": 14109831,
+            "planning_selection_ns": 8303642,
+            "planning_selected_rows_ns": 4311789,
+            "planning_measurement_set_spectral_windows_ns": 164725,
+            "planning_calibration_table_plans_ns": 1254364,
+            "open_measurement_set_ns": 1032715,
+            "row_field_index_lookup_ns": 0,
+            "ensure_corrected_data_ns": 45978,
+            "correlation_lookup_ns": 28583,
+            "calibration_load_ns": 322629,
+            "row_loop_ns": 545573918,
+            "row_read_total_ns": 145292736,
+            "row_fetch_ns": 145292526,
+            "row_compute_ns": 217156953,
+            "row_read_overhead_ns": 210,
+            "row_writeback_ns": 175969641,
+            "save_ns": 741152,
+            "execute_apply_plan_ns": 546716356,
+            "execute_apply_plan_unattributed_ns": 7158684,
+            "drop_ns": 1033346,
+            "total_ns": 563233956
+          }
+        },
+        {
+          "wall_seconds": 0.7167138160002651,
+          "cpu_seconds": 0.7180549999999997,
+          "user_seconds": 0.5273679999999992,
+          "system_seconds": 0.1906870000000005,
+          "block_io": {
+            "read_bytes": 0,
+            "write_bytes": 28672
+          },
+          "native_peak_rss_kib": 306120,
+          "native_trace": {
+            "kind": "apply_completed",
+            "monotonic_ns": 619918476,
+            "ms_path": "/workspace/casa-rs-cal1518/target/calibration-1518/applycal-perf-7mqpd9xa/native.ms",
+            "apply_mode": "CalFlag",
+            "selected_row_count": 12000,
+            "calibration_table_count": 1,
+            "parang": false,
+            "created_corrected_data_column": false,
+            "updated_row_count": 12000,
+            "flagged_row_count": 0,
+            "flagged_sample_count": 0,
+            "planning_ns": 14422917,
+            "planning_selection_ns": 8845928,
+            "planning_selected_rows_ns": 4444305,
+            "planning_measurement_set_spectral_windows_ns": 187789,
+            "planning_calibration_table_plans_ns": 863714,
+            "open_measurement_set_ns": 937103,
+            "row_field_index_lookup_ns": 0,
+            "ensure_corrected_data_ns": 50425,
+            "correlation_lookup_ns": 32949,
+            "calibration_load_ns": 368948,
+            "row_loop_ns": 601982337,
+            "row_read_total_ns": 158233250,
+            "row_fetch_ns": 158233039,
+            "row_compute_ns": 228498255,
+            "row_read_overhead_ns": 211,
+            "row_writeback_ns": 206936787,
+            "save_ns": 809554,
+            "execute_apply_plan_ns": 603248680,
+            "execute_apply_plan_unattributed_ns": 8318512,
+            "drop_ns": 1139504,
+            "total_ns": 620028270
+          }
+        }
+      ]
+    },
+    "fresh": {
+      "casa": {
+        "import_seconds": 1.8803204970026854,
+        "wall_seconds": 0.3060153700062074,
+        "python_peak_kib": 276900,
+        "child_peak_kib": 0.0,
+        "native_peak_rss_kib": null
+      },
+      "native": {
+        "import_seconds": 0.030928460997529328,
+        "wall_seconds": 1.5264884250063915,
+        "python_peak_kib": 60468,
+        "child_peak_kib": 305744.0,
+        "native_peak_rss_kib": 305744
+      }
+    },
+    "median_seconds": {
+      "casa": 0.2827555909898365,
+      "native": 0.6831432879989734
+    },
+    "reader_runs": [
+      {
+        "wall_seconds": 0.9338545240025269,
+        "cpu_seconds": 0.9297609999999992,
+        "block_io": {
+          "read_bytes": 1044480,
+          "write_bytes": 0
+        }
+      },
+      {
+        "wall_seconds": 0.22702633700100705,
+        "cpu_seconds": 0.22707300000000075,
+        "block_io": {
+          "read_bytes": 0,
+          "write_bytes": 0
+        }
+      },
+      {
+        "wall_seconds": 0.22169697500066832,
+        "cpu_seconds": 0.22172099999999872,
+        "block_io": {
+          "read_bytes": 0,
+          "write_bytes": 0
+        }
+      },
+      {
+        "wall_seconds": 0.24421459398581646,
+        "cpu_seconds": 0.24415300000000073,
+        "block_io": {
+          "read_bytes": 0,
+          "write_bytes": 0
+        }
+      },
+      {
+        "wall_seconds": 0.20628661899536382,
+        "cpu_seconds": 0.20630399999999938,
+        "block_io": {
+          "read_bytes": 0,
+          "write_bytes": 0
+        }
+      }
+    ],
+    "cold_imports": {
+      "casa": {
+        "process_seconds": 1.9915910340059781,
+        "import_seconds": 1.7456443539995234
+      },
+      "native": {
+        "process_seconds": 0.06275142400409095,
+        "import_seconds": 0.03978866498800926
+      }
+    }
+  },
+  "cold": {
+    "casa_version": "6.7.6.14",
+    "host": "Linux-6.18.57-x86_64-with-glibc2.41",
+    "cache": "cold",
+    "input_rows": 12000,
+    "input_complex_samples": 6144000,
+    "input_data_bytes": 49152000,
+    "input_ms_bytes": 175431884,
+    "worker_environment": {
+      "RAYON_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1"
+    },
+    "validation_scope": "Every defined MAIN column and absolute times; HISTORY/API state is a separate oracle gate",
+    "runs": {
+      "casa": [
+        {
+          "wall_seconds": 0.4977862639934756,
+          "cpu_seconds": 0.4798599999999986,
+          "user_seconds": 0.32690099999999944,
+          "system_seconds": 0.15295899999999962,
+          "block_io": {
+            "read_bytes": 117702656,
+            "write_bytes": 58634240
+          },
+          "native_peak_rss_kib": null
+        },
+        {
+          "wall_seconds": 0.29267594999691937,
+          "cpu_seconds": 0.2763579999999983,
+          "user_seconds": 0.24584699999999948,
+          "system_seconds": 0.030510999999999733,
+          "block_io": {
+            "read_bytes": 117702656,
+            "write_bytes": 58634240
+          },
+          "native_peak_rss_kib": null
+        },
+        {
+          "wall_seconds": 0.3824327210022602,
+          "cpu_seconds": 0.3663070000000026,
+          "user_seconds": 0.26853200000000044,
+          "system_seconds": 0.09777500000000039,
+          "block_io": {
+            "read_bytes": 117702656,
+            "write_bytes": 58634240
+          },
+          "native_peak_rss_kib": null
+        },
+        {
+          "wall_seconds": 0.5116540599992732,
+          "cpu_seconds": 0.49421800000000005,
+          "user_seconds": 0.3448360000000008,
+          "system_seconds": 0.14938200000000013,
+          "block_io": {
+            "read_bytes": 117702656,
+            "write_bytes": 58634240
+          },
+          "native_peak_rss_kib": null
+        },
+        {
+          "wall_seconds": 0.30311128399625886,
+          "cpu_seconds": 0.289437999999997,
+          "user_seconds": 0.19464800000000082,
+          "system_seconds": 0.09478999999999971,
+          "block_io": {
+            "read_bytes": 117702656,
+            "write_bytes": 58634240
+          },
+          "native_peak_rss_kib": null
+        }
+      ],
+      "native": [
+        {
+          "wall_seconds": 0.6619269400107441,
+          "cpu_seconds": 0.6519060000000003,
+          "user_seconds": 0.519171,
+          "system_seconds": 0.13273499999999983,
+          "block_io": {
+            "read_bytes": 117350400,
+            "write_bytes": 58626048
+          },
+          "native_peak_rss_kib": 306332,
+          "native_trace": {
+            "kind": "apply_completed",
+            "monotonic_ns": 568293390,
+            "ms_path": "/workspace/casa-rs-cal1518/target/calibration-1518/applycal-perf-qgl_iuom/native.ms",
+            "apply_mode": "CalFlag",
+            "selected_row_count": 12000,
+            "calibration_table_count": 1,
+            "parang": false,
+            "created_corrected_data_column": false,
+            "updated_row_count": 12000,
+            "flagged_row_count": 0,
+            "flagged_sample_count": 0,
+            "planning_ns": 18125138,
+            "planning_selection_ns": 9879578,
+            "planning_selected_rows_ns": 4122244,
+            "planning_measurement_set_spectral_windows_ns": 535946,
+            "planning_calibration_table_plans_ns": 3503395,
+            "open_measurement_set_ns": 6361842,
+            "row_field_index_lookup_ns": 0,
+            "ensure_corrected_data_ns": 47461,
+            "correlation_lookup_ns": 275269,
+            "calibration_load_ns": 316650,
+            "row_loop_ns": 540844248,
+            "row_read_total_ns": 153824094,
+            "row_fetch_ns": 153823774,
+            "row_compute_ns": 229381033,
+            "row_read_overhead_ns": 320,
+            "row_writeback_ns": 146670191,
+            "save_ns": 605793,
+            "execute_apply_plan_ns": 542094249,
+            "execute_apply_plan_unattributed_ns": 10973758,
+            "drop_ns": 1452054,
+            "total_ns": 568480909
+          }
+        },
+        {
+          "wall_seconds": 0.7520977649983251,
+          "cpu_seconds": 0.7393920000000005,
+          "user_seconds": 0.4422390000000007,
+          "system_seconds": 0.2971529999999998,
+          "block_io": {
+            "read_bytes": 117350400,
+            "write_bytes": 58646528
+          },
+          "native_peak_rss_kib": 305672,
+          "native_trace": {
+            "kind": "apply_completed",
+            "monotonic_ns": 659616911,
+            "ms_path": "/workspace/casa-rs-cal1518/target/calibration-1518/applycal-perf-qgl_iuom/native.ms",
+            "apply_mode": "CalFlag",
+            "selected_row_count": 12000,
+            "calibration_table_count": 1,
+            "parang": false,
+            "created_corrected_data_column": false,
+            "updated_row_count": 12000,
+            "flagged_row_count": 0,
+            "flagged_sample_count": 0,
+            "planning_ns": 30071410,
+            "planning_selection_ns": 17763937,
+            "planning_selected_rows_ns": 8348813,
+            "planning_measurement_set_spectral_windows_ns": 494988,
+            "planning_calibration_table_plans_ns": 3280540,
+            "open_measurement_set_ns": 6585054,
+            "row_field_index_lookup_ns": 0,
+            "ensure_corrected_data_ns": 51777,
+            "correlation_lookup_ns": 234980,
+            "calibration_load_ns": 311364,
+            "row_loop_ns": 620221684,
+            "row_read_total_ns": 217567338,
+            "row_fetch_ns": 217567008,
+            "row_compute_ns": 212814164,
+            "row_read_overhead_ns": 330,
+            "row_writeback_ns": 181826864,
+            "save_ns": 616288,
+            "execute_apply_plan_ns": 621441432,
+            "execute_apply_plan_unattributed_ns": 8018657,
+            "drop_ns": 1305535,
+            "total_ns": 659797680
+          }
+        },
+        {
+          "wall_seconds": 0.6358166749996599,
+          "cpu_seconds": 0.6238820000000018,
+          "user_seconds": 0.45590800000000087,
+          "system_seconds": 0.16797400000000007,
+          "block_io": {
+            "read_bytes": 117350400,
+            "write_bytes": 58626048
+          },
+          "native_peak_rss_kib": 305620,
+          "native_trace": {
+            "kind": "apply_completed",
+            "monotonic_ns": 541751868,
+            "ms_path": "/workspace/casa-rs-cal1518/target/calibration-1518/applycal-perf-qgl_iuom/native.ms",
+            "apply_mode": "CalFlag",
+            "selected_row_count": 12000,
+            "calibration_table_count": 1,
+            "parang": false,
+            "created_corrected_data_column": false,
+            "updated_row_count": 12000,
+            "flagged_row_count": 0,
+            "flagged_sample_count": 0,
+            "planning_ns": 18028407,
+            "planning_selection_ns": 9806041,
+            "planning_selected_rows_ns": 4058370,
+            "planning_measurement_set_spectral_windows_ns": 516167,
+            "planning_calibration_table_plans_ns": 3564526,
+            "open_measurement_set_ns": 7961324,
+            "row_field_index_lookup_ns": 0,
+            "ensure_corrected_data_ns": 52228,
+            "correlation_lookup_ns": 360846,
+            "calibration_load_ns": 310451,
+            "row_loop_ns": 512891249,
+            "row_read_total_ns": 158187315,
+            "row_fetch_ns": 158187105,
+            "row_compute_ns": 211080035,
+            "row_read_overhead_ns": 210,
+            "row_writeback_ns": 136629173,
+            "save_ns": 795652,
+            "execute_apply_plan_ns": 514414362,
+            "execute_apply_plan_unattributed_ns": 6998662,
+            "drop_ns": 1169638,
+            "total_ns": 541959956
+          }
+        },
+        {
+          "wall_seconds": 0.7821312140004011,
+          "cpu_seconds": 0.7675070000000019,
+          "user_seconds": 0.49497399999999914,
+          "system_seconds": 0.272533000000001,
+          "block_io": {
+            "read_bytes": 117350400,
+            "write_bytes": 58626048
+          },
+          "native_peak_rss_kib": 306384,
+          "native_trace": {
+            "kind": "apply_completed",
+            "monotonic_ns": 678040269,
+            "ms_path": "/workspace/casa-rs-cal1518/target/calibration-1518/applycal-perf-qgl_iuom/native.ms",
+            "apply_mode": "CalFlag",
+            "selected_row_count": 12000,
+            "calibration_table_count": 1,
+            "parang": false,
+            "created_corrected_data_column": false,
+            "updated_row_count": 12000,
+            "flagged_row_count": 0,
+            "flagged_sample_count": 0,
+            "planning_ns": 38237666,
+            "planning_selection_ns": 24587815,
+            "planning_selected_rows_ns": 8955976,
+            "planning_measurement_set_spectral_windows_ns": 502386,
+            "planning_calibration_table_plans_ns": 4004250,
+            "open_measurement_set_ns": 8882187,
+            "row_field_index_lookup_ns": 0,
+            "ensure_corrected_data_ns": 53780,
+            "correlation_lookup_ns": 295980,
+            "calibration_load_ns": 383700,
+            "row_loop_ns": 627830323,
+            "row_read_total_ns": 222686623,
+            "row_fetch_ns": 222686353,
+            "row_compute_ns": 217577211,
+            "row_read_overhead_ns": 270,
+            "row_writeback_ns": 179259586,
+            "save_ns": 704587,
+            "execute_apply_plan_ns": 629274069,
+            "execute_apply_plan_unattributed_ns": 8312602,
+            "drop_ns": 1455693,
+            "total_ns": 678162781
+          }
+        },
+        {
+          "wall_seconds": 0.9436915370024508,
+          "cpu_seconds": 0.9234860000000005,
+          "user_seconds": 0.6080449999999988,
+          "system_seconds": 0.31544100000000075,
+          "block_io": {
+            "read_bytes": 117350400,
+            "write_bytes": 58626048
+          },
+          "native_peak_rss_kib": 306380,
+          "native_trace": {
+            "kind": "apply_completed",
+            "monotonic_ns": 846900538,
+            "ms_path": "/workspace/casa-rs-cal1518/target/calibration-1518/applycal-perf-qgl_iuom/native.ms",
+            "apply_mode": "CalFlag",
+            "selected_row_count": 12000,
+            "calibration_table_count": 1,
+            "parang": false,
+            "created_corrected_data_column": false,
+            "updated_row_count": 12000,
+            "flagged_row_count": 0,
+            "flagged_sample_count": 0,
+            "planning_ns": 20208400,
+            "planning_selection_ns": 11025565,
+            "planning_selected_rows_ns": 4667741,
+            "planning_measurement_set_spectral_windows_ns": 682866,
+            "planning_calibration_table_plans_ns": 3747142,
+            "open_measurement_set_ns": 8937105,
+            "row_field_index_lookup_ns": 0,
+            "ensure_corrected_data_ns": 221750,
+            "correlation_lookup_ns": 184725,
+            "calibration_load_ns": 323621,
+            "row_loop_ns": 809835397,
+            "row_read_total_ns": 148165799,
+            "row_fetch_ns": 148165579,
+            "row_compute_ns": 210489615,
+            "row_read_overhead_ns": 220,
+            "row_writeback_ns": 442619519,
+            "save_ns": 1239983,
+            "execute_apply_plan_ns": 811810504,
+            "execute_apply_plan_unattributed_ns": 8565492,
+            "drop_ns": 5624414,
+            "total_ns": 846974719
+          }
+        }
+      ]
+    },
+    "fresh": {
+      "casa": {
+        "import_seconds": 1.8157976070069708,
+        "wall_seconds": 0.2580360020074295,
+        "python_peak_kib": 276236,
+        "child_peak_kib": 0.0,
+        "native_peak_rss_kib": null
+      },
+      "native": {
+        "import_seconds": 0.03185441599634942,
+        "wall_seconds": 1.1312348020001082,
+        "python_peak_kib": 60528,
+        "child_peak_kib": 305936.0,
+        "native_peak_rss_kib": 305936
+      }
+    },
+    "median_seconds": {
+      "casa": 0.3824327210022602,
+      "native": 0.7520977649983251
+    },
+    "reader_runs": [
+      {
+        "wall_seconds": 0.26265959700685926,
+        "cpu_seconds": 0.2604439999999997,
+        "block_io": {
+          "read_bytes": 58650624,
+          "write_bytes": 0
+        }
+      },
+      {
+        "wall_seconds": 0.20078530900354963,
+        "cpu_seconds": 0.19865500000000225,
+        "block_io": {
+          "read_bytes": 58650624,
+          "write_bytes": 0
+        }
+      },
+      {
+        "wall_seconds": 0.21667237300425768,
+        "cpu_seconds": 0.21459799999999518,
+        "block_io": {
+          "read_bytes": 58650624,
+          "write_bytes": 0
+        }
+      },
+      {
+        "wall_seconds": 0.21696798299672082,
+        "cpu_seconds": 0.21463699999999974,
+        "block_io": {
+          "read_bytes": 58650624,
+          "write_bytes": 0
+        }
+      },
+      {
+        "wall_seconds": 0.21906218799995258,
+        "cpu_seconds": 0.21662800000000004,
+        "block_io": {
+          "read_bytes": 58650624,
+          "write_bytes": 0
+        }
+      }
+    ],
+    "cold_imports": {
+      "casa": {
+        "process_seconds": 1.6794913579942659,
+        "import_seconds": 1.4666720340028405
+      },
+      "native": {
+        "process_seconds": 0.05557004301226698,
+        "import_seconds": 0.03813869300938677
+      }
+    }
+  }
+}

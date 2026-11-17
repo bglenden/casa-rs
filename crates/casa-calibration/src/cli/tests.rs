@@ -820,6 +820,7 @@ fn sample_apply_plan() -> ApplyPlan {
         measurement_set_path: Some(PathBuf::from("dataset.ms")),
         apply_mode: ApplyMode::CalFlag,
         requires_corrected_data_column: true,
+        channel_selections: Default::default(),
         selected_rows: Vec::new(),
         selected_row_count: 11,
         parang: true,

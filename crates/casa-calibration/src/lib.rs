@@ -84,10 +84,11 @@ pub use model::{
     CalibrationValidationIssue, TimeCoverageSummary,
 };
 pub use plan::{
-    ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode,
-    ApplyPlan, ApplyPlanError, ApplyPlanRequest, ApplyPlanTimings, ApplyRowPlan, ApplySpwMapping,
-    ApplyTableSelection, GainFieldSelector, ResolvedGainField, ResolvedNearestGainField,
-    SpectralWindowPlan, plan_apply, plan_apply_from_path, plan_apply_with_timings,
+    ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyChannelSelection,
+    ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplyPlanError, ApplyPlanRequest,
+    ApplyPlanTimings, ApplyRowPlan, ApplySpwMapping, ApplyTableSelection, GainFieldSelector,
+    ResolvedGainField, ResolvedNearestGainField, SpectralWindowPlan, plan_apply,
+    plan_apply_from_path, plan_apply_with_timings,
 };
 pub use plots::{
     CalibrationPlotError, CalibrationPlotPreset, CalibrationPlotRequest,
