@@ -83,8 +83,22 @@ impl<'a> StagedEdit<'a> {
                     chosen
                 }
             };
-            desc.data_manager_type = kind;
-            desc.data_manager_group = group;
+            // A manager's stored name can be empty even when its column
+            // descriptions name a group (for example StManAipsIO).
+            // Joining a manager keeps that descriptor's declared binding.
+            if let Some((declared, _)) = dat
+                .table_desc
+                .columns
+                .iter()
+                .zip(&dat.column_set.columns)
+                .find(|(_, entry)| entry.dm_seq_nr == seq)
+            {
+                desc.data_manager_type = declared.data_manager_type.clone();
+                desc.data_manager_group = declared.data_manager_group.clone();
+            } else {
+                desc.data_manager_type = kind;
+                desc.data_manager_group = group;
+            }
             desc.keywords = column.keywords;
             if let Some(value) = column.default {
                 defaults.push(RecordField::new(&desc.col_name, value));
@@ -168,9 +182,10 @@ impl<'a> StagedEdit<'a> {
                 name,
             )?)),
             "StandardStMan" => {
-                let layout = uint_spec(spec, "BUCKETSIZE")
-                    .filter(|&n| n >= 128)
-                    .map(|bucket| (bucket, uint_spec(spec, "PERSCACHESIZE").unwrap_or(2)));
+                let layout = Some((
+                    uint_spec(spec, "BUCKETSIZE").filter(|&n| n >= 128),
+                    uint_spec(spec, "PERSCACHESIZE").unwrap_or(2),
+                ));
                 Ok(Some(standard_stman::write_ssm_with_bucket(
                     &dst,
                     columns,

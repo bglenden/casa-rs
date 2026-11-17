@@ -411,3 +411,23 @@ def test_add_direct_column_wider_than_one_shared_bucket_stream(tmp_path: Path) -
     np.testing.assert_array_equal(tool.getcell("wide", 3), np.zeros(32, dtype=np.float32))
     assert next(iter(tool.getdminfo().values()))["SPEC"]["BUCKETSIZE"] == 128
     tool.done()
+
+
+def test_bucket_settings_are_checked_and_cache_setting_stands_alone(tmp_path: Path) -> None:
+    path = tmp_path / "managers.table"
+    tool = tools.table()
+    assert tool.create(str(path), {"id": {"valueType": "int"}}, nrow=2)
+    before = contents(path)
+    with pytest.raises(RuntimeError, match="bucket size"):
+        tool.addcols(
+            {"rejected": {"valueType": "int"}},
+            {"TYPE": "IncrementalStMan", "NAME": "Tiny", "SPEC": {"BUCKETSIZE": 1}},
+        )
+    assert contents(path) == before
+    assert tool.addcols(
+        {"probe": {"valueType": "int"}},
+        {"TYPE": "StandardStMan", "NAME": "Cached", "SPEC": {"PERSCACHESIZE": 7}},
+    )
+    manager = next(dm for dm in tool.getdminfo().values() if dm["NAME"] == "Cached")
+    assert manager["SPEC"]["PERSCACHESIZE"] == 7
+    tool.done()

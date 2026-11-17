@@ -195,7 +195,7 @@ impl Table {
     /// published since this handle last synchronized, and returns whether it
     /// did. The caller holds a lock, so no writer is publishing.
     #[cfg(unix)]
-    fn reload_if_published(&mut self) -> Result<bool, TableError> {
+    pub(super) fn reload_if_published(&mut self) -> Result<bool, TableError> {
         let state = self
             .lock_state
             .as_ref()

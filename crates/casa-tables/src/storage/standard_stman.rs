@@ -1945,7 +1945,7 @@ pub(crate) fn rewrite_ssm_rows(
         header.big_endian,
         false,
         name,
-        Some((header.bucket_size, header.pers_cache_size)),
+        Some((Some(header.bucket_size), header.pers_cache_size)),
     )
 }
 
@@ -1955,7 +1955,7 @@ pub(super) fn write_ssm_with_bucket(
     rows: &[casa_types::RecordValue],
     big_endian: bool,
     name: &str,
-    bucket_and_cache: Option<(u32, u32)>,
+    bucket_and_cache: Option<(Option<u32>, u32)>,
 ) -> Result<Vec<u8>, StorageError> {
     column_writer::write_ssm_file_columns_with_layout(
         destination,

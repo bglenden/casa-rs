@@ -132,6 +132,10 @@ impl Table {
         }
         let auto_unlock = self.begin_write_operation(operation)?;
         let result = (|| {
+            #[cfg(unix)]
+            if auto_unlock {
+                self.reload_if_published()?;
+            }
             let dat = crate::storage::table_control::read_table_dat(
                 &path.join(crate::storage::TABLE_CONTROL_FILE),
             )?;

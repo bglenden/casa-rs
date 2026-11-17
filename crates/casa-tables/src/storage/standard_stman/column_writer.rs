@@ -223,7 +223,7 @@ pub(super) fn write_ssm_file_columns_with_layout(
     big_endian: bool,
     casacore_default_small: bool,
     dm_name: &str,
-    inherited: Option<(u32, u32)>,
+    inherited: Option<(Option<u32>, u32)>,
 ) -> Result<Vec<u8>, StorageError> {
     let nrrow = cells.row_count();
     let ncol = col_descs.len();
@@ -241,11 +241,12 @@ pub(super) fn write_ssm_file_columns_with_layout(
         None
     };
     let bits = column_bits(col_descs);
-    let (default_rows, bucket_size, cache_size) = if let Some((size, cache)) = inherited {
-        (None, size, cache)
+    let (bucket, cache_size) = inherited.unwrap_or((None, 2));
+    let (default_rows, bucket_size) = if let Some(size) = bucket {
+        (None, size)
     } else {
         let (rows, bytes) = new_ssm_bucket_layout_with_policy(&bits, nrrow, casacore_default_small);
-        (Some(rows), bytes, 2)
+        (Some(rows), bytes)
     };
     let bucket_bytes = bucket_size as usize;
     let streams = data_streams(&bits, nrrow, bucket_bytes, default_rows)?;

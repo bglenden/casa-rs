@@ -2468,7 +2468,7 @@ mod tests {
         buf.putstart("IncrementalStMan", 4).unwrap();
         buf.put_u32(32768); // bucket_size
         buf.put_u32(10); // nr_buckets
-        buf.put_u32(cache_size); // persCacheSize
+        buf.put_u32(1); // persCacheSize
         buf.put_u32(0); // uniqnr
         buf.put_u32(0); // nFreeBucket
         buf.put_i32(-1); // firstFreeBucket
@@ -2492,7 +2492,7 @@ mod tests {
         buf.put_bool(false); // LE
         buf.put_u32(16384); // bucket_size
         buf.put_u32(5); // nr_buckets
-        buf.put_u32(cache_size); // persCacheSize
+        buf.put_u32(1); // persCacheSize
         buf.put_u32(0); // uniqnr
         buf.put_u32(0); // nFreeBucket
         buf.put_i32(-1); // firstFreeBucket

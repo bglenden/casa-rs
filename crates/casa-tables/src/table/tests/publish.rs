@@ -460,3 +460,38 @@ fn metadata_only_unlock_of_a_projected_reference_keeps_base_metadata() {
     );
     assert_eq!(view.info().table_type, "VIEW");
 }
+
+#[test]
+fn adding_a_column_with_a_stale_descriptor_keeps_the_first_added_column() {
+    use crate::ColumnAddition;
+    let options = one_row_table("column_resync").with_data_manager(DataManagerKind::StandardStMan);
+    let table = Table::open(options.clone()).unwrap();
+    table.save(options.clone()).unwrap();
+    let open = || {
+        Table::open_with_lock(
+            options.clone(),
+            LockOptions::new(LockMode::AutoNoReadLocking),
+        )
+        .unwrap()
+    };
+    let (mut old, mut writer) = (open(), open());
+    let column = |name, value| ColumnAddition {
+        schema: ColumnSchema::scalar(name, PrimitiveType::Int32),
+        default: Some(Value::Scalar(ScalarValue::Int32(value))),
+        keywords: RecordValue::default(),
+        manager_type: None,
+        manager_group: None,
+    };
+    writer
+        .add_columns_in_place(vec![column("first", 66)], None)
+        .unwrap();
+    old.add_columns_in_place(vec![column("second", 13)], None)
+        .unwrap();
+    let saved = open();
+    for (name, expected) in [("first", 66), ("second", 13)] {
+        assert_eq!(
+            saved.cell_accessor(0, name).unwrap().scalar().unwrap(),
+            &ScalarValue::Int32(expected)
+        );
+    }
+}

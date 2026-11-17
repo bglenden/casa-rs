@@ -763,23 +763,16 @@ def test_columns_renamed_or_removed_change_table_dat_and_the_files_of_removed_ma
     reader.done()
 
 
-def test_a_table_of_several_managers_refuses_rows_before_anything_changes(
+def test_a_measurement_set_refuses_row_removal_before_anything_changes(
     fixtures: dict[str, Path], tmp_path: Path
 ) -> None:
-    """casa-tables cannot change the rows of a MeasurementSet in place, and a
-    full rewrite would change its layout: `addrows` is not implemented for it
-    (`NotImplementedError`), and `removerows` says what CASA says, since its
-    incremental and tiled managers cannot remove rows. Every file is as it was
-    and nothing was loaded to find out (#1025)."""
+    """The MeasurementSet's incremental and tiled managers refuse removal
+    before a row or a file is changed, as in CASA."""
     path = tmp_path.resolve() / "mssel_test_small.ms"
     shutil.copytree(fixtures["ms"], path)
     before = table_files(path)
     tool = tools.table()
     assert tool.open(str(path), nomodify=False)
-    with pytest.raises(NotImplementedError, match="StManAipsIO group"):
-        tool.addrows(2)
-    with pytest.raises(NotImplementedError, match="StManAipsIO group"):
-        tool.addcols({"extra": {"valueType": "double"}})
     dminfo = tool.getdminfo()
     assert "*1" in dminfo
     assert any(entry["TYPE"] == "TiledShapeStMan" and "HYPERCUBES" in entry["SPEC"] for entry in dminfo.values())
