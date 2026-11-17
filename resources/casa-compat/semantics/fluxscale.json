@@ -248,8 +248,8 @@
       "scope": "70 same-argument public-Python cases on the same CASA-made G/T gains, plus 3 documented spectral-order corrections checked against identifiable CASA fits; captured original/selector fixtures, read-only big-endian inputs, published rows beyond stale control counts, and independent C++ readback.",
       "result": "73 cases passed, zero comparison failures; all 15 owned parameters have implemented behavior.",
       "casa_version": "6.7.6.14",
-      "revision": "03869e66e82c549c92c308b5d133619acd300454",
-      "command": "python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/review-final-oracle --native-bin target/calibration-990/build/release/calibrate",
+      "revision": "872a540581271d3fd58105928b2e8a3b7461ca0b",
+      "command": "python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/bucket-final-oracle --native-bin target/calibration-990/calibrate-bucket-872a54058",
       "receipt": "resources/casa-compat/evidence/fluxscale-20261117.json",
       "links": [
         "tools/casa-compat/fluxscale_oracle.py",
@@ -259,10 +259,10 @@
     "performance": {
       "kind": "Matched public-Python performance",
       "state": "measured",
-      "scope": "Alternating same-host, one-worker warm/cold full and incremental public-Python calls, validated equal products; separate fresh imports, RSS, estimator phases, user/system CPU and native table-reader software baseline.",
-      "result": "Full native 0.115\u20130.141 s versus CASA 5.685\u20135.784 s, about 35 MB peak RSS; read phase 38\u201345 ms. CPU and thousands of source bucket reads/seeks remain material, so performance acceptance stays open on #990.",
+      "scope": "Alternating same-host one-worker warm/cold public-Python calls with identical HISTORY input, validated equal products, fresh imports, RSS, phases and user/system CPU; native paired source-read diagnostic and raw data-I/O reference separately attributed.",
+      "result": "Full native 0.110\u20130.114 s versus CASA 5.482\u20135.704 s; source MAIN reads 5,655\u2192471, seeks 5,655\u219233. Controlled 300k read phase 0.122\u21920.088 s; full-workflow speedup not established. Full-output allocation/serialization remains materially CPU-bound; #990 remains open.",
       "casa_version": "6.7.6.14",
-      "revision": "03869e66e82c549c92c308b5d133619acd300454",
+      "revision": "872a540581271d3fd58105928b2e8a3b7461ca0b",
       "command": "python tools/perf/calibrate/fluxscale.py --vis <oracle-ms> --gain <oracle-gain> --native-bin <release-calibrate> --repeat-input 1000 --repeats 5 --cache warm|cold --out <receipt>",
       "receipt": "resources/casa-compat/evidence/fluxscale-performance-20261117.json",
       "links": [

@@ -12,75 +12,75 @@
       "runs": {
         "casa": [
           {
-            "wall_seconds": 5.68479658599972,
-            "cpu_seconds": 5.6545960000000015,
+            "wall_seconds": 6.217715835002309,
+            "cpu_seconds": 6.159582999999998,
             "cpu_breakdown_seconds": {
-              "user": 4.868051000000001,
-              "system": 0.7865449999999998
+              "user": 5.374930999999998,
+              "system": 0.7846519999999999
             },
             "block_io": {
-              "read_bytes": 11419648,
-              "write_bytes": 12283904
+              "read_bytes": 11333632,
+              "write_bytes": 11878400
             },
             "phases_seconds": {},
             "native_peak_rss_kib": null,
             "workers": 1
           },
           {
-            "wall_seconds": 5.923732973998995,
-            "cpu_seconds": 5.866032000000001,
+            "wall_seconds": 6.232707241004391,
+            "cpu_seconds": 6.164566000000004,
             "cpu_breakdown_seconds": {
-              "user": 5.074455,
-              "system": 0.7915769999999998
+              "user": 5.356709000000002,
+              "system": 0.8078570000000003
             },
             "block_io": {
-              "read_bytes": 11427840,
-              "write_bytes": 12328960
+              "read_bytes": 11333632,
+              "write_bytes": 11878400
             },
             "phases_seconds": {},
             "native_peak_rss_kib": null,
             "workers": 1
           },
           {
-            "wall_seconds": 5.8968092129944125,
-            "cpu_seconds": 5.830495999999997,
+            "wall_seconds": 5.7043577559961705,
+            "cpu_seconds": 5.645406000000001,
             "cpu_breakdown_seconds": {
-              "user": 5.004619999999999,
-              "system": 0.825876
+              "user": 4.868205,
+              "system": 0.7772009999999998
             },
             "block_io": {
-              "read_bytes": 11431936,
-              "write_bytes": 12341248
+              "read_bytes": 11333632,
+              "write_bytes": 11878400
             },
             "phases_seconds": {},
             "native_peak_rss_kib": null,
             "workers": 1
           },
           {
-            "wall_seconds": 5.4533160959981615,
-            "cpu_seconds": 5.402068999999997,
+            "wall_seconds": 5.267891625997436,
+            "cpu_seconds": 5.219749999999998,
             "cpu_breakdown_seconds": {
-              "user": 4.713094999999996,
-              "system": 0.688974
+              "user": 4.495487999999998,
+              "system": 0.7242619999999995
             },
             "block_io": {
-              "read_bytes": 11444224,
-              "write_bytes": 12382208
+              "read_bytes": 11333632,
+              "write_bytes": 11882496
             },
             "phases_seconds": {},
             "native_peak_rss_kib": null,
             "workers": 1
           },
           {
-            "wall_seconds": 5.262744329003908,
-            "cpu_seconds": 5.219093999999998,
+            "wall_seconds": 5.509012339003675,
+            "cpu_seconds": 5.466612999999995,
             "cpu_breakdown_seconds": {
-              "user": 4.454770999999994,
-              "system": 0.7643230000000001
+              "user": 4.756077999999995,
+              "system": 0.7105350000000001
             },
             "block_io": {
-              "read_bytes": 11444224,
-              "write_bytes": 12394496
+              "read_bytes": 11333632,
+              "write_bytes": 11878400
             },
             "phases_seconds": {},
             "native_peak_rss_kib": null,
@@ -89,103 +89,103 @@
         ],
         "native": [
           {
-            "wall_seconds": 0.10862129900488071,
-            "cpu_seconds": 0.09485099999999846,
+            "wall_seconds": 0.09397913599968888,
+            "cpu_seconds": 0.08422300000000149,
             "cpu_breakdown_seconds": {
-              "user": 0.06287399999999721,
-              "system": 0.031977000000000366
+              "user": 0.039708000000000965,
+              "system": 0.04451500000000008
             },
             "block_io": {
-              "read_bytes": 11223040,
-              "write_bytes": 11993088
+              "read_bytes": 11161600,
+              "write_bytes": 11902976
             },
             "phases_seconds": {
-              "fluxscale_read": 0.03756557,
-              "fluxscale_estimate": 0.004256707,
-              "fluxscale_write": 0.041449413,
-              "fluxscale_history": 0.008863005
+              "fluxscale_read": 0.029604291,
+              "fluxscale_estimate": 0.004301753,
+              "fluxscale_write": 0.041782936,
+              "fluxscale_history": 0.006253522
             },
-            "native_peak_rss_kib": 33620,
+            "native_peak_rss_kib": 34248,
             "workers": 1
           },
           {
-            "wall_seconds": 0.10524107599485433,
-            "cpu_seconds": 0.09694199999999853,
+            "wall_seconds": 0.11028281100152526,
+            "cpu_seconds": 0.09903500000000065,
             "cpu_breakdown_seconds": {
-              "user": 0.0447570000000006,
-              "system": 0.052184999999999704
+              "user": 0.039358000000000004,
+              "system": 0.05967699999999976
             },
             "block_io": {
-              "read_bytes": 11227136,
-              "write_bytes": 11993088
+              "read_bytes": 11132928,
+              "write_bytes": 11902976
             },
             "phases_seconds": {
-              "fluxscale_read": 0.03143251,
-              "fluxscale_estimate": 0.004978001,
-              "fluxscale_write": 0.050288914,
-              "fluxscale_history": 0.008388599
+              "fluxscale_read": 0.030150386,
+              "fluxscale_estimate": 0.004300361,
+              "fluxscale_write": 0.056806893,
+              "fluxscale_history": 0.006853086
             },
-            "native_peak_rss_kib": 33432,
+            "native_peak_rss_kib": 34124,
             "workers": 1
           },
           {
-            "wall_seconds": 0.18260684100096114,
-            "cpu_seconds": 0.1739079999999973,
+            "wall_seconds": 0.1535328070021933,
+            "cpu_seconds": 0.14607600000000076,
             "cpu_breakdown_seconds": {
-              "user": 0.0647650000000013,
-              "system": 0.10914300000000043
+              "user": 0.038902000000000214,
+              "system": 0.10717399999999966
             },
             "block_io": {
-              "read_bytes": 11247616,
-              "write_bytes": 12005376
+              "read_bytes": 11132928,
+              "write_bytes": 11902976
             },
             "phases_seconds": {
-              "fluxscale_read": 0.065160971,
-              "fluxscale_estimate": 0.004319089,
-              "fluxscale_write": 0.084803472,
-              "fluxscale_history": 0.009191041
+              "fluxscale_read": 0.052692169,
+              "fluxscale_estimate": 0.004227033,
+              "fluxscale_write": 0.072950944,
+              "fluxscale_history": 0.008049417
             },
-            "native_peak_rss_kib": 33624,
+            "native_peak_rss_kib": 34116,
             "workers": 1
           },
           {
-            "wall_seconds": 0.11490246900211787,
-            "cpu_seconds": 0.09206500000000517,
+            "wall_seconds": 0.09632263800449437,
+            "cpu_seconds": 0.08496600000000143,
             "cpu_breakdown_seconds": {
-              "user": 0.0510079999999995,
-              "system": 0.04105700000000034
+              "user": 0.03733800000000187,
+              "system": 0.04762799999999956
             },
             "block_io": {
-              "read_bytes": 11239424,
-              "write_bytes": 12009472
+              "read_bytes": 11132928,
+              "write_bytes": 11902976
             },
             "phases_seconds": {
-              "fluxscale_read": 0.034663902,
-              "fluxscale_estimate": 0.004862237,
-              "fluxscale_write": 0.056287468,
-              "fluxscale_history": 0.008458472
+              "fluxscale_read": 0.029634286,
+              "fluxscale_estimate": 0.004040152,
+              "fluxscale_write": 0.047267781,
+              "fluxscale_history": 0.005865185
             },
-            "native_peak_rss_kib": 33496,
+            "native_peak_rss_kib": 34304,
             "workers": 1
           },
           {
-            "wall_seconds": 0.13290028099436313,
-            "cpu_seconds": 0.1255910000000071,
+            "wall_seconds": 0.16317271799925948,
+            "cpu_seconds": 0.15189399999999154,
             "cpu_breakdown_seconds": {
-              "user": 0.029956000000005645,
-              "system": 0.09563499999999969
+              "user": 0.024306999999993195,
+              "system": 0.12758699999999923
             },
             "block_io": {
-              "read_bytes": 11247616,
-              "write_bytes": 12017664
+              "read_bytes": 11132928,
+              "write_bytes": 11902976
             },
             "phases_seconds": {
-              "fluxscale_read": 0.042926428,
-              "fluxscale_estimate": 0.004115796,
-              "fluxscale_write": 0.063646652,
-              "fluxscale_history": 0.01078209
+              "fluxscale_read": 0.061832703,
+              "fluxscale_estimate": 0.004307047,
+              "fluxscale_write": 0.067380468,
+              "fluxscale_history": 0.006515844
             },
-            "native_peak_rss_kib": 33628,
+            "native_peak_rss_kib": 33712,
             "workers": 1
           }
         ]
@@ -195,83 +195,83 @@
         "native": 11588220
       },
       "median_seconds": {
-        "casa": 5.68479658599972,
-        "native": 0.11490246900211787
+        "casa": 5.7043577559961705,
+        "native": 0.11028281100152526
       }
     },
     "incremental": {
       "runs": {
         "casa": [
           {
-            "wall_seconds": 4.111181751002732,
-            "cpu_seconds": 4.070172999999997,
+            "wall_seconds": 4.259834363001573,
+            "cpu_seconds": 4.222639999999998,
             "cpu_breakdown_seconds": {
-              "user": 3.3584139999999962,
-              "system": 0.7117590000000007
+              "user": 3.5149779999999993,
+              "system": 0.707662
             },
             "block_io": {
-              "read_bytes": 11481088,
-              "write_bytes": 1884160
+              "read_bytes": 11358208,
+              "write_bytes": 1449984
             },
             "phases_seconds": {},
             "native_peak_rss_kib": null,
             "workers": 1
           },
           {
-            "wall_seconds": 4.192694340003072,
-            "cpu_seconds": 4.159897000000008,
+            "wall_seconds": 4.119842965999851,
+            "cpu_seconds": 4.080795000000002,
             "cpu_breakdown_seconds": {
-              "user": 3.4331100000000063,
-              "system": 0.7267869999999998
+              "user": 3.3689990000000023,
+              "system": 0.7117959999999997
             },
             "block_io": {
-              "read_bytes": 11489280,
-              "write_bytes": 1912832
+              "read_bytes": 11358208,
+              "write_bytes": 1343488
             },
             "phases_seconds": {},
             "native_peak_rss_kib": null,
             "workers": 1
           },
           {
-            "wall_seconds": 4.110746538004605,
-            "cpu_seconds": 4.077781000000002,
+            "wall_seconds": 3.977147999998124,
+            "cpu_seconds": 3.939041000000003,
             "cpu_breakdown_seconds": {
-              "user": 3.383077,
-              "system": 0.6947039999999998
+              "user": 3.3229070000000007,
+              "system": 0.6161339999999988
             },
             "block_io": {
-              "read_bytes": 11489280,
-              "write_bytes": 1937408
+              "read_bytes": 11358208,
+              "write_bytes": 1310720
             },
             "phases_seconds": {},
             "native_peak_rss_kib": null,
             "workers": 1
           },
           {
-            "wall_seconds": 4.005074351996882,
-            "cpu_seconds": 3.971494000000007,
+            "wall_seconds": 4.255166581002413,
+            "cpu_seconds": 4.220652999999999,
             "cpu_breakdown_seconds": {
-              "user": 3.2982370000000003,
-              "system": 0.6732569999999996
+              "user": 3.513452000000001,
+              "system": 0.7072010000000013
             },
             "block_io": {
-              "read_bytes": 11501568,
-              "write_bytes": 1966080
+              "read_bytes": 11358208,
+              "write_bytes": 1310720
             },
             "phases_seconds": {},
             "native_peak_rss_kib": null,
             "workers": 1
           },
           {
-            "wall_seconds": 4.2485759639967,
-            "cpu_seconds": 4.217518999999996,
+            "wall_seconds": 4.361348790000193,
+            "cpu_seconds": 4.310344000000001,
             "cpu_breakdown_seconds": {
-              "user": 3.430868000000004,
-              "system": 0.7866509999999991
+              "user": 3.5336440000000024,
+              "system": 0.7766999999999982
             },
             "block_io": {
-              "read_bytes": 11501568,
-              "write_bytes": 1982464
+              "read_bytes": 11358208,
+              "write_bytes": 1310720
             },
             "phases_seconds": {},
             "native_peak_rss_kib": null,
@@ -280,103 +280,103 @@
         ],
         "native": [
           {
-            "wall_seconds": 0.11391083399939816,
-            "cpu_seconds": 0.1002070000000046,
+            "wall_seconds": 0.06210976500005927,
+            "cpu_seconds": 0.05129699999999815,
             "cpu_breakdown_seconds": {
-              "user": 0.03046000000000504,
-              "system": 0.06974699999999956
+              "user": 0.03092099999999931,
+              "system": 0.020375999999999728
             },
             "block_io": {
-              "read_bytes": 10776576,
-              "write_bytes": 602112
+              "read_bytes": 10649600,
+              "write_bytes": 577536
             },
             "phases_seconds": {
-              "fluxscale_read": 0.073625224,
-              "fluxscale_estimate": 0.004930651,
-              "fluxscale_write": 0.008334481,
-              "fluxscale_history": 0.010029614
+              "fluxscale_read": 0.031327945,
+              "fluxscale_estimate": 0.0045515,
+              "fluxscale_write": 0.008217984,
+              "fluxscale_history": 0.006193425
             },
-            "native_peak_rss_kib": 22992,
+            "native_peak_rss_kib": 24320,
             "workers": 1
           },
           {
-            "wall_seconds": 0.08499904299969785,
-            "cpu_seconds": 0.07415699999999958,
+            "wall_seconds": 0.07286314300290542,
+            "cpu_seconds": 0.06336699999999951,
             "cpu_breakdown_seconds": {
-              "user": 0.04072299999999984,
-              "system": 0.03343399999999974
+              "user": 0.021729000000000553,
+              "system": 0.04163800000000073
             },
             "block_io": {
-              "read_bytes": 10776576,
-              "write_bytes": 606208
+              "read_bytes": 10649600,
+              "write_bytes": 483328
             },
             "phases_seconds": {
-              "fluxscale_read": 0.042755389,
-              "fluxscale_estimate": 0.007061936,
-              "fluxscale_write": 0.009624856,
-              "fluxscale_history": 0.015195551
+              "fluxscale_read": 0.045718444,
+              "fluxscale_estimate": 0.004225789,
+              "fluxscale_write": 0.007633161,
+              "fluxscale_history": 0.006228076
             },
-            "native_peak_rss_kib": 23316,
+            "native_peak_rss_kib": 23916,
             "workers": 1
           },
           {
-            "wall_seconds": 0.09819011199579109,
-            "cpu_seconds": 0.08655599999999453,
+            "wall_seconds": 0.08274288100074045,
+            "cpu_seconds": 0.06249100000000141,
             "cpu_breakdown_seconds": {
-              "user": 0.026517999999995823,
-              "system": 0.060037999999998704
+              "user": 0.034278000000000475,
+              "system": 0.028212999999999155
             },
             "block_io": {
-              "read_bytes": 10788864,
-              "write_bytes": 614400
+              "read_bytes": 10649600,
+              "write_bytes": 479232
             },
             "phases_seconds": {
-              "fluxscale_read": 0.057611708,
-              "fluxscale_estimate": 0.004291871,
-              "fluxscale_write": 0.007475281,
-              "fluxscale_history": 0.011312435
+              "fluxscale_read": 0.042051923,
+              "fluxscale_estimate": 0.004467529,
+              "fluxscale_write": 0.007806728,
+              "fluxscale_history": 0.005925529
             },
-            "native_peak_rss_kib": 23456,
+            "native_peak_rss_kib": 23952,
             "workers": 1
           },
           {
-            "wall_seconds": 0.07760724199761171,
-            "cpu_seconds": 0.06817199999999701,
+            "wall_seconds": 0.09571714499907102,
+            "cpu_seconds": 0.08621500000000992,
             "cpu_breakdown_seconds": {
-              "user": 0.027026999999996804,
-              "system": 0.04114500000000021
+              "user": 0.02757400000000132,
+              "system": 0.0586410000000015
             },
             "block_io": {
-              "read_bytes": 10788864,
-              "write_bytes": 618496
+              "read_bytes": 10649600,
+              "write_bytes": 479232
             },
             "phases_seconds": {
-              "fluxscale_read": 0.045626511,
-              "fluxscale_estimate": 0.004544757,
-              "fluxscale_write": 0.007853675,
-              "fluxscale_history": 0.009546635
+              "fluxscale_read": 0.060617664,
+              "fluxscale_estimate": 0.004196856,
+              "fluxscale_write": 0.008215677,
+              "fluxscale_history": 0.006377481
             },
-            "native_peak_rss_kib": 22976,
+            "native_peak_rss_kib": 24320,
             "workers": 1
           },
           {
-            "wall_seconds": 0.07543335299851606,
-            "cpu_seconds": 0.06523500000000126,
+            "wall_seconds": 0.06409130999963963,
+            "cpu_seconds": 0.05141099999998744,
             "cpu_breakdown_seconds": {
-              "user": 0.03854400000000169,
-              "system": 0.026690999999999576
+              "user": 0.02726099999999576,
+              "system": 0.024149999999998784
             },
             "block_io": {
-              "read_bytes": 10797056,
-              "write_bytes": 622592
+              "read_bytes": 10649600,
+              "write_bytes": 479232
             },
             "phases_seconds": {
-              "fluxscale_read": 0.039832412,
-              "fluxscale_estimate": 0.003973176,
-              "fluxscale_write": 0.008301991,
-              "fluxscale_history": 0.009920391
+              "fluxscale_read": 0.034832796,
+              "fluxscale_estimate": 0.00416099,
+              "fluxscale_write": 0.008047312,
+              "fluxscale_history": 0.008327519
             },
-            "native_peak_rss_kib": 23332,
+            "native_peak_rss_kib": 24492,
             "workers": 1
           }
         ]
@@ -386,63 +386,64 @@
         "native": 93759
       },
       "median_seconds": {
-        "casa": 4.111181751002732,
-        "native": 0.08499904299969785
+        "casa": 4.255166581002413,
+        "native": 0.07286314300290542
       }
     }
   },
   "fresh": {
     "casa": {
-      "import_seconds": 1.691225991002284,
-      "wall_seconds": 5.976662547996966,
-      "python_peak_kib": 305156,
+      "import_seconds": 1.5872176280026906,
+      "wall_seconds": 5.756338197999867,
+      "python_peak_kib": 305320,
       "native_peak_rss_kib": null
     },
     "native": {
-      "import_seconds": 0.029113497002981603,
-      "wall_seconds": 0.15581385199766373,
-      "python_peak_kib": 39312,
-      "native_peak_rss_kib": 33492
+      "import_seconds": 0.03707347399904393,
+      "wall_seconds": 0.1483068599991384,
+      "python_peak_kib": 39380,
+      "native_peak_rss_kib": 34368
     }
   },
+  "history_policy": "Restore identical input HISTORY before every call, outside timing; restore original HISTORY on exit.",
   "input_rows": 60000,
   "input_table_bytes": 10635880,
   "reader_runs": [
     {
-      "wall_seconds": 0.0857475200027693,
-      "cpu_seconds": 0.08427000000000362,
+      "wall_seconds": 0.11925165299908258,
+      "cpu_seconds": 0.11762399999999218,
       "block_io": {
         "read_bytes": 10596352,
         "write_bytes": 0
       }
     },
     {
-      "wall_seconds": 0.07552877499983879,
-      "cpu_seconds": 0.07399199999998984,
+      "wall_seconds": 0.0852805980030098,
+      "cpu_seconds": 0.0837099999999964,
       "block_io": {
         "read_bytes": 10596352,
         "write_bytes": 0
       }
     },
     {
-      "wall_seconds": 0.07817486499698134,
-      "cpu_seconds": 0.07669800000000748,
+      "wall_seconds": 0.08148319600149989,
+      "cpu_seconds": 0.0800350000000094,
       "block_io": {
         "read_bytes": 10596352,
         "write_bytes": 0
       }
     },
     {
-      "wall_seconds": 0.07320728999911807,
-      "cpu_seconds": 0.07155799999999601,
+      "wall_seconds": 0.08711916900210781,
+      "cpu_seconds": 0.08542599999999823,
       "block_io": {
         "read_bytes": 10596352,
         "write_bytes": 0
       }
     },
     {
-      "wall_seconds": 0.07134619799762731,
-      "cpu_seconds": 0.06990500000000566,
+      "wall_seconds": 0.08019327699730638,
+      "cpu_seconds": 0.07869499999999618,
       "block_io": {
         "read_bytes": 10596352,
         "write_bytes": 0
@@ -452,43 +453,43 @@
   "rewrite_scope": "Native public table.copy valuecopy MAIN only; owning subtable references removed after all task timings",
   "rewrite_runs": [
     {
-      "wall_seconds": 1.8000737660040613,
-      "cpu_seconds": 1.7900899999999922,
-      "block_io": {
-        "read_bytes": 10596352,
-        "write_bytes": 10600448
-      }
-    },
-    {
-      "wall_seconds": 0.7220911159965908,
-      "cpu_seconds": 0.7142929999999978,
+      "wall_seconds": 1.730955669998366,
+      "cpu_seconds": 1.7271400000000057,
       "block_io": {
         "read_bytes": 10596352,
         "write_bytes": 10604544
       }
     },
     {
-      "wall_seconds": 0.7450316280010156,
-      "cpu_seconds": 0.7432650000000081,
+      "wall_seconds": 0.7132149030003347,
+      "cpu_seconds": 0.7108170000000058,
+      "block_io": {
+        "read_bytes": 10596352,
+        "write_bytes": 10604544
+      }
+    },
+    {
+      "wall_seconds": 0.6949579170031939,
+      "cpu_seconds": 0.6922959999999989,
       "block_io": {
         "read_bytes": 10596352,
         "write_bytes": 10600448
       }
     },
     {
-      "wall_seconds": 0.6867663209995953,
-      "cpu_seconds": 0.6844629999999938,
+      "wall_seconds": 0.7315389350042096,
+      "cpu_seconds": 0.7232450000000199,
       "block_io": {
         "read_bytes": 10596352,
         "write_bytes": 10600448
       }
     },
     {
-      "wall_seconds": 0.7659940730009112,
-      "cpu_seconds": 0.7594610000000159,
+      "wall_seconds": 0.8515288589987904,
+      "cpu_seconds": 0.8478939999999966,
       "block_io": {
         "read_bytes": 10596352,
-        "write_bytes": 10600448
+        "write_bytes": 10608640
       }
     }
   ]
