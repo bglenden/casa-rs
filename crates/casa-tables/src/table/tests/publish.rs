@@ -342,10 +342,7 @@ fn a_locked_aipsio_full_flush_keeps_the_group_and_stored_byte_order() {
             .declared_managers,
         [("meta".into(), "StManAipsIO".into(), "big".into())],
     );
-    assert_eq!(
-        reopened.row(0).unwrap().get("meta"),
-        Some(&updated)
-    );
+    assert_eq!(reopened.row(0).unwrap().get("meta"), Some(&updated));
 }
 
 #[test]
