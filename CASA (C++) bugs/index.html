@@ -3750,6 +3750,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#tablerow__getitem__-process-abort-in-casa-67614" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tablerow.__getitem__ process abort in CASA 6.7.6.14
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9608,6 +9619,15 @@ domain. <code>tools/casa-compat/calibration_lifecycle_oracle.py</code> reproduce
 CASA error and compares the two native append products. Invalid boolean
 arguments retain the native exception policy documented in
 <code>docs/python/api.md</code>.</p>
+<h2 id="tablerow__getitem__-process-abort-in-casa-67614"><code>tablerow.__getitem__</code> process abort in CASA 6.7.6.14<a class="headerlink" href="#tablerow__getitem__-process-abort-in-casa-67614" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, indexing a <code>tablerow</code> accessor via <code>r[rownr]</code> (including valid
+and out-of-range row indices, e.g. <code>r[0]</code> or <code>r[10]</code>) terminates Python with
+segmentation fault (signal 11, exit code 139) inside the SWIG <code>casac::tablerow</code>
+wrapper (<code>__getitem__</code>), even though <code>r.get(rownr)</code> and <code>len(r)</code> succeed.</p>
+<p>casa-rs implements <code>tablerow.__getitem__</code> safely under the GIL-detached Rust
+table accessor, supporting negative indices, slices, and sequences of row
+indices, and raising <code>IndexError</code> cleanly on out-of-range indices.
+<a href="https://github.com/bglenden/casa-rs/issues/1028">Table tool issue #1028</a></p>
 
 
 

@@ -71,57 +71,34 @@
 <a href=#71 id=71 data-nosnippet>71</a>    }
 <a href=#72 id=72 data-nosnippet>72</a>
 <a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="attr">#[pyo3(signature = (columnname, startrow = <span class="prelude-val">None</span>, nrow = <span class="prelude-val">None</span>, rowincr = <span class="prelude-val">None</span>, torecord = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, columnname, startrow=0, nrow=-1, rowincr=1, torecord=False)"</span>)]
-<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">fn </span>getcoliter(
+<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="attr">#[pyo3(signature = (query = <span class="prelude-val">None</span>, name = <span class="prelude-val">None</span>, sortlist = <span class="prelude-val">None</span>, columns = <span class="prelude-val">None</span>, style = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, query='String', name='', sortlist='', columns='', style='')"</span>)]
+<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">fn </span>query(
 <a href=#76 id=76 data-nosnippet>76</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#77 id=77 data-nosnippet>77</a>        columnname: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#78 id=78 data-nosnippet>78</a>        startrow: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#79 id=79 data-nosnippet>79</a>        nrow: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#80 id=80 data-nosnippet>80</a>        rowincr: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#81 id=81 data-nosnippet>81</a>        torecord: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#77 id=77 data-nosnippet>77</a>        query: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#78 id=78 data-nosnippet>78</a>        name: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#79 id=79 data-nosnippet>79</a>        sortlist: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#80 id=80 data-nosnippet>80</a>        columns: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#81 id=81 data-nosnippet>81</a>        style: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
 <a href=#82 id=82 data-nosnippet>82</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#83 id=83 data-nosnippet>83</a>        stub(<span class="string">"getcoliter"</span>)
+<a href=#83 id=83 data-nosnippet>83</a>        stub(<span class="string">"query"</span>)
 <a href=#84 id=84 data-nosnippet>84</a>    }
 <a href=#85 id=85 data-nosnippet>85</a>
 <a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="attr">#[pyo3(signature = (query = <span class="prelude-val">None</span>, name = <span class="prelude-val">None</span>, sortlist = <span class="prelude-val">None</span>, columns = <span class="prelude-val">None</span>, style = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, query='String', name='', sortlist='', columns='', style='')"</span>)]
-<a href=#88 id=88 data-nosnippet>88</a>    </span><span class="kw">fn </span>query(
-<a href=#89 id=89 data-nosnippet>89</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#90 id=90 data-nosnippet>90</a>        query: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#91 id=91 data-nosnippet>91</a>        name: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#92 id=92 data-nosnippet>92</a>        sortlist: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#93 id=93 data-nosnippet>93</a>        columns: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#94 id=94 data-nosnippet>94</a>        style: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#95 id=95 data-nosnippet>95</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#96 id=96 data-nosnippet>96</a>        stub(<span class="string">"query"</span>)
-<a href=#97 id=97 data-nosnippet>97</a>    }
-<a href=#98 id=98 data-nosnippet>98</a>
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#100 id=100 data-nosnippet>100</a>    </span><span class="attr">#[pyo3(signature = (columnnames = <span class="prelude-val">None</span>, exclude = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, columnnames=[], exclude=False)"</span>)]
-<a href=#101 id=101 data-nosnippet>101</a>    </span><span class="kw">fn </span>row(
-<a href=#102 id=102 data-nosnippet>102</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#103 id=103 data-nosnippet>103</a>        columnnames: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#104 id=104 data-nosnippet>104</a>        exclude: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#105 id=105 data-nosnippet>105</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#106 id=106 data-nosnippet>106</a>        stub(<span class="string">"row"</span>)
-<a href=#107 id=107 data-nosnippet>107</a>    }
-<a href=#108 id=108 data-nosnippet>108</a>
-<a href=#109 id=109 data-nosnippet>109</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="attr">#[pyo3(signature = (taqlcommand = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, taqlcommand='TaQL expression')"</span>)]
-<a href=#111 id=111 data-nosnippet>111</a>    </span><span class="kw">fn </span>taql(<span class="kw-2">&amp;</span><span class="self">self</span>, taqlcommand: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#112 id=112 data-nosnippet>112</a>        stub(<span class="string">"taql"</span>)
-<a href=#113 id=113 data-nosnippet>113</a>    }
-<a href=#114 id=114 data-nosnippet>114</a>
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="attr">#[pyo3(signature = (asciifile, headerfile = <span class="prelude-val">None</span>, columns = <span class="prelude-val">None</span>, sep = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, asciifile, headerfile='', columns=[], sep='')"</span>)]
-<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="kw">fn </span>toasciifmt(
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#119 id=119 data-nosnippet>119</a>        asciifile: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#120 id=120 data-nosnippet>120</a>        headerfile: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#121 id=121 data-nosnippet>121</a>        columns: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#122 id=122 data-nosnippet>122</a>        sep: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#123 id=123 data-nosnippet>123</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#124 id=124 data-nosnippet>124</a>        stub(<span class="string">"toasciifmt"</span>)
-<a href=#125 id=125 data-nosnippet>125</a>    }
-<a href=#126 id=126 data-nosnippet>126</a>}
+<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="attr">#[pyo3(signature = (taqlcommand = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, taqlcommand='TaQL expression')"</span>)]
+<a href=#88 id=88 data-nosnippet>88</a>    </span><span class="kw">fn </span>taql(<span class="kw-2">&amp;</span><span class="self">self</span>, taqlcommand: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#89 id=89 data-nosnippet>89</a>        stub(<span class="string">"taql"</span>)
+<a href=#90 id=90 data-nosnippet>90</a>    }
+<a href=#91 id=91 data-nosnippet>91</a>
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="attr">#[pyo3(signature = (asciifile, headerfile = <span class="prelude-val">None</span>, columns = <span class="prelude-val">None</span>, sep = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, asciifile, headerfile='', columns=[], sep='')"</span>)]
+<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="kw">fn </span>toasciifmt(
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#96 id=96 data-nosnippet>96</a>        asciifile: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#97 id=97 data-nosnippet>97</a>        headerfile: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#98 id=98 data-nosnippet>98</a>        columns: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#99 id=99 data-nosnippet>99</a>        sep: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#100 id=100 data-nosnippet>100</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#101 id=101 data-nosnippet>101</a>        stub(<span class="string">"toasciifmt"</span>)
+<a href=#102 id=102 data-nosnippet>102</a>    }
+<a href=#103 id=103 data-nosnippet>103</a>}
 </code></pre></div></section></main></body></html>
