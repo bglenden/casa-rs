@@ -99,8 +99,22 @@ pub(in crate::storage) fn stage_append(
                     .flatten()
                     .find(|file| file.seq_nr == file_id)
                     .ok_or_else(invalid)?;
-                let tile_bytes =
-                    compute_tile_layout(&header.col_data_types, &cube.tile_shape).0 as u64;
+                // The header lists every bound column, including coordinates.
+                // Only the data columns occupy bytes inside each tile.
+                let bound: Vec<&str> = columns
+                    .iter()
+                    .map(|column| column.col_name.as_str())
+                    .collect();
+                let types: Vec<_> = super::tile_columns::tile_order(
+                    &header.hypercolumn_name,
+                    &bound,
+                    &header.col_data_types,
+                    private_keywords,
+                )?
+                .into_iter()
+                .map(|index| header.col_data_types[index])
+                .collect();
+                let tile_bytes = compute_tile_layout(&types, &cube.tile_shape).0 as u64;
                 // Extending a cube inside an existing tile file may not
                 // overwrite another cube's allocation.
                 let old_end = old_tiles
