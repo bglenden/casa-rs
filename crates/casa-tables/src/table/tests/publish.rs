@@ -387,3 +387,76 @@ fn saving_a_tiled_column_leaves_other_edits_for_unlock() {
         assert!(reopened.keywords().get("NEW").is_some());
     }
 }
+
+#[test]
+fn metadata_only_unlock_of_a_projected_reference_keeps_base_metadata() {
+    use crate::storage::{CompositeStorage, RefTableDatContents, TableInfo};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("base.table");
+    let reference_path = dir.path().join("view.table");
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("included", PrimitiveType::Int32),
+        ColumnSchema::scalar("excluded", PrimitiveType::Int32),
+    ])
+    .unwrap();
+    let mut base = Table::with_schema(schema);
+    base.add_row(RecordValue::new(vec![
+        RecordField::new("included", Value::Scalar(ScalarValue::Int32(1))),
+        RecordField::new("excluded", Value::Scalar(ScalarValue::Int32(2))),
+    ]))
+    .unwrap();
+    let keywords = |key| {
+        RecordValue::new(vec![RecordField::new(
+            key,
+            Value::Scalar(ScalarValue::Bool(true)),
+        )])
+    };
+    base.set_column_keywords("included", keywords("ORIGINAL"));
+    base.set_column_keywords("excluded", keywords("OTHER_COLUMN"));
+    base.set_info(TableInfo {
+        table_type: "BASE".to_string(),
+        ..Default::default()
+    });
+    base.save(TableOptions::new(&path)).unwrap();
+    CompositeStorage
+        .save_ref_table(
+            &reference_path,
+            &RefTableDatContents {
+                nrrow: 1,
+                big_endian: false,
+                parent_relative_path: path.to_str().unwrap().to_string(),
+                column_name_map: vec![("renamed".into(), "included".into())],
+                column_names: vec!["renamed".into()],
+                parent_nrrow: 1,
+                row_order: true,
+                row_map: vec![0],
+            },
+            &TableInfo {
+                table_type: "VIEW".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let mut view = handle(&TableOptions::new(&reference_path));
+    assert!(view.lock(LockType::Write, 1).unwrap());
+    mark(&mut view, "NEW_KEYWORD");
+    view.set_column_keywords("renamed", keywords("NEW_COLUMN_KEYWORD"));
+    view.unlock_metadata_only().unwrap();
+    let base = Table::open(TableOptions::new(&path)).unwrap();
+    assert_eq!(base.info().table_type, "BASE");
+    assert!(base.keywords().get("NEW_KEYWORD").is_some());
+    assert!(
+        base.column_keywords("included")
+            .unwrap()
+            .get("NEW_COLUMN_KEYWORD")
+            .is_some()
+    );
+    assert!(
+        base.column_keywords("excluded")
+            .unwrap()
+            .get("OTHER_COLUMN")
+            .is_some()
+    );
+    assert_eq!(view.info().table_type, "VIEW");
+}

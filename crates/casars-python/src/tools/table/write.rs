@@ -296,8 +296,18 @@ pub(super) fn write_root(
             } => {
                 columns.sort_unstable();
                 columns.dedup();
-                rows.sort_unstable();
-                rows.dedup();
+                if is_reference {
+                    // Different persisted view rows can refer to the same
+                    // root cell. Keep the last occurrence of each view row,
+                    // in mutation order, so the last write to the root wins.
+                    let mut seen = std::collections::HashSet::new();
+                    rows.reverse();
+                    rows.retain(|row| seen.insert(*row));
+                    rows.reverse();
+                } else {
+                    rows.sort_unstable();
+                    rows.dedup();
+                }
                 let col_refs: Vec<&str> = columns.iter().map(String::as_str).collect();
                 let partial = root
                     .table

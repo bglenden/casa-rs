@@ -483,7 +483,8 @@ impl Table {
                 })?;
             let flush = state.lock_file.has_lock(LockType::Write)
                 && state.has_unflushed_changes(&self.inner);
-            let opts = TableOptions::new(&state.path)
+            let source = self.source_path.as_ref().unwrap_or(&state.path);
+            let opts = TableOptions::new(source)
                 .with_data_manager(state.data_manager)
                 .with_endian_format(state.endian_format);
             (flush, opts, state.options.mode)
