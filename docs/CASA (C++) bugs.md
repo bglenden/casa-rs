@@ -3851,26 +3851,27 @@ casa-rs keeps a new value as a 64-bit integer and refuses an overflowing
 replacement of a 32-bit keyword, so neither call silently loses the value
 (#1053).
 
-## `tb` slices with a wrong rank or a start outside the array abort the process
+## Some `tb` slice calls with invalid coordinates abort the process
 
 - Date noted: 2026-10-30
 - Status: CASA bug; casa-rs does not follow it (#1025, the `table` tool)
-- Affected code: casatools `table::getcellslice`, `getcolslice`, `putcellslice`
-  and `putcolslice`, over casacore's `Slicer`
+- Affected code: casatools slice calls that pass coordinates directly to
+  casacore's `Slicer`
 
-In CASA 6.7.6.14 a slice whose `blc`, `trc` or `incr` has the wrong number of
-elements for the array, or whose `blc` lies outside the array, throws an
-`ArraySlicerError` that nothing catches, and the Python process ends
-(`libc++abi: terminating due to uncaught exception of type
-casacore::ArraySlicerError`, exit status 134). The default `incr=[1]` is such a
-slice for an array of more than one axis, so `tb.getcellslice('DATA', 0, [0, 0],
-[1, 3])` aborts. casa-rs raises a `RuntimeError` for each of them and takes a
-one-element `incr` as the step of every axis. The recording
-(`crates/casars-python/python/tests/data/casa_table_tool.json`, `slices` and
-`ms_slices`) holds only the cases CASA survives. CASA is also inconsistent
-about `trc=-1`: `getcellslice` refuses it ("All elements of trc must be greater
-than or equal to 0"), `getcolslice` takes it as the last element; casa-rs
-follows both.
+On a 3×4 CASA image opened as a table, CASA 6.7.6.14 aborts on
+`tb.getcolslice("map", [0, 0], [2, 3], [1])` with an uncaught
+`casacore::ArraySlicerError` and exit status 134. The one-element step has a
+different rank from the cell. casa-rs takes that step on every axis and
+raises a `RuntimeError` for invalid coordinates. The `slices` and
+`ms_slices` oracle recordings contain calls for which CASA returns or raises
+a Python exception.
+
+`getcellslice` on the same image expands the default step `[1]` to every
+axis and raises Python exceptions for invalid coordinates. It accepts either
+`-1` or `[-1]` to select the first or last index of every axis for the
+respective corner. CASA rejects negative indices inside a multidimensional
+corner for `getcellslice`. For `getcolslice`, a `-1` top-right index selects
+the last element of that axis. casa-rs follows both conventions.
 
 ## `tb.putcell` and `putcol` wrap an int beyond 32 bits in an int cell
 

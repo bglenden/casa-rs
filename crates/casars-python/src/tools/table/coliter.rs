@@ -5,7 +5,9 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use casa_tables::ColumnType;
+use pyo3::exceptions::PyStopIteration;
 use pyo3::prelude::*;
+use pyo3::pyclass::CompareOp;
 
 use super::read::scalar_cells;
 use super::state::{Fail, RootOpen, State, synchronize_root};
@@ -130,6 +132,20 @@ impl PyTableColIter {
             IterYield::None => Ok(Some(py.None())),
             IterYield::Value(value) => Ok(Some(value.into_python(py)?)),
         }
+    }
+
+    fn __richcmp__(
+        &self,
+        py: Python<'_>,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+    ) -> PyResult<Py<PyAny>> {
+        // CASA compares each operand to the next yielded row, including when
+        // NumPy dispatches an array comparison one element at a time.
+        let next = self
+            .__next__(py)?
+            .ok_or_else(|| PyStopIteration::new_err(()))?;
+        Ok(next.bind(py).rich_compare(other, op)?.unbind())
     }
 }
 

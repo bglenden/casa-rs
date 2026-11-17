@@ -1005,7 +1005,21 @@ impl PyTableTool {
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
         let row = integer(Some(rownr), "rownr", 0)?;
-        let corners = corners(Some(blc), Some(trc), incr)?;
+        let scalar_or_list = |value: &Bound<'_, PyAny>, name| {
+            if let Ok(scalar) = value.extract::<i64>() {
+                Ok(vec![scalar])
+            } else {
+                integers(Some(value), name).map(Option::unwrap_or_default)
+            }
+        };
+        let corners = Corners {
+            blc: scalar_or_list(blc, "blc")?,
+            trc: scalar_or_list(trc, "trc")?,
+            incr: incr
+                .map(|value| scalar_or_list(value, "incr"))
+                .transpose()?
+                .unwrap_or_else(|| vec![1]),
+        };
         self.read(py, move |state, log| {
             state.getcellslice(&column, row, &corners, log)
         })

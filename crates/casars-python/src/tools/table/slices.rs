@@ -5,10 +5,8 @@
 //! `ms_slices`).
 //!
 //! A slice is given by its bottom-left corner `blc`, top-right corner `trc`
-//! (both inclusive) and step `incr`, one element of each per axis. CASA
-//! aborts its whole process when a corner has the wrong rank or a slice
-//! starts outside the array; casa-rs raises a `RuntimeError` for those
-//! (`docs/CASA (C++) bugs.md`).
+//! (both inclusive) and step `incr`. For `getcellslice`, `-1` alone
+//! selects the first or last index on every axis for the respective corner.
 
 use casa_tables::{ColumnType, Slicer, Table};
 use casa_types::{ArrayValue, Value};
@@ -38,8 +36,7 @@ pub(crate) struct Corners {
 
 impl Corners {
     /// The slicer over an array of `shape` and the shape the slice has.
-    /// `trc` may be `-1` (the last element) where `end_ok`, as `getcolslice`
-    /// accepts it and `getcellslice` does not.
+    /// `getcolslice` accepts `trc=-1` separately on each axis (`end_ok`).
     fn over(&self, shape: &[usize], end_ok: bool) -> Result<(Slicer, Vec<usize>), Fail> {
         let rank = shape.len();
         // The default `incr=[1]` steps every axis by one (CASA aborts on it
@@ -90,6 +87,70 @@ impl Corners {
         }
         Ok((Slicer::new(start, end, stride)?, result))
     }
+
+    fn cell_read_slicer(&self, shape: &[usize]) -> Result<Slicer, Fail> {
+        if shape.is_empty() && (self.blc == [-1] || self.trc == [-1]) {
+            return runtime(
+                "Exception: It appears arrays in this column have different shapes, and so the shape of the requested row cannot easily be determined. Please explicitly specify the blc and trc.".into(),
+            );
+        }
+        let start = if self.blc == [-1] {
+            vec![0; shape.len()]
+        } else {
+            checked_corner(&self.blc, shape, "blc")?
+        };
+        let end = if self.trc == [-1] {
+            shape.to_vec()
+        } else {
+            let trc = checked_corner(&self.trc, shape, "trc")?;
+            if trc.iter().zip(&start).any(|(upper, lower)| upper < lower) {
+                return runtime(
+                    "Exception: All elements of trc must be greater than or equal to their corresponding blc elements.".into(),
+                );
+            }
+            trc.into_iter().map(|index| index + 1).collect()
+        };
+        let stride = if self.incr == [1] {
+            vec![1; shape.len()]
+        } else {
+            if self.incr.len() != shape.len() {
+                return runtime(format!(
+                    "Exception: incr must have length of {}.",
+                    shape.len()
+                ));
+            }
+            if self.incr.iter().any(|&step| step <= 0) {
+                return runtime("Exception: All elements of incr must be greater than 0.".into());
+            }
+            self.incr.iter().map(|&step| step as usize).collect()
+        };
+        Ok(Slicer::new(start, end, stride)?)
+    }
+}
+
+fn checked_corner(corner: &[i64], shape: &[usize], name: &str) -> Result<Vec<usize>, Fail> {
+    if corner.len() != shape.len() {
+        return runtime(format!(
+            "Exception: {name} must have length of {}.",
+            shape.len()
+        ));
+    }
+    if corner.iter().any(|&index| index < 0) {
+        return runtime(format!(
+            "Exception: All elements of {name} must be greater than or equal to 0."
+        ));
+    }
+    let mut indices = Vec::with_capacity(shape.len());
+    for (axis, (&index, &size)) in corner.iter().zip(shape).enumerate() {
+        let index = index as usize;
+        if index >= size {
+            return runtime(format!(
+                "Exception: Element {axis} of {name} must be less than {size}."
+            ));
+        }
+        indices.push(index);
+    }
+    Ok(indices)
 }
 
 fn cell_slice(
@@ -97,18 +158,22 @@ fn cell_slice(
     column: &str,
     row: usize,
     corners: &Corners,
-    end_ok: bool,
-) -> Result<(CasaValue, Slicer), Fail> {
+    column_slice: bool,
+) -> Reply {
     let shape = table.array_shape(row, column)?.ok_or_else(|| {
         Fail::Runtime(format!(
             "Table DataManager error: Invalid operation: no array in row {row} of column {column}"
         ))
     })?;
-    let (slicer, _) = corners.over(&shape, end_ok)?;
+    let slicer = if column_slice {
+        corners.over(&shape, true)?.0
+    } else {
+        corners.cell_read_slicer(&shape)?
+    };
     let Value::Array(array) = table.get_cell_slice(column, row, &slicer)? else {
         return runtime(format!("row {row} of column {column} is not an array"));
     };
-    Ok((values::array(&array), slicer))
+    Ok(values::array(&array))
 }
 
 fn require_array_column(table: &Table, column: &str, what: &str) -> Result<(), Fail> {
@@ -147,7 +212,7 @@ impl Open {
                 ))
             })?;
         let row = self.translate_row(row);
-        Ok(cell_slice(&root.table, column, row, corners, false)?.0)
+        cell_slice(&root.table, column, row, corners, false)
     }
 
     fn getcolslice(&self, column: &str, corners: &Corners, selection: (i64, i64, i64)) -> Reply {
@@ -178,7 +243,7 @@ impl Open {
         let cells = self
             .translate_rows(&selected)
             .into_iter()
-            .map(|row| Ok(cell_slice(&root.table, column, row, corners, true)?.0))
+            .map(|row| cell_slice(&root.table, column, row, corners, true))
             .collect::<Result<Vec<_>, Fail>>()?;
         values::stack_rows(&cells)
     }

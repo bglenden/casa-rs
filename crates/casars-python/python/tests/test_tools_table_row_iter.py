@@ -176,6 +176,20 @@ def test_getcoliter_semantics_and_edges(tmp_path: Path) -> None:
     assert [int(x[0]) for x in held] == [10, 999, 30]
 
 
+def test_getcoliter_comparison_advances_the_iterator(tmp_path: Path) -> None:
+    tb = _create_sample_table(tmp_path / "compare.table", nrow=5)
+    values = tb.getcol("si", 0, 3, 2)
+    iterator = tb.getcoliter("si", 0, 3, 2)
+    assert all(values == iterator)
+    with pytest.raises(StopIteration):
+        next(iterator)
+
+    iterator = tb.getcoliter("si")
+    assert (iterator < 15).tolist() == [True]
+    np.testing.assert_array_equal(next(iterator), [20])
+    tb.done()
+
+
 def test_tablerow_get_put_and_lifecycle(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
