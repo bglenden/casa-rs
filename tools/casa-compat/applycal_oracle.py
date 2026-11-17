@@ -321,6 +321,9 @@ def run(root, native_bin):
             ('intersection', 'CALIBRATE_PHASE*&*WVR*'),
             ('state-range', f'{state_start}~{state_start+3}'),
             ('bounds', f'>{state_start}&<{state_start+3}'),
+            ('less-bounds-with-flag', f'<{state_start+4}'),
+            ('greater-bounds-with-flag', f'>{state_start+1}'),
+            ('bounds-with-flag', f'>{state_start}&<{state_start+4}'),
             ('parentheses', f'({state_start},{state_start+1})'),
             ('flagged-id', str(state_start+3)),
             ('literal-none', 'none'),
@@ -351,6 +354,7 @@ def run(root, native_bin):
             ('literal-none-uv', dict(uvrange='none')),
             ('literal-auto-intent', dict(intent='auto')),
             ('invalid-intent-logic', dict(intent=f'{state_start}&CALIBRATE_PHASE*')),
+            ('empty-intent-bound-union', dict(intent=f'>{state_start}&<{state_start+1},{state_start}')),
             ('trial-error', dict(uvrange='invalid', applymode='trial'))]:
         case('selection-'+name, arguments, input_vis=selection_source)
     return result

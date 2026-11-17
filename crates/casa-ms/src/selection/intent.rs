@@ -14,8 +14,9 @@ pub(super) fn resolve(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<i32>>
     for term in split(text, ',')? {
         let mut matching = vec![true; rows.len()];
         let atoms = split(term, '&')?;
+        let bounded = atoms.len() == 2 && atoms[0].starts_with('>') && atoms[1].starts_with('<');
         if atoms.len() > 1
-            && !(atoms.len() == 2 && atoms[0].starts_with('>') && atoms[1].starts_with('<'))
+            && !bounded
             && atoms
                 .iter()
                 .any(|atom| atom.starts_with(['<', '>']) || numeric_reference(atom))
@@ -32,6 +33,13 @@ pub(super) fn resolve(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<i32>>
             for (value, included) in matching.iter_mut().zip(mask) {
                 *value &= included;
             }
+        }
+        // MSStateGram checks combined bounds before adding other union terms;
+        // numeric ID lists alone may ignore unavailable IDs.
+        if bounded && !matching.iter().any(|value| *value) {
+            return Err(MsError::VersionError(format!(
+                "intent bounds {term:?} did not match any STATE rows"
+            )));
         }
         for (value, included) in selected.iter_mut().zip(matching) {
             *value |= included;
@@ -98,13 +106,19 @@ fn atom_mask(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<bool>> {
     }
     if let Some(bound) = text.strip_prefix('<') {
         let bound = number(bound)?;
-        return Ok((0..rows.len())
-            .map(|index| (index as i64) < bound)
+        return Ok(rows
+            .iter()
+            .enumerate()
+            .map(|(index, (_, flagged))| !*flagged && (index as i64) < bound)
             .collect());
     }
     if let Some(bound) = text.strip_prefix('>') {
         let bound = number(bound)?;
-        return Ok((0..rows.len()).map(|index| index as i64 > bound).collect());
+        return Ok(rows
+            .iter()
+            .enumerate()
+            .map(|(index, (_, flagged))| !*flagged && index as i64 > bound)
+            .collect());
     }
     if decimal(text.trim()) {
         let id = number(text)?;
@@ -201,6 +215,8 @@ mod tests {
             (">0&<2", vec![1]),
             ("(0,1)", vec![0, 1]),
             ("0,999", vec![0]),
+            ("<3", vec![0, 1]),
+            (">0", vec![1]),
         ] {
             assert_eq!(resolve(text, &rows).unwrap(), expected, "{text}");
         }
@@ -214,5 +230,12 @@ mod tests {
         ] {
             assert!(resolve(text, &rows).is_err(), "{text}");
         }
+    }
+
+    #[test]
+    fn empty_combined_bound_rejects_even_with_a_matching_union_member() {
+        let rows = vec![("A".into(), false), ("B".into(), false)];
+        assert!(resolve(">0&<1,0", &rows).is_err());
+        assert_eq!(resolve(">0&<2,0", &rows).unwrap(), [0, 1]);
     }
 }
