@@ -10229,7 +10229,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <h4 id="fluxscale-parameter-implementation">fluxscale parameter implementation<a class="headerlink" href="#fluxscale-parameter-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.</p>
-<p>Audit baseline: <code>50182477cabf77d75728015a6d40bdb2559eebd5</code>. Status counts: Default only: 0, Implemented: 15, Not implemented: 0, Partial: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>53a1ca6722ae5758f9598487be2395d8b6212205</code>. Status counts: Default only: 0, Implemented: 15, Not implemented: 0, Partial: 0, Unassessed: 0.</p>
 <p>Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.</p>
 <table>
 <thead>
@@ -10256,7 +10256,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>caltable</code> → <code>caltable</code></td>
 <td>Implemented</td>
-<td>G/T Jones complex, single-channel gains; flagged samples and unequal intervals, undefined/type errors and duplicate timestamps. <a href="#fluxscale-behavior-estimate">estimate</a><br>Catalog domain: <code>path</code> (calibration_table)</td>
+<td>G/T Jones complex, single-channel gains; flagged samples and unequal intervals, undefined/type errors and duplicate timestamps. Sorted read-only big-endian inputs and rows published beyond stale table.dat counts retain complete products. <a href="#fluxscale-behavior-estimate">estimate</a><br>Catalog domain: <code>path</code> (calibration_table)</td>
 <td><a href="#fluxscale-evidence-oracle">oracle</a></td>
 </tr>
 <tr>
@@ -10389,7 +10389,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h4 id="fluxscale-deviations-and-unfinished-work">fluxscale deviations and unfinished work<a class="headerlink" href="#fluxscale-deviations-and-unfinished-work" title="Permanent link">&para;</a></h4>
 <h5 id="safe-spectral-orders-previously-agreed">safe-spectral-orders: Previously agreed<a class="headerlink" href="#safe-spectral-orders-previously-agreed" title="Permanent link">&para;</a></h5>
 <ul>
-<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/docs/CASA%20%28C%2B%2B%29%20bugs.md#fluxscale-negative-and-underdetermined-spectral-fit-orders">Fluxscale negative and underdetermined spectral-fit orders</a></li>
+<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/docs/CASA%20%28C%2B%2B%29%20bugs.md#fluxscale-negative-and-underdetermined-spectral-fit-orders">Fluxscale negative and underdetermined spectral-fit orders</a></li>
 <li>Inputs: Negative order, too few valid windows for requested degree, or an exactly determined fit.</li>
 <li>CASA: Can segfault, fit the wrong degree, return unstable coefficients/negative covariance, or invent roundoff uncertainty.</li>
 <li>casa-rs: Use advertised negative-order fallback; cap degree at nvalid-1, pad requested vectors and retain zero residual uncertainty at zero residual degrees of freedom.</li>
@@ -10400,7 +10400,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <h5 id="initialized-history-and-empty-map-previously-agreed">initialized-history-and-empty-map: Previously agreed<a class="headerlink" href="#initialized-history-and-empty-map-previously-agreed" title="Permanent link">&para;</a></h5>
 <ul>
-<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/docs/CASA%20%28C%2B%2B%29%20bugs.md#fluxscale-history-can-contain-uninitialized-object-identifiers">Fluxscale history can contain uninitialized object identifiers</a></li>
+<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/docs/CASA%20%28C%2B%2B%29%20bugs.md#fluxscale-history-can-contain-uninitialized-object-identifiers">Fluxscale history can contain uninitialized object identifiers</a></li>
 <li>Inputs: Successful MS HISTORY writes or refspwmap=[].</li>
 <li>CASA: Does not initialize OBJECT_ID; indexes an empty map and segfaults.</li>
 <li>casa-rs: Initialize OBJECT_ID=0 and treat the empty map as identity.</li>
@@ -10411,7 +10411,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <h5 id="preserve-scientific-files-previously-agreed">preserve-scientific-files: Previously agreed<a class="headerlink" href="#preserve-scientific-files-previously-agreed" title="Permanent link">&para;</a></h5>
 <ul>
-<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/docs/CASA%20%28C%2B%2B%29%20bugs.md#fluxscale-listfile-can-overwrite-scientific-table-files">Fluxscale listfile can overwrite scientific table files</a></li>
+<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/docs/CASA%20%28C%2B%2B%29%20bugs.md#fluxscale-listfile-can-overwrite-scientific-table-files">Fluxscale listfile can overwrite scientific table files</a></li>
 <li>Inputs: A listing path inside the input MS, input caltable or output product, or a failed listing stream.</li>
 <li>CASA: Can truncate a scientific table file or report success despite an unchecked stream failure.</li>
 <li>casa-rs: Refuse overlapping paths before mutation and report listing write failures.</li>
@@ -10424,20 +10424,20 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p>Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.</p>
 <p><a id="fluxscale-evidence-oracle"></a></p>
 <h5 id="oracle">oracle<a class="headerlink" href="#oracle" title="Permanent link">&para;</a></h5>
-<p><strong>Scientific, Python API/state and interchange comparison — passed.</strong> 70 cases passed, zero comparison failures; all 15 owned parameters have implemented behavior. 67 same-argument public-Python cases on the same CASA-made G/T gains, plus 3 documented spectral-order corrections checked against identifiable CASA fits; captured original/selector fixtures and independent C++ readback.</p>
+<p><strong>Scientific, Python API/state and interchange comparison — passed.</strong> 73 cases passed, zero comparison failures; all 15 owned parameters have implemented behavior. 70 same-argument public-Python cases on the same CASA-made G/T gains, plus 3 documented spectral-order corrections checked against identifiable CASA fits; captured original/selector fixtures, read-only big-endian inputs, published rows beyond stale control counts, and independent C++ readback.</p>
 <ul>
-<li><a href="https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/tools/casa-compat/fluxscale_oracle.py">tools/casa-compat/fluxscale_oracle.py</a></li>
-<li><a href="https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/crates/casa-calibration/tests/fluxscale_casa_fixture.rs">crates/casa-calibration/tests/fluxscale_casa_fixture.rs</a></li>
-<li>Revision: <code>8d4d6a51316d7566b5ab4c4758f615363424ee19</code>; CASA: <code>6.7.6.14</code>.</li>
-<li>Command: <code>python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/final-orders --native-bin target/calibration-990/build/release/calibrate</code>.</li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/tools/casa-compat/fluxscale_oracle.py">tools/casa-compat/fluxscale_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/crates/casa-calibration/tests/fluxscale_casa_fixture.rs">crates/casa-calibration/tests/fluxscale_casa_fixture.rs</a></li>
+<li>Revision: <code>53a1ca6722ae5758f9598487be2395d8b6212205</code>; CASA: <code>6.7.6.14</code>.</li>
+<li>Command: <code>python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/io-final --native-bin target/calibration-990/build/release/calibrate</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/fluxscale-20261117.json</code>.</li>
 </ul>
 <p><a id="fluxscale-evidence-performance"></a></p>
 <h5 id="performance">performance<a class="headerlink" href="#performance" title="Permanent link">&para;</a></h5>
-<p><strong>Matched public-Python performance — measured.</strong> Full output is 6.3–6.5× faster and incremental output 25.2–27.0× faster than CASA across warm/cold policies. Estimation takes about 7 ms; table I/O dominates, with CPU decoding/serialization and the native reader/rewrite references reported explicitly. Alternating same-host, one-worker warm/cold full and incremental calls, equal validated products; separate fresh imports and peak memory, estimator phases and native table-reader floor.</p>
+<p><strong>Matched public-Python performance — measured.</strong> Full output takes 0.206–0.230 s versus CASA 5.738–5.834 s (25.4–27.8× faster), with about 50 MB native peak RSS. Input decoding remains materially CPU-bound; performance acceptance stays open on #990. Alternating same-host, one-worker warm/cold full and incremental calls, equal validated products; separate fresh imports and peak memory, estimator phases and native table-reader floor.</p>
 <ul>
-<li><a href="https://github.com/bglenden/casa-rs/blob/50182477cabf77d75728015a6d40bdb2559eebd5/tools/perf/calibrate/fluxscale.py">tools/perf/calibrate/fluxscale.py</a></li>
-<li>Revision: <code>e7f859f76413872af29fb54a28149e81bcab65e6</code>; CASA: <code>6.7.6.14</code>.</li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/53a1ca6722ae5758f9598487be2395d8b6212205/tools/perf/calibrate/fluxscale.py">tools/perf/calibrate/fluxscale.py</a></li>
+<li>Revision: <code>53a1ca6722ae5758f9598487be2395d8b6212205</code>; CASA: <code>6.7.6.14</code>.</li>
 <li>Command: <code>python tools/perf/calibrate/fluxscale.py --vis &lt;oracle-ms&gt; --gain &lt;oracle-gain&gt; --native-bin &lt;release-calibrate&gt; --repeat-input 1000 --repeats 5 --cache warm|cold --out &lt;receipt&gt;</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/fluxscale-performance-20261117.json</code>.</li>
 </ul>
