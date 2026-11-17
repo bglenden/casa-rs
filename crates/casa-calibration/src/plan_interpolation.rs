@@ -33,6 +33,60 @@ pub enum ApplyInterpolationMode {
 }
 
 impl ApplyInterpolationMode {
+    pub(crate) fn parse_casa(value: &str) -> Result<Self, String> {
+        use crate::{FrequencyInterpolation as F, TimeInterpolation as T};
+        let (time, frequency) = value.split_once(',').unwrap_or((value, ""));
+        let time = if time.is_empty() { "linear" } else { time };
+        if time.contains("aips") || frequency.contains("aips") {
+            return Err("aipslin interpolation is deprecated in CASA".to_string());
+        }
+        let curve = if time.contains("nearest") {
+            T::Nearest
+        } else if time.contains("linear") {
+            T::Linear
+        } else if time.contains("cubic") {
+            T::Cubic
+        } else if time.contains("spline") {
+            T::Spline
+        } else {
+            return Err(format!("unknown time interpolation {time:?}"));
+        };
+        match value {
+            "" | "linear" => return Ok(Self::Linear),
+            "nearest" => return Ok(Self::Nearest),
+            "nearest,linear" => return Ok(Self::NearestLinear),
+            _ => {}
+        }
+        let frequency_curve = if frequency.contains("nearest") {
+            F::Nearest
+        } else if frequency.contains("cubic") && !frequency.contains("linear") {
+            F::Cubic
+        } else if frequency.contains("spline") && !frequency.contains("linear") {
+            F::Spline
+        } else {
+            F::Linear
+        };
+        let frequency_curve = if frequency.contains("flag") {
+            match frequency_curve {
+                F::Nearest => F::NearestFlag,
+                F::Linear => F::LinearFlag,
+                F::Cubic => F::CubicFlag,
+                F::Spline => F::SplineFlag,
+                _ => unreachable!("base interpolation"),
+            }
+        } else {
+            frequency_curve
+        };
+        Ok(Self::Casa {
+            time: curve,
+            frequency: frequency_curve,
+            per_observation: time.contains("perobs"),
+            per_scan: time.contains("perscan"),
+            phase_delay: time.contains("PD"),
+            relative_frequency: frequency.contains("rel"),
+        })
+    }
+
     /// Returns `true` when the mode depends on frequency-grid metadata.
     pub fn uses_frequency_axis(self) -> bool {
         matches!(self, Self::NearestLinear | Self::Casa { .. })

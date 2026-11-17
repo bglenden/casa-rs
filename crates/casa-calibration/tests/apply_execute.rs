@@ -15,6 +15,65 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 #[test]
+fn spline_time_apply_matches_the_closed_form_natural_curve() {
+    let dir = TempDir::new().unwrap();
+    let path = common::create_apply_fixture_ms(dir.path(), false);
+    let rows = [(85., 1.), (95., 2.), (105., 0.5), (115., 1.25)]
+        .into_iter()
+        .flat_map(|(time_seconds, amplitude)| {
+            [0, 1].map(|antenna_id| common::SyntheticGainSolutionRow {
+                time_seconds,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id,
+                gains: vec![casa_types::Complex32::new(amplitude, 0.); 2],
+                flags: vec![false; 2],
+            })
+        })
+        .collect::<Vec<_>>();
+    let table =
+        common::create_apply_gain_caltable(&dir.path().join("spline.gcal"), &["CAL"], &rows);
+    let mut spec = ApplyCalibrationTableSpec::new(table);
+    spec.interp = casa_calibration::ApplyInterpolationMode::Casa {
+        time: casa_calibration::TimeInterpolation::Spline,
+        frequency: casa_calibration::FrequencyInterpolation::Linear,
+        per_observation: false,
+        per_scan: false,
+        phase_delay: false,
+        relative_frequency: false,
+    };
+    execute_apply_from_path(
+        &path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new().spw(&[0]),
+            apply_mode: ApplyMode::CalFlag,
+            parang: false,
+            calibration_tables: vec![spec],
+        },
+    )
+    .unwrap();
+    let ms = MeasurementSet::open(&path).unwrap();
+    let cell = |column| {
+        ms.main_table()
+            .cell_accessor(0, column)
+            .unwrap()
+            .array()
+            .unwrap()
+    };
+    let (ArrayValue::Complex32(data), ArrayValue::Complex32(corrected)) =
+        (cell("DATA"), cell("CORRECTED_DATA"))
+    else {
+        panic!("complex data");
+    };
+    // The natural spline through [1,2,1/2,5/4] has middle half-knot 203/160.
+    // This closed form is independent of the shared interpolation solver.
+    let gain = 203_f32 / 160.;
+    for (input, output) in data.iter().zip(corrected) {
+        assert!((*output - *input / gain.powi(2)).norm() < 1e-6);
+    }
+}
+
+#[test]
 fn default_gainfield_interpolates_across_the_calibration_fields() {
     let dir = TempDir::new().unwrap();
     let path = common::create_apply_fixture_ms(dir.path(), false);

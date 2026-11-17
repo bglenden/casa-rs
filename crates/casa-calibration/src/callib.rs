@@ -462,28 +462,12 @@ fn parse_interp(
     tinterp: Option<&str>,
     finterp: Option<&str>,
 ) -> Result<ApplyInterpolationMode, String> {
-    let tinterp = tinterp
-        .map(strip_quotes)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let finterp = finterp
-        .map(strip_quotes)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let effective_tinterp = if tinterp.is_empty() {
-        "linear"
+    let time = tinterp.map(strip_quotes).unwrap_or_default();
+    let frequency = finterp.map(strip_quotes).unwrap_or_default();
+    if frequency.is_empty() {
+        ApplyInterpolationMode::parse_casa(&time)
     } else {
-        &tinterp
-    };
-
-    match (effective_tinterp, finterp.as_str()) {
-        ("nearest", "") => Ok(ApplyInterpolationMode::Nearest),
-        ("linear", "") => Ok(ApplyInterpolationMode::Linear),
-        ("nearest", "linear") => Ok(ApplyInterpolationMode::NearestLinear),
-        _ => Err(format!(
-            "unsupported interpolation combination tinterp={effective_tinterp:?}, finterp={:?}",
-            finterp
-        )),
+        ApplyInterpolationMode::parse_casa(&format!("{time},{frequency}"))
     }
 }
 
