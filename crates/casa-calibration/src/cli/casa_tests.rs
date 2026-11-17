@@ -151,12 +151,10 @@ fn applycal_with_nothing_to_apply_is_refused() {
         "gaintable",
     );
     assert!(message.contains("nothing to apply"), "{message}");
-    // The parallactic-angle correction alone is not implemented yet.
-    let message = refused(
-        casa("applycal", json!({"vis": "d.ms", "parang": true})),
-        "parang",
-    );
-    assert!(message.contains("#979"), "{message}");
+    // PJones is a complete apply term even without a supplied table.
+    let request = apply(json!({"vis": "d.ms", "parang": true}));
+    assert!(request.parang);
+    assert!(request.calibration_tables.is_empty());
 }
 
 #[test]

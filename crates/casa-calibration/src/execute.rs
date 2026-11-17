@@ -64,6 +64,7 @@ mod gain_validity;
 use gain_validity::correcting_gain;
 mod bandpass;
 mod channels;
+mod parang;
 mod weights;
 use channels::{DataChannelGrid, apply_row};
 
@@ -483,9 +484,9 @@ pub enum ApplyExecutionError {
         correlation_types: Vec<String>,
     },
 
-    /// `parang` currently supports only circular-feed correlation layouts.
+    /// Linear-feed `parang` requires all four correlation products.
     #[error(
-        "parallactic-angle application currently supports only circular-feed layouts for DATA_DESC_ID {data_desc_id}: {correlation_types:?}"
+        "parallactic-angle application requires circular-feed correlations or the full XX/XY/YX/YY linear-feed layout for DATA_DESC_ID {data_desc_id}: {correlation_types:?}"
     )]
     UnsupportedParallacticAngleBasis {
         /// Data description id.
@@ -2316,18 +2317,17 @@ fn apply_row_all_channels(
             row.data_spw_id,
         )?;
 
-        for corr_index in 0..data.shape()[0] {
-            let correction = parallactic_angle_gain(
-                correlation_types[corr_index],
-                row.data_desc_id,
-                correlation_types,
-                ant1_feed_pa,
-                ant2_feed_pa,
-            )?;
-            for chan_index in 0..data.shape()[1] {
-                corrected[[corr_index, chan_index]] /= correction;
-            }
+        parang::apply(
+            row.data_desc_id,
+            correlation_types,
+            ant1_feed_pa,
+            ant2_feed_pa,
+            &mut corrected,
+        )?;
+        if plan.apply_mode.writes_flags() {
+            newly_flagged_samples += parang::propagate_flags(correlation_types, &mut flags);
         }
+
         if let Some(profile) = compute_profile.as_deref_mut() {
             ApplyRowComputeProfile::add_elapsed(
                 &mut profile.parallactic_angle_ns,

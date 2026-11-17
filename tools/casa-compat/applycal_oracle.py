@@ -110,16 +110,34 @@ def run(root, native_bin):
     if 'CORRECTED_DATA' in tool.colnames():
         tool.removecols(['CORRECTED_DATA'])
     tool.close()
+    polarized_sources = {}
+    for basis, correlations in [('linear', 'XX XY YX YY'), ('circular', 'RR RL LR LL')]:
+        path = root/('source-'+basis+'.ms')
+        make_cal_ms(str(path), stokes=correlations)
+        tool.open(str(path), nomodify=False)
+        data = tool.getcol('DATA')
+        for corr, value in enumerate([1.+.2j, .3+.4j, -.2+.5j, 2.-.1j]):
+            data[corr, :, :] = value*(np.arange(data.shape[1])+1)[:, None]
+        tool.putcol('DATA', data)
+        flags = tool.getcol('FLAG')
+        flags[1, 2, 0] = True
+        flags[2, 3, 1] = True
+        tool.putcol('FLAG', flags)
+        if 'CORRECTED_DATA' in tool.colnames():
+            tool.removecols(['CORRECTED_DATA'])
+        tool.close()
+        polarized_sources[basis] = path
+
     result = dict(casa_version=casa.version_string(), signature=str(reference), cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
-    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False):
+    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None):
         records, paths = {}, {}
         before_gain = snapshot(gain)
         for engine, module in [('casa', casa), ('native', native)]:
             path = root/f'{name}.{engine}.ms'
             paths[engine] = path
-            copy_ms(source, path, endian)
+            copy_ms(input_vis or source, path, endian)
             if descending_ms:
                 tool.open(str(path/'SPECTRAL_WINDOW'), nomodify=False)
                 tool.putcol('CHAN_FREQ', tool.getcol('CHAN_FREQ')[::-1, :])
@@ -165,7 +183,7 @@ def run(root, native_bin):
                         value = module.applycal(**arguments)
                 record = dict(value=plain(value))
             except (ValueError, TypeError, RuntimeError, OSError) as error:
-                record = dict(error=type(error).__name__, message=str(error))
+                record = dict(error=type(error).__name__, exception_bases=[kind.__name__ for kind in type(error).__mro__], message=str(error))
             finally:
                 if preload is not None:
                     os.environ['LD_PRELOAD'] = preload
@@ -193,6 +211,10 @@ def run(root, native_bin):
         def compare_return():
             assert records['casa'].get('value') == records['native'].get('value')
             assert ('error' in records['casa']) == ('error' in records['native']), records
+            if 'error' in records['casa']:
+                # casars.TaskExecutionError subclasses RuntimeError; callers'
+                # CASA exception handlers must still catch the native exception.
+                assert records['casa']['error'] in records['native']['exception_bases'], records
         def compare_history():
             left, right = records['casa']['history'], records['native']['history']
             assert len(left['TIME']) == len(right['TIME']), (len(left['TIME']), len(right['TIME']))
@@ -262,6 +284,9 @@ def run(root, native_bin):
         case('unavailable-'+mode, dict(applymode=mode), gain=unavailable, precorrected=True, weight_seed=(3., 2.), spectral_sigma=True)
     case('unavailable-new', gain=unavailable)
     case('parang-alone', dict(gaintable=[], parang=True))
+    for basis, input_vis in polarized_sources.items():
+        case('parang-'+basis, dict(gaintable=[], parang=True), input_vis=input_vis)
+        case('parang-'+basis+'-channels', dict(gaintable=[], parang=True, spw='0:0~6^2'), input_vis=input_vis, precorrected=True)
     return result
 
 
