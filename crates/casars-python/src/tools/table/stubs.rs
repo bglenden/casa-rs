@@ -15,17 +15,6 @@ use super::{PyTableTool, stub};
 )]
 impl PyTableTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (expr, prefix = None, showtaql = None), text_signature = "($self, expr, prefix='using style base0, endincl, fortranorder', showtaql=False)")]
-    fn calc(
-        &self,
-        expr: &Bound<'_, PyAny>,
-        prefix: Option<&Bound<'_, PyAny>>,
-        showtaql: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("calc")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (tablename, xmlfile), text_signature = "($self, tablename, xmlfile)")]
     fn fromASDM(
         &self,
@@ -68,25 +57,6 @@ impl PyTableTool {
         ack: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("fromfits")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (query = None, name = None, sortlist = None, columns = None, style = None), text_signature = "($self, query='String', name='', sortlist='', columns='', style='')")]
-    fn query(
-        &self,
-        query: Option<&Bound<'_, PyAny>>,
-        name: Option<&Bound<'_, PyAny>>,
-        sortlist: Option<&Bound<'_, PyAny>>,
-        columns: Option<&Bound<'_, PyAny>>,
-        style: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("query")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (taqlcommand = None), text_signature = "($self, taqlcommand='TaQL expression')")]
-    fn taql(&self, taqlcommand: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("taql")
     }
 
     /// Not yet implemented in casa-rs.

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use casa_tables::taql::{self, TaqlResult};
-use casa_tables::{ColumnSchema, Table, TableSchema};
+use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::measures::MeasuresProvider;
 use casa_types::*;
 
@@ -511,4 +511,173 @@ fn comments_in_query() {
         .query("# Select bright sources\nSELECT * WHERE flux > 24.0")
         .unwrap();
     assert_eq!(view.row_count(), 2);
+}
+
+#[test]
+fn using_style_flags_and_omitted_star_query() {
+    let mut table = catalog_table();
+    let stmt = taql::parse("using style base0, endincl, fortranorder SELECT WHERE flux > 20.0 ORDERBY NODUPLICATES category DESC").unwrap();
+    match &stmt {
+        taql::Statement::Select(s) => {
+            assert!(s.columns.is_empty());
+            assert!(s.order_distinct);
+            assert!(!s.style.is_one_based());
+            assert!(s.style.is_end_inclusive());
+            assert!(s.style.is_fortran_order());
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+    let res = taql::execute(&stmt, &mut table).unwrap();
+    match res {
+        TaqlResult::Select { row_indices, .. } => {
+            assert_eq!(row_indices.len(), 5);
+            let cats: Vec<String> = row_indices
+                .iter()
+                .map(
+                    |&r| match table.row_accessor().scalar_cell(r, "category").unwrap() {
+                        ScalarValue::String(s) => s.clone(),
+                        other => panic!("expected String category, got {other:?}"),
+                    },
+                )
+                .collect();
+            assert_eq!(cats, vec!["star", "quasar", "pulsar", "nebula", "galaxy"]);
+        }
+        other => panic!("expected Select result, got {other:?}"),
+    }
+}
+
+#[test]
+fn count_grouped_command_and_calc_evaluation() {
+    let table = catalog_table();
+    let stmt = taql::parse("COUNT(category) FROM ignored").unwrap();
+    let res = taql::exec::execute_readonly(&stmt, &table).unwrap();
+    match res {
+        TaqlResult::Materialized { table: out } => {
+            assert_eq!(out.row_count(), 5);
+            let cols: Vec<&str> = out
+                .schema()
+                .unwrap()
+                .columns()
+                .iter()
+                .map(|c| c.name())
+                .collect();
+            assert_eq!(cols, vec!["category", "_COUNT_"]);
+        }
+        other => panic!("expected Materialized count table, got {other:?}"),
+    }
+
+    let calc_stmt = taql::parse("CALC flux * 2.0 FROM mem").unwrap();
+    let taql::Statement::Calc(c) = calc_stmt else {
+        panic!("expected Calc");
+    };
+    let out = taql::evaluate_calc(&c, Some((std::path::Path::new("mem"), &table))).unwrap();
+    assert_eq!(out.values.len(), table.row_count());
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("disk.tab");
+    table.save(TableOptions::new(&path)).unwrap();
+    let sub_src = format!(
+        "using style base0, endincl, fortranorder CALC SUM([SELECT FROM \"{}\" GIVING [id]])",
+        path.display()
+    );
+    let taql::Statement::Calc(sub_calc) = taql::parse(&sub_src).unwrap() else {
+        panic!("expected Calc");
+    };
+    let sub_out = taql::evaluate_calc(&sub_calc, None).unwrap();
+    assert_eq!(sub_out.values.len(), 1);
+    match &sub_out.values[0] {
+        taql::eval::ExprValue::Float(v) => assert!((*v - 1225.0).abs() < 1e-6),
+        taql::eval::ExprValue::Int(v) => assert_eq!(*v, 1225),
+        other => panic!("unexpected sum output: {other:?}"),
+    }
+
+    // Subquery inside IN [...], aggregate subquery [SELECT GSUM(...) FROM ...],
+    // top-level SELECT ... GIVING [expr] refusal, and 0-row column validation.
+    let in_src = format!(
+        "CALC id IN [SELECT FROM \"{}\" WHERE id < 2 GIVING [id]] FROM \"{}\"",
+        path.display(),
+        path.display()
+    );
+    let taql::Statement::Calc(in_calc) = taql::parse(&in_src).unwrap() else {
+        panic!("expected Calc");
+    };
+    let in_out = taql::evaluate_calc(&in_calc, None).unwrap();
+    assert_eq!(in_out.values[0], taql::eval::ExprValue::Bool(true));
+    assert_eq!(in_out.values[1], taql::eval::ExprValue::Bool(true));
+    assert_eq!(in_out.values[2], taql::eval::ExprValue::Bool(false));
+
+    let gsum_src = format!("CALC [SELECT GSUM(id) FROM \"{}\"]", path.display());
+    let taql::Statement::Calc(gsum_calc) = taql::parse(&gsum_src).unwrap() else {
+        panic!("expected Calc");
+    };
+    let gsum_out = taql::evaluate_calc(&gsum_calc, None).unwrap();
+    match &gsum_out.values[0] {
+        taql::eval::ExprValue::Array(arr) => assert_eq!(arr.data.len(), 1),
+        other => panic!("expected Array from aggregate subquery, got {other:?}"),
+    }
+
+    let giving_top = taql::parse("SELECT FROM ignored GIVING [id]").unwrap();
+    assert!(taql::exec::execute_readonly(&giving_top, &table).is_err());
+
+    let empty = Table::with_schema(table.schema().unwrap().clone());
+    let taql::Statement::Calc(missing_col) = taql::parse("CALC no_such_col FROM e").unwrap() else {
+        panic!("expected Calc");
+    };
+    assert!(taql::evaluate_calc(&missing_col, Some((std::path::Path::new("e"), &empty))).is_err());
+    let taql::Statement::Calc(scalar_agg) = taql::parse("CALC SUM(id) FROM e").unwrap() else {
+        panic!("expected Calc");
+    };
+    assert!(taql::evaluate_calc(&scalar_agg, Some((std::path::Path::new("e"), &empty))).is_err());
+}
+
+#[test]
+fn insert_partial_columns_populates_defaults_and_leaves_var_arrays_undefined() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("si", PrimitiveType::Int32),
+        ColumnSchema::scalar("df", PrimitiveType::Float64),
+        ColumnSchema::scalar("ss", PrimitiveType::String),
+        ColumnSchema::array_fixed("fa", PrimitiveType::Float32, vec![2]),
+        ColumnSchema::array_variable("va", PrimitiveType::Float64, Some(1)),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+
+    // Partial column insert: omitted scalars + fixed arrays get zero/empty defaults;
+    // omitted variable-shape arrays stay undefined.
+    let ins_partial = taql::parse("INSERT INTO t (si, ss) VALUES (99, 'ins')").unwrap();
+    let res = taql::execute(&ins_partial, &mut table).unwrap();
+    assert!(matches!(res, TaqlResult::Insert { rows_inserted: 1 }));
+    assert_eq!(table.row_count(), 1);
+    assert_eq!(
+        table.row_accessor().scalar_cell(0, "si").unwrap(),
+        &ScalarValue::Int32(99)
+    );
+    assert_eq!(
+        table.row_accessor().scalar_cell(0, "df").unwrap(),
+        &ScalarValue::Float64(0.0)
+    );
+    assert_eq!(
+        table.row_accessor().scalar_cell(0, "ss").unwrap(),
+        &ScalarValue::String("ins".to_string())
+    );
+    match table.row_accessor().array_cell(0, "fa").unwrap() {
+        ArrayValue::Float32(arr) => {
+            assert_eq!(arr.shape(), &[2]);
+            assert_eq!(arr.iter().copied().collect::<Vec<_>>(), vec![0.0f32, 0.0]);
+        }
+        other => panic!("expected Float32 fixed array, got {other:?}"),
+    }
+    assert!(!table.is_cell_defined(0, "va").unwrap());
+
+    // Partial insert specifying fixed Float32 array from integer literal coerces to Float32.
+    let ins_arr = taql::parse("INSERT INTO t (si, fa) VALUES (7, [1, 2])").unwrap();
+    taql::execute(&ins_arr, &mut table).unwrap();
+    assert_eq!(table.row_count(), 2);
+    match table.row_accessor().array_cell(1, "fa").unwrap() {
+        ArrayValue::Float32(arr) => {
+            assert_eq!(arr.iter().copied().collect::<Vec<_>>(), vec![1.0f32, 2.0]);
+        }
+        other => panic!("expected coerced Float32 fixed array, got {other:?}"),
+    }
+    assert!(!table.is_cell_defined(1, "va").unwrap());
 }

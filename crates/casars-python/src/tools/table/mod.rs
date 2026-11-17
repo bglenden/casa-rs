@@ -28,6 +28,7 @@ mod description;
 mod housekeeping;
 mod keyword_value;
 mod new_column;
+mod query;
 mod read;
 mod registry;
 mod row;

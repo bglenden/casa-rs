@@ -396,68 +396,30 @@ impl From<&Value> for ExprValue {
 /// Convert a casacore `ArrayValue` (typed ndarray) into an `ExprValue::Array`.
 ///
 /// The flat data vector uses **column-major** (Fortran) order to match C++ casacore
-/// conventions, where the first dimension varies fastest. We use `as_slice_memory_order()`
-/// since casacore arrays are stored in Fortran layout.
+/// conventions, where the first dimension varies fastest. Transposing (`.t()`) and
+/// iterating in standard order yields column-major order regardless of whether the
+/// source `ArrayD` uses C or Fortran memory layout.
 fn array_value_to_expr(arr: &casa_types::ArrayValue) -> ExprValue {
     use casa_types::ArrayValue as AV;
     let shape: Vec<usize> = arr.shape().to_vec();
 
-    /// Iterate ndarray elements in storage (memory) order.
-    /// For Fortran-layout arrays (as used by casacore), this gives column-major order.
-    fn storage_order<T>(a: &ndarray::ArrayD<T>) -> &[T] {
-        a.as_slice_memory_order()
-            .expect("casacore arrays are always contiguous")
-    }
-
     let data: Vec<ExprValue> = match arr {
-        AV::Bool(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::Bool(*v))
-            .collect(),
-        AV::UInt8(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::Int(*v as i64))
-            .collect(),
-        AV::UInt16(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::Int(*v as i64))
-            .collect(),
-        AV::UInt32(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::Int(*v as i64))
-            .collect(),
-        AV::Int16(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::Int(*v as i64))
-            .collect(),
-        AV::Int32(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::Int(*v as i64))
-            .collect(),
-        AV::Int64(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::Int(*v))
-            .collect(),
-        AV::Float32(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::Float(*v as f64))
-            .collect(),
-        AV::Float64(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::Float(*v))
-            .collect(),
-        AV::Complex32(a) => storage_order(a)
+        AV::Bool(a) => a.t().iter().map(|v| ExprValue::Bool(*v)).collect(),
+        AV::UInt8(a) => a.t().iter().map(|v| ExprValue::Int(*v as i64)).collect(),
+        AV::UInt16(a) => a.t().iter().map(|v| ExprValue::Int(*v as i64)).collect(),
+        AV::UInt32(a) => a.t().iter().map(|v| ExprValue::Int(*v as i64)).collect(),
+        AV::Int16(a) => a.t().iter().map(|v| ExprValue::Int(*v as i64)).collect(),
+        AV::Int32(a) => a.t().iter().map(|v| ExprValue::Int(*v as i64)).collect(),
+        AV::Int64(a) => a.t().iter().map(|v| ExprValue::Int(*v)).collect(),
+        AV::Float32(a) => a.t().iter().map(|v| ExprValue::Float(*v as f64)).collect(),
+        AV::Float64(a) => a.t().iter().map(|v| ExprValue::Float(*v)).collect(),
+        AV::Complex32(a) => a
+            .t()
             .iter()
             .map(|v| ExprValue::Complex(Complex64::new(v.re as f64, v.im as f64)))
             .collect(),
-        AV::Complex64(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::Complex(*v))
-            .collect(),
-        AV::String(a) => storage_order(a)
-            .iter()
-            .map(|v| ExprValue::String(v.clone()))
-            .collect(),
+        AV::Complex64(a) => a.t().iter().map(|v| ExprValue::Complex(*v)).collect(),
+        AV::String(a) => a.t().iter().map(|v| ExprValue::String(v.clone())).collect(),
     };
     ExprValue::Array(ArrayValue { shape, data })
 }
@@ -519,9 +481,18 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlEr
             let mut found = false;
             for v in values {
                 let item = eval_expr(v, ctx)?;
-                if val == item {
-                    found = true;
-                    break;
+                match item {
+                    ExprValue::Array(arr) => {
+                        if arr.data.iter().any(|elem| elem == &val) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    other if val == other => {
+                        found = true;
+                        break;
+                    }
+                    _ => {}
                 }
             }
             Ok(ExprValue::Bool(if *negated { !found } else { found }))
@@ -732,7 +703,7 @@ fn eval_column_ref(col_ref: &ColumnRef, ctx: &EvalContext<'_>) -> Result<ExprVal
     }
 }
 
-fn eval_unary(op: UnaryOp, val: ExprValue) -> Result<ExprValue, TaqlError> {
+pub(super) fn eval_unary(op: UnaryOp, val: ExprValue) -> Result<ExprValue, TaqlError> {
     if val.is_null() {
         return Ok(ExprValue::Null);
     }
@@ -763,7 +734,11 @@ fn eval_unary(op: UnaryOp, val: ExprValue) -> Result<ExprValue, TaqlError> {
     }
 }
 
-fn eval_binary(op: BinaryOp, lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue, TaqlError> {
+pub(super) fn eval_binary(
+    op: BinaryOp,
+    lhs: ExprValue,
+    rhs: ExprValue,
+) -> Result<ExprValue, TaqlError> {
     // NULL propagation for all operators
     if lhs.is_null() || rhs.is_null() {
         return Ok(ExprValue::Null);
@@ -992,22 +967,16 @@ fn like_match_recursive(text: &[u8], pattern: &[u8]) -> bool {
 
 /// Convert a user-supplied index to a 0-based index, respecting [`IndexStyle`].
 ///
-/// - **Glish** (1-based): subtract 1.
-/// - **Python** (0-based): use as-is. Negative indices count from end.
+/// - `one_based` (Glish/`base1`): subtract 1 (negative indices count from end).
+/// - `0-based` (Python/`base0`): use as-is (negative indices count from end).
 fn to_zero_based(idx: i64, len: usize, style: ast::IndexStyle) -> Result<usize, TaqlError> {
     let len_i = len as i64;
-    let actual = match style {
-        ast::IndexStyle::Glish => {
-            // 1-based: 1 → 0, negative counts from end
-            if idx < 0 { len_i + idx } else { idx - 1 }
-        }
-        ast::IndexStyle::Python => {
-            if idx < 0 {
-                len_i + idx
-            } else {
-                idx
-            }
-        }
+    let actual = if idx < 0 {
+        len_i + idx
+    } else if style.is_one_based() {
+        idx - 1
+    } else {
+        idx
     };
     if actual < 0 || actual >= len_i {
         return Err(TaqlError::TypeError {
@@ -1031,73 +1000,67 @@ fn resolve_slice(
             message: "slice step cannot be zero".to_string(),
         });
     }
+    if dim_len == 0 {
+        return Ok(Vec::new());
+    }
     let len_i = dim_len as i64;
-    match style {
-        ast::IndexStyle::Glish => {
-            // 1-based inclusive: start defaults to 1, end defaults to len
-            let s = start.unwrap_or(1);
-            let e = end.unwrap_or(len_i);
-            let s0 = if s < 0 { len_i + s } else { s - 1 };
-            let e0 = if e < 0 { len_i + e } else { e - 1 };
-            let mut result = Vec::new();
-            if step > 0 {
-                let mut i = s0;
-                while i <= e0 && i < len_i {
-                    if i >= 0 {
-                        result.push(i as usize);
-                    }
-                    i += step;
-                }
-            } else {
-                let mut i = s0;
-                while i >= e0 && i >= 0 {
-                    if i < len_i {
-                        result.push(i as usize);
-                    }
-                    i += step;
-                }
+    let offset = if style.is_one_based() { 1 } else { 0 };
+    let to_idx = |v: i64| if v < 0 { len_i + v } else { v - offset };
+
+    let mut result = Vec::new();
+    if style.is_end_inclusive() {
+        if step > 0 {
+            let mut i = start.map_or(0, to_idx);
+            if i < 0 {
+                let hops = (-i + step - 1) / step;
+                i += hops * step;
             }
-            Ok(result)
+            let e0 = end.map_or(len_i - 1, |e| to_idx(e).min(len_i - 1));
+            while i <= e0 {
+                result.push(i as usize);
+                i += step;
+            }
+        } else {
+            let mut i = start.map_or(len_i - 1, to_idx);
+            if i >= len_i {
+                let neg_step = -step;
+                let hops = (i - (len_i - 1) + neg_step - 1) / neg_step;
+                i += hops * step;
+            }
+            let e0 = end.map_or(0, |e| to_idx(e).max(0));
+            while i >= e0 {
+                result.push(i as usize);
+                i += step;
+            }
         }
-        ast::IndexStyle::Python => {
-            // 0-based exclusive end: start defaults to 0, end defaults to len
-            let s = start.unwrap_or(if step > 0 { 0 } else { len_i - 1 });
-            let e = end.unwrap_or(if step > 0 { len_i } else { -len_i - 1 });
-            let s0 = if s < 0 {
-                (len_i + s).max(0)
-            } else {
-                s.min(len_i)
-            };
-            let e0 = if e < 0 {
-                (len_i + e).max(-1)
-            } else {
-                e.min(len_i)
-            };
-            let mut result = Vec::new();
-            if step > 0 {
-                let mut i = s0;
-                while i < e0 {
-                    result.push(i as usize);
-                    i += step;
-                }
-            } else {
-                let mut i = s0;
-                while i > e0 {
-                    result.push(i as usize);
-                    i += step;
-                }
-            }
-            Ok(result)
+    } else if step > 0 {
+        let s0 = start.map_or(0, |s| to_idx(s).clamp(0, len_i));
+        let e0 = end.map_or(len_i, |e| to_idx(e).clamp(0, len_i));
+        let mut i = s0;
+        while i < e0 {
+            result.push(i as usize);
+            i += step;
+        }
+    } else {
+        let s0 = start.map_or(len_i - 1, |s| to_idx(s).clamp(-1, len_i - 1));
+        let e0 = end.map_or(-1, |e| to_idx(e).clamp(-1, len_i - 1));
+        let mut i = s0;
+        while i > e0 {
+            result.push(i as usize);
+            i += step;
         }
     }
+    Ok(result)
 }
 
 /// Evaluate array indexing/slicing with style-aware offset.
 ///
 /// Supports N-dimensional arrays with single-element access and slicing.
+/// When `!ctx.style.is_fortran_order()` (`CORDER` / `PYTHON`), index positions
+/// map in reverse order (`indices[0]` → innermost-last Fortran axis).
 ///
 /// C++ reference: `TableExprNodeArrayPart`.
-fn eval_array_index(
+pub(super) fn eval_array_index(
     arr: &ArrayValue,
     indices: &[ast::IndexElement],
     ctx: &EvalContext<'_>,
@@ -1105,23 +1068,27 @@ fn eval_array_index(
     let ndim = arr.shape.len();
 
     // If fewer indices than dimensions, remaining dims are taken in full.
-    // If more indices than dimensions for a 1-D array, allow as flat access.
-    if indices.len() > ndim && ndim != 1 {
+    if indices.len() > ndim {
         return Err(TaqlError::TypeError {
             message: format!(
-                "too many indices ({}) for {}-dimensional array",
+                "#indices mismatches array dimensionality ({} for {}-dimensional array)",
                 indices.len(),
                 ndim
             ),
         });
     }
 
+    let fortran_order = ctx.style.is_fortran_order();
+    let index_for_dim = |dim: usize| -> Option<&ast::IndexElement> {
+        let user_pos = if fortran_order { dim } else { ndim - 1 - dim };
+        indices.get(user_pos)
+    };
+
     // Resolve each index dimension to a list of positions.
     let mut dim_indices: Vec<Vec<usize>> = Vec::with_capacity(ndim);
-    for dim in 0..ndim {
-        let dim_len = arr.shape[dim];
-        if dim < indices.len() {
-            match &indices[dim] {
+    for (dim, &dim_len) in arr.shape.iter().enumerate() {
+        if let Some(elem) = index_for_dim(dim) {
+            match elem {
                 ast::IndexElement::Single(expr) => {
                     let val = eval_expr(expr, ctx)?;
                     let idx = val.to_int()?;
@@ -1150,14 +1117,20 @@ fn eval_array_index(
         }
     }
 
-    // Compute output shape: dims with >1 element remain; dims with 1 element are squeezed.
-    // But only squeeze if the user gave a Single index for that dim.
+    // Compute output shape: dims with Single index are squeezed.
     let mut result_shape = Vec::new();
     for (dim, idxs) in dim_indices.iter().enumerate() {
-        let is_single = dim < indices.len() && matches!(indices[dim], ast::IndexElement::Single(_));
+        let is_single = matches!(index_for_dim(dim), Some(ast::IndexElement::Single(_)));
         if !is_single {
             result_shape.push(idxs.len());
         }
+    }
+
+    if dim_indices.iter().any(Vec::is_empty) {
+        return Ok(ExprValue::Array(ArrayValue {
+            shape: result_shape,
+            data: Vec::new(),
+        }));
     }
 
     // Collect elements using column-major (Fortran) traversal of the index
@@ -1194,8 +1167,8 @@ fn eval_array_index(
         }
     }
 
-    // If the result is a scalar (all dims squeezed), return the single element.
-    if result_shape.is_empty() || result_shape.iter().all(|&d| d == 1) {
+    // If the result is a scalar (all dims indexed with Single subscripts), return the single element.
+    if result_shape.is_empty() {
         if let Some(val) = result_data.into_iter().next() {
             return Ok(val);
         }

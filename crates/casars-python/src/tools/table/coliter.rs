@@ -150,6 +150,9 @@ pub(super) fn create(
         let mut root = open.root();
         synchronize_root(&mut root)?;
         for column in &columns {
+            if !open.column_allowed(column) {
+                return Err(Fail::Runtime(format!("column \"{column}\" does not exist")));
+            }
             let schema = root
                 .table
                 .schema()

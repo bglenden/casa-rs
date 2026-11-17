@@ -58,25 +58,41 @@ impl<'src> Parser<'src> {
                 Statement::Select(s)
             }
             Some(Token::Count) => {
-                // COUNT SELECT ... — returns row count of a SELECT.
                 self.lexer.next_token(); // consume COUNT
-                if self.lexer.peek() != Some(&Token::Select) {
-                    return Err(TaqlError::unexpected_end("expected SELECT after COUNT"));
+                if self.lexer.peek() == Some(&Token::Select) {
+                    let mut s = self.parse_select()?;
+                    s.style = style;
+                    Statement::CountSelect(s)
+                } else {
+                    Statement::Count(self.parse_count(style)?)
                 }
-                let mut s = self.parse_select()?;
-                s.style = style;
-                Statement::CountSelect(s)
             }
-            Some(Token::Update) => Statement::Update(self.parse_update()?),
-            Some(Token::Insert) => Statement::Insert(self.parse_insert()?),
-            Some(Token::Delete) => Statement::Delete(self.parse_delete()?),
-            Some(Token::Calc) => Statement::Calc(self.parse_calc()?),
+            Some(Token::Update) => {
+                let mut u = self.parse_update()?;
+                u.style = style;
+                Statement::Update(u)
+            }
+            Some(Token::Insert) => {
+                let mut ins = self.parse_insert()?;
+                ins.style = style;
+                Statement::Insert(ins)
+            }
+            Some(Token::Delete) => {
+                let mut del = self.parse_delete()?;
+                del.style = style;
+                Statement::Delete(del)
+            }
+            Some(Token::Calc) => {
+                let mut c = self.parse_calc()?;
+                c.style = style;
+                Statement::Calc(c)
+            }
             Some(Token::Create) => Statement::CreateTable(self.parse_create_table()?),
             Some(Token::Drop) => {
                 // DROP TABLE or DROP COLUMN (but DROP COLUMN is ALTER TABLE syntax)
                 self.lexer.next_token(); // consume DROP
                 self.lexer.expect(&Token::Table)?;
-                let table_name = self.parse_ident_string()?;
+                let table_name = self.parse_table_name()?;
                 Statement::DropTable(DropTableStatement { table_name })
             }
             Some(Token::Alter) => Statement::AlterTable(self.parse_alter_table()?),
@@ -106,21 +122,88 @@ impl<'src> Parser<'src> {
         }
         Ok(stmt)
     }
-    /// Parse optional `USING STYLE GLISH|PYTHON` prefix.
+    /// Parse optional `USING [STYLE] ...` / `USINGSTYLE ...` prefix.
     fn parse_using_style(&mut self) -> Result<IndexStyle, TaqlError> {
-        if self.lexer.eat_if(&Token::Using).is_some() {
+        let is_usingstyle = self.lexer.peek_with_span().is_some_and(|(tok, span)| {
+            tok == Token::Ident && self.lexer.slice(&span).eq_ignore_ascii_case("USINGSTYLE")
+        });
+        if is_usingstyle {
+            self.lexer.next_token();
+        } else if self.lexer.eat_if(&Token::Using).is_some() {
             self.lexer.expect(&Token::Style)?;
-            let name = self.parse_ident_string()?;
-            match name.to_uppercase().as_str() {
-                "GLISH" => Ok(IndexStyle::Glish),
-                "PYTHON" => Ok(IndexStyle::Python),
-                other => Err(TaqlError::unexpected_end(format!(
-                    "expected GLISH or PYTHON after USING STYLE, got {other}"
-                ))),
-            }
         } else {
-            Ok(IndexStyle::Glish)
+            return Ok(IndexStyle::Glish);
         }
+
+        let (mut one_based, mut end_inclusive, mut fortran_order) = (true, true, true);
+        loop {
+            let pos = self
+                .lexer
+                .peek_with_span()
+                .map_or(0, |(_, span)| span.start);
+            let flag = self.parse_ident_string()?;
+            match flag.to_uppercase().as_str() {
+                "GLISH" => (one_based, end_inclusive, fortran_order) = (true, true, true),
+                "PYTHON" => (one_based, end_inclusive, fortran_order) = (false, false, false),
+                "BASE0" => one_based = false,
+                "BASE1" => one_based = true,
+                "ENDINCL" => end_inclusive = true,
+                "ENDEXCL" => end_inclusive = false,
+                "FORTRANORDER" | "FORTRAN" => fortran_order = true,
+                "CORDER" | "C" => fortran_order = false,
+                _ => {
+                    return Err(TaqlError::parse(
+                        self.lexer.position(pos),
+                        format!("{flag} is an invalid TaQL STYLE value"),
+                    ));
+                }
+            }
+            if self.lexer.eat_if(&Token::Comma).is_none() {
+                break;
+            }
+        }
+        Ok(IndexStyle::from_flags(
+            one_based,
+            end_inclusive,
+            fortran_order,
+        ))
+    }
+
+    fn parse_count(&mut self, style: IndexStyle) -> Result<CountStatement, TaqlError> {
+        let columns = if self.lexer.eat_if(&Token::LParen).is_some() {
+            let cols = if self.lexer.peek() == Some(&Token::RParen) {
+                vec![]
+            } else {
+                self.parse_expr_list()?
+            };
+            self.lexer.expect(&Token::RParen)?;
+            cols
+        } else if self.lexer.peek() == Some(&Token::From) || self.lexer.is_eof() {
+            vec![]
+        } else {
+            self.parse_expr_list()?
+        };
+        if columns.is_empty() {
+            return Err(TaqlError::TypeError {
+                message: "No COUNT columns given".to_string(),
+            });
+        }
+        let from = if self.lexer.eat_if(&Token::From).is_some() {
+            Some(self.parse_table_ref()?)
+        } else {
+            None
+        };
+        let where_clause = if self.lexer.eat_if(&Token::Where).is_some() {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+        Ok(CountStatement {
+            columns,
+            from,
+            where_clause,
+            style,
+        })
     }
 
     // ── SELECT ─────────────────────────────────────────────────────
@@ -161,13 +244,13 @@ impl<'src> Parser<'src> {
             None
         };
 
-        let order_by = if let Some(span) = self.lexer.eat_if(&Token::Order) {
+        let (order_by, order_distinct) = if let Some(span) = self.lexer.eat_if(&Token::Order) {
             if self.lexer.slice(&span).eq_ignore_ascii_case("ORDER") {
                 self.lexer.expect(&Token::By)?;
             }
             self.parse_order_by_list()?
         } else {
-            vec![]
+            (vec![], false)
         };
 
         let limit = if self.lexer.eat_if(&Token::Limit).is_some() {
@@ -182,20 +265,26 @@ impl<'src> Parser<'src> {
             None
         };
 
-        let giving = if self.lexer.eat_if(&Token::Giving).is_some() {
-            let table_name = self.parse_ident_string()?;
-            let output_type = if self.lexer.eat_if(&Token::As).is_some() {
-                Some(self.parse_ident_string()?)
+        let mut giving = None;
+        let mut giving_expr = None;
+        if self.lexer.eat_if(&Token::Giving).is_some() {
+            if self.lexer.eat_if(&Token::LBracket).is_some() {
+                let expr = self.parse_expr()?;
+                self.lexer.expect(&Token::RBracket)?;
+                giving_expr = Some(expr);
             } else {
-                None
-            };
-            Some(GivingClause {
-                table_name,
-                output_type,
-            })
-        } else {
-            None
-        };
+                let table_name = self.parse_table_name()?;
+                let output_type = if self.lexer.eat_if(&Token::As).is_some() {
+                    Some(self.parse_ident_string()?)
+                } else {
+                    None
+                };
+                giving = Some(GivingClause {
+                    table_name,
+                    output_type,
+                });
+            }
+        }
 
         Ok(SelectStatement {
             columns,
@@ -205,11 +294,13 @@ impl<'src> Parser<'src> {
             group_by,
             having,
             order_by,
+            order_distinct,
             limit,
             offset,
             distinct,
             style: IndexStyle::default(),
             giving,
+            giving_expr,
         })
     }
 
@@ -231,6 +322,12 @@ impl<'src> Parser<'src> {
             }
             return Ok(vec![]);
         }
+        if self.lexer.is_eof()
+            || self.peek_is_keyword_clause()
+            || matches!(self.lexer.peek(), Some(Token::RParen | Token::RBracket))
+        {
+            return Ok(vec![]);
+        }
 
         let mut columns = vec![self.parse_select_column()?];
         while self.lexer.eat_if(&Token::Comma).is_some() {
@@ -250,7 +347,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_table_ref(&mut self) -> Result<TableRef, TaqlError> {
-        let name = self.parse_ident_string()?;
+        let name = self.parse_table_name()?;
         let alias = if self.lexer.eat_if(&Token::As).is_some()
             || (self.peek_is_ident_like() && !self.peek_is_keyword_clause())
         {
@@ -306,21 +403,36 @@ impl<'src> Parser<'src> {
         Ok(joins)
     }
 
-    fn parse_order_by_list(&mut self) -> Result<Vec<OrderBySpec>, TaqlError> {
-        let mut specs = vec![self.parse_order_by_spec()?];
-        while self.lexer.eat_if(&Token::Comma).is_some() {
-            specs.push(self.parse_order_by_spec()?);
+    fn parse_order_by_list(&mut self) -> Result<(Vec<OrderBySpec>, bool), TaqlError> {
+        let mut distinct = self.lexer.eat_if(&Token::Distinct).is_some();
+        if !distinct && let Some((Token::Ident, span)) = self.lexer.peek_with_span() {
+            let word = self.lexer.slice(&span);
+            if word.eq_ignore_ascii_case("NODUPLICATES") || word.eq_ignore_ascii_case("UNIQUE") {
+                self.lexer.next_token();
+                distinct = true;
+            }
         }
-        Ok(specs)
-    }
-
-    fn parse_order_by_spec(&mut self) -> Result<OrderBySpec, TaqlError> {
-        let expr = self.parse_expr()?;
-        let ascending = if self.lexer.eat_if(&Token::Desc).is_some() {
+        let default_asc = if self.lexer.eat_if(&Token::Desc).is_some() {
             false
         } else {
             self.lexer.eat_if(&Token::Asc);
             true
+        };
+        let mut specs = vec![self.parse_order_by_spec(default_asc)?];
+        while self.lexer.eat_if(&Token::Comma).is_some() {
+            specs.push(self.parse_order_by_spec(default_asc)?);
+        }
+        Ok((specs, distinct))
+    }
+
+    fn parse_order_by_spec(&mut self, default_asc: bool) -> Result<OrderBySpec, TaqlError> {
+        let expr = self.parse_expr()?;
+        let ascending = if self.lexer.eat_if(&Token::Desc).is_some() {
+            false
+        } else if self.lexer.eat_if(&Token::Asc).is_some() {
+            true
+        } else {
+            default_asc
         };
         Ok(OrderBySpec { expr, ascending })
     }
@@ -360,6 +472,7 @@ impl<'src> Parser<'src> {
             assignments,
             where_clause,
             limit,
+            style: IndexStyle::default(),
         })
     }
 
@@ -377,7 +490,7 @@ impl<'src> Parser<'src> {
         self.lexer.expect(&Token::Into)?;
 
         // Optional table name (may be absent if operating on the current table).
-        let table = if self.peek_is_ident_like() && self.lexer.peek() != Some(&Token::Values) {
+        let table = if self.peek_is_table_name() && self.lexer.peek() != Some(&Token::Values) {
             // Check if this looks like a table name vs column list
             if self.lexer.peek() != Some(&Token::LParen) {
                 Some(self.parse_table_ref()?)
@@ -411,6 +524,7 @@ impl<'src> Parser<'src> {
             table,
             columns,
             values,
+            style: IndexStyle::default(),
         })
     }
 
@@ -427,7 +541,7 @@ impl<'src> Parser<'src> {
         self.lexer.expect(&Token::Delete)?;
         self.lexer.expect(&Token::From)?;
 
-        let table = if self.peek_is_ident_like()
+        let table = if self.peek_is_table_name()
             && self.lexer.peek() != Some(&Token::Where)
             && self.lexer.peek() != Some(&Token::Limit)
         {
@@ -452,6 +566,7 @@ impl<'src> Parser<'src> {
             table,
             where_clause,
             limit,
+            style: IndexStyle::default(),
         })
     }
 
@@ -465,7 +580,11 @@ impl<'src> Parser<'src> {
         } else {
             None
         };
-        Ok(CalcStatement { expr, from })
+        Ok(CalcStatement {
+            expr,
+            from,
+            style: IndexStyle::default(),
+        })
     }
 
     // ── ALTER TABLE statement ─────────────────────────────────────
@@ -473,7 +592,7 @@ impl<'src> Parser<'src> {
     fn parse_create_table(&mut self) -> Result<CreateTableStatement, TaqlError> {
         self.lexer.expect(&Token::Create)?;
         self.lexer.expect(&Token::Table)?;
-        let table_name = self.parse_ident_string()?;
+        let table_name = self.parse_table_name()?;
         self.lexer.expect(&Token::LParen)?;
         let mut columns = Vec::new();
         loop {
@@ -496,7 +615,7 @@ impl<'src> Parser<'src> {
         self.lexer.expect(&Token::Table)?;
 
         // Optional table name
-        let table = if self.peek_is_ident_like()
+        let table = if self.peek_is_table_name()
             && self.lexer.peek() != Some(&Token::Add)
             && self.lexer.peek() != Some(&Token::Drop)
             && self.lexer.peek() != Some(&Token::Rename)
@@ -792,6 +911,9 @@ impl<'src> Parser<'src> {
             }
             Some(Token::LBracket) => {
                 self.lexer.next_token();
+                if self.peek_starts_subquery() {
+                    return self.parse_subquery_after_lbracket();
+                }
                 let mut values = Vec::new();
                 if self.lexer.peek() != Some(&Token::RBracket) {
                     loop {
@@ -1058,10 +1180,28 @@ impl<'src> Parser<'src> {
         })
     }
 
+    fn parse_subquery_after_lbracket(&mut self) -> Result<Expr, TaqlError> {
+        let style = self.parse_using_style()?;
+        let mut sel = self.parse_select()?;
+        if style != IndexStyle::Glish {
+            sel.style = style;
+        }
+        self.lexer.expect(&Token::RBracket)?;
+        Ok(Expr::Subquery(Box::new(sel)))
+    }
+
     fn parse_in_tail(&mut self, lhs: Expr, negated: bool) -> Result<Expr, TaqlError> {
         self.lexer.expect(&Token::In)?;
-        // Bracket syntax: IN [a, b, c] or IN [a:b] or IN [a:b:s]
+        // Bracket syntax: IN [a, b, c] or IN [a:b] or IN [a:b:s] or IN [SELECT ...]
         if self.lexer.eat_if(&Token::LBracket).is_some() {
+            if self.peek_starts_subquery() {
+                let sub = self.parse_subquery_after_lbracket()?;
+                return Ok(Expr::In {
+                    expr: Box::new(lhs),
+                    values: vec![sub],
+                    negated,
+                });
+            }
             let elements = self.parse_in_set_elements()?;
             self.lexer.expect(&Token::RBracket)?;
             return Ok(Expr::InSet {
@@ -1216,6 +1356,71 @@ impl<'src> Parser<'src> {
 
     // ── Helpers ────────────────────────────────────────────────────
 
+    /// Parse a table name or path: quoted string or contiguous path tokens.
+    fn parse_table_name(&mut self) -> Result<String, TaqlError> {
+        if let Some(Token::StringLiteral) = self.lexer.peek() {
+            let (_, span) = self.lexer.next_token().unwrap();
+            let s = self.lexer.slice(&span);
+            return Ok(s[1..s.len() - 1].to_string());
+        }
+        let mut out = String::new();
+        let mut prev_end = match self.lexer.peek_with_span() {
+            Some((ref tok, ref span))
+                if matches!(tok, Token::Ident | Token::Slash | Token::Dot) || tok.is_keyword() =>
+            {
+                let end = span.end;
+                let text = self.lexer.slice(span).to_string();
+                self.lexer.next_token();
+                out.push_str(&text);
+                end
+            }
+            Some((tok, span)) => {
+                let msg = format!("expected table name, found {tok}");
+                let pos = self.lexer.position(span.start);
+                self.lexer.next_token();
+                return Err(TaqlError::parse(pos, msg));
+            }
+            None => return Err(TaqlError::unexpected_end("expected table name")),
+        };
+        while let Some((ref tok, ref span)) = self.lexer.peek_with_span() {
+            if span.start != prev_end {
+                break;
+            }
+            let is_path_part = matches!(
+                tok,
+                Token::Ident
+                    | Token::IntLiteral
+                    | Token::FloatLiteral
+                    | Token::Slash
+                    | Token::Dot
+                    | Token::Minus
+            ) || tok.is_keyword();
+            if !is_path_part {
+                break;
+            }
+            prev_end = span.end;
+            let text = self.lexer.slice(span).to_string();
+            self.lexer.next_token();
+            out.push_str(&text);
+        }
+        Ok(out)
+    }
+
+    fn peek_is_table_name(&mut self) -> bool {
+        match self.lexer.peek() {
+            Some(Token::Ident | Token::StringLiteral | Token::Slash | Token::Dot) => true,
+            Some(tok) => tok.is_keyword(),
+            None => false,
+        }
+    }
+
+    fn peek_starts_subquery(&mut self) -> bool {
+        matches!(self.lexer.peek(), Some(Token::Select | Token::Using))
+            || self.lexer.peek_with_span().is_some_and(|(tok, span)| {
+                tok == Token::Ident && self.lexer.slice(&span).eq_ignore_ascii_case("USINGSTYLE")
+            })
+    }
+
     /// Parse an identifier token and return its string value.
     /// Accepts both Ident tokens and certain keywords used as identifiers.
     fn parse_ident_string(&mut self) -> Result<String, TaqlError> {
@@ -1245,7 +1450,8 @@ impl<'src> Parser<'src> {
         matches!(
             self.lexer.peek(),
             Some(
-                Token::Where
+                Token::From
+                    | Token::Where
                     | Token::Order
                     | Token::Group
                     | Token::Having
@@ -1258,6 +1464,9 @@ impl<'src> Parser<'src> {
                     | Token::Cross
                     | Token::On
                     | Token::Set
+                    | Token::Giving
+                    | Token::Into
+                    | Token::Values
             )
         )
     }

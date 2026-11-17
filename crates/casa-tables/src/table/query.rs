@@ -16,6 +16,15 @@ impl Table {
         crate::RefTable::from_rows(self, indices.to_vec())
     }
 
+    /// Creates a reference table containing the specified rows and columns.
+    pub fn select_rows_and_columns(
+        &self,
+        indices: &[usize],
+        columns: &[String],
+    ) -> Result<crate::RefTable<'_>, TableError> {
+        crate::RefTable::from_rows_and_columns(self, indices.to_vec(), columns)
+    }
+
     /// Creates a mutable reference table containing only the specified rows.
     pub fn select_rows_mut(
         &mut self,

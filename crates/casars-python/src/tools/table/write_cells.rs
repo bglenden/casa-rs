@@ -241,6 +241,11 @@ impl State {
         value: Incoming,
         log: &mut Vec<LogLine>,
     ) -> Reply {
+        if let Some(open) = self.open.as_ref()
+            && !open.column_allowed(&column)
+        {
+            return Err(put_column_error(&format!("column {column} does not exist")));
+        }
         self.write_with(Target::Cells, log, move |table, row_map| {
             let (ty, array) = describe(table, &column)?;
             let nrows = row_map.map_or_else(|| table.row_count(), <[usize]>::len);
@@ -279,6 +284,11 @@ impl State {
         selection: (i64, i64, i64),
         log: &mut Vec<LogLine>,
     ) -> Reply {
+        if let Some(open) = self.open.as_ref()
+            && !open.column_allowed(&column)
+        {
+            return Err(put_column_error(&format!("column {column} does not exist")));
+        }
         self.write_with(Target::Cells, log, move |table, row_map| {
             let (ty, array) = describe(table, &column)?;
             let nrows = row_map.map_or_else(|| table.row_count(), <[usize]>::len);
@@ -334,6 +344,11 @@ impl State {
         selection: (i64, i64, i64),
         log: &mut Vec<LogLine>,
     ) -> Reply {
+        if let Some(open) = self.open.as_ref()
+            && !open.column_allowed(&column)
+        {
+            return Err(put_column_error(&format!("column {column} does not exist")));
+        }
         self.write_with(Target::Cells, log, move |table, row_map| {
             let (ty, array) = describe(table, &column)?;
             let nrows = row_map.map_or_else(|| table.row_count(), <[usize]>::len);

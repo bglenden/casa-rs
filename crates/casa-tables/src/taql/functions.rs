@@ -705,7 +705,12 @@ pub fn call_function(
         }
         "rownumber" | "rownr" => {
             check_arity(name, args, 0)?;
-            Ok(ExprValue::Int((ctx.row_index + 1) as i64))
+            let n = if ctx.style.is_one_based() {
+                ctx.row_index + 1
+            } else {
+                ctx.row_index
+            };
+            Ok(ExprValue::Int(n as i64))
         }
         "rowid" => {
             check_arity(name, args, 0)?;

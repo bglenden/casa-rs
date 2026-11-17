@@ -50,15 +50,26 @@ fn format_record_brief(record: &RecordValue) -> String {
         .join(", ")
 }
 
+struct SummaryView<'a> {
+    display_path: &'a Path,
+    base_path: &'a Path,
+    nrows: usize,
+    visible_cols: Option<&'a [String]>,
+}
+
 fn log_table_summary(
     table: &Table,
-    display_path: &Path,
-    base_path: &Path,
-    nrows: usize,
+    view: SummaryView<'_>,
     recurse: bool,
     visited: &mut HashSet<PathBuf>,
     log: &mut Vec<LogLine>,
 ) -> Result<(), Fail> {
+    let SummaryView {
+        display_path,
+        base_path,
+        nrows,
+        visible_cols,
+    } = view;
     if display_path.exists() {
         let display_real =
             std::fs::canonicalize(display_path).unwrap_or_else(|_| display_path.to_path_buf());
@@ -66,12 +77,15 @@ fn log_table_summary(
     }
     let real = std::fs::canonicalize(base_path).unwrap_or_else(|_| base_path.to_path_buf());
     visited.insert(real);
-    let cols: Vec<String> = table
-        .schema()
-        .into_iter()
-        .flat_map(|schema| schema.columns())
-        .map(|col| col.name().to_string())
-        .collect();
+    let cols: Vec<String> = match visible_cols {
+        Some(cols) => cols.to_vec(),
+        None => table
+            .schema()
+            .into_iter()
+            .flat_map(|schema| schema.columns())
+            .map(|col| col.name().to_string())
+            .collect(),
+    };
     let info = table.info();
     let readme: String = info.readme.iter().map(|line| format!("{line}\n")).collect();
     log.push(LogLine::info(format!(
@@ -114,9 +128,12 @@ fn log_table_summary(
             if let Ok(subtable) = Table::open(TableOptions::new(&sub_path)) {
                 log_table_summary(
                     &subtable,
-                    &sub_path,
-                    &sub_path,
-                    subtable.row_count(),
+                    SummaryView {
+                        display_path: &sub_path,
+                        base_path: &sub_path,
+                        nrows: subtable.row_count(),
+                        visible_cols: None,
+                    },
                     true,
                     visited,
                     log,
@@ -349,11 +366,20 @@ impl State {
                 std::fs::canonicalize(&open.root_name).unwrap_or_else(|_| open.root_name.clone()),
             );
         }
+        let visible_cols: Option<Vec<String>> = open.columns.as_ref().map(|_| {
+            open.visible_columns(&root.table)
+                .into_iter()
+                .map(|c| c.name().to_string())
+                .collect()
+        });
         log_table_summary(
             &root.table,
-            &display_path,
-            &base_path,
-            nrows,
+            SummaryView {
+                display_path: &display_path,
+                base_path: &base_path,
+                nrows,
+                visible_cols: visible_cols.as_deref(),
+            },
             recurse,
             &mut visited,
             log,

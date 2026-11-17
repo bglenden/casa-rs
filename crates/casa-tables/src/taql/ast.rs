@@ -15,22 +15,74 @@ use std::fmt;
 use casa_types::quanta::Unit;
 use num_complex::Complex64;
 
-/// Index style for array subscripts.
+/// Index and axis style for array subscripts and `ROWNUMBER()`.
 ///
-/// TaQL supports two indexing conventions:
-/// - **Glish** (default): 1-based, end-inclusive ranges.
-/// - **Python**: 0-based, end-exclusive ranges.
-///
-/// Selected via `USING STYLE GLISH` or `USING STYLE PYTHON`.
+/// TaQL supports fine-grained style flags via `USING STYLE`:
+/// - **Glish** (default): 1-based indexing, inclusive slice end, Fortran axis order.
+/// - **Python**: 0-based indexing, exclusive slice end, C axis order.
+/// - **Custom**: arbitrary combinations such as `base0, endincl, fortranorder`.
 ///
 /// C++ reference: `TaQLStyle`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IndexStyle {
-    /// 1-based indexing with inclusive end (Fortran/Glish convention). This is the default.
+    /// 1-based indexing with inclusive end and Fortran axis order (default).
     #[default]
     Glish,
-    /// 0-based indexing with exclusive end (Python/C convention).
+    /// 0-based indexing with exclusive end and C axis order.
     Python,
+    /// Explicit combination of base, slice end inclusivity, and axis order.
+    Custom {
+        one_based: bool,
+        end_inclusive: bool,
+        fortran_order: bool,
+    },
+}
+
+impl IndexStyle {
+    /// Builds an [`IndexStyle`] from explicit flags, collapsing to [`Self::Glish`]
+    /// or [`Self::Python`] when the tuple matches a standard convention.
+    #[must_use]
+    pub const fn from_flags(one_based: bool, end_inclusive: bool, fortran_order: bool) -> Self {
+        match (one_based, end_inclusive, fortran_order) {
+            (true, true, true) => Self::Glish,
+            (false, false, false) => Self::Python,
+            _ => Self::Custom {
+                one_based,
+                end_inclusive,
+                fortran_order,
+            },
+        }
+    }
+
+    /// Returns `true` when indices and `ROWNUMBER()` are 1-based (`base1` / `glish`).
+    #[must_use]
+    pub const fn is_one_based(self) -> bool {
+        match self {
+            Self::Glish => true,
+            Self::Python => false,
+            Self::Custom { one_based, .. } => one_based,
+        }
+    }
+
+    /// Returns `true` when slice upper bounds are inclusive (`endincl` / `glish`).
+    #[must_use]
+    pub const fn is_end_inclusive(self) -> bool {
+        match self {
+            Self::Glish => true,
+            Self::Python => false,
+            Self::Custom { end_inclusive, .. } => end_inclusive,
+        }
+    }
+
+    /// Returns `true` when array indices are ordered Fortran-first (`fortranorder`).
+    #[must_use]
+    pub const fn is_fortran_order(self) -> bool {
+        match self {
+            Self::Glish => true,
+            Self::Python => false,
+            Self::Custom { fortran_order, .. } => fortran_order,
+        }
+    }
 }
 
 impl fmt::Display for IndexStyle {
@@ -38,6 +90,21 @@ impl fmt::Display for IndexStyle {
         match self {
             Self::Glish => write!(f, "GLISH"),
             Self::Python => write!(f, "PYTHON"),
+            Self::Custom {
+                one_based,
+                end_inclusive,
+                fortran_order,
+            } => write!(
+                f,
+                "{}, {}, {}",
+                if *one_based { "BASE1" } else { "BASE0" },
+                if *end_inclusive { "ENDINCL" } else { "ENDEXCL" },
+                if *fortran_order {
+                    "FORTRANORDER"
+                } else {
+                    "CORDER"
+                }
+            ),
         }
     }
 }
@@ -61,6 +128,8 @@ pub enum Statement {
     ///
     /// C++ reference: `TaQLCountNodeRep`.
     CountSelect(SelectStatement),
+    /// `COUNT [(cols)] FROM ... [WHERE ...]` — return grouped row counts.
+    Count(CountStatement),
     /// `CREATE TABLE name (col type, ...)`
     ///
     /// C++ reference: `TaQLCreTabNodeRep`.
@@ -111,6 +180,19 @@ pub struct GivingClause {
     pub output_type: Option<String>,
 }
 
+/// A `COUNT [(cols)] FROM table [WHERE expr]` statement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CountStatement {
+    /// Columns/expressions to group and count.
+    pub columns: Vec<Expr>,
+    /// Optional table reference.
+    pub from: Option<TableRef>,
+    /// Optional WHERE filter.
+    pub where_clause: Option<Expr>,
+    /// Index style (`USING STYLE ...`).
+    pub style: IndexStyle,
+}
+
 /// A CALC statement.
 ///
 /// ```text
@@ -118,7 +200,7 @@ pub struct GivingClause {
 /// ```
 ///
 /// Evaluates `expr` in the context of an optional table and returns
-/// the result as a scalar value.
+/// the values.
 ///
 /// C++ reference: `TaQLCalcNodeRep`.
 #[derive(Debug, Clone, PartialEq)]
@@ -127,6 +209,8 @@ pub struct CalcStatement {
     pub expr: Expr,
     /// Optional table context.
     pub from: Option<TableRef>,
+    /// Index style (`USING STYLE ...`).
+    pub style: IndexStyle,
 }
 
 /// An ALTER TABLE statement.
@@ -190,16 +274,20 @@ pub struct SelectStatement {
     pub having: Option<Expr>,
     /// ORDER BY specifications.
     pub order_by: Vec<OrderBySpec>,
+    /// Whether `ORDERBY NODUPLICATES|UNIQUE|DISTINCT` was requested.
+    pub order_distinct: bool,
     /// Optional LIMIT.
     pub limit: Option<Expr>,
     /// Optional OFFSET.
     pub offset: Option<Expr>,
     /// Whether DISTINCT was specified.
     pub distinct: bool,
-    /// Index style (`USING STYLE GLISH` or `USING STYLE PYTHON`).
+    /// Index style (`USING STYLE ...`).
     pub style: IndexStyle,
     /// Optional GIVING clause for output materialization.
     pub giving: Option<GivingClause>,
+    /// Optional `GIVING [expr]` subquery projection.
+    pub giving_expr: Option<Expr>,
 }
 
 /// A column in a SELECT list.
@@ -244,6 +332,8 @@ pub struct UpdateStatement {
     pub where_clause: Option<Expr>,
     /// Optional LIMIT.
     pub limit: Option<Expr>,
+    /// Index style (`USING STYLE ...`).
+    pub style: IndexStyle,
 }
 
 /// A SET assignment in an UPDATE.
@@ -268,6 +358,8 @@ pub struct InsertStatement {
     pub columns: Vec<String>,
     /// Rows of value expressions.
     pub values: Vec<Vec<Expr>>,
+    /// Index style (`USING STYLE ...`).
+    pub style: IndexStyle,
 }
 
 /// A DELETE statement.
@@ -283,6 +375,8 @@ pub struct DeleteStatement {
     pub where_clause: Option<Expr>,
     /// Optional LIMIT.
     pub limit: Option<Expr>,
+    /// Index style (`USING STYLE ...`).
+    pub style: IndexStyle,
 }
 
 /// A JOIN clause.
@@ -605,6 +699,7 @@ impl fmt::Display for Statement {
             Self::Calc(s) => write!(f, "{s}"),
             Self::AlterTable(s) => write!(f, "{s}"),
             Self::CountSelect(s) => write!(f, "COUNT {s}"),
+            Self::Count(c) => write!(f, "{c}"),
             Self::CreateTable(s) => {
                 write!(f, "CREATE TABLE {} (", s.table_name)?;
                 for (i, col) in s.columns.iter().enumerate() {
@@ -620,8 +715,44 @@ impl fmt::Display for Statement {
     }
 }
 
+fn fmt_table_name(f: &mut fmt::Formatter<'_>, name: &str) -> fmt::Result {
+    let bare = !name.is_empty()
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && !name.as_bytes()[0].is_ascii_digit();
+    if bare {
+        write!(f, "{name}")
+    } else {
+        write!(f, "\"{name}\"")
+    }
+}
+
+impl fmt::Display for CountStatement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.style != IndexStyle::Glish {
+            write!(f, "USING STYLE {} ", self.style)?;
+        }
+        write!(f, "COUNT ")?;
+        for (i, col) in self.columns.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{col}")?;
+        }
+        if let Some(ref from) = self.from {
+            write!(f, " FROM {from}")?;
+        }
+        if let Some(ref w) = self.where_clause {
+            write!(f, " WHERE {w}")?;
+        }
+        Ok(())
+    }
+}
+
 impl fmt::Display for CalcStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.style != IndexStyle::Glish {
+            write!(f, "USING STYLE {} ", self.style)?;
+        }
         write!(f, "CALC {}", self.expr)?;
         if let Some(ref from) = self.from {
             write!(f, " FROM {from}")?;
@@ -706,6 +837,9 @@ impl fmt::Display for SelectStatement {
         }
         if !self.order_by.is_empty() {
             write!(f, " ORDER BY ")?;
+            if self.order_distinct {
+                write!(f, "NODUPLICATES ")?;
+            }
             for (i, o) in self.order_by.iter().enumerate() {
                 if i > 0 {
                     write!(f, ", ")?;
@@ -720,10 +854,13 @@ impl fmt::Display for SelectStatement {
             write!(f, " OFFSET {o}")?;
         }
         if let Some(ref g) = self.giving {
-            write!(f, " GIVING {}", g.table_name)?;
+            write!(f, " GIVING ")?;
+            fmt_table_name(f, &g.table_name)?;
             if let Some(ref ot) = g.output_type {
                 write!(f, " AS {ot}")?;
             }
+        } else if let Some(ref expr) = self.giving_expr {
+            write!(f, " GIVING [{expr}]")?;
         }
         Ok(())
     }
@@ -741,7 +878,7 @@ impl fmt::Display for SelectColumn {
 
 impl fmt::Display for TableRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name)?;
+        fmt_table_name(f, &self.name)?;
         if let Some(ref alias) = self.alias {
             write!(f, " AS {alias}")?;
         }
@@ -762,6 +899,9 @@ impl fmt::Display for OrderBySpec {
 
 impl fmt::Display for UpdateStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.style != IndexStyle::Glish {
+            write!(f, "USING STYLE {} ", self.style)?;
+        }
         write!(f, "UPDATE")?;
         if let Some(ref t) = self.table {
             write!(f, " {t}")?;
@@ -791,6 +931,9 @@ impl fmt::Display for Assignment {
 
 impl fmt::Display for InsertStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.style != IndexStyle::Glish {
+            write!(f, "USING STYLE {} ", self.style)?;
+        }
         write!(f, "INSERT INTO")?;
         if let Some(ref t) = self.table {
             write!(f, " {t}")?;
@@ -825,6 +968,9 @@ impl fmt::Display for InsertStatement {
 
 impl fmt::Display for DeleteStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.style != IndexStyle::Glish {
+            write!(f, "USING STYLE {} ", self.style)?;
+        }
         write!(f, "DELETE FROM")?;
         if let Some(ref t) = self.table {
             write!(f, " {t}")?;

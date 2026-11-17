@@ -185,6 +185,9 @@ pub(super) struct Open {
     /// Present on a `selectrows` view: maps view row indices `0..len` to row
     /// indices in `root.table`.
     pub(super) row_map: Option<Vec<usize>>,
+    /// Present on a column-projected `query`/`taql` view: restricts visible
+    /// columns (and column order) relative to `root.table.schema()`.
+    pub(super) columns: Option<Vec<String>>,
     /// Remains `true` while this `Open` handle is attached to its parent `table`
     /// tool; dropping or closing `Open` clears it so `tablerow` handles notice.
     pub(super) alive: Arc<AtomicBool>,
@@ -208,11 +211,41 @@ impl Open {
             plain_paths,
             is_memory,
             row_map: None,
+            columns: None,
             alive: Arc::new(AtomicBool::new(true)),
         }
     }
 
+    pub(super) fn from_detached_table(
+        table: Table,
+        name: PathBuf,
+        writable: bool,
+        lock: LockSettings,
+    ) -> Self {
+        let root = RootOpen {
+            table,
+            name: name.clone(),
+            writable,
+            lock,
+            memory_added_columns: HashSet::new(),
+            last_modify_counter: 0,
+            keyword_epoch: super::registry::keyword_epoch(&name),
+            seen_keyword_epoch: 0,
+            created_in_this_handle: false,
+        };
+        Self::from_root(root)
+    }
+
     pub(super) fn view(&self, name: PathBuf, row_map: Vec<usize>) -> Self {
+        self.view_columns(name, row_map, self.columns.clone())
+    }
+
+    pub(super) fn view_columns(
+        &self,
+        name: PathBuf,
+        row_map: Vec<usize>,
+        columns: Option<Vec<String>>,
+    ) -> Self {
         Self {
             root: Arc::clone(&self.root),
             name,
@@ -220,6 +253,7 @@ impl Open {
             plain_paths: self.plain_paths.clone(),
             is_memory: self.is_memory,
             row_map: Some(row_map),
+            columns,
             alive: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -229,7 +263,26 @@ impl Open {
     }
 
     pub(super) fn is_view(&self) -> bool {
-        self.row_map.is_some()
+        self.row_map.is_some() || self.columns.is_some()
+    }
+
+    pub(super) fn column_allowed(&self, column: &str) -> bool {
+        self.columns
+            .as_ref()
+            .is_none_or(|cols| cols.iter().any(|c| c == column))
+    }
+
+    pub(super) fn visible_columns<'a>(
+        &self,
+        table: &'a Table,
+    ) -> Vec<&'a casa_tables::ColumnSchema> {
+        let Some(schema) = table.schema() else {
+            return Vec::new();
+        };
+        match &self.columns {
+            None => schema.columns().iter().collect(),
+            Some(cols) => cols.iter().filter_map(|c| schema.column(c)).collect(),
+        }
     }
 
     pub(super) fn nrows(&self) -> usize {

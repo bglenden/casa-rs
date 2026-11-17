@@ -1008,19 +1008,19 @@ fn multidim_single_element() {
 #[test]
 fn multidim_row_slice() {
     let row = casa_types::RecordValue::default();
-    let ctx = EvalContext {
+    // Base0 + EndExcl + FortranOrder keeps dim0 first: arr[1] -> row 1 = [4, 5, 6]
+    let ctx_fortran = EvalContext {
         row: &row,
         row_index: 0,
-        style: ast::IndexStyle::Python,
+        style: ast::IndexStyle::from_flags(false, false, true),
         measures: None,
     };
     // 2x3 array: [[1,2,3],[4,5,6]] in column-major flat order
     let arr = make_2d_array(2, 3, vec![1, 4, 2, 5, 3, 6]);
-    // Python: arr[1] → row 1, all cols → [4,5,6]
     let result = eval_array_index(
         &arr,
         &[ast::IndexElement::Single(Expr::Literal(Literal::Int(1)))],
-        &ctx,
+        &ctx_fortran,
     )
     .unwrap();
     match result {
@@ -1033,6 +1033,40 @@ fn multidim_row_slice() {
         }
         _ => panic!("expected Array, got {result:?}"),
     }
+
+    // PYTHON style in casacore Note 199 §2.2 uses corder (reverses axes relative to Fortran):
+    // arr[1] -> Fortran dim1 = 1 (column 1 = [2, 5]), arr[0, 1] -> Fortran dim1=0, dim0=1 -> 4.
+    let ctx_python = EvalContext {
+        row: &row,
+        row_index: 0,
+        style: ast::IndexStyle::Python,
+        measures: None,
+    };
+    match eval_array_index(
+        &arr,
+        &[ast::IndexElement::Single(Expr::Literal(Literal::Int(1)))],
+        &ctx_python,
+    )
+    .unwrap()
+    {
+        ExprValue::Array(a) => {
+            assert_eq!(a.shape, vec![2]);
+            assert_eq!(a.data, vec![ExprValue::Int(2), ExprValue::Int(5)]);
+        }
+        other => panic!("expected Array, got {other:?}"),
+    }
+    assert_eq!(
+        eval_array_index(
+            &arr,
+            &[
+                ast::IndexElement::Single(Expr::Literal(Literal::Int(0))),
+                ast::IndexElement::Single(Expr::Literal(Literal::Int(1))),
+            ],
+            &ctx_python,
+        )
+        .unwrap(),
+        ExprValue::Int(4)
+    );
 }
 
 #[test]
@@ -1073,4 +1107,141 @@ fn slice_step_zero_error() {
         &ctx,
     );
     assert!(result.is_err());
+}
+
+#[test]
+fn single_element_slice_keeps_shape_and_c_order_array_converts_column_major() {
+    use casa_types::{ArrayValue as CasaArray, Value};
+    use ndarray::{ArrayD, IxDyn};
+
+    let row = casa_types::RecordValue::default();
+    let ctx = EvalContext {
+        row: &row,
+        row_index: 0,
+        style: ast::IndexStyle::from_flags(false, true, true),
+        measures: None,
+    };
+    let arr = make_1d_array(vec![10, 20, 30]);
+    let sliced = eval_array_index(
+        &arr,
+        &[ast::IndexElement::Slice {
+            start: Some(Expr::Literal(Literal::Int(0))),
+            end: Some(Expr::Literal(Literal::Int(0))),
+            step: None,
+        }],
+        &ctx,
+    )
+    .unwrap();
+    match sliced {
+        ExprValue::Array(a) => {
+            assert_eq!(a.shape, vec![1]);
+            assert_eq!(a.data, vec![ExprValue::Int(10)]);
+        }
+        other => panic!("expected 1-element Array, got {other:?}"),
+    }
+
+    // C-layout ArrayD [[0, 1, 2], [10, 11, 12]] must yield column-major data.
+    let c_arr = ArrayD::from_shape_vec(IxDyn(&[2, 3]), vec![0, 1, 2, 10, 11, 12]).unwrap();
+    let expr_arr = match ExprValue::from(&Value::Array(CasaArray::Int32(c_arr))) {
+        ExprValue::Array(a) => a,
+        other => panic!("expected ExprValue::Array, got {other:?}"),
+    };
+    let py_ctx = EvalContext {
+        row: &row,
+        row_index: 0,
+        style: ast::IndexStyle::Python,
+        measures: None,
+    };
+    assert_eq!(
+        eval_array_index(
+            &expr_arr,
+            &[
+                ast::IndexElement::Single(Expr::Literal(Literal::Int(0))),
+                ast::IndexElement::Single(Expr::Literal(Literal::Int(1))),
+            ],
+            &py_ctx,
+        )
+        .unwrap(),
+        ExprValue::Int(10)
+    );
+
+    // Extra index on 1-D array must error instead of silently dropping indices.
+    let one_d = make_1d_array(vec![10, 20, 30]);
+    let extra = eval_array_index(
+        &one_d,
+        &[
+            ast::IndexElement::Single(Expr::Literal(Literal::Int(0))),
+            ast::IndexElement::Single(Expr::Literal(Literal::Int(1))),
+        ],
+        &py_ctx,
+    );
+    assert!(extra.is_err());
+
+    // Empty slice (start > end in Glish, or end <= start in Python) returns empty Array without panic.
+    let glish_ctx = EvalContext {
+        row: &row,
+        row_index: 0,
+        style: ast::IndexStyle::Glish,
+        measures: None,
+    };
+    match eval_array_index(
+        &one_d,
+        &[ast::IndexElement::Slice {
+            start: Some(Expr::Literal(Literal::Int(2))),
+            end: Some(Expr::Literal(Literal::Int(1))),
+            step: None,
+        }],
+        &glish_ctx,
+    )
+    .unwrap()
+    {
+        ExprValue::Array(a) => {
+            assert_eq!(a.shape, vec![0]);
+            assert!(a.data.is_empty());
+        }
+        other => panic!("expected empty Array, got {other:?}"),
+    }
+
+    // Negative step out-of-range clamps cleanly under end-exclusive slicing.
+    let five = make_1d_array(vec![10, 20, 30, 40, 50]);
+    match eval_array_index(
+        &five,
+        &[ast::IndexElement::Slice {
+            start: Some(Expr::Literal(Literal::Int(10))),
+            end: None,
+            step: Some(Expr::Literal(Literal::Int(-1))),
+        }],
+        &py_ctx,
+    )
+    .unwrap()
+    {
+        ExprValue::Array(a) => assert_eq!(
+            a.data,
+            vec![
+                ExprValue::Int(50),
+                ExprValue::Int(40),
+                ExprValue::Int(30),
+                ExprValue::Int(20),
+                ExprValue::Int(10),
+            ]
+        ),
+        other => panic!("expected Array, got {other:?}"),
+    }
+    match eval_array_index(
+        &five,
+        &[ast::IndexElement::Slice {
+            start: Some(Expr::Literal(Literal::Int(-10))),
+            end: None,
+            step: Some(Expr::Literal(Literal::Int(-1))),
+        }],
+        &py_ctx,
+    )
+    .unwrap()
+    {
+        ExprValue::Array(a) => {
+            assert_eq!(a.shape, vec![0]);
+            assert!(a.data.is_empty());
+        }
+        other => panic!("expected empty Array, got {other:?}"),
+    }
 }
