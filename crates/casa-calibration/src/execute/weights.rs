@@ -5,7 +5,8 @@ use casa_ms::MsError;
 use casa_tables::Table;
 use casa_types::ArrayValue;
 
-use super::ApplyExecutionError;
+use super::{ApplyExecutionError, GainGrid, correcting_gain, correlation_receptors, stokes_name};
+use ndarray::{ArrayD, Axis};
 
 /// Calibrater uses partialMedians without takeEvenMean: an even channel count
 /// takes the lower central value, not the average of the two central values.
@@ -52,4 +53,41 @@ pub(super) fn has_spectrum(
             path: format!("<measurement-set {column}>"),
             source: MsError::from(source),
         })
+}
+
+/// Single-channel diagonal gains have one weight factor per correlation.
+/// Apply it over the spectrum without sampling the antenna gains per bin.
+pub(super) fn apply_scalar_pair(
+    first: &GainGrid,
+    second: &GainGrid,
+    correlations: &[i32],
+    data_desc_id: i32,
+    mut weights: Option<&mut ArrayD<f32>>,
+    mut implicit_weights: Option<&mut ArrayD<f32>>,
+) -> Result<(), ApplyExecutionError> {
+    for (correlation, &code) in correlations.iter().enumerate() {
+        let (left, right) = correlation_receptors(code).ok_or_else(|| {
+            ApplyExecutionError::UnsupportedCorrelationLayout {
+                data_desc_id,
+                correlation_types: correlations
+                    .iter()
+                    .map(|&code| stokes_name(code).to_string())
+                    .collect(),
+            }
+        })?;
+        let left = left.min(first.receptor_count.saturating_sub(1));
+        let right = right.min(second.receptor_count.saturating_sub(1));
+        let (left, _) = correcting_gain(first.value_at(left, 0), first.flag_at(left, 0));
+        let (right, _) = correcting_gain(second.value_at(right, 0), second.flag_at(right, 0));
+        let factor = left.norm_sqr() * right.norm_sqr();
+        for spectrum in [weights.as_deref_mut(), implicit_weights.as_deref_mut()]
+            .into_iter()
+            .flatten()
+        {
+            spectrum
+                .index_axis_mut(Axis(0), correlation)
+                .mapv_inplace(|weight| weight * factor);
+        }
+    }
+    Ok(())
 }
