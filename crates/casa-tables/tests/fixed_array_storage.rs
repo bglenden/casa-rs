@@ -226,3 +226,84 @@ fn whole_cell_reads_do_not_slice_extra_channels_or_hide_undefined_cells() {
             .is_none()
     );
 }
+
+#[test]
+fn sparse_array_saves_keep_latest_updates_axes_and_unselected_rows() {
+    let root = tempfile::tempdir().unwrap();
+    let cell = |base: f32| {
+        Value::Array(ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 3], (0..6).map(|axis| base + axis as f32).collect())
+                .unwrap(),
+        ))
+    };
+    for manager in [
+        DataManagerKind::StandardStMan,
+        DataManagerKind::TiledShapeStMan,
+    ] {
+        for endian in [EndianFormat::BigEndian, EndianFormat::LittleEndian] {
+            for ordered in [true, false] {
+                let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+                    "DATA",
+                    PrimitiveType::Float32,
+                    vec![2, 3],
+                )])
+                .unwrap();
+                let mut table = Table::with_schema(schema);
+                for row in 0..4 {
+                    table
+                        .add_row(RecordValue::new(vec![RecordField::new(
+                            "DATA",
+                            cell(row as f32 * 100.0),
+                        )]))
+                        .unwrap();
+                }
+                let path = root
+                    .path()
+                    .join(format!("sparse-{manager:?}-{endian:?}-{ordered}"));
+                table
+                    .save(
+                        TableOptions::new(&path)
+                            .with_data_manager(manager)
+                            .with_endian_format(endian),
+                    )
+                    .unwrap();
+                let mut table = Table::open(TableOptions::new(&path)).unwrap();
+                let updates = if ordered {
+                    vec![(0, 10.0), (1, 20.0)]
+                } else {
+                    vec![(0, 10.0), (1, 20.0), (0, 40.0)]
+                };
+                for (row, value) in updates {
+                    table
+                        .column_accessor_mut("DATA")
+                        .unwrap()
+                        .set(row, cell(value))
+                        .unwrap();
+                }
+                table
+                    .prepare_write()
+                    .save_selected_rows(&["DATA"], if ordered { &[0, 1] } else { &[1, 0] })
+                    .unwrap();
+                drop(table);
+                let table = Table::open(TableOptions::new(&path)).unwrap();
+                for (row, expected) in [
+                    (0, if ordered { 10.0 } else { 40.0 }),
+                    (1, 20.0),
+                    (2, 200.0),
+                    (3, 300.0),
+                ] {
+                    assert_eq!(
+                        table
+                            .column_accessor("DATA")
+                            .unwrap()
+                            .get(row)
+                            .unwrap()
+                            .unwrap(),
+                        &cell(expected),
+                        "{manager:?} {endian:?} ordered={ordered} row={row}"
+                    );
+                }
+            }
+        }
+    }
+}

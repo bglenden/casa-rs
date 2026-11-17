@@ -31,6 +31,7 @@
 //! - `casacore::StManArrayFile`  (`StArrayFile.h / StArrayFile.cc`)
 //! - `casacore::StIndArray`      (`StIndArray.h / StIndArray.cc`)
 
+use std::borrow::Cow;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -251,11 +252,11 @@ pub(crate) struct StManArrayFileReader {
 /// a shape as no elements (#923). It is stored as `[1]`, so its element
 /// survives.
 pub(super) fn stored_shape(shape: &[usize]) -> Vec<usize> {
-    if shape.is_empty() {
-        vec![1]
-    } else {
-        shape.to_vec()
-    }
+    stored_shape_ref(shape).to_vec()
+}
+
+fn stored_shape_ref(shape: &[usize]) -> &[usize] {
+    if shape.is_empty() { &[1] } else { shape }
 }
 
 impl StManArrayFileReader {
@@ -595,7 +596,7 @@ impl StManArrayFileWriter {
     ) -> Result<i64, StorageError> {
         let (shape, total) = match value {
             Value::Array(av) => {
-                let s = stored_shape(av.shape());
+                let s = stored_shape_ref(av.shape());
                 let t: usize = s.iter().product();
                 (s, t)
             }
@@ -631,7 +632,7 @@ impl StManArrayFileWriter {
         let ndim = shape.len() as u32;
         write_u32(&mut self.file, ndim, self.bo)?;
         header_bytes += 4;
-        for &dim in &shape {
+        for &dim in shape {
             write_i32(&mut self.file, dim as i32, self.bo)?;
             header_bytes += 4;
         }
@@ -670,48 +671,48 @@ impl StManArrayFileWriter {
                 self.file.write_all(&flat)?;
             }
             (Value::Array(ArrayValue::Int16(arr)), CasacoreDataType::TpShort) => {
-                for v in fortran_flat_iter(arr) {
+                for &v in fortran_flat_iter(arr).iter() {
                     write_i16(&mut self.file, v, self.bo)?;
                 }
             }
             (Value::Array(ArrayValue::UInt16(arr)), CasacoreDataType::TpUShort) => {
-                for v in fortran_flat_iter(arr) {
+                for &v in fortran_flat_iter(arr).iter() {
                     write_u16(&mut self.file, v, self.bo)?;
                 }
             }
             (Value::Array(ArrayValue::Int32(arr)), CasacoreDataType::TpInt) => {
-                for v in fortran_flat_iter(arr) {
+                for &v in fortran_flat_iter(arr).iter() {
                     write_i32(&mut self.file, v, self.bo)?;
                 }
             }
             (Value::Array(ArrayValue::UInt32(arr)), CasacoreDataType::TpUInt) => {
-                for v in fortran_flat_iter(arr) {
+                for &v in fortran_flat_iter(arr).iter() {
                     write_u32(&mut self.file, v, self.bo)?;
                 }
             }
             (Value::Array(ArrayValue::Int64(arr)), CasacoreDataType::TpInt64) => {
-                for v in fortran_flat_iter(arr) {
+                for &v in fortran_flat_iter(arr).iter() {
                     write_i64(&mut self.file, v, self.bo)?;
                 }
             }
             (Value::Array(ArrayValue::Float32(arr)), CasacoreDataType::TpFloat) => {
-                for v in fortran_flat_iter(arr) {
+                for &v in fortran_flat_iter(arr).iter() {
                     write_f32(&mut self.file, v, self.bo)?;
                 }
             }
             (Value::Array(ArrayValue::Float64(arr)), CasacoreDataType::TpDouble) => {
-                for v in fortran_flat_iter(arr) {
+                for &v in fortran_flat_iter(arr).iter() {
                     write_f64(&mut self.file, v, self.bo)?;
                 }
             }
             (Value::Array(ArrayValue::Complex32(arr)), CasacoreDataType::TpComplex) => {
-                for v in fortran_flat_iter(arr) {
+                for &v in fortran_flat_iter(arr).iter() {
                     write_f32(&mut self.file, v.re, self.bo)?;
                     write_f32(&mut self.file, v.im, self.bo)?;
                 }
             }
             (Value::Array(ArrayValue::Complex64(arr)), CasacoreDataType::TpDComplex) => {
-                for v in fortran_flat_iter(arr) {
+                for &v in fortran_flat_iter(arr).iter() {
                     write_f64(&mut self.file, v.re, self.bo)?;
                     write_f64(&mut self.file, v.im, self.bo)?;
                 }
@@ -732,7 +733,7 @@ impl StManArrayFileWriter {
                 }
                 // Now append each string and record its offset.
                 let mut string_offsets = Vec::with_capacity(flat.len());
-                for s in &flat {
+                for s in flat.iter() {
                     if s.is_empty() {
                         string_offsets.push(0u32);
                     } else {
@@ -808,20 +809,16 @@ fn make_empty_array(dt: CasacoreDataType, shape: &[usize]) -> Value {
     Value::Array(av)
 }
 
-/// Return array data as a flat Vec in Fortran (column-major) order.
-///
-/// Fast path: if the array is contiguous in Fortran order, copies directly
-/// from memory via `as_slice_memory_order()` (avoids per-element index math).
-/// Fallback: manual index iteration for non-contiguous or C-order arrays.
-fn fortran_flat_iter<T: Clone>(arr: &ArrayD<T>) -> Vec<T> {
+/// Borrow contiguous Fortran data; otherwise pack in column-major order.
+fn fortran_flat_iter<T: Clone>(arr: &ArrayD<T>) -> Cow<'_, [T]> {
     if arr.is_empty() {
-        return vec![];
+        return Cow::Borrowed(&[]);
     }
-    // Fast path: contiguous Fortran-order array — bulk copy from memory.
+    // Contiguous Fortran-order values need no temporary allocation.
     if let Some(slice) = arr.as_slice_memory_order() {
         let is_fortran = arr.ndim() <= 1 || arr.strides().first().is_some_and(|&s| s == 1);
         if is_fortran {
-            return slice.to_vec();
+            return Cow::Borrowed(slice);
         }
     }
     // Fallback: manual iteration for non-contiguous or C-order arrays.
@@ -841,7 +838,7 @@ fn fortran_flat_iter<T: Clone>(arr: &ArrayD<T>) -> Vec<T> {
             indices[d] = 0;
         }
     }
-    result
+    Cow::Owned(result)
 }
 
 // ---------------------------------------------------------------------------
