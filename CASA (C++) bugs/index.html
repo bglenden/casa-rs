@@ -3751,6 +3751,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fluxscale-negative-and-underdetermined-spectral-fit-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fluxscale negative and underdetermined spectral-fit orders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fluxscale-history-can-contain-uninitialized-object-identifiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fluxscale history can contain uninitialized object identifiers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fluxscale-listfile-can-overwrite-scientific-table-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fluxscale listfile can overwrite scientific table files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tablerow__getitem__-process-abort-in-casa-67614" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9619,6 +9652,56 @@ domain. <code>tools/casa-compat/calibration_lifecycle_oracle.py</code> reproduce
 CASA error and compares the two native append products. Invalid boolean
 arguments retain the native exception policy documented in
 <code>docs/python/api.md</code>.</p>
+<h2 id="fluxscale-negative-and-underdetermined-spectral-fit-orders">Fluxscale negative and underdetermined spectral-fit orders<a class="headerlink" href="#fluxscale-negative-and-underdetermined-spectral-fit-orders" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 <code>fluxscale</code> allocates coefficient arrays with <code>fitorder+1</code>
+entries before checking a negative order. With three valid spectral windows,
+<code>fitorder=-1</code> logs "Using fitorder=1", then writes outside the zero-width
+array and segfaults (isolated Python oracle exit 139). casa-rs implements the
+advertised fallback to order 1 and allocates the corresponding two entries.</p>
+<p>With two valid windows and <code>fitorder&gt;1</code>, <code>SolvableVisJones::fluxscale</code>
+advertises order 1 but leaves <code>myfitorder</code> at its initializer, zero. It fits a
+constant instead. With three windows and degree 3 or 5 it returns an
+underdetermined solution, including negative covariance diagonals; one probe
+returned a cubic coefficient of 1560 and a covariance diagonal of -2.95e20.
+casa-rs reduces the fitted degree to the number of valid windows minus one,
+warns, and pads the requested coefficient/error vectors with zeros. Valid,
+determined fits retain the requested degree and CASA's covariance convention.
+The existing singular order-one behavior is retained.</p>
+<p>For exactly determined fits, casacore <code>LSQFit::solve</code> subtracts accumulated
+moments (<code>sum(w*y*y) - x*b + x*(N*x-b)</code>) and divides by at least one when
+estimating residual scatter. Roundoff can become a positive uncertainty
+although the data determine every coefficient exactly. A five-window degree-4
+probe returned coefficient 24697.456405169 and uncertainty 0.0038844, and a
+flux-density error of 6.1e-7. casa-rs retains zero residual uncertainty when
+there are no residual degrees of freedom, extending its existing two-window
+linear-fit convention. The oracle separately bounds these CASA artifacts to
+1e-3 of the corresponding coefficient/flux scale and checks native zeros;
+determined coefficients, covariance, and overdetermined uncertainties retain
+their direct numerical comparisons. Existing stricter order-one checks remain.</p>
+<p>Source: <code>synthesis/MeasurementComponents/SolvableVisCal.cc</code>,
+<code>SolvableVisJones::fluxscale</code>, coefficient allocation and <code>myfitorder</code> branches.
+Reproduction: <code>tools/casa-compat/fluxscale_oracle.py</code> builds the three-window
+input; the negative-order crash must be run in a separate Python process.
+Regression: <code>casa-calibration</code>'s spectral-fit tests and captured CASA gain data.</p>
+<h2 id="fluxscale-history-can-contain-uninitialized-object-identifiers">Fluxscale history can contain uninitialized object identifiers<a class="headerlink" href="#fluxscale-history-can-contain-uninitialized-object-identifiers" title="Permanent link">&para;</a></h2>
+<p><code>MSHistoryHandler::addMessage</code> writes every required HISTORY column except
+<code>OBJECT_ID</code>. Repeated CASA 6.7.6.14 fluxscale calls return arbitrary integers
+there (one run produced -1045601744 and 32549); freshly allocated storage can
+instead read as zero. casa-rs initializes this required field to zero. The
+oracle compares all other history content, checks the native zero, and treats
+the current timestamp and implementation version as process-specific metadata.</p>
+<p>CASA 6.7.6.14 also accepts <code>refspwmap=[]</code> at the Python boundary but indexes
+element zero unconditionally in <code>SolvableVisJones::fluxscale</code>, causing a
+segfault. Native empty mapping means identity, as <code>refspwmap=[-1]</code> does.</p>
+<h2 id="fluxscale-listfile-can-overwrite-scientific-table-files">Fluxscale listfile can overwrite scientific table files<a class="headerlink" href="#fluxscale-listfile-can-overwrite-scientific-table-files" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 opens <code>listfile</code> with <code>ofstream</code> truncation without checking
+whether it names a file inside the input MS, input caltable or output product.
+Such a path can overwrite a scientific table file. Stream failures are also
+unchecked, so the task can report success without producing the listing.
+casa-rs refuses overlapping listing/product paths before mutation and reports
+listing write errors. This preserves data and implements the requested file
+output rather than silently losing it. Source: <code>SolvableVisJones::fluxscale</code>,
+the <code>oListFile</code> stream blocks.</p>
 <h2 id="tablerow__getitem__-process-abort-in-casa-67614"><code>tablerow.__getitem__</code> process abort in CASA 6.7.6.14<a class="headerlink" href="#tablerow__getitem__-process-abort-in-casa-67614" title="Permanent link">&para;</a></h2>
 <p>In CASA 6.7.6.14, indexing a <code>tablerow</code> accessor via <code>r[rownr]</code> (including valid
 and out-of-range row indices, e.g. <code>r[0]</code> or <code>r[10]</code>) terminates Python with

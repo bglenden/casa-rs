@@ -1440,7 +1440,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 606</li>
+<li>Concepts: 612</li>
 <li>Surfaces: 31 (31 task, 0 session)</li>
 <li>Surface bindings: 896</li>
 </ul>
@@ -1571,7 +1571,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-fluxscale">Fluxscale</a><br><code>fluxscale</code></td>
 <td>task</td>
-<td style="text-align: right;">6</td>
+<td style="text-align: right;">7</td>
 <td><code>calibration</code></td>
 <td style="text-align: right;">18</td>
 <td>Scale gain solutions using reference calibrator fields.</td>
@@ -6144,7 +6144,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="fluxscale-fluxscale">Fluxscale (<code>fluxscale</code>)<a class="headerlink" href="#fluxscale-fluxscale" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>6</code></li>
+<li>Contract version: <code>7</code></li>
 <li>Category: Calibration</li>
 <li>Provider family: <code>calibration</code></li>
 <li>Summary: Scale gain solutions using reference calibrator fields.</li>
@@ -6163,11 +6163,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tbody>
 <tr>
 <td><code>vis</code></td>
-<td><code>data.input.vis@r1</code></td>
-<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>data.input.vis@r2</code></td>
+<td><code>path (measurement_set)</code></td>
 <td><code>""</code>; required</td>
 <td>Input</td>
-<td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. CASA's fluxscale requires the MeasurementSet the gain table was solved from.</td>
+<td>One input MeasurementSet path.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. CASA's fluxscale requires the MeasurementSet the gain table was solved from.</td>
 </tr>
 <tr>
 <td><code>caltable</code></td>
@@ -6187,7 +6187,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>reference</code></td>
-<td><code>scaling.reference@r1</code></td>
+<td><code>scaling.reference@r2</code></td>
 <td><code>array&lt;string&gt;</code></td>
 <td><code>[]</code>; required</td>
 <td>Fluxscale</td>
@@ -6195,7 +6195,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>transfer</code></td>
-<td><code>scaling.transfer@r1</code></td>
+<td><code>scaling.transfer@r2</code></td>
 <td><code>array&lt;string&gt;</code></td>
 <td><code>[]</code>; optional</td>
 <td>Fluxscale</td>
@@ -6219,7 +6219,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>refspwmap</code></td>
-<td><code>scaling.refspwmap@r1</code></td>
+<td><code>scaling.refspwmap@r2</code></td>
 <td><code>array&lt;integer&gt;</code></td>
 <td><code>[-1]</code>; optional</td>
 <td>Fluxscale</td>
@@ -6227,7 +6227,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>gainthreshold</code></td>
-<td><code>scaling.gainthreshold@r1</code></td>
+<td><code>scaling.gainthreshold@r2</code></td>
 <td><code>float</code></td>
 <td><code>-1.0</code>; optional</td>
 <td>Fluxscale</td>
@@ -6235,27 +6235,27 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>antenna</code></td>
-<td><code>ms.selection.antenna@r1</code></td>
+<td><code>ms.selection.antenna@r2</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+<td>CASA antenna (baseline) selection, exact text</td>
 </tr>
 <tr>
 <td><code>timerange</code></td>
-<td><code>ms.selection.timerange@r1</code></td>
+<td><code>ms.selection.timerange@r2</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Inclusive TIME range in MJD seconds</td>
+<td>CASA time selection, exact text</td>
 </tr>
 <tr>
 <td><code>scan</code></td>
-<td><code>ms.selection.scan@r1</code></td>
+<td><code>ms.selection.scan@r2</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated scan numbers</td>
+<td>Syntax-preserving numeric scan selection</td>
 </tr>
 <tr>
 <td><code>incremental</code></td>
@@ -6267,7 +6267,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>fitorder</code></td>
-<td><code>scaling.fitorder@r1</code></td>
+<td><code>scaling.fitorder@r2</code></td>
 <td><code>integer</code></td>
 <td><code>1</code>; optional</td>
 <td>Fluxscale</td>
