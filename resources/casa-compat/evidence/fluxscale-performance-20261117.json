@@ -1,8 +1,8 @@
 {
   "casa_version": "6.7.6.14",
-  "measurement_native_revision": "e7f859f76413872af29fb54a28149e81bcab65e6",
-  "measurement_table_reader_revision": "e7f859f76413872af29fb54a28149e81bcab65e6",
-  "harness_revision": "50182477cabf77d75728015a6d40bdb2559eebd5",
+  "measurement_native_revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
+  "measurement_table_reader_revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
+  "harness_revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
   "worker_count": 1,
   "repeats": 5,
   "input_rows": 60000,
@@ -10,100 +10,100 @@
   "cache_policies": {
     "warm": {
       "raw_receipt": "resources/casa-compat/evidence/fluxscale-performance-warm-20261117.json",
-      "reader_median_seconds": 0.07984895000117831,
-      "main_rewrite_median_seconds": 0.9986274459952256,
+      "reader_median_seconds": 0.07743357100116555,
+      "main_rewrite_median_seconds": 0.7542553179955576,
       "rewrite_scope": "Native public table.copy valuecopy MAIN only; owning subtable references removed after all task timings"
     },
     "cold": {
       "raw_receipt": "resources/casa-compat/evidence/fluxscale-performance-cold-20261117.json",
-      "reader_median_seconds": 0.07789470499847084,
-      "main_rewrite_median_seconds": 0.7388044999970589,
+      "reader_median_seconds": 0.07803063000028487,
+      "main_rewrite_median_seconds": 0.7600095480011078,
       "rewrite_scope": "Native public table.copy valuecopy MAIN only; owning subtable references removed after all task timings"
     }
   },
   "phase_medians_seconds": {
     "warm": {
       "full": {
-        "fluxscale_read": 0.070615617,
-        "fluxscale_estimate": 0.006968474,
-        "fluxscale_write": 0.735856462,
-        "fluxscale_history": 0.016705757
+        "fluxscale_read": 0.118153822,
+        "fluxscale_estimate": 0.007262342,
+        "fluxscale_write": 0.038884182,
+        "fluxscale_history": 0.014932489
       },
       "incremental": {
-        "fluxscale_read": 0.096888117,
-        "fluxscale_estimate": 0.006777688,
-        "fluxscale_write": 0.006750357,
-        "fluxscale_history": 0.017617914
+        "fluxscale_read": 0.142444799,
+        "fluxscale_estimate": 0.006728363,
+        "fluxscale_write": 0.006941553,
+        "fluxscale_history": 0.016222637
       }
     },
     "cold": {
       "full": {
-        "fluxscale_read": 0.082160648,
-        "fluxscale_estimate": 0.006591582,
-        "fluxscale_write": 0.758372756,
-        "fluxscale_history": 0.018997312
+        "fluxscale_read": 0.125773103,
+        "fluxscale_estimate": 0.006626789,
+        "fluxscale_write": 0.039754258,
+        "fluxscale_history": 0.018428857
       },
       "incremental": {
-        "fluxscale_read": 0.097773731,
-        "fluxscale_estimate": 0.007233956,
-        "fluxscale_write": 0.010859923,
-        "fluxscale_history": 0.02336158
+        "fluxscale_read": 0.136509433,
+        "fluxscale_estimate": 0.00662398,
+        "fluxscale_write": 0.008902071,
+        "fluxscale_history": 0.020590061
       }
     }
   },
   "medians": {
     "warm": {
       "full": {
-        "casa": 5.5835326529995655,
-        "native": 0.8644266129995231,
-        "speedup": 6.459232708748922
+        "casa": 5.833747368000331,
+        "native": 0.22994160799862584,
+        "speedup": 25.37056002511383
       },
       "incremental": {
-        "casa": 4.351246857993829,
-        "native": 0.16138766700169072,
-        "speedup": 26.96145832474451
+        "casa": 4.36420144099975,
+        "native": 0.19461209799919743,
+        "speedup": 22.4251291973521
       }
     },
     "cold": {
       "full": {
-        "casa": 5.6305256449995795,
-        "native": 0.8894064280029852,
-        "speedup": 6.330655443588363
+        "casa": 5.737731465000252,
+        "native": 0.20641646099829813,
+        "speedup": 27.796869674301597
       },
       "incremental": {
-        "casa": 4.559417026997835,
-        "native": 0.18093313799909083,
-        "speedup": 25.199458083906915
+        "casa": 4.212774544997956,
+        "native": 0.19151088000216987,
+        "speedup": 21.99757290525856
       }
     }
   },
   "fresh": {
     "warm": {
       "casa": {
-        "import_seconds": 1.7522886599981575,
-        "wall_seconds": 5.177533488000336,
-        "python_peak_kib": 305500,
+        "import_seconds": 1.4387164340005256,
+        "wall_seconds": 5.754262048001692,
+        "python_peak_kib": 303864,
         "native_peak_rss_kib": null
       },
       "native": {
-        "import_seconds": 0.031082348003110383,
-        "wall_seconds": 1.1614761119999457,
-        "python_peak_kib": 39224,
-        "native_peak_rss_kib": 310548
+        "import_seconds": 0.028671528001723345,
+        "wall_seconds": 0.1977126040001167,
+        "python_peak_kib": 39288,
+        "native_peak_rss_kib": 49212
       }
     },
     "cold": {
       "casa": {
-        "import_seconds": 1.9699993640024331,
-        "wall_seconds": 6.253832776004856,
-        "python_peak_kib": 305544,
+        "import_seconds": 1.8583461750022252,
+        "wall_seconds": 6.216103145998204,
+        "python_peak_kib": 305152,
         "native_peak_rss_kib": null
       },
       "native": {
-        "import_seconds": 0.034760290996928234,
-        "wall_seconds": 0.9021779709946713,
-        "python_peak_kib": 39432,
-        "native_peak_rss_kib": 310688
+        "import_seconds": 0.031186453998088837,
+        "wall_seconds": 0.21532852399832336,
+        "python_peak_kib": 38996,
+        "native_peak_rss_kib": 49472
       }
     }
   },
@@ -111,52 +111,52 @@
     "warm": {
       "full": {
         "casa": {
-          "rows_per_second": 10745.885038886092,
-          "input_megabytes_per_second": 1.9048657294564635,
-          "input_plus_output_megabytes_per_second": 3.809213686352136
+          "rows_per_second": 10284.984284564,
+          "input_megabytes_per_second": 1.8231643108751425,
+          "input_plus_output_megabytes_per_second": 3.6458330569241735
         },
         "native": {
-          "rows_per_second": 69410.17212762873,
-          "input_megabytes_per_second": 12.303971025480065,
-          "input_plus_output_megabytes_per_second": 24.635905095637945
+          "rows_per_second": 260935.81114888337,
+          "input_megabytes_per_second": 46.2546995847031,
+          "input_plus_output_megabytes_per_second": 96.65105934256498
         }
       },
       "incremental": {
         "casa": {
-          "rows_per_second": 13789.151008468272,
-          "input_megabytes_per_second": 2.4443292571324586,
-          "input_plus_output_megabytes_per_second": 2.45906779118786
+          "rows_per_second": 13748.219648233107,
+          "input_megabytes_per_second": 2.437073573204159,
+          "input_plus_output_megabytes_per_second": 2.451768357775173
         },
         "native": {
-          "rows_per_second": 371775.620248426,
-          "input_megabytes_per_second": 65.90268139813048,
-          "input_plus_output_megabytes_per_second": 66.48363657111169
+          "rows_per_second": 308305.60184520204,
+          "input_megabytes_per_second": 54.65168974255579,
+          "input_plus_output_megabytes_per_second": 55.133463491279194
         }
       }
     },
     "cold": {
       "full": {
         "casa": {
-          "rows_per_second": 10656.19868959934,
-          "input_megabytes_per_second": 1.8889675086455973,
-          "input_plus_output_megabytes_per_second": 3.777421566117667
+          "rows_per_second": 10457.094474705844,
+          "input_megabytes_per_second": 1.8536733663605731,
+          "input_plus_output_megabytes_per_second": 3.706842875052373
         },
         "native": {
-          "rows_per_second": 67460.72224227124,
-          "input_megabytes_per_second": 11.958402441368799,
-          "input_plus_output_megabytes_per_second": 23.943982559038265
+          "rows_per_second": 290674.4922852577,
+          "input_megabytes_per_second": 51.52631698344877,
+          "input_plus_output_megabytes_per_second": 107.66631639994658
         }
       },
       "incremental": {
         "casa": {
-          "rows_per_second": 13159.577122408393,
-          "input_megabytes_per_second": 2.3327280520780165,
-          "input_plus_output_megabytes_per_second": 2.3467936660853024
+          "rows_per_second": 14242.395209883969,
+          "input_megabytes_per_second": 2.524673439415012,
+          "input_plus_output_megabytes_per_second": 2.539896423535096
         },
         "native": {
-          "rows_per_second": 331614.2120980707,
-          "input_megabytes_per_second": 58.7834827694938,
-          "input_plus_output_megabytes_per_second": 59.30167971802886
+          "rows_per_second": 313298.1269749279,
+          "input_megabytes_per_second": 55.536688045501606,
+          "input_plus_output_megabytes_per_second": 56.02626336361898
         }
       }
     }
@@ -165,44 +165,44 @@
     "warm": {
       "full": {
         "casa": {
-          "median_seconds": 5.535566000000003,
-          "ratio_of_cpu_to_wall": 0.991409264352776
+          "median_seconds": 5.806782000000005,
+          "ratio_of_cpu_to_wall": 0.9917481041413398
         },
         "native": {
-          "median_seconds": 0.8629349999999931,
-          "ratio_of_cpu_to_wall": 0.996195209420053
+          "median_seconds": 0.23013999999999868,
+          "ratio_of_cpu_to_wall": 0.9907457794098719
         }
       },
       "incremental": {
         "casa": {
-          "median_seconds": 4.3421809999999965,
-          "ratio_of_cpu_to_wall": 0.9945111286526168
+          "median_seconds": 4.3356370000000055,
+          "ratio_of_cpu_to_wall": 0.9954957206126573
         },
         "native": {
-          "median_seconds": 0.15857299999999697,
-          "ratio_of_cpu_to_wall": 0.9934662396797916
+          "median_seconds": 0.1932469999999995,
+          "ratio_of_cpu_to_wall": 0.9872420110785756
         }
       }
     },
     "cold": {
       "full": {
         "casa": {
-          "median_seconds": 5.581713999999998,
-          "ratio_of_cpu_to_wall": 0.9930366860111017
+          "median_seconds": 5.6691940000000045,
+          "ratio_of_cpu_to_wall": 0.990240454274446
         },
         "native": {
-          "median_seconds": 0.8795810000000017,
-          "ratio_of_cpu_to_wall": 0.9882494952225197
+          "median_seconds": 0.1976839999999953,
+          "ratio_of_cpu_to_wall": 0.9320493905198544
         }
       },
       "incremental": {
         "casa": {
-          "median_seconds": 4.505903999999987,
-          "ratio_of_cpu_to_wall": 0.9882631865694715
+          "median_seconds": 4.1704950000000025,
+          "ratio_of_cpu_to_wall": 0.989047486790281
         },
         "native": {
-          "median_seconds": 0.16900000000000404,
-          "ratio_of_cpu_to_wall": 0.9335390728976706
+          "median_seconds": 0.18162900000000093,
+          "ratio_of_cpu_to_wall": 0.9487293495055624
         }
       }
     }
@@ -210,37 +210,84 @@
   "memory": {
     "warm": {
       "full": {
-        "native_peak_rss_kib": 310624
+        "native_peak_rss_kib": 49452
       },
       "incremental": {
-        "native_peak_rss_kib": 49216
+        "native_peak_rss_kib": 49468
       }
     },
     "cold": {
       "full": {
-        "native_peak_rss_kib": 310556
+        "native_peak_rss_kib": 49464
       },
       "incremental": {
-        "native_peak_rss_kib": 49164
+        "native_peak_rss_kib": 49324
+      }
+    }
+  },
+  "output_bytes": {
+    "warm": {
+      "full": {
+        "casa": 10632989,
+        "native": 11588220
+      },
+      "incremental": {
+        "casa": 64131,
+        "native": 93759
+      }
+    },
+    "cold": {
+      "full": {
+        "casa": 10632989,
+        "native": 11588220
+      },
+      "incremental": {
+        "casa": 64131,
+        "native": 93759
       }
     }
   },
   "input_table_bytes": 10635880,
   "host": "Linux-6.18.57-x86_64-with-glibc2.41",
-  "validation": "The benchmark compares public-Python returns and every fully defined MAIN column, standard subtables and owning references against CASA before the timed alternating runs. No skipped comparison.",
-  "interpretation": "Estimation takes about 7 ms (less than 1% of full output; about 4% of incremental). Reads and writes dominate, with full output close to the existing native decoded/re-encoded MAIN rewrite and input close to the optimized table-reader reference plus launch/selection costs. CPU/wall is near one: these small tables do not saturate raw disk, and the costs include table decoding and serialization. This is measured table I/O cost, not a claim of raw-disk saturation.",
-  "investigation": {
-    "measured_syscalls_before": 1061930,
-    "measured_syscalls_after": 104159,
-    "scope": "Same 60,000-row, 10.6 MB gain table; strace counts only, not wall-time comparison.",
-    "corrections": "Removed duplicate coverage scans, per-row scalar access and cloned complete MAIN rows; use typed bulk input and column-oriented full output. Preserve reader/writer buffers across numeric record alignment instead of flushing/reseeking each tiny cell.",
-    "developmental_before_seconds": {
-      "full_native": 3.9278,
-      "full_casa": 6.05097,
-      "incremental_native": 2.94725,
-      "incremental_casa": 4.18325
+  "validation": "Public-Python returns and all fully defined MAIN columns, standard subtables and owning references compare against CASA before alternating timings. No skipped comparison. The 73-case oracle separately covers read-only big-endian input and both stale-control-count cases.",
+  "interpretation": "Output serialization is corrected: unchanged payloads are copied and only replacement transfer CPARAM records are appended. Full write takes about 40 ms and peak RSS is about 50 MB. Input decoding/allocation remains material at 118\u2013143 ms, CPU/wall remains 0.93\u20130.99, and warm/cold task times differ little. This is not an I/O-limited performance pass; #990 remains open for the packed-input correction. The decoded MAIN rewrite is a software reference, not a raw-disk floor.",
+  "before_output_change": {
+    "receipt": "https://github.com/bglenden/casa-rs/blob/ca619b7c08f65cdd65a71b322cf1f8e9ce7f2294/resources/casa-compat/evidence/fluxscale-performance-20261117.json",
+    "native_revision": "e7f859f76413872af29fb54a28149e81bcab65e6",
+    "medians": {
+      "warm": {
+        "full": {
+          "casa": 5.5835326529995655,
+          "native": 0.8644266129995231,
+          "speedup": 6.459232708748922
+        },
+        "incremental": {
+          "casa": 4.351246857993829,
+          "native": 0.16138766700169072,
+          "speedup": 26.96145832474451
+        }
+      },
+      "cold": {
+        "full": {
+          "casa": 5.6305256449995795,
+          "native": 0.8894064280029852,
+          "speedup": 6.330655443588363
+        },
+        "incremental": {
+          "casa": 4.559417026997835,
+          "native": 0.18093313799909083,
+          "speedup": 25.199458083906915
+        }
+      }
     },
-    "before_scope": "Investigative measurements of the uncommitted precursor based on 2108c1111; not a separately pinned scientific pass."
+    "write_phase_seconds": {
+      "warm": 0.735856462,
+      "cold": 0.758372756
+    },
+    "native_peak_rss_kib": {
+      "warm": 310624,
+      "cold": 310556
+    }
   },
-  "reuse": "Measured native code is e7f859f76. The subsequent review fixes affect failed reads/calls, partial antenna selection and an unmatched transfer field. They preserve the measured default FLUX-to-PHASE workload, scientific products, bulk reader and column writer; successful HISTORY is still batched into one save. The expanded oracle independently checks the corrected code. Reader reference uses the same release-built core as the measurements."
+  "storage_tradeoff": "Appending replacement records preserves shared old records and the source storage layout. The measured full native product is 11,588,220 bytes versus 10,632,989 bytes from CASA (about 9% larger); obsolete payloads remain unreferenced. Unsupported storage layouts and incomplete copied row counts use the validated reconstruction path."
 }

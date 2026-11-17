@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "fluxscale",
   "casa_version": "6.7.6.14",
-  "audit_revision": "50182477cabf77d75728015a6d40bdb2559eebd5",
+  "audit_revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
   "parameters": {
     "vis": {
       "status": "Implemented",
@@ -16,7 +16,7 @@
     },
     "caltable": {
       "status": "Implemented",
-      "scope": "G/T Jones complex, single-channel gains; flagged samples and unequal intervals, undefined/type errors and duplicate timestamps.",
+      "scope": "G/T Jones complex, single-channel gains; flagged samples and unequal intervals, undefined/type errors and duplicate timestamps. Sorted read-only big-endian inputs and rows published beyond stale table.dat counts retain complete products.",
       "evidence": [
         "oracle"
       ],
@@ -245,11 +245,11 @@
     "oracle": {
       "kind": "Scientific, Python API/state and interchange comparison",
       "state": "passed",
-      "scope": "67 same-argument public-Python cases on the same CASA-made G/T gains, plus 3 documented spectral-order corrections checked against identifiable CASA fits; captured original/selector fixtures and independent C++ readback.",
-      "result": "70 cases passed, zero comparison failures; all 15 owned parameters have implemented behavior.",
+      "scope": "70 same-argument public-Python cases on the same CASA-made G/T gains, plus 3 documented spectral-order corrections checked against identifiable CASA fits; captured original/selector fixtures, read-only big-endian inputs, published rows beyond stale control counts, and independent C++ readback.",
+      "result": "73 cases passed, zero comparison failures; all 15 owned parameters have implemented behavior.",
       "casa_version": "6.7.6.14",
-      "revision": "8d4d6a51316d7566b5ab4c4758f615363424ee19",
-      "command": "python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/final-orders --native-bin target/calibration-990/build/release/calibrate",
+      "revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
+      "command": "python tools/casa-compat/fluxscale_oracle.py --work target/calibration-990/io-final --native-bin target/calibration-990/build/release/calibrate",
       "receipt": "resources/casa-compat/evidence/fluxscale-20261117.json",
       "links": [
         "tools/casa-compat/fluxscale_oracle.py",
@@ -260,9 +260,9 @@
       "kind": "Matched public-Python performance",
       "state": "measured",
       "scope": "Alternating same-host, one-worker warm/cold full and incremental calls, equal validated products; separate fresh imports and peak memory, estimator phases and native table-reader floor.",
-      "result": "Full output is 6.3\u20136.5\u00d7 faster and incremental output 25.2\u201327.0\u00d7 faster than CASA across warm/cold policies. Estimation takes about 7 ms; table I/O dominates, with CPU decoding/serialization and the native reader/rewrite references reported explicitly.",
+      "result": "Full output takes 0.206\u20130.230 s versus CASA 5.738\u20135.834 s (25.4\u201327.8\u00d7 faster), with about 50 MB native peak RSS. Input decoding remains materially CPU-bound; performance acceptance stays open on #990.",
       "casa_version": "6.7.6.14",
-      "revision": "e7f859f76413872af29fb54a28149e81bcab65e6",
+      "revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
       "command": "python tools/perf/calibrate/fluxscale.py --vis <oracle-ms> --gain <oracle-gain> --native-bin <release-calibrate> --repeat-input 1000 --repeats 5 --cache warm|cold --out <receipt>",
       "receipt": "resources/casa-compat/evidence/fluxscale-performance-20261117.json",
       "links": [

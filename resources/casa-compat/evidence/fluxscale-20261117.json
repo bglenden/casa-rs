@@ -1,7 +1,7 @@
 {
   "casa_version": "6.7.6.14",
-  "native_revision": "8d4d6a51316d7566b5ab4c4758f615363424ee19",
-  "harness_revision": "50182477cabf77d75728015a6d40bdb2559eebd5",
+  "native_revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
+  "harness_revision": "53a1ca6722ae5758f9598487be2395d8b6212205",
   "signature": "(vis='', caltable='', fluxtable='', reference=[], transfer=[], listfile='', append=False, refspwmap=[-1], gainthreshold=-1.0, antenna='', timerange='', scan='', incremental=False, fitorder=1, display=False)",
   "comparison_failures": [],
   "cases": {
@@ -286,6 +286,309 @@
             "covarMat": [],
             "fieldName": "PHASE",
             "fitFluxd": 0.9624320886597723,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "big-endian-readonly": {
+      "arguments": {},
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "stale-control-transfer": {
+      "arguments": {},
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                1.014581621096799,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.03767496546937333,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 1.014581621096799,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      }
+    },
+    "stale-control-reference": {
+      "arguments": {},
+      "casa": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9856279467382467,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04159147188139776,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9856279467382467,
+            "fitFluxdErr": 0.0,
+            "fitRefFreq": 100003500000.0,
+            "spidx": [
+              0.0,
+              0.0
+            ],
+            "spidxerr": [
+              0.0,
+              0.0
+            ]
+          },
+          "freq": [
+            100003500000.0
+          ],
+          "spwID": [
+            0
+          ],
+          "spwName": [
+            "SPW0"
+          ]
+        },
+        "history_rows": 22
+      },
+      "native": {
+        "value": {
+          "1": {
+            "0": {
+              "fluxd": [
+                0.9856279467382467,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "fluxdErr": [
+                0.04159147188139776,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "numSol": [
+                10.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "covarMat": [],
+            "fieldName": "PHASE",
+            "fitFluxd": 0.9856279467382467,
             "fitFluxdErr": 0.0,
             "fitRefFreq": 100003500000.0,
             "spidx": [
@@ -2699,7 +3002,7 @@
     },
     "listfile": {
       "arguments": {
-        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/final-orders/flux.txt"
+        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/io-final/flux.txt"
       },
       "casa": {
         "value": {
@@ -3446,7 +3749,7 @@
     },
     "listfile-mapped": {
       "arguments": {
-        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/final-orders/mapped.txt",
+        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/io-final/mapped.txt",
         "refspwmap": [
           0
         ]
@@ -6881,7 +7184,7 @@
     },
     "listfile-missing": {
       "arguments": {
-        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/final-orders/missing.txt"
+        "listfile": "/workspace/casa-rs-cal990/target/calibration-990/io-final/missing.txt"
       },
       "casa": {
         "value": {
@@ -7097,17 +7400,17 @@
     "vis-list": {
       "arguments": {
         "vis": [
-          "/workspace/casa-rs-cal990/target/calibration-990/final-orders/original.ms"
+          "/workspace/casa-rs-cal990/target/calibration-990/io-final/original.ms"
         ]
       },
       "casa": {
         "error": "AssertionError",
-        "message": "the vis parameter must be a path that exists ('['/workspace/casa-rs-cal990/target/calibration-990/final-orders/original.ms']' does not exist)",
+        "message": "the vis parameter must be a path that exists ('['/workspace/casa-rs-cal990/target/calibration-990/io-final/original.ms']' does not exist)",
         "history_rows": 0
       },
       "native": {
         "error": "TypeError",
-        "message": "invalid value for vis: invalid parameter type: value Array([String(\"/workspace/casa-rs-cal990/target/calibration-990/final-orders/original.ms\")]) does not match Path { resource_kind: Some(MeasurementSet) }",
+        "message": "invalid value for vis: invalid parameter type: value Array([String(\"/workspace/casa-rs-cal990/target/calibration-990/io-final/original.ms\")]) does not match Path { resource_kind: Some(MeasurementSet) }",
         "history_rows": 0
       }
     },
