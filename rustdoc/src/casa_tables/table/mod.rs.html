@@ -270,8 +270,8 @@
 <a href=#270 id=270 data-nosnippet>270</a>/// selection is strided: `StandardStMan` is read bucket by bucket, keeping the
 <a href=#271 id=271 data-nosnippet>271</a>/// selected rows of each, and `StManAipsIO` row by row. Two costs are outside
 <a href=#272 id=272 data-nosnippet>272</a>/// this footprint because the selection does not bound them: a reader's I/O
-<a href=#273 id=273 data-nosnippet>273</a>/// buffers, which depend on the stored layout (a `StandardStMan` bucket's worth
-<a href=#274 id=274 data-nosnippet>274</a>/// at a time; a tiled manager's recent tiles and the process-wide table cache, see
+<a href=#273 id=273 data-nosnippet>273</a>/// buffers, which depend on the stored layout (one `StandardStMan` bucket plus
+<a href=#274 id=274 data-nosnippet>274</a>/// 32 KiB of read-ahead; a tiled manager's recent tiles and the process-wide table cache, see
 <a href=#275 id=275 data-nosnippet>275</a>/// [`set_table_cache_budget_bytes`](crate::set_table_cache_budget_bytes)), and
 <a href=#276 id=276 data-nosnippet>276</a>/// data-manager metadata a reader parses for any read (bucket indices, tile
 <a href=#277 id=277 data-nosnippet>277</a>/// layouts), which depends on the stored table.
