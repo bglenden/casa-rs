@@ -6432,3 +6432,28 @@ did not add a `NULL` column keyword for its `TNULL2 = -32768` card.
 `FITSTabular::nullsFromHDU` looks up each indexed card with a
 zero-based column index. casa-rs preserves both the unscaled integer
 cell and the matching null marker so readers can interpret it. See #1028.
+
+
+## Callibrary joint scan maps mark other observations unavailable
+
+- Date noted: 2026-11-17
+- Status: corrected under the standing evident-intent rule (#1518)
+- Affected code: CASA 6.7.6.14 `CLPatchPanel` MS constructor, missing-scan catch.
+
+With scan 1 in observation 0 and scan 2 in observation 1 in both the MS and
+G table, `obsmap='self' scanmap='self'` skips all calibration. The constructor
+tries each requested scan within each calibration observation. When a scan
+is absent in the current observation, it calls `recordBadMSIndices(reqMSobs,
+theseMSscan, ...)`, marking that scan bad in every requested observation,
+including the observation where the scan exists. With an existing corrected
+column, CASA leaves its values and weights unchanged; ordinary calflag adds
+no flags. This contradicts the explicitly independent observation/scan maps.
+
+casa-rs checks availability within the actual joint mapped context and
+calibrates its valid buffers. The public task oracle retains the raw CASA
+result and compares native output to an independent CASA control with two
+explicit library slices, `obs='0' scan='1'` and `obs='1' scan='2'`, retaining
+both self maps and the identical input MS/calibration table. That control
+matches native corrected data, flags and weight/sigma columns. Missing joint
+contexts still use the ordinary unavailable-calibration rules. No tolerance
+is relaxed, and this correction is separate from same-input task matches.

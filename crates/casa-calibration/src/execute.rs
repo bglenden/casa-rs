@@ -5074,6 +5074,7 @@ mod tests {
             measurement_set_spectral_windows: vec![spw_plan.clone()],
             calibration_tables: vec![ApplyCalibrationTablePlan {
                 applicable_row_indices: None,
+                unavailable_row_indices: Vec::new(),
                 spec: crate::plan::ApplyCalibrationTableSpec {
                     callibrary: None,
                     path: cal_path.clone(),

@@ -64,7 +64,16 @@ pub fn project_provider_invocation_with_originals(
                         == Some(value)
             });
             let sent = given
-                .filter(|_| is_quantity(session, name))
+                .filter(|_| {
+                    is_quantity(session, name)
+                        || (session.bundle().surface.id() == "applycal"
+                            && name == "spwmap"
+                            && session
+                                .states()
+                                .get("docallib")
+                                .and_then(|state| state.value.as_ref())
+                                == Some(&ParameterValue::Bool(true)))
+                })
                 .map(|given| match given {
                     ParameterValue::ScalarArray(value)
                     | ParameterValue::NumpyScalar { value, .. } => value.as_ref(),
@@ -552,5 +561,31 @@ mod tests {
             &ParameterValue::Array(vec![auto(), ParameterValue::String("1arcsec".into())]),
             omit
         ));
+    }
+    #[test]
+    fn inactive_applycal_spwmap_keeps_its_flat_form_across_processes() {
+        let mut session =
+            ParameterSession::defaults(builtin_surface_bundle("applycal").unwrap()).unwrap();
+        session
+            .set("vis", ParameterValue::String("data.ms".into()))
+            .unwrap();
+        session.set("docallib", ParameterValue::Bool(true)).unwrap();
+        session
+            .set("callib", ParameterValue::String("apply.callib".into()))
+            .unwrap();
+        session
+            .set(
+                "spwmap",
+                ParameterValue::Array(vec![ParameterValue::Integer(999)]),
+            )
+            .unwrap();
+        assert_eq!(request(&session).values["spwmap"], serde_json::json!([999]));
+        session
+            .set("docallib", ParameterValue::Bool(false))
+            .unwrap();
+        assert_eq!(
+            request(&session).values["spwmap"],
+            serde_json::json!([[999]])
+        );
     }
 }

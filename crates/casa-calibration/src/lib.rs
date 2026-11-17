@@ -57,7 +57,7 @@ pub use bandpass::{
     BandpassSolveRequest, BandpassType,
 };
 pub use callib::{
-    CallibError, CallibraryObservationMap, CallibraryOptions, load_apply_specs_from_callib,
+    CallibError, CallibraryContextMap, CallibraryOptions, load_apply_specs_from_callib,
     save_apply_specs_to_callib,
 };
 pub use casa_return::{fluxscale_record, solve_record};

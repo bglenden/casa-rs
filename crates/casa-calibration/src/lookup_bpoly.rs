@@ -42,6 +42,7 @@ impl CalibrationTableLookup {
             summarize_table(path).map_err(|error| Self::table_error(path, &error.to_string()))?;
         let plan = ApplyCalibrationTablePlan {
             applicable_row_indices: None,
+            unavailable_row_indices: Vec::new(),
             spec: ApplyCalibrationTableSpec {
                 callibrary: None,
                 interp,

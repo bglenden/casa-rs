@@ -265,6 +265,9 @@ pub struct ApplyCalibrationTablePlan {
     /// Physical MS rows selected by a callibrary slice; None means no extra mask.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applicable_row_indices: Option<Vec<usize>>,
+    /// Rows whose library mapping requests an absent calibration context.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unavailable_row_indices: Vec<usize>,
     /// Number of selected rows to which this table can apply.
     pub applicable_selected_row_count: usize,
     /// Normalized summary for the table.
@@ -289,6 +292,7 @@ impl ApplyCalibrationTablePlan {
         self.spec.apply_to.matches(row)
             && self.spec.callibrary.as_ref().is_none_or(|library| {
                 library.observation_map.covers(row.observation_id)
+                    && library.scan_map.covers(row.scan_number)
                     && (library.field_map.is_empty()
                         || usize::try_from(row.field_id)
                             .is_ok_and(|id| id < library.field_map.len()))
@@ -592,6 +596,7 @@ pub(crate) fn plan_apply_with_preparation_error(
         .iter()
         .map(|spec| build_table_plan(ms, spec, &selected_rows))
         .collect::<Result<Vec<_>, _>>()?;
+    library::validate_overlaps(&calibration_tables, &selected_rows)?;
     let calibration_table_plans_ns = calibration_tables_started_at.elapsed().as_nanos() as u64;
 
     Ok((
@@ -823,6 +828,7 @@ fn build_table_plan(
             spec.apply_to.matches(row)
                 && spec.callibrary.as_ref().is_none_or(|library| {
                     library.observation_map.covers(row.observation_id)
+                        && library.scan_map.covers(row.scan_number)
                         && (library.field_map.is_empty()
                             || usize::try_from(row.field_id)
                                 .is_ok_and(|id| id < library.field_map.len()))
@@ -888,8 +894,9 @@ fn build_table_plan(
         load_caltable_spectral_windows(&summary, &available_mappings)?
     };
 
-    Ok(ApplyCalibrationTablePlan {
+    let mut plan = ApplyCalibrationTablePlan {
         spec: spec.clone(),
+        unavailable_row_indices: Vec::new(),
         applicable_row_indices,
         applicable_selected_row_count: applicable_rows.len(),
         summary,
@@ -903,7 +910,9 @@ fn build_table_plan(
             spec.interp
         },
         calwt: spec.calwt,
-    })
+    };
+    library::arrange_contexts(ms, &mut plan, selected_rows)?;
+    Ok(plan)
 }
 
 fn k_antpos_default_spwmap_spec(
@@ -1059,7 +1068,6 @@ fn get_string(table: &Table, row_index: usize, column: &str) -> Result<String, A
     }
 }
 
-#[cfg(test)]
 fn get_i32(table: &Table, row_index: usize, column: &str) -> Result<i32, ApplyPlanError> {
     match table
         .cell_accessor(row_index, column)

@@ -1,18 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Narrow callibrary parsing for `applycal`-class workflows.
-//!
-//! The first slice intentionally parses only the subset that maps onto the
-//! existing apply planner/executor surface:
-//!
-//! - `caltable`
-//! - `calwt`
-//! - `field`, `spw`, `obs`
-//! - `fldmap`
-//! - `spwmap`
-//! - `tinterp`, `finterp`
-//!
-//! Unsupported callibrary directives stay explicit errors so the compatibility
-//! boundary remains honest.
+//! CASA task callibrary parsing and apply specifications.
+//! File syntax follows CalLibraryGram; data slices and mappings follow CLPatchPanel.
+
+#[path = "callib_parser.rs"]
+mod parser;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -61,21 +52,21 @@ pub enum CallibError {
     },
 }
 
-/// Observation mapping used by a callibrary slice.
+/// Observation or scan mapping used by a callibrary slice.
 #[derive(
     Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
-pub enum CallibraryObservationMap {
-    /// Merge all available calibration observations in time.
+pub enum CallibraryContextMap {
+    /// Merge all available calibration contexts in time.
     #[default]
     All,
-    /// Use the data observation's own calibration observation.
+    /// Use the data context's own calibration ID.
     SelfMap,
-    /// Map each listed data observation; unlisted observations are outside the slice.
+    /// Map each listed data ID; unlisted IDs are outside the slice.
     Indices(Vec<i32>),
 }
 
-impl CallibraryObservationMap {
+impl CallibraryContextMap {
     pub(crate) fn active(&self) -> bool {
         !matches!(self, Self::All)
     }
@@ -109,7 +100,9 @@ pub struct CallibraryOptions {
     /// Explicit data FIELD_ID to calibration FIELD_ID map.
     pub field_map: Vec<i32>,
     /// Explicit observation grouping, independent of traditional perobs admission.
-    pub observation_map: CallibraryObservationMap,
+    pub observation_map: CallibraryContextMap,
+    /// Explicit scan grouping, independent of traditional perscan admission.
+    pub scan_map: CallibraryContextMap,
     /// Antenna map; hardware IDs beyond its length repeat the last value.
     pub antenna_map: Vec<i32>,
     /// Recorded by CASA's parser; CLPatchPanel 6.7.6 does not consume reach.
@@ -134,19 +127,31 @@ pub fn load_apply_specs_from_callib(
     let mut specs = Vec::new();
     let mut calwt_by_table = BTreeMap::<PathBuf, bool>::new();
 
-    for (line_number, raw_line) in contents.lines().enumerate() {
-        let line_number = line_number + 1;
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut spec =
-            parse_callib_line(line, &base_dir).map_err(|reason| CallibError::ParseLine {
+    let entries =
+        parser::parse(&contents).map_err(|(line_number, reason)| CallibError::ParseLine {
+            path: path.display().to_string(),
+            line_number,
+            line: contents
+                .lines()
+                .nth(line_number.saturating_sub(1))
+                .unwrap_or_default()
+                .to_string(),
+            reason,
+        })?;
+    for entry in entries {
+        let line_number = entry.line;
+        let mut spec = parse_callib_entry(entry.values, &base_dir).map_err(|reason| {
+            CallibError::ParseLine {
                 path: path.display().to_string(),
                 line_number,
-                line: raw_line.to_string(),
+                line: contents
+                    .lines()
+                    .nth(line_number.saturating_sub(1))
+                    .unwrap_or_default()
+                    .to_string(),
                 reason,
-            })?;
+            }
+        })?;
         if let Some(existing) = calwt_by_table.get(&spec.path) {
             // CalLibraryParse retains the first table-level calwt when
             // subsequent lines add slices of the same physical table.
@@ -191,16 +196,10 @@ pub fn save_apply_specs_to_callib(
     })
 }
 
-fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTableSpec, String> {
-    let tokens = tokenize_callib_line(line)?;
-    let mut values = BTreeMap::<String, String>::new();
-    for token in tokens {
-        let (key, value) = token
-            .split_once('=')
-            .ok_or_else(|| format!("expected key=value token, found {token:?}"))?;
-        values.insert(key.trim().to_ascii_lowercase(), value.trim().to_string());
-    }
-
+fn parse_callib_entry(
+    mut values: BTreeMap<String, String>,
+    base_dir: &Path,
+) -> Result<ApplyCalibrationTableSpec, String> {
     let caltable = values
         .remove("caltable")
         .ok_or_else(|| "missing required caltable= directive".to_string())?;
@@ -235,22 +234,14 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
         .remove("reach")
         .map(|v| strip_quotes(&v))
         .unwrap_or_default();
-    let observation_map = match values.remove("obsmap") {
-        None => CallibraryObservationMap::All,
-        Some(value) if value.trim().starts_with('[') => {
-            CallibraryObservationMap::Indices(parse_int_array(&value, "obsmap")?)
-        }
-        Some(value) if strip_quotes(&value) == "self" => CallibraryObservationMap::SelfMap,
-        Some(value) => return Err(format!("unrecognized observation mapping {value}")),
-    };
+    let observation_map = parse_context_map(values.remove("obsmap"), "observation")?;
+    let scan_map = parse_context_map(values.remove("scanmap"), "scan")?;
     let antenna_map = match values.remove("antmap") {
         Some(value) if value.trim().starts_with('[') => parse_int_array(&value, "antmap")?,
         // CLPatchPanel only consumes an integer array for antmap.
         _ => Vec::new(),
     };
-    let field_value = values
-        .remove("fldmap")
-        .or_else(|| values.remove("gainfield"));
+    let field_value = values.remove("fldmap");
     let (gainfield, field_map) = match field_value {
         Some(value) if value.trim().starts_with('[') => (None, parse_int_array(&value, "fldmap")?),
         Some(value) => (parse_gainfield_selector(&value)?, Vec::new()),
@@ -261,15 +252,14 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
         reach,
         field_map,
         observation_map,
+        scan_map,
         antenna_map,
     });
     let apply_to = ApplyTableSelection::default();
-    if let Some(scanmap) = values.remove("scanmap") {
-        return Err(format!("scanmap={scanmap} is not implemented yet (#1518)"));
-    }
 
     let spwmap = values
         .remove("spwmap")
+        .filter(|value| value.starts_with('['))
         .map(|value| parse_int_array(&value, "spwmap"))
         .transpose()?
         .unwrap_or_default();
@@ -294,6 +284,17 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
         interp,
         calwt,
     })
+}
+
+fn parse_context_map(value: Option<String>, kind: &str) -> Result<CallibraryContextMap, String> {
+    match value {
+        None => Ok(CallibraryContextMap::All),
+        Some(value) if value.trim().starts_with('[') => Ok(CallibraryContextMap::Indices(
+            parse_int_array(&value, kind)?,
+        )),
+        Some(value) if strip_quotes(&value) == "self" => Ok(CallibraryContextMap::SelfMap),
+        Some(value) => Err(format!("unrecognized {kind} mapping {value}")),
+    }
 }
 
 fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> String {
@@ -328,13 +329,18 @@ fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> Stri
                 ));
             }
         }
-        match &library.observation_map {
-            CallibraryObservationMap::All => {}
-            CallibraryObservationMap::SelfMap => parts.push("obsmap='self'".to_string()),
-            CallibraryObservationMap::Indices(ids) => parts.push(format!(
-                "obsmap=[{}]",
-                ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
-            )),
+        for (name, map) in [
+            ("obsmap", &library.observation_map),
+            ("scanmap", &library.scan_map),
+        ] {
+            match map {
+                CallibraryContextMap::All => {}
+                CallibraryContextMap::SelfMap => parts.push(format!("{name}='self'")),
+                CallibraryContextMap::Indices(ids) => parts.push(format!(
+                    "{name}=[{}]",
+                    ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
+                )),
+            }
         }
         if !library.reach.is_empty() {
             parts.push(format!("reach='{}'", escape_callib_string(&library.reach)));
@@ -438,56 +444,6 @@ fn escape_callib_string(value: &str) -> String {
     value.replace('\'', "\\'")
 }
 
-fn tokenize_callib_line(line: &str) -> Result<Vec<String>, String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut quote = None;
-    let mut bracket_depth = 0usize;
-
-    for ch in line.chars() {
-        match ch {
-            '\'' | '"' => {
-                if let Some(active) = quote {
-                    if active == ch {
-                        quote = None;
-                    }
-                } else {
-                    quote = Some(ch);
-                }
-                current.push(ch);
-            }
-            '[' if quote.is_none() => {
-                bracket_depth += 1;
-                current.push(ch);
-            }
-            ']' if quote.is_none() => {
-                if bracket_depth == 0 {
-                    return Err("unmatched closing ']'".to_string());
-                }
-                bracket_depth -= 1;
-                current.push(ch);
-            }
-            ch if ch.is_whitespace() && quote.is_none() && bracket_depth == 0 => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-            }
-            _ => current.push(ch),
-        }
-    }
-
-    if quote.is_some() {
-        return Err("unterminated quoted string".to_string());
-    }
-    if bracket_depth != 0 {
-        return Err("unterminated list literal".to_string());
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    Ok(tokens)
-}
-
 fn resolve_callib_path(base_dir: &Path, value: &str) -> PathBuf {
     let path = PathBuf::from(value);
     if path.is_absolute() {
@@ -503,7 +459,7 @@ fn strip_quotes(value: &str) -> String {
         let first = trimmed.as_bytes()[0] as char;
         let last = trimmed.as_bytes()[trimmed.len() - 1] as char;
         if (first == '\'' || first == '"') && first == last {
-            return trimmed[1..trimmed.len() - 1].trim().to_string();
+            return trimmed[1..trimmed.len() - 1].to_string();
         }
     }
     trimmed.to_string()
@@ -517,25 +473,13 @@ fn parse_bool(value: &str) -> Result<bool, String> {
     }
 }
 
-fn parse_numeric_selector(value: &str, label: &str) -> Result<Vec<i32>, String> {
-    let value = strip_quotes(value);
-    casa_ms::parse_numeric_id_selector(&value, label).map_err(|error| error.to_string())
-}
-
 fn parse_gainfield_selector(value: &str) -> Result<Option<GainFieldSelector>, String> {
     let value = strip_quotes(value);
     if value.is_empty() {
-        return Ok(None);
+        return Err("Field mapping by selection failure: empty selection matches no fields".into());
     }
     if value == "nearest" {
         return Ok(Some(GainFieldSelector::Nearest));
-    }
-    if let Ok(ids) = parse_numeric_selector(&value, "fldmap") {
-        return match ids.as_slice() {
-            [] => Ok(None),
-            [field_id] => Ok(Some(GainFieldSelector::FieldId(*field_id))),
-            _ => Ok(Some(GainFieldSelector::Expression(value))),
-        };
     }
     Ok(Some(GainFieldSelector::Expression(value)))
 }
@@ -595,6 +539,7 @@ mod tests {
         ] {
             let mut spec = ApplyCalibrationTableSpec::new(dir.path().join("g.gcal"));
             spec.interp = ApplyInterpolationMode::parse_casa(value).unwrap();
+            spec.callibrary = Some(crate::CallibraryOptions::default());
             save_apply_specs_to_callib(&path, &[spec.clone()]).unwrap();
             assert_eq!(load_apply_specs_from_callib(&path).unwrap(), vec![spec]);
         }
@@ -614,15 +559,17 @@ caltable='bandpass.bcal' calwt=F spwmap=[0,0] tinterp='nearest' finterp='linear'
 
         let specs = load_apply_specs_from_callib(&callib).expect("load callib");
         assert_eq!(specs.len(), 2);
-        assert_eq!(specs[0].path, dir.path().join("phase.gcal"));
         assert_eq!(
-            specs[0].apply_to,
-            ApplyTableSelection {
-                field_ids: vec![0, 1],
-                spectral_window_ids: vec![0, 2],
-                observation_ids: vec![3],
-            }
+            specs[0].path,
+            std::env::current_dir().unwrap().join("phase.gcal")
         );
+        // File selectors are FIELD/SPW/observation expressions resolved on the MS,
+        // rather than pre-parsed numeric native apply_to vectors.
+        assert_eq!(specs[0].apply_to, ApplyTableSelection::default());
+        let selection = &specs[0].callibrary.as_ref().unwrap().selection;
+        assert_eq!(selection.field.as_deref(), Some("0~1"));
+        assert_eq!(selection.spw.as_deref(), Some("0,2"));
+        assert_eq!(selection.observation.as_deref(), Some("3"));
         assert_eq!(specs[0].gainfield, Some(GainFieldSelector::Nearest));
         assert_eq!(specs[0].interp, ApplyInterpolationMode::Nearest);
         assert_eq!(specs[1].spwmap, vec![0, 0]);
@@ -630,16 +577,22 @@ caltable='bandpass.bcal' calwt=F spwmap=[0,0] tinterp='nearest' finterp='linear'
     }
 
     #[test]
-    fn load_callib_rejects_unsupported_directives() {
+    fn load_callib_retains_supported_intent() {
         let dir = TempDir::new().expect("tempdir");
         let callib = dir.path().join("apply.callib");
         std::fs::write(&callib, "caltable='phase.gcal' intent='CALIBRATE_PHASE'\n")
             .expect("write callib");
 
-        let error = load_apply_specs_from_callib(&callib).expect_err("reject unsupported intent");
-        assert!(
-            error.to_string().contains("intent="),
-            "unexpected error: {error}"
+        let specs = load_apply_specs_from_callib(&callib).expect("intent is supported");
+        assert_eq!(
+            specs[0]
+                .callibrary
+                .as_ref()
+                .unwrap()
+                .selection
+                .intent
+                .as_deref(),
+            Some("CALIBRATE_PHASE")
         );
     }
 
@@ -674,6 +627,29 @@ caltable='bandpass.bcal' calwt=F spwmap=[0,0] tinterp='nearest' finterp='linear'
 
         save_apply_specs_to_callib(&callib, &specs).expect("save callib");
         let loaded = load_apply_specs_from_callib(&callib).expect("reload callib");
-        assert_eq!(loaded, specs);
+        // Loading a file changes typed native apply_to into its raw MS selector
+        // representation. The canonical file and effective controls must persist.
+        let text = std::fs::read_to_string(&callib).unwrap();
+        save_apply_specs_to_callib(&callib, &loaded).unwrap();
+        assert_eq!(std::fs::read_to_string(&callib).unwrap(), text);
+        assert_eq!(loaded[0].path, specs[0].path);
+        assert_eq!(loaded[0].calwt, specs[0].calwt);
+        assert_eq!(loaded[0].gainfield, specs[0].gainfield);
+        assert_eq!(
+            loaded[0]
+                .callibrary
+                .as_ref()
+                .unwrap()
+                .selection
+                .field
+                .as_deref(),
+            Some("0,1")
+        );
+        assert_eq!(loaded[1].spwmap, specs[1].spwmap);
+        assert_eq!(
+            loaded[1].gainfield,
+            Some(GainFieldSelector::Expression("2".into()))
+        );
+        assert_eq!(loaded[1].interp, specs[1].interp);
     }
 }

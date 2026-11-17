@@ -281,7 +281,7 @@ fn a_callibrary_names_the_chain_alone() {
     assert_eq!(apply.calibration_tables.len(), 1);
     assert_eq!(
         apply.calibration_tables[0].path,
-        dir.path().join("phase.gcal")
+        std::env::current_dir().unwrap().join("phase.gcal")
     );
 
     let both = refusal(request(
@@ -835,6 +835,7 @@ fn sample_apply_plan() -> ApplyPlan {
         measurement_set_spectral_windows: Vec::new(),
         calibration_tables: vec![ApplyCalibrationTablePlan {
             applicable_row_indices: None,
+            unavailable_row_indices: Vec::new(),
             spec,
             applicable_selected_row_count: 9,
             summary: sample_summary("phase.gcal"),

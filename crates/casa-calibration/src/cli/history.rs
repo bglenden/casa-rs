@@ -121,7 +121,12 @@ fn effective(task: &TaskInvocation<'_>, name: &str) -> Option<ParameterValue> {
         return Some(ParameterValue::String("calflag".into()));
     }
     if value(task, "docallib") == Some(ParameterValue::Bool(true)) {
-        return Some(current);
+        // CASA wraps a flat spwmap only in its active traditional branch.
+        return Some(if name == "spwmap" {
+            task.session().given(name).cloned().unwrap_or(current)
+        } else {
+            current
+        });
     }
     let tables = match value(task, "gaintable") {
         Some(ParameterValue::Array(tables)) => tables,

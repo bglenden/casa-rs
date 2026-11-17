@@ -8,6 +8,13 @@ pub(super) fn available(row: &ApplyRowPlan, plan: &ApplyPlan) -> bool {
         .iter()
         .filter(|table| table.applies_to(row))
         .all(|table| {
+            if table
+                .unavailable_row_indices
+                .binary_search(&row.row_index)
+                .is_ok()
+            {
+                return false;
+            }
             table
                 .spw_mapping
                 .iter()

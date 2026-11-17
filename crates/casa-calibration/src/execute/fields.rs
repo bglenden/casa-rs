@@ -71,7 +71,11 @@ pub(super) fn load(
                 .callibrary
                 .as_ref()
                 .is_some_and(|library| library.observation_map.active());
-            options.per_scan = false;
+            options.per_scan = plan
+                .spec
+                .callibrary
+                .as_ref()
+                .is_some_and(|library| library.scan_map.active());
         }
         // CASA's legacy BPOLY conversion emits unpartitioned modern headers.
         if plan.summary.table_subtype == "BPOLY" {
@@ -83,13 +87,8 @@ pub(super) fn load(
         options.phase_delay &= matches!(plan.summary.table_subtype.as_str(), "G Jones" | "T Jones");
         table.phase_delay = options.phase_delay;
         let mut context = TimePlan::apply_context(&table, options)?;
-        if plan
-            .spec
-            .callibrary
-            .as_ref()
-            .is_some_and(|library| library.observation_map.active())
-        {
-            context.mapped_observations();
+        if let Some(library) = &plan.spec.callibrary {
+            context.mapped_contexts(library.observation_map.active(), library.scan_map.active());
         }
         let mut groups = HashMap::<_, HashMap<_, _>>::new();
         for (key, mut rows) in std::mem::take(&mut table.solutions) {
@@ -177,7 +176,12 @@ pub(super) fn lookup(
             .map_or(row.observation_id, |library| {
                 library.observation_map.map(row.observation_id)
             }),
-        scan: row.scan_number,
+        scan: table
+            .callibrary
+            .as_ref()
+            .map_or(row.scan_number, |library| {
+                library.scan_map.map(row.scan_number)
+            }),
         window,
         antenna,
         time: row.time_seconds,
