@@ -865,11 +865,11 @@ fn build_table_plan(
 
     let is_bpoly = summary.table_subtype == "BPOLY";
     let (resolved_gainfields, resolved_nearest_gainfields) = if is_bpoly {
-        if let Some(selector) = spec.gainfield.as_ref() {
-            return Err(ApplyPlanError::ResolveGainField {
-                path: spec.path.display().to_string(),
-                selector: format!("{selector:?}"),
-                reason: "BPOLY apply currently supports only the default field mapping".to_string(),
+        // BJonesPoly::loadMemCalTable ignores field selections and emits a
+        // modern B table with wildcard FIELD_ID=-1 for every sampled row.
+        if spec.callibrary.is_some() {
+            return Err(ApplyPlanError::Callibrary {
+                message: "BPOLY is not supported for application by cal library in CASA".into(),
             });
         }
         (Vec::new(), Vec::new())

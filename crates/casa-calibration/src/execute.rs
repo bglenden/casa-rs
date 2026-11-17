@@ -3427,12 +3427,32 @@ pub(crate) struct LoadedCalibrationTable {
     callibrary: Option<crate::CallibraryOptions>,
     time_plans: HashMap<i32, crate::lookup::TimePlan>,
     missing_grids: HashMap<i32, Arc<CalibrationGrid>>,
-    time_is_delay: bool,
+    time_parameter_family: Option<TimeParameterFamily>,
     phase_delay: bool,
     interp: ApplyInterpolationMode,
     supports_calwt: bool,
     engine: Option<Arc<MsCalEngine>>,
     pub(crate) solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
+}
+
+#[derive(Clone, Copy)]
+enum TimeParameterFamily {
+    Delay,
+    Antpos,
+    GainCurve,
+    Opacity,
+}
+
+impl TimeParameterFamily {
+    fn from_subtype(subtype: &str) -> Option<Self> {
+        match subtype {
+            "K Jones" => Some(Self::Delay),
+            "KAntPos Jones" => Some(Self::Antpos),
+            "EGainCurve" => Some(Self::GainCurve),
+            "TOpac" => Some(Self::Opacity),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -3811,7 +3831,7 @@ impl AntposGrid {
                 });
             }
         };
-        let ArrayValue::Bool(flags) = flags else {
+        let ArrayValue::Bool(_) = flags else {
             return Err(ApplyExecutionError::UnsupportedParameterShape {
                 path: path.display().to_string(),
                 shape: flags.shape().to_vec(),
@@ -3825,7 +3845,9 @@ impl AntposGrid {
         }
         Ok(Self {
             offsets_m: [values[[0, 0]], values[[1, 0]], values[[2, 0]]],
-            flagged: flags.iter().any(|flag| *flag),
+            // KAntPosJones::calcAllJones marks the projected Jones term valid
+            // regardless of the FPARAM flags. Missing rows are handled separately.
+            flagged: false,
         })
     }
 
@@ -3893,7 +3915,7 @@ impl GainCurveGrid {
                 });
             }
         };
-        let ArrayValue::Bool(flags) = flags else {
+        let ArrayValue::Bool(_) = flags else {
             return Err(ApplyExecutionError::UnsupportedParameterShape {
                 path: path.display().to_string(),
                 shape: flags.shape().to_vec(),
@@ -3907,8 +3929,10 @@ impl GainCurveGrid {
         }
         Ok(Self {
             receptor_count: coefficients.shape()[0] / 4,
+            // EGainCurve::calcAllJones evaluates the coefficients and marks
+            // each Jones term valid regardless of the input flags.
+            flags: ArrayD::from_elem(IxDyn(coefficients.shape()), false),
             coefficients,
-            flags: flags.clone(),
         })
     }
 
@@ -4153,7 +4177,11 @@ fn load_parameters(
             source: MsError::from(source),
         }
     })?;
-    let supports_calwt = table_plan.summary.parameter_family == CalibrationParameterFamily::Complex;
+    let supports_calwt = table_plan.summary.parameter_family == CalibrationParameterFamily::Complex
+        || matches!(
+            table_plan.summary.table_subtype.as_str(),
+            "TOpac" | "EGainCurve"
+        );
 
     let mut solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>> = HashMap::new();
     for row_index in 0..table.row_count() {
@@ -4287,7 +4315,7 @@ fn load_parameters(
         callibrary: None,
         time_plans: HashMap::new(),
         missing_grids: HashMap::new(),
-        time_is_delay: false,
+        time_parameter_family: None,
         phase_delay: false,
     })
 }
@@ -4360,7 +4388,7 @@ fn load_bpoly_calibration_table(
         callibrary: None,
         time_plans: HashMap::new(),
         missing_grids: HashMap::new(),
-        time_is_delay: false,
+        time_parameter_family: None,
         phase_delay: false,
     })
 }

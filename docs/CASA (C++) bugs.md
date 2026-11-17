@@ -5497,6 +5497,21 @@ initialized from DATA, and no successful-task HISTORY is written. The
 oracle records this as an intentional CASA-bug correction, separately from
 its matching MAIN/API/state cases. No numerical tolerance changes.
 
+## Applycal nearest-field mapping fails for legacy BPOLY
+
+- Date noted: 2026-11-17
+- Status: corrected under the standing crash rule (#1518)
+- Affected code: CASA 6.7.6.14 `BJonesPoly::loadMemCalTable` and the
+  subsequent nearest-field mapping of the converted B table.
+
+BPOLY conversion ignores the supplied field selector and assigns
+`FIELD_ID=-1` to all converted rows. With `gainfield=['nearest']`, CASA
+reports that the converted table has no available calibration and the
+isolated public task aborts. Casa-rs applies the field-independent BPOLY
+solutions for this input, as it does for explicit field selectors. The
+public oracle compares the result against an independent CASA run with
+the same polynomial table and default gainfield.
+
 ## Simulator short cubic time axes can alter DATA before failing
 
 - Date noted: 2026-11-12

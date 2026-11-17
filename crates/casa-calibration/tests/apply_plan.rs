@@ -241,7 +241,7 @@ fn plan_apply_accepts_bpoly_tables() {
 }
 
 #[test]
-fn plan_apply_rejects_explicit_gainfield_for_bpoly_tables() {
+fn plan_apply_keeps_bpoly_gainfield_as_an_ignored_upstream_control() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), true);
     let bpoly_path = common::create_apply_bpoly_caltable(
@@ -259,7 +259,7 @@ fn plan_apply_rejects_explicit_gainfield_for_bpoly_tables() {
         }],
     );
 
-    let error = plan_apply_from_path(
+    let plan = plan_apply_from_path(
         &ms_path,
         &ApplyPlanRequest {
             selection: MsSelection::new().field(&[0]).spw(&[0]),
@@ -276,12 +276,12 @@ fn plan_apply_rejects_explicit_gainfield_for_bpoly_tables() {
             }],
         },
     )
-    .expect_err("BPOLY gainfield should be rejected");
+    .expect("BPOLY ignores field selection, as its upstream loader does");
 
-    assert!(
-        error
-            .to_string()
-            .contains("BPOLY apply currently supports only the default field mapping")
+    assert!(plan.calibration_tables[0].resolved_gainfields.is_empty());
+    assert_eq!(
+        plan.calibration_tables[0].spec.gainfield,
+        Some(GainFieldSelector::FieldId(0))
     );
 }
 
