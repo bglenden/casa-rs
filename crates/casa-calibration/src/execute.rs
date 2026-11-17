@@ -11,13 +11,13 @@
 //! - narrow float `FPARAM` support for `K Jones` delay tables
 //! - legacy `BPOLY` bandpass tables expanded onto the target SPW grid
 //! - diagonal `G` / `T`-style application to `RR/RL/LR/LL` and `XX/XY/YX/YY`
-//! - `ApplyMode::Trial`, `ApplyMode::CalOnly`, and `ApplyMode::CalFlag`
+//! - all six apply modes, including strict and flag-only application
+//! - circular-feed and full four-correlation linear-feed parallactic angle
 //! - automatic `CORRECTED_DATA` creation when absent
 //!
 //! Explicitly deferred from this executor cut:
 //!
 //! - non-diagonal Jones terms / polarization leakage
-//! - linear-feed parallactic-angle rotation, which requires general Jones support
 //! - solver output beyond the existing planner surface
 
 use std::collections::{BTreeSet, HashMap};
@@ -535,6 +535,20 @@ pub(crate) fn evaluate_apply_rows(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
+    let mut rows = HashMap::new();
+    for_each_apply_row(ms, plan, |index, row| {
+        rows.insert(index, row);
+    })?;
+    Ok(rows)
+}
+
+/// Evaluate one row at a time, allowing TRIAL validation without accumulating
+/// corrected data or publishing any MS changes.
+fn for_each_apply_row(
+    ms: &MeasurementSet,
+    plan: &ApplyPlan,
+    mut consume: impl FnMut(usize, EvaluatedApplyRow),
+) -> Result<(), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
     let correlation_types_by_ddid = load_correlation_types_by_ddid(ms).map_err(|source| {
         ApplyExecutionError::MutateMeasurementSet {
@@ -565,7 +579,6 @@ pub(crate) fn evaluate_apply_rows(
             .iter()
             .zip(&loaded_tables)
             .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
-    let mut evaluated_rows = HashMap::new();
     let mut main_rows = ms
         .main_table()
         .row_accessor()
@@ -606,6 +619,23 @@ pub(crate) fn evaluate_apply_rows(
                 source: MsError::from(source),
             }
         })?;
+        if !availability::available(row, plan) {
+            if plan.apply_mode == ApplyMode::Trial {
+                continue;
+            }
+            // VisEquation::collapse2 excludes data that cannot be pre-calibrated
+            // from solving, independently of the table's calwt setting.
+            let shape = IxDyn(data.shape());
+            consume(
+                row.row_index,
+                EvaluatedApplyRow {
+                    corrected_data: data.clone(),
+                    flags: ArrayValue::Bool(ArrayD::from_elem(shape.clone(), true)),
+                    weight_factors: Some(ArrayD::zeros(shape)),
+                },
+            );
+            continue;
+        }
         // Unit weights through the calwt update leave its factors.
         let unit_weight = any_calwt.then(|| {
             ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[correlation_types.len()]), 1.0))
@@ -630,7 +660,7 @@ pub(crate) fn evaluate_apply_rows(
             Some(&mut geometry_cache),
             None,
         )?;
-        evaluated_rows.insert(
+        consume(
             row.row_index,
             EvaluatedApplyRow {
                 corrected_data: result.corrected_data,
@@ -645,7 +675,7 @@ pub(crate) fn evaluate_apply_rows(
         );
     }
 
-    Ok(evaluated_rows)
+    Ok(())
 }
 
 /// Plan and execute calibration application against an on-disk MeasurementSet.
@@ -682,6 +712,9 @@ pub fn execute_apply_from_path_with_options(
         let (plan, plan_timings) = plan_apply_with_timings(&ms, request)?;
         let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
         if plan.apply_mode == ApplyMode::Trial {
+            // Calibrater::correct2 still runs the calibration operators in
+            // trial mode, including their input/basis validation.
+            for_each_apply_row(&ms, &plan, |_, _| {})?;
             return Ok(ApplyExecutionReport {
                 plan,
                 created_corrected_data_column: false,
@@ -779,6 +812,7 @@ pub fn execute_apply(
     let (plan, plan_timings) = plan_apply_with_timings(ms, request)?;
     let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
     if plan.apply_mode == ApplyMode::Trial {
+        for_each_apply_row(ms, &plan, |_, _| {})?;
         return Ok(ApplyExecutionReport {
             plan,
             created_corrected_data_column: false,

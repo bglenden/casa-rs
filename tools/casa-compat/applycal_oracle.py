@@ -284,9 +284,12 @@ def run(root, native_bin):
         case('unavailable-'+mode, dict(applymode=mode), gain=unavailable, precorrected=True, weight_seed=(3., 2.), spectral_sigma=True)
     case('unavailable-new', gain=unavailable)
     case('parang-alone', dict(gaintable=[], parang=True))
+    case('parang-alone-trial', dict(gaintable=[], parang=True, applymode='trial'))
     for basis, input_vis in polarized_sources.items():
         case('parang-'+basis, dict(gaintable=[], parang=True), input_vis=input_vis)
         case('parang-'+basis+'-channels', dict(gaintable=[], parang=True, spw='0:0~6^2'), input_vis=input_vis, precorrected=True)
+        for mode in ['trial', 'flagonly']:
+            case('parang-'+basis+'-'+mode, dict(gaintable=[], parang=True, applymode=mode), input_vis=input_vis)
     return result
 
 

@@ -64,6 +64,46 @@ fn phase_gain_request(output_table: std::path::PathBuf) -> GainSolveRequest {
 }
 
 #[test]
+fn unavailable_prior_spectral_window_excludes_data_from_solving() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let baseline = phase_gain_request(dir.path().join("baseline.gcal"));
+    assert!(
+        run_gain_solve(&ms_path, &baseline)
+            .unwrap()
+            .solution_row_count
+            > 0
+    );
+
+    let rows = (0..3)
+        .map(|antenna_id| common::SyntheticGainSolutionRow {
+            time_seconds: 100.0,
+            field_id: 0,
+            spectral_window_id: 1,
+            antenna_id,
+            gains: vec![num_complex::Complex32::new(1.0, 0.0); 2],
+            flags: vec![false; 2],
+        })
+        .collect::<Vec<_>>();
+    let prior = common::create_apply_gain_caltable(
+        &dir.path().join("unavailable.gcal"),
+        &["TARGET0"],
+        &rows,
+    );
+    for calwt in [false, true] {
+        let output = dir.path().join(format!("residual-{calwt}.gcal"));
+        let mut request = phase_gain_request(output.clone());
+        let mut spec = ApplyCalibrationTableSpec::new(&prior);
+        spec.calwt = calwt;
+        request.prior_calibration_tables = vec![spec];
+        // VisEquation::collapse2 flags unavailable prior calibration and zeroes
+        // weights, so otherwise solvable data must yield no output solutions.
+        assert_no_solutions(run_gain_solve(&ms_path, &request), &output);
+    }
+}
+
+#[test]
 fn shared_solve_setup_reports_invalid_empty_missing_prior_and_refant_errors() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path =

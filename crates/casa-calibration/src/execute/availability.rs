@@ -3,7 +3,7 @@
 
 use super::*;
 
-fn available(row: &ApplyRowPlan, plan: &ApplyPlan) -> bool {
+pub(super) fn available(row: &ApplyRowPlan, plan: &ApplyPlan) -> bool {
     plan.calibration_tables
         .iter()
         .filter(|table| table.spec.apply_to.matches(row))
