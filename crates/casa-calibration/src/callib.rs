@@ -278,6 +278,32 @@ fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> Stri
             parts.push("tinterp='nearest'".to_string());
             parts.push("finterp='linear'".to_string());
         }
+        ApplyInterpolationMode::Casa {
+            time,
+            frequency,
+            per_observation,
+            per_scan,
+            phase_delay,
+            relative_frequency,
+        } => {
+            let mut time = format!("{time:?}").to_ascii_lowercase();
+            if per_observation {
+                time.push_str("perobs");
+            }
+            if per_scan {
+                time.push_str("perscan");
+            }
+            if phase_delay {
+                time.push_str("PD");
+            }
+            let mut frequency = format!("{frequency:?}").to_ascii_lowercase();
+            if relative_frequency {
+                frequency.push_str("rel");
+            }
+            parts.push(format!("tinterp='{time}'"));
+            parts.push(format!("finterp='{frequency}'"));
+        }
+        ApplyInterpolationMode::Invalid => parts.push("tinterp='invalid'".to_string()),
     }
 
     parts.join(" ")
@@ -302,7 +328,7 @@ fn format_gainfield_selector(selector: &GainFieldSelector) -> String {
     match selector {
         GainFieldSelector::Nearest => "nearest".to_string(),
         GainFieldSelector::FieldId(field_id) => field_id.to_string(),
-        GainFieldSelector::FieldName(name) => name.clone(),
+        GainFieldSelector::Expression(name) => name.clone(),
     }
 }
 
@@ -409,7 +435,7 @@ fn parse_gainfield_selector(value: &str) -> Result<Option<GainFieldSelector>, St
             _ => Err("fldmap supports only one numeric FIELD_ID in this wave".to_string()),
         };
     }
-    Ok(Some(GainFieldSelector::FieldName(value)))
+    Ok(Some(GainFieldSelector::Expression(value)))
 }
 
 fn parse_int_array(value: &str, label: &str) -> Result<Vec<i32>, String> {
@@ -436,28 +462,12 @@ fn parse_interp(
     tinterp: Option<&str>,
     finterp: Option<&str>,
 ) -> Result<ApplyInterpolationMode, String> {
-    let tinterp = tinterp
-        .map(strip_quotes)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let finterp = finterp
-        .map(strip_quotes)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let effective_tinterp = if tinterp.is_empty() {
-        "linear"
+    let time = tinterp.map(strip_quotes).unwrap_or_default();
+    let frequency = finterp.map(strip_quotes).unwrap_or_default();
+    if frequency.is_empty() {
+        ApplyInterpolationMode::parse_casa(&time)
     } else {
-        &tinterp
-    };
-
-    match (effective_tinterp, finterp.as_str()) {
-        ("nearest", "") => Ok(ApplyInterpolationMode::Nearest),
-        ("linear", "") => Ok(ApplyInterpolationMode::Linear),
-        ("nearest", "linear") => Ok(ApplyInterpolationMode::NearestLinear),
-        _ => Err(format!(
-            "unsupported interpolation combination tinterp={effective_tinterp:?}, finterp={:?}",
-            finterp
-        )),
+        ApplyInterpolationMode::parse_casa(&format!("{time},{frequency}"))
     }
 }
 
@@ -469,6 +479,22 @@ mod tests {
     use crate::{
         ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyTableSelection, GainFieldSelector,
     };
+
+    #[test]
+    fn interpolation_round_trip_keeps_the_effective_curve_and_modifiers() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("interpolation.callib");
+        for value in [
+            "nearest,unknown",
+            "linear,cubicflag",
+            "linearperobsperscanPD,splinerel",
+        ] {
+            let mut spec = ApplyCalibrationTableSpec::new(dir.path().join("g.gcal"));
+            spec.interp = ApplyInterpolationMode::parse_casa(value).unwrap();
+            save_apply_specs_to_callib(&path, &[spec.clone()]).unwrap();
+            assert_eq!(load_apply_specs_from_callib(&path).unwrap(), vec![spec]);
+        }
+    }
 
     #[test]
     fn load_callib_parses_supported_apply_entries() {

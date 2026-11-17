@@ -77,7 +77,7 @@ fn applycal_lists_are_positional_and_short_lists_take_casas_defaults() {
     phase.gainfield = Some(GainFieldSelector::Nearest);
     phase.spwmap = vec![0, 0];
     let mut bandpass = table("bandpass.bcal", false);
-    bandpass.gainfield = Some(GainFieldSelector::FieldId(0));
+    bandpass.gainfield = Some(GainFieldSelector::Expression("0".into()));
     bandpass.interp = ApplyInterpolationMode::NearestLinear;
     // The empty entry is skipped, its list positions with it; flux.gcal,
     // past every list but calwt, takes CASA's defaults.
@@ -256,7 +256,7 @@ fn gaincal_reads_casas_values() {
         "parang": true,
     }));
     let mut prior = table("prior.gcal", true);
-    prior.gainfield = Some(GainFieldSelector::FieldId(1));
+    prior.gainfield = Some(GainFieldSelector::Expression("1".into()));
     assert_eq!(
         solve,
         crate::SolveGainTaskRequest {
@@ -306,13 +306,9 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         // CASA's default: a solve with no reference antenna.
         ("refant", json!("")),
         ("smodel", json!([1, 0.1, 0, 0])),
-        ("interp", json!(["cubic"])),
     ] {
         let mut values = base.clone();
         values[name] = value.clone();
-        if name == "interp" {
-            values["gaintable"] = json!(["prior.gcal"]);
-        }
         let message = refused(casa("gaincal", values), name);
         assert!(message.contains("#979"), "{name}={value}: {message}");
     }

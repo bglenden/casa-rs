@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Simulator-only time segmentation and phase-delay context.
+//! Shared calibration time segmentation and phase-delay context.
 use super::*;
 use casa_tables::{
     RequiredScalarColumnDestination as Destination, RequiredScalarColumnValuesMut as Values, Table,
@@ -8,7 +8,7 @@ use casa_tables::{
 use std::collections::HashSet;
 use std::sync::Arc;
 
-/// Time lookup options used when imposing calibration errors on simulated DATA.
+/// Time lookup options shared by task application and simulated DATA.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimeInterpolationOptions {
     /// Amplitude/phase curve within each selected time series.
@@ -19,7 +19,7 @@ pub struct TimeInterpolationOptions {
     pub per_observation: bool,
     /// Partition by SCAN_NUMBER; takes precedence over per-observation lookup.
     pub per_scan: bool,
-    /// Number of OBSERVATION rows in the simulated MeasurementSet.
+    /// Number of OBSERVATION rows in the data MeasurementSet.
     pub observation_count: usize,
 }
 
@@ -74,7 +74,7 @@ pub(super) enum TimeScope {
     Scan,
 }
 
-pub(super) struct TimeQuery {
+pub(crate) struct TimeQuery {
     pub observation: i32,
     pub scan: i32,
     pub window: i32,
@@ -324,45 +324,78 @@ impl TimePlan {
         options: TimeInterpolationOptions,
         real: bool,
     ) -> Result<Self, ApplyExecutionError> {
-        let mut scope = TimeScope::All;
-        let series = if options.per_observation || options.per_scan {
+        let rows = if options.per_observation || options.per_scan {
             let mut rows = headers(&lookup.path)?;
             lookup.baseline_headers(&mut rows)?;
-            if options.per_scan {
-                if rows
-                    .iter()
-                    .map(|r| r[4])
-                    .min()
-                    .is_some_and(|scan| scan != -1)
-                {
-                    scope = TimeScope::Scan;
-                }
-            } else if options.per_observation {
-                let observations = rows.iter().map(|r| r[3]).collect::<HashSet<_>>();
-                let table = Table::open(TableOptions::new(&lookup.path))
-                    .map_err(|e| invalid(&lookup.path, &e.to_string()))?;
-                let path = table
-                    .keywords()
-                    .get("OBSERVATION")
-                    .and_then(casa_types::Value::as_table_ref)
-                    .map(|name| casa_tables::add_directory(name, &lookup.path))
-                    .unwrap_or_else(|| lookup.path.join("OBSERVATION"));
-                let count = Table::rows_on_disk(&path)
-                    .map_err(|e| invalid(&lookup.path, &e.to_string()))?;
-                if observations.len() > 1
-                    && observations.len() == count
-                    && count == options.observation_count
-                {
-                    scope = TimeScope::Observation;
-                }
-            }
-            let result = segmented(lookup, &rows, scope)?;
-            lookup.across_fields = None;
-            result
+            Some(rows)
         } else {
-            lookup
-                .across_fields
-                .take()
+            None
+        };
+        Self::from_table(
+            &lookup.table,
+            options,
+            real,
+            rows,
+            lookup.across_fields.take(),
+            None,
+        )
+    }
+
+    pub(crate) fn apply_context(
+        table: &LoadedCalibrationTable,
+        options: TimeInterpolationOptions,
+    ) -> Result<ApplyTimeContext, ApplyExecutionError> {
+        let rows = if options.per_observation || options.per_scan {
+            let mut rows = headers(&table.path)?;
+            rows.retain(|row| table.solutions.contains_key(&(row[0], row[1], row[2])));
+            Some(rows)
+        } else {
+            None
+        };
+        let scope = selected_scope(&table.path, rows.as_deref().unwrap_or_default(), options)?;
+        Ok(ApplyTimeContext { rows, scope })
+    }
+
+    pub(crate) fn for_apply(
+        table: &LoadedCalibrationTable,
+        options: TimeInterpolationOptions,
+        real: bool,
+        context: &ApplyTimeContext,
+    ) -> Result<Self, ApplyExecutionError> {
+        let rows = context.rows.as_ref().map(|rows| {
+            rows.iter()
+                .copied()
+                .filter(|row| table.solutions.contains_key(&(row[0], row[1], row[2])))
+                .collect()
+        });
+        Self::from_table(
+            table,
+            options,
+            real,
+            rows,
+            Some(across_fields(table)),
+            Some(context.scope),
+        )
+    }
+
+    fn from_table(
+        table: &LoadedCalibrationTable,
+        options: TimeInterpolationOptions,
+        real: bool,
+        rows: Option<Vec<[i32; 5]>>,
+        across: Option<HashMap<(i32, i32), Vec<CalibrationSolution>>>,
+        fixed_scope: Option<TimeScope>,
+    ) -> Result<Self, ApplyExecutionError> {
+        let path = &table.path;
+        let scope = if let Some(scope) = fixed_scope {
+            scope
+        } else {
+            selected_scope(path, rows.as_deref().unwrap_or_default(), options)?
+        };
+        let series = if let Some(rows) = rows {
+            segmented(table, &rows, scope)?
+        } else {
+            across
                 .expect("all fields")
                 .into_iter()
                 .map(|((spw, antenna), rows)| ((-1, spw, antenna), rows))
@@ -378,7 +411,7 @@ impl TimePlan {
             reference_hz: Vec::new(),
         };
         if options.phase_delay && !plan.real {
-            plan.reference_hz = CalibrationTableLookup::frequency_grids_on_disk(&lookup.path)?
+            plan.reference_hz = CalibrationTableLookup::frequency_grids_on_disk(path)?
                 .iter()
                 .map(|axis| axis.get(axis.len() / 2).copied().unwrap_or(0.))
                 .collect();
@@ -386,10 +419,10 @@ impl TimePlan {
         for (&key, rows) in &plan.series {
             if options.mode == TimeInterpolation::Spline && !rows.is_empty() {
                 plan.splines
-                    .insert(key, Spline::new(&lookup.path, rows, plan.real)?);
+                    .insert(key, Spline::new(path, rows, plan.real)?);
             }
             if options.phase_delay && !plan.real && !rows.is_empty() {
-                plan.cycles.insert(key, phase_cycles(&lookup.path, rows)?);
+                plan.cycles.insert(key, phase_cycles(path, rows)?);
             }
         }
         Ok(plan)
@@ -411,6 +444,48 @@ impl TimePlan {
             1.
         })
     }
+}
+
+pub(crate) struct ApplyTimeContext {
+    rows: Option<Vec<[i32; 5]>>,
+    scope: TimeScope,
+}
+
+fn selected_scope(
+    path: &Path,
+    rows: &[[i32; 5]],
+    options: TimeInterpolationOptions,
+) -> Result<TimeScope, ApplyExecutionError> {
+    let mut scope = TimeScope::All;
+    if options.per_scan {
+        if rows
+            .iter()
+            .map(|r| r[4])
+            .min()
+            .is_some_and(|scan| scan != -1)
+        {
+            scope = TimeScope::Scan;
+        }
+    } else if options.per_observation {
+        let observations = rows.iter().map(|r| r[3]).collect::<HashSet<_>>();
+        let metadata =
+            Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
+        let observation_path = metadata
+            .keywords()
+            .get("OBSERVATION")
+            .and_then(casa_types::Value::as_table_ref)
+            .map(|name| casa_tables::add_directory(name, path))
+            .unwrap_or_else(|| path.join("OBSERVATION"));
+        let count =
+            Table::rows_on_disk(&observation_path).map_err(|e| invalid(path, &e.to_string()))?;
+        if observations.len() > 1
+            && observations.len() == count
+            && count == options.observation_count
+        {
+            scope = TimeScope::Observation;
+        }
+    }
+    Ok(scope)
 }
 
 /// Only scalar columns are read; CPARAM arrays are never rematerialized.
@@ -461,7 +536,7 @@ fn headers(path: &Path) -> Result<Vec<[i32; 5]>, ApplyExecutionError> {
 }
 
 fn segmented(
-    lookup: &CalibrationTableLookup,
+    table: &LoadedCalibrationTable,
     headers: &[[i32; 5]],
     scope: TimeScope,
 ) -> Result<TimeSeries, ApplyExecutionError> {
@@ -469,14 +544,13 @@ fn segmented(
     let mut grouped = HashMap::<_, Vec<(i32, &CalibrationSolution)>>::new();
     for &[field, window, antenna, observation, scan] in headers {
         let position = positions.entry((field, window, antenna)).or_default();
-        let row = lookup
-            .table
+        let row = table
             .solutions
             .get(&(field, window, antenna))
             .and_then(|rows| rows.get(*position))
             .ok_or_else(|| {
                 invalid(
-                    &lookup.path,
+                    &table.path,
                     "calibration scalar context differs from loaded solutions",
                 )
             })?;

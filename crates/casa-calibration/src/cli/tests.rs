@@ -138,7 +138,7 @@ fn aligned_chain_lists_reach_each_table() {
     let mut phase = table("phase.gcal", false);
     phase.gainfield = Some(GainFieldSelector::Nearest);
     let mut bandpass = table("bandpass.bcal", false);
-    bandpass.gainfield = Some(GainFieldSelector::FieldId(0));
+    bandpass.gainfield = Some(GainFieldSelector::Expression("0".into()));
     bandpass.interp = ApplyInterpolationMode::NearestLinear;
     bandpass.spwmap = vec![0, 0];
     assert_eq!(apply.calibration_tables, [phase, bandpass]);
@@ -197,7 +197,10 @@ fn repeated_table_flags_name_every_table_in_order() {
             .collect::<Vec<_>>();
         assert_eq!(paths, ["phase.gcal", "bandpass.bcal"].map(PathBuf::from));
         assert_eq!(tables[0].gainfield, Some(GainFieldSelector::Nearest));
-        assert_eq!(tables[1].gainfield, Some(GainFieldSelector::FieldId(0)));
+        assert_eq!(
+            tables[1].gainfield,
+            Some(GainFieldSelector::Expression("0".into()))
+        );
     }
 
     let summary = |paths: &[&str]| {
@@ -742,7 +745,7 @@ fn value_parsers_cover_their_edges() {
     assert!(
         read::parse_interp_value("bogus")
             .unwrap_err()
-            .contains("is unsupported")
+            .contains("unknown time interpolation")
     );
     assert_eq!(
         read::parse_interp_value("").unwrap(),
@@ -750,7 +753,7 @@ fn value_parsers_cover_their_edges() {
     );
     assert_eq!(
         read::parse_gainfield_value("nearest,0"),
-        Some(GainFieldSelector::FieldName("nearest,0".into()))
+        Some(GainFieldSelector::Expression("nearest,0".into()))
     );
     assert_eq!(
         read::parse_gain_solve_interval("0s").unwrap(),
@@ -832,11 +835,11 @@ fn sample_apply_plan() -> ApplyPlan {
             spec,
             applicable_selected_row_count: 9,
             summary: sample_summary("phase.gcal"),
-            resolved_gainfield: Some(ResolvedGainField {
+            resolved_gainfields: vec![ResolvedGainField {
                 selector: GainFieldSelector::Nearest,
                 field_id: 4,
                 field_name: Some("calibrator".into()),
-            }),
+            }],
             resolved_nearest_gainfields: vec![ResolvedNearestGainField {
                 measurement_set_field_id: 0,
                 measurement_set_field_name: Some("target".into()),

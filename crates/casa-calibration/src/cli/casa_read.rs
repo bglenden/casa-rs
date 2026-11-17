@@ -325,7 +325,9 @@ fn chain(
             .get(index)
             .and_then(|field| parse_gainfield_value(field));
         spec.interp = match interp.get(index) {
-            Some(text) => parse_interp_value(text).map_err(|_| not_yet("interp", text))?,
+            Some(text) => {
+                parse_interp_value(text).unwrap_or(crate::ApplyInterpolationMode::Invalid)
+            }
             None => crate::ApplyInterpolationMode::Linear,
         };
         spec.spwmap = match spwmap.get(index) {

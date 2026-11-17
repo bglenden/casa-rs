@@ -2,9 +2,12 @@
 //! CASA's frequency resampling interpolates amplitude and unwrapped phase.
 use crate::interpolation::{Curve, sample, spline_derivatives, unwrap_phase};
 use crate::{ApplyExecutionError, CalibrationTableLookup, ComplexSolution};
+use casa_types::Complex32;
 
 /// Frequency interpolation for a complex calibration grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum FrequencyInterpolation {
     /// Nearest valid frequency sample, with nearest endpoint extrapolation.
     Nearest,
@@ -137,6 +140,22 @@ impl ComplexSolution {
                         if real { 0. } else { value.arg() },
                     ));
                 }
+            }
+            // CTPatchedInterp copies a matching compressed valid grid before
+            // constructing any curve or registering the original input flags.
+            if points.len() == output_hz.len()
+                && points.iter().zip(output_hz).all(|(point, frequency)| {
+                    let output = frequency / 1e9;
+                    (point.0 - output).abs() <= 1e-10 * point.0.abs().max(output.abs())
+                })
+            {
+                values.extend(
+                    points
+                        .iter()
+                        .map(|point| Complex32::from_polar(point.1, point.2)),
+                );
+                flags.extend(std::iter::repeat_n(false, output_hz.len()));
+                continue;
             }
             let descending = input_hz
                 .first()

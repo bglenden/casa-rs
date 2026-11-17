@@ -60,6 +60,7 @@ use crate::plan::{
 
 mod availability;
 use availability::execute as execute_apply_plan;
+mod fields;
 mod gain_validity;
 mod initialization;
 use gain_validity::correcting_gain;
@@ -560,7 +561,7 @@ fn for_each_apply_row(
     let loaded_tables = plan
         .calibration_tables
         .iter()
-        .map(|table_plan| load_calibration_table(table_plan, geometry_engine.as_ref()))
+        .map(|table_plan| fields::load(table_plan, geometry_engine.as_ref(), ms))
         .collect::<Result<Vec<_>, _>>()?;
     let parang_state = if plan.parang {
         Some(load_parallactic_angle_state(ms).map_err(|source| {
@@ -900,7 +901,7 @@ fn execute_apply_available(
     let loaded_tables = plan
         .calibration_tables
         .iter()
-        .map(|table_plan| load_calibration_table(table_plan, geometry_engine.as_ref()))
+        .map(|table_plan| fields::load(table_plan, geometry_engine.as_ref(), ms))
         .collect::<Result<Vec<_>, _>>()?;
     let parang_state = if plan.parang {
         Some(load_parallactic_angle_state(ms).map_err(|source| {
@@ -1546,6 +1547,9 @@ struct CalibrationLookupKey {
     antenna_id: i32,
     time_bits: u64,
     interp: u8,
+    observation_id: i32,
+    scan_number: i32,
+    data_spw_id: i32,
 }
 
 impl RowGeometryCache {
@@ -1822,10 +1826,15 @@ fn calibration_lookup_key(
         spw_id,
         antenna_id,
         time_bits: time_seconds.to_bits(),
+        observation_id: -1,
+        scan_number: -1,
+        data_spw_id: -1,
         interp: match interp {
             ApplyInterpolationMode::Nearest => 1,
             ApplyInterpolationMode::Linear => 2,
             ApplyInterpolationMode::NearestLinear => 3,
+            ApplyInterpolationMode::Casa { .. } => 4,
+            ApplyInterpolationMode::Invalid => 0,
         },
     }
 }
@@ -2013,68 +2022,30 @@ fn apply_row_all_channels(
             .iter()
             .find(|mapping| mapping.measurement_set_field_id == row.field_id)
             .map(|mapping| mapping.calibration_field_id)
-            .or_else(|| {
-                table_plan
-                    .resolved_gainfield
-                    .as_ref()
-                    .map(|field| field.field_id)
-            })
-            .unwrap_or(row.field_id);
+            .unwrap_or(-1);
 
-        let ant1_key = calibration_lookup_key(
-            table_index,
-            field_id,
-            cal_spw_id,
-            row.antenna1,
-            row.time_seconds,
-            table_plan.interp,
-        );
-        let ant2_key = calibration_lookup_key(
-            table_index,
-            field_id,
-            cal_spw_id,
-            row.antenna2,
-            row.time_seconds,
-            table_plan.interp,
-        );
-        let ant1 = if let Some(cache) = geometry_cache.as_deref_mut() {
-            cache.calibration_lookup(ant1_key, || {
-                loaded_table.lookup(
-                    field_id,
-                    cal_spw_id,
-                    row.antenna1,
-                    row.time_seconds,
-                    table_plan.interp,
-                )
-            })?
-        } else {
-            loaded_table.lookup(
+        let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
+            let mut key = calibration_lookup_key(
+                table_index,
                 field_id,
                 cal_spw_id,
-                row.antenna1,
+                antenna,
                 row.time_seconds,
                 table_plan.interp,
-            )?
+            );
+            key.observation_id = row.observation_id;
+            key.scan_number = row.scan_number;
+            key.data_spw_id = row.data_spw_id;
+            let calculate =
+                || fields::lookup(loaded_table, field_id, cal_spw_id, antenna, row, data_spw);
+            if let Some(cache) = cache {
+                cache.calibration_lookup(key, calculate)
+            } else {
+                calculate()
+            }
         };
-        let ant2 = if let Some(cache) = geometry_cache.as_deref_mut() {
-            cache.calibration_lookup(ant2_key, || {
-                loaded_table.lookup(
-                    field_id,
-                    cal_spw_id,
-                    row.antenna2,
-                    row.time_seconds,
-                    table_plan.interp,
-                )
-            })?
-        } else {
-            loaded_table.lookup(
-                field_id,
-                cal_spw_id,
-                row.antenna2,
-                row.time_seconds,
-                table_plan.interp,
-            )?
-        };
+        let ant1 = lookup(row.antenna1, geometry_cache.as_deref_mut())?;
+        let ant2 = lookup(row.antenna2, geometry_cache.as_deref_mut())?;
         if let Some(profile) = compute_profile.as_deref_mut() {
             ApplyRowComputeProfile::add_elapsed(&mut profile.table_lookup_ns, lookup_started_at);
         }
@@ -2124,19 +2095,15 @@ fn apply_row_all_channels(
                 ant1,
                 &cal_spw.channel_frequencies_hz,
                 data_spw,
-                row,
-                row.antenna1,
                 geometry_cache.as_deref_mut(),
-                &loaded_table.path,
+                loaded_table,
             )?;
             let ant2 = bandpass::prepare(
                 ant2,
                 &cal_spw.channel_frequencies_hz,
                 data_spw,
-                row,
-                row.antenna2,
                 geometry_cache.as_deref_mut(),
-                &loaded_table.path,
+                loaded_table,
             )?;
             (ant1, ant2)
         } else {
@@ -3433,7 +3400,11 @@ fn pol_id_of_ddid(ddid_row: usize) -> i32 {
 }
 
 pub(crate) struct LoadedCalibrationTable {
-    path: PathBuf,
+    pub(crate) path: PathBuf,
+    time_plans: HashMap<i32, crate::lookup::TimePlan>,
+    missing_grids: HashMap<i32, Arc<CalibrationGrid>>,
+    time_is_delay: bool,
+    phase_delay: bool,
     interp: ApplyInterpolationMode,
     supports_calwt: bool,
     engine: Option<Arc<MsCalEngine>>,
@@ -3618,7 +3589,10 @@ impl GainGrid {
         }
 
         match interp {
-            ApplyInterpolationMode::Nearest | ApplyInterpolationMode::Linear => {
+            ApplyInterpolationMode::Nearest
+            | ApplyInterpolationMode::Linear
+            | ApplyInterpolationMode::Casa { .. }
+            | ApplyInterpolationMode::Invalid => {
                 let chan = data_channels
                     .original_index(data_chan_index)
                     .min(self.channel_count.saturating_sub(1));
@@ -4072,6 +4046,12 @@ impl LoadedCalibrationTable {
             ApplyInterpolationMode::Linear => {
                 interpolate_time_linear(&self.path, candidates, time_seconds).map(Some)
             }
+            other => Err(ApplyExecutionError::UnsupportedInterpolation {
+                path: self.path.display().to_string(),
+                interp: other,
+                reason: "contextual interpolation requires the common apply time engine (#1518)"
+                    .to_string(),
+            }),
         }
     }
 
@@ -4280,6 +4260,10 @@ fn load_parameters(
         supports_calwt,
         engine: geometry_engine.cloned(),
         solutions,
+        time_plans: HashMap::new(),
+        missing_grids: HashMap::new(),
+        time_is_delay: false,
+        phase_delay: false,
     })
 }
 
@@ -4348,6 +4332,10 @@ fn load_bpoly_calibration_table(
         supports_calwt: false,
         engine: None,
         solutions,
+        time_plans: HashMap::new(),
+        missing_grids: HashMap::new(),
+        time_is_delay: false,
+        phase_delay: false,
     })
 }
 
@@ -5041,6 +5029,7 @@ mod tests {
                 row_index: 4,
                 field_id: 5,
                 observation_id: 6,
+                scan_number: 1,
                 data_desc_id: 7,
                 data_spw_id: 2,
                 polarization_id: 8,
@@ -5068,7 +5057,7 @@ mod tests {
                 },
                 applicable_selected_row_count: 1,
                 summary: empty_cal_summary(cal_path.clone()),
-                resolved_gainfield: None,
+                resolved_gainfields: Vec::new(),
                 resolved_nearest_gainfields: Vec::new(),
                 spw_mapping: vec![crate::plan::ApplySpwMapping {
                     data_spw_id: 2,

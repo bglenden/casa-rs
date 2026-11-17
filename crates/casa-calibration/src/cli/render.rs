@@ -202,7 +202,7 @@ pub(super) fn render_apply_report_text(report: &ApplyExecutionReport) -> String 
                 format_apply_table_selection(&table.spec.apply_to)
             );
         }
-        if let Some(gainfield) = &table.resolved_gainfield {
+        for gainfield in &table.resolved_gainfields {
             let _ = writeln!(
                 out,
                 "    gainfield={} {:?}",
@@ -277,7 +277,7 @@ pub(super) fn render_apply_plan_text(plan: &ApplyPlan) -> String {
                 format_apply_table_selection(&table.spec.apply_to)
             );
         }
-        if let Some(gainfield) = &table.resolved_gainfield {
+        for gainfield in &table.resolved_gainfields {
             let _ = writeln!(
                 out,
                 "    gainfield={} {:?}",

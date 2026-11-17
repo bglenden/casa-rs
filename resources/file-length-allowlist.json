@@ -3,7 +3,6 @@
   "files": [
     "crates/casa-aipsio/src/aipsio.rs",
     "crates/casa-calibration/src/execute.rs",
-    "crates/casa-calibration/src/plan.rs",
     "crates/casa-calibration/tests/casa_calibration_parity.rs",
     "crates/casa-calibration/tests/common/mod.rs",
     "crates/casa-images/src/analysis.rs",

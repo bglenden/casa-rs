@@ -5449,6 +5449,53 @@ knot tables uses the separate original-table nearest controls, because the
 CASA spline setup itself crashes. No numerical tolerance is relaxed.
 
 
+The same setup crash is confirmed through public `applycal(interp=['spline'])`
+on the shifted twelve-time G fixture in `tools/casa-compat/applycal_oracle.py`
+(#1518): the isolated CASA process terminates with signal 11. Native task
+application additionally checks the independent middle half-knot value
+`203/160` for the four-amplitude natural spline above. This is separate from
+the same-input CASA comparisons; it does not relax their tolerance.
+
+## Applycal per-scan setup crashes with scans in multiple observations
+
+- Date noted: 2026-11-17
+- Status: corrected under the standing crash/evident-intent rule (#1518)
+- Affected code: CASA 6.7.6.14 `CTPatchedInterp` MS constructor and scan lookup.
+
+A two-observation MS/calibration table with scan 1 in observation 0 and scan 2
+in observation 1 terminates with signal 11 for `nearestperscan`,
+`linearperscan` and `linearperobsperscan`. Each public-task probe runs in an
+isolated process. The source sizes the MS scan axis using
+`getScanNumbers(0,0)`, although subsequent lookup uses scans from all
+observations. Native groups the selected scalar headers by their actual scan
+numbers and gives per-scan precedence over per-observation partitioning.
+All three native results agree with CASA's working single-observation
+controls for the same samples, calibration values and scan numbers. The
+original native observation IDs are preserved. These controls are recorded
+separately from same-input comparisons.
+
+## Nearest-field ambiguity guard is disabled by sort options
+
+- Date noted: 2026-11-17
+- Status: corrected under the standing evident-intent rule (#1518)
+- Affected code: `CTPatchedInterp::setFldMap`, casacore `Sort`/`genSort`.
+
+CASA's nearest-field mapper explicitly intends to reject duplicate minimum
+angular separations. Its `genSort` options instead OR `Sort::QuickSort` with
+`Sort::Ascending`, whose enum value is -1. This enables every option,
+including `NoDuplicates`, so the intended duplicate-minimum check cannot
+observe a duplicate. With two calibration FIELD rows having identical
+PHASE_DIR/REFERENCE_DIR/DELAY_DIR and different gains, CASA succeeds and
+applies an arbitrary tied gain. The public oracle and a fresh CASA process
+both reproduce this behavior.
+
+Native restores the explicit ambiguity check, including MS fields outside
+the requested selection, and raises a runtime error during setup. DATA,
+flags and weights remain unchanged; a newly required CORRECTED_DATA is
+initialized from DATA, and no successful-task HISTORY is written. The
+oracle records this as an intentional CASA-bug correction, separately from
+its matching MAIN/API/state cases. No numerical tolerance changes.
+
 ## Simulator short cubic time axes can alter DATA before failing
 
 - Date noted: 2026-11-12

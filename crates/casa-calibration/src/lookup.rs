@@ -44,18 +44,17 @@ mod fringe;
 mod real;
 #[path = "lookup_time.rs"]
 mod time;
-use time::TimePlan;
 pub use time::{TimeInterpolation, TimeInterpolationOptions};
+pub(crate) use time::{TimePlan, TimeQuery};
 
 /// Which fields' solutions a row takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldSelection {
-    /// The row's field's, or the table's sole field's: the apply
-    /// executor's default.
+    /// Use the row's field, falling back to a table's sole field.
+    /// Traditional applycal selects its calibration fields separately.
     RowField,
-    /// Every field's, as one series in time: CASA's `Simulator::setapply`
-    /// ignores fields and does not partition the table by them (#893
-    /// review).
+    /// Merge every supplied calibration field into one time series, as
+    /// traditional applycal and CASA's simulator do by default.
     AnyField,
 }
 
@@ -147,7 +146,7 @@ pub struct ComplexSolution {
 }
 
 impl ComplexSolution {
-    fn of(grid: &GainGrid) -> Self {
+    pub(crate) fn of(grid: &GainGrid) -> Self {
         let (receptors, channels) = (grid.receptor_count, grid.channel_count);
         let mut values = Vec::with_capacity(receptors * channels);
         let mut flags = Vec::with_capacity(receptors * channels);
@@ -170,6 +169,17 @@ impl ComplexSolution {
             channels,
             values,
             flags,
+        }
+    }
+
+    pub(crate) fn into_gain_grid(self) -> GainGrid {
+        let shape = ndarray::IxDyn(&[self.receptors, self.channels]);
+        GainGrid {
+            receptor_count: self.receptors,
+            channel_count: self.channels,
+            values: ndarray::ArrayD::from_shape_vec(shape.clone(), self.values)
+                .expect("gain dimensions"),
+            flags: ndarray::ArrayD::from_shape_vec(shape, self.flags).expect("flag dimensions"),
         }
     }
 
@@ -305,6 +315,15 @@ impl CalibrationTableLookup {
         fields: FieldSelection,
         real: bool,
     ) -> Result<Self, ApplyExecutionError> {
+        if matches!(
+            interp,
+            ApplyInterpolationMode::Casa { .. } | ApplyInterpolationMode::Invalid
+        ) {
+            return Err(ApplyExecutionError::UnsupportedInterpolation {
+                path: path.display().to_string(), interp,
+                reason: "context-free lookup supports nearest/linear; use the contextual time lookup for other curves".to_string(),
+            });
+        }
         let unsupported = |reason: String| ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason,
@@ -326,7 +345,7 @@ impl CalibrationTableLookup {
             },
             applicable_selected_row_count: 0,
             summary,
-            resolved_gainfield: None,
+            resolved_gainfields: Vec::new(),
             resolved_nearest_gainfields: Vec::new(),
             spw_mapping: Vec::new(),
             calibration_spectral_windows: Vec::new(),
@@ -461,13 +480,20 @@ impl CalibrationTableLookup {
                 let upper = after.min(last).max(lower);
                 interpolate_time_linear(&self.path, &candidates[lower..=upper], time_s).map(Some)
             }
+            other => Err(ApplyExecutionError::UnsupportedInterpolation {
+                path: self.path.display().to_string(),
+                interp: other,
+                reason: "this lookup requires a supported context-free mode".to_string(),
+            }),
         }
     }
 }
 
 /// Each (spectral window, antenna)'s solutions across the fields of
 /// `table`, in time order, fields in order at equal times.
-fn across_fields(table: &LoadedCalibrationTable) -> HashMap<(i32, i32), Vec<CalibrationSolution>> {
+pub(crate) fn across_fields(
+    table: &LoadedCalibrationTable,
+) -> HashMap<(i32, i32), Vec<CalibrationSolution>> {
     let mut by_window: HashMap<(i32, i32), Vec<(i32, &CalibrationSolution)>> = HashMap::new();
     for (&(field, spw, antenna), solutions) in &table.solutions {
         by_window

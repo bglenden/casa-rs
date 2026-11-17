@@ -47,7 +47,7 @@ impl CalibrationTableLookup {
             },
             applicable_selected_row_count: 0,
             summary,
-            resolved_gainfield: None,
+            resolved_gainfields: Vec::new(),
             resolved_nearest_gainfields: Vec::new(),
             spw_mapping: Vec::new(),
             calibration_spectral_windows: frequencies

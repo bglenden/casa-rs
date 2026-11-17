@@ -460,29 +460,17 @@ fn expand_aligned_values<T: Clone>(
 }
 
 pub(super) fn parse_gainfield_value(value: &str) -> Option<GainFieldSelector> {
-    let value = value.trim();
     if value.is_empty() {
         return None;
     }
-    if value.eq_ignore_ascii_case("nearest") {
+    if value == "nearest" {
         return Some(GainFieldSelector::Nearest);
     }
-    if let Ok(field_id) = value.parse::<i32>() {
-        return Some(GainFieldSelector::FieldId(field_id));
-    }
-    Some(GainFieldSelector::FieldName(value.to_string()))
+    Some(GainFieldSelector::Expression(value.to_string()))
 }
 
 pub(super) fn parse_interp_value(value: &str) -> Result<ApplyInterpolationMode, String> {
-    let normalized = value.trim().to_ascii_lowercase().replace(' ', "");
-    match normalized.as_str() {
-        "" | "linear" => Ok(ApplyInterpolationMode::Linear),
-        "nearest" => Ok(ApplyInterpolationMode::Nearest),
-        "nearest,linear" | "nearestlinear" => Ok(ApplyInterpolationMode::NearestLinear),
-        _ => Err(format!(
-            "interp value {value:?} is unsupported; expected nearest, linear, or nearest,linear"
-        )),
-    }
+    ApplyInterpolationMode::parse_casa(value)
 }
 
 fn parse_spwmap_value(value: &str) -> Result<Vec<i32>, String> {
