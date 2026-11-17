@@ -91,15 +91,31 @@ fn unavailable_prior_spectral_window_excludes_data_from_solving() {
         &["TARGET0"],
         &rows,
     );
-    for calwt in [false, true] {
-        let output = dir.path().join(format!("residual-{calwt}.gcal"));
-        let mut request = phase_gain_request(output.clone());
-        let mut spec = ApplyCalibrationTableSpec::new(&prior);
-        spec.calwt = calwt;
-        request.prior_calibration_tables = vec![spec];
-        // VisEquation::collapse2 flags unavailable prior calibration and zeroes
-        // weights, so otherwise solvable data must yield no output solutions.
-        assert_no_solutions(run_gain_solve(&ms_path, &request), &output);
+    let rows = (0..3)
+        .map(|antenna_id| common::SyntheticBPolySolutionRow {
+            time_seconds: 100.,
+            field_id: 0,
+            spectral_window_id: 1,
+            antenna_id,
+            scale_factor: casa_types::Complex32::new(1., 0.),
+            valid_domain_hz: [1.0e9, 1.2e9],
+            amp_coefficients: vec![vec![0.]; 2],
+            phase_coefficients: vec![vec![0.]; 2],
+            phase_units: "rad",
+        })
+        .collect::<Vec<_>>();
+    let bpoly = common::create_apply_bpoly_caltable(&dir.path().join("unavailable.bpoly"), &rows);
+    for (index, prior) in [prior, bpoly].iter().enumerate() {
+        for calwt in [false, true] {
+            let output = dir.path().join(format!("residual-{index}-{calwt}.gcal"));
+            let mut request = phase_gain_request(output.clone());
+            let mut spec = ApplyCalibrationTableSpec::new(prior);
+            spec.calwt = calwt;
+            request.prior_calibration_tables = vec![spec];
+            // VisEquation::collapse2 flags unavailable prior calibration and zeroes
+            // weights, so otherwise solvable data must yield no output solutions.
+            assert_no_solutions(run_gain_solve(&ms_path, &request), &output);
+        }
     }
 }
 

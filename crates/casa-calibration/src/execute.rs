@@ -4310,15 +4310,11 @@ fn load_bpoly_calibration_table(
                 reason: format!("CAL_DESC_ID {cal_desc_id} was not present in CAL_DESC"),
             }
         })?;
-        let spw_plan = spw_plans.get(&cal_desc_entry.spw_id).ok_or_else(|| {
-            ApplyExecutionError::UnsupportedCalibrationTable {
-                path: table_plan.spec.path.display().to_string(),
-                reason: format!(
-                    "planner did not provide a target SPW grid for CAL_DESC_ID {cal_desc_id} -> SPW {}",
-                    cal_desc_entry.spw_id
-                ),
-            }
-        })?;
+        let Some(spw_plan) = spw_plans.get(&cal_desc_entry.spw_id) else {
+            // Only mapped, applicable windows have a target sampling grid.
+            // Unavailable rows are skipped or strictly flagged by the caller.
+            continue;
+        };
         let grid = sample_bpoly_row(
             &table,
             row_index,

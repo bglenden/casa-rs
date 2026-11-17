@@ -256,125 +256,142 @@ fn public_applycal_records_all_parameters_including_trial_history() {
 fn unavailable_windows_preserve_data_weights_and_only_strict_modes_flag() {
     // Calibrater::correct2 skips unavailable windows, or flags the selected
     // cube in STRICT mode. Neither case applies data or weight corrections.
-    for mode in [
-        ApplyMode::CalFlag,
-        ApplyMode::CalOnly,
-        ApplyMode::CalFlagStrict,
-        ApplyMode::FlagOnly,
-        ApplyMode::FlagOnlyStrict,
-        ApplyMode::Trial,
-    ] {
-        for existing in [false, true] {
-            let dir = tempfile::tempdir().unwrap();
-            let path = common::create_apply_fixture_ms_with_options(dir.path(), existing, true);
-            let mut ms = MeasurementSet::open(&path).unwrap();
-            let ArrayValue::Complex32(data) = ms
-                .main_table()
-                .cell_accessor(1, "DATA")
-                .unwrap()
-                .array()
-                .unwrap()
-            else {
-                panic!("DATA")
-            };
-            let input = data.clone();
-            let previous = input.mapv(|value| value * Complex32::new(7., 2.));
-            for (name, value) in [
-                ("WEIGHT", ArrayValue::from_f32_vec(vec![3.; 2])),
-                ("SIGMA", ArrayValue::from_f32_vec(vec![2.; 2])),
-                (
-                    "WEIGHT_SPECTRUM",
-                    ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[2, 2]), 99.)),
-                ),
-            ] {
-                ms.main_table_mut()
-                    .cell_accessor_mut(1, name)
-                    .unwrap()
-                    .set(Value::Array(value))
-                    .unwrap();
-            }
-            if existing {
-                ms.main_table_mut()
-                    .cell_accessor_mut(1, "CORRECTED_DATA")
-                    .unwrap()
-                    .set(Value::Array(ArrayValue::Complex32(previous.clone())))
-                    .unwrap();
-            }
-            ms.save().unwrap();
-            drop(ms);
-            let rows = [0, 1].map(|antenna| common::SyntheticGainSolutionRow {
-                time_seconds: 100.,
-                field_id: 0,
-                spectral_window_id: 0,
-                antenna_id: antenna,
-                gains: vec![Complex32::new(2., 0.); 2],
-                flags: vec![false; 2],
-            });
-            let gain = common::create_apply_gain_caltable(
-                &dir.path().join("gain.gcal"),
-                &["TARGET0"],
-                &rows,
-            );
-            let mut spec = ApplyCalibrationTableSpec::new(gain);
-            spec.calwt = true;
-            execute_apply_from_path(
-                &path,
-                &ApplyPlanRequest {
-                    selection: MsSelection::new().spw_selector("1:0").unwrap(),
-                    apply_mode: mode,
-                    parang: false,
-                    calibration_tables: vec![spec],
-                },
-            )
-            .unwrap();
-            let ms = MeasurementSet::open(&path).unwrap();
-            let column = |row, name| {
-                ms.main_table()
-                    .cell_accessor(row, name)
+    for bpoly in [false, true] {
+        for mode in [
+            ApplyMode::CalFlag,
+            ApplyMode::CalOnly,
+            ApplyMode::CalFlagStrict,
+            ApplyMode::FlagOnly,
+            ApplyMode::FlagOnlyStrict,
+            ApplyMode::Trial,
+        ] {
+            for existing in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let path = common::create_apply_fixture_ms_with_options(dir.path(), existing, true);
+                let mut ms = MeasurementSet::open(&path).unwrap();
+                let ArrayValue::Complex32(data) = ms
+                    .main_table()
+                    .cell_accessor(1, "DATA")
                     .unwrap()
                     .array()
                     .unwrap()
-            };
-            assert_eq!(column(1, "DATA"), &ArrayValue::Complex32(input.clone()));
-            assert_eq!(column(1, "WEIGHT"), &ArrayValue::from_f32_vec(vec![3.; 2]));
-            assert_eq!(column(1, "SIGMA"), &ArrayValue::from_f32_vec(vec![2.; 2]));
-            assert_eq!(
-                column(1, "WEIGHT_SPECTRUM"),
-                &ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[2, 2]), 99.))
-            );
-            let has_corrected = ms
-                .main_table()
-                .schema()
-                .unwrap()
-                .contains_column("CORRECTED_DATA");
-            let creates = matches!(
-                mode,
-                ApplyMode::CalFlag | ApplyMode::CalOnly | ApplyMode::CalFlagStrict
-            );
-            assert_eq!(has_corrected, existing || creates);
-            if has_corrected {
-                assert_eq!(
-                    column(1, "CORRECTED_DATA"),
-                    &ArrayValue::Complex32(if existing { previous } else { input })
-                );
-                if !existing {
-                    assert_eq!(column(0, "CORRECTED_DATA"), column(0, "DATA"));
+                else {
+                    panic!("DATA")
+                };
+                let input = data.clone();
+                let previous = input.mapv(|value| value * Complex32::new(7., 2.));
+                for (name, value) in [
+                    ("WEIGHT", ArrayValue::from_f32_vec(vec![3.; 2])),
+                    ("SIGMA", ArrayValue::from_f32_vec(vec![2.; 2])),
+                    (
+                        "WEIGHT_SPECTRUM",
+                        ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[2, 2]), 99.)),
+                    ),
+                ] {
+                    ms.main_table_mut()
+                        .cell_accessor_mut(1, name)
+                        .unwrap()
+                        .set(Value::Array(value))
+                        .unwrap();
                 }
-            }
-            let ArrayValue::Bool(flags) = column(1, "FLAG") else {
-                panic!("FLAG")
-            };
-            for corr in 0..2 {
+                if existing {
+                    ms.main_table_mut()
+                        .cell_accessor_mut(1, "CORRECTED_DATA")
+                        .unwrap()
+                        .set(Value::Array(ArrayValue::Complex32(previous.clone())))
+                        .unwrap();
+                }
+                ms.save().unwrap();
+                drop(ms);
+                let rows = [0, 1].map(|antenna| common::SyntheticGainSolutionRow {
+                    time_seconds: 100.,
+                    field_id: 0,
+                    spectral_window_id: 0,
+                    antenna_id: antenna,
+                    gains: vec![Complex32::new(2., 0.); 2],
+                    flags: vec![false; 2],
+                });
+                let gain = if bpoly {
+                    let rows = [0, 1].map(|antenna| common::SyntheticBPolySolutionRow {
+                        time_seconds: 100.,
+                        field_id: 0,
+                        spectral_window_id: 0,
+                        antenna_id: antenna,
+                        scale_factor: Complex32::new(2., 0.),
+                        valid_domain_hz: [1.0e9, 1.2e9],
+                        amp_coefficients: vec![vec![0.]; 2],
+                        phase_coefficients: vec![vec![0.]; 2],
+                        phase_units: "rad",
+                    });
+                    common::create_apply_bpoly_caltable(&dir.path().join("gain.bpoly"), &rows)
+                } else {
+                    common::create_apply_gain_caltable(
+                        &dir.path().join("gain.gcal"),
+                        &["TARGET0"],
+                        &rows,
+                    )
+                };
+                let mut spec = ApplyCalibrationTableSpec::new(gain);
+                spec.calwt = true;
+                execute_apply_from_path(
+                    &path,
+                    &ApplyPlanRequest {
+                        selection: MsSelection::new().spw_selector("1:0").unwrap(),
+                        apply_mode: mode,
+                        parang: false,
+                        calibration_tables: vec![spec],
+                    },
+                )
+                .unwrap();
+                let ms = MeasurementSet::open(&path).unwrap();
+                let column = |row, name| {
+                    ms.main_table()
+                        .cell_accessor(row, name)
+                        .unwrap()
+                        .array()
+                        .unwrap()
+                };
+                assert_eq!(column(1, "DATA"), &ArrayValue::Complex32(input.clone()));
+                assert_eq!(column(1, "WEIGHT"), &ArrayValue::from_f32_vec(vec![3.; 2]));
+                assert_eq!(column(1, "SIGMA"), &ArrayValue::from_f32_vec(vec![2.; 2]));
                 assert_eq!(
-                    flags[[corr, 0]],
-                    matches!(mode, ApplyMode::CalFlagStrict | ApplyMode::FlagOnlyStrict)
+                    column(1, "WEIGHT_SPECTRUM"),
+                    &ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[2, 2]), 99.))
                 );
-                assert!(!flags[[corr, 1]]);
+                let has_corrected = ms
+                    .main_table()
+                    .schema()
+                    .unwrap()
+                    .contains_column("CORRECTED_DATA");
+                let creates = matches!(
+                    mode,
+                    ApplyMode::CalFlag | ApplyMode::CalOnly | ApplyMode::CalFlagStrict
+                );
+                assert_eq!(has_corrected, existing || creates);
+                if has_corrected {
+                    assert_eq!(
+                        column(1, "CORRECTED_DATA"),
+                        &ArrayValue::Complex32(if existing { previous } else { input })
+                    );
+                    if !existing {
+                        assert_eq!(column(0, "CORRECTED_DATA"), column(0, "DATA"));
+                    }
+                }
+                let ArrayValue::Bool(flags) = column(1, "FLAG") else {
+                    panic!("FLAG")
+                };
+                for corr in 0..2 {
+                    assert_eq!(
+                        flags[[corr, 0]],
+                        matches!(mode, ApplyMode::CalFlagStrict | ApplyMode::FlagOnlyStrict)
+                    );
+                    assert!(!flags[[corr, 1]]);
+                }
+                let ArrayValue::Bool(untouched) = column(0, "FLAG") else {
+                    panic!("FLAG")
+                };
+                assert!(untouched.iter().all(|flag| !flag));
             }
-            let ArrayValue::Bool(untouched) = column(0, "FLAG") else {
-                panic!("FLAG")
-            };
-            assert!(untouched.iter().all(|flag| !flag));
         }
     }
 }
