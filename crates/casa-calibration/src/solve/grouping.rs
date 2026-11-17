@@ -588,7 +588,7 @@ impl SolveSampleRow {
     }
 }
 
-/// One sample's arrays for [`SolveAccumulator::observe_samples`], each
+/// One sample's arrays for [`SolveAccumulator::observe_selected_samples`], each
 /// `[correlation, channel]` as casacore stores a MAIN cell: the data, the
 /// flags the solve uses (row flags already folded in), the solve weights and
 /// the model, if any.
