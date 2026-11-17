@@ -5235,7 +5235,10 @@ mod tests {
         cache.remember_fast_gain_curve(1, 3, gains);
         let cached_gains = cache.cached_fast_gain_curve(1, 3).expect("gain cache");
         assert_eq!(cached_gains.sample(0), (1.5, false));
-        assert_eq!(cached_gains.sample(8), (2.5, true));
+        // Cache raw solutions unchanged. At application, JonesDiag::invert
+        // substitutes identity for a flagged gain (the other antenna still applies).
+        assert_eq!((cached_gains.values[1], cached_gains.flags[1]), (2.5, true));
+        assert_eq!(cached_gains.sample(8), (1.0, true));
 
         cache.remember_fast_opacity(2, 4, 0.875);
         assert_eq!(cache.cached_fast_opacity(2, 4), Some(0.875));
