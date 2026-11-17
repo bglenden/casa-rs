@@ -246,8 +246,9 @@ mod tests {
                             .map(|[re, im]| Complex32::new(re, im))
                             .collect(),
                     )
-                    .unwrap(),
-                    flags: ArrayD::from_shape_vec(shape, row.flags).unwrap(),
+                    .unwrap()
+                    .into(),
+                    flags: ArrayD::from_shape_vec(shape, row.flags).unwrap().into(),
                 }
             })
             .collect::<Vec<_>>();

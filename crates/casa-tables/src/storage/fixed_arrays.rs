@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Fixed-shape whole-cell typed reads share the selected-row storage routes.
+
+use super::*;
+use crate::table::SelectedArray2DCells;
+
+impl CompositeStorage {
+    pub(crate) fn load_fixed_2d_from_plain(
+        &self,
+        path: &Path,
+        table: &TableDatContents,
+        column: &str,
+        rows: &[usize],
+        shape: [usize; 2],
+    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
+        if rows.is_empty() || shape.contains(&0) {
+            return Ok(None);
+        }
+        let entry = table
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!("column {column} has no storage binding"))
+            })?;
+        let dm = table
+            .column_set
+            .data_managers
+            .iter()
+            .find(|dm| dm.seq_nr == entry.dm_seq_nr)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!("column {column} has no data manager"))
+            })?;
+        if table
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            return Ok(None);
+        }
+        if dm.type_name == "StandardStMan" {
+            let descs = table
+                .column_set
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.dm_seq_nr == dm.seq_nr)
+                .map(|(index, _)| &table.table_desc.columns[index])
+                .collect::<Vec<_>>();
+            let index = descs
+                .iter()
+                .position(|desc| desc.col_name == column)
+                .ok_or_else(|| {
+                    StorageError::FormatMismatch(format!("column {column} has no descriptor"))
+                })?;
+            if let Some(values) = standard_stman::read_fixed_2d_cells(
+                &path.join(format!("{TABLE_DATA_FILE_PREFIX}{}", dm.seq_nr)),
+                &dm.data,
+                &descs,
+                index,
+                rows,
+                shape,
+            )? {
+                return Ok(Some(values));
+            }
+        }
+        self.whole_cell_read(path, table, column, rows)
+            .load_fixed_2d(shape)
+    }
+}

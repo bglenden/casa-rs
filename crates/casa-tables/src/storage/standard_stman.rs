@@ -1457,7 +1457,9 @@ pub(crate) fn save_ssm_file_scalar_columns_sparse_rows_in_place(
 }
 
 mod array_rows;
+mod fixed_arrays;
 pub(crate) use array_rows::{read_ssm_array_column_rows, read_ssm_array_column_shapes};
+pub(crate) use fixed_arrays::read_fixed_2d_cells;
 
 /// One cell of an indirect SSM array column, read at `offset` of its array
 /// file. A table without an array file has only undefined cells.

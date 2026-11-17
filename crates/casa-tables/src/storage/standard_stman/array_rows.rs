@@ -2,19 +2,21 @@
 //! Selected SSM array payloads and metadata share column and bucket registration.
 use super::*;
 
-trait ReadCell {
+pub(super) trait ReadCell {
     type Cell: Clone;
     fn indirect(
+        &mut self,
         reader: Option<&mut StManArrayFileReader>,
         offset: i64,
         data_type: CasacoreDataType,
         desc: &ColumnDescContents,
-        row: usize,
+        position: (usize, usize),
     ) -> Result<Option<Self::Cell>, StorageError>;
     fn direct(
+        &mut self,
         raw: &ColumnRawData,
         desc: &ColumnDescContents,
-        row: usize,
+        position: (usize, usize),
         rows: usize,
     ) -> Result<Option<Self::Cell>, StorageError>;
 }
@@ -23,18 +25,20 @@ struct Values;
 impl ReadCell for Values {
     type Cell = ArrayValue;
     fn indirect(
+        &mut self,
         reader: Option<&mut StManArrayFileReader>,
         offset: i64,
         data_type: CasacoreDataType,
         desc: &ColumnDescContents,
-        row: usize,
+        (row, _slot): (usize, usize),
     ) -> Result<Option<Self::Cell>, StorageError> {
         read_ssm_indirect_cell(reader, offset, data_type, desc, row)
     }
     fn direct(
+        &mut self,
         raw: &ColumnRawData,
         desc: &ColumnDescContents,
-        row: usize,
+        (row, _slot): (usize, usize),
         rows: usize,
     ) -> Result<Option<Self::Cell>, StorageError> {
         match extract_row_value(raw, desc, row, rows)? {
@@ -52,11 +56,12 @@ struct Shapes;
 impl ReadCell for Shapes {
     type Cell = Vec<usize>;
     fn indirect(
+        &mut self,
         reader: Option<&mut StManArrayFileReader>,
         offset: i64,
         _data_type: CasacoreDataType,
         desc: &ColumnDescContents,
-        row: usize,
+        (row, _slot): (usize, usize),
     ) -> Result<Option<Self::Cell>, StorageError> {
         match reader {
             Some(reader) => reader.read_shape_at(offset),
@@ -68,9 +73,10 @@ impl ReadCell for Shapes {
         }
     }
     fn direct(
+        &mut self,
         _raw: &ColumnRawData,
         desc: &ColumnDescContents,
-        _row: usize,
+        (_row, _slot): (usize, usize),
         _rows: usize,
     ) -> Result<Option<Self::Cell>, StorageError> {
         Ok(Some(desc.shape.iter().map(|&size| size as usize).collect()))
@@ -84,7 +90,14 @@ pub(crate) fn read_ssm_array_column_rows(
     target_col_idx: usize,
     selected_rows: &[usize],
 ) -> Result<Option<Vec<Option<ArrayValue>>>, StorageError> {
-    read::<Values>(file_path, dm_blob, col_descs, target_col_idx, selected_rows)
+    read(
+        file_path,
+        dm_blob,
+        col_descs,
+        target_col_idx,
+        selected_rows,
+        &mut Values,
+    )
 }
 
 pub(crate) fn read_ssm_array_column_shapes(
@@ -108,15 +121,23 @@ pub(crate) fn read_ssm_array_column_shapes(
             .collect::<Vec<_>>();
         return Ok(Some(vec![Some(shape); selected_rows.len()]));
     }
-    read::<Shapes>(file_path, dm_blob, col_descs, target_col_idx, selected_rows)
+    read(
+        file_path,
+        dm_blob,
+        col_descs,
+        target_col_idx,
+        selected_rows,
+        &mut Shapes,
+    )
 }
 
-fn read<R: ReadCell>(
+pub(super) fn read<R: ReadCell>(
     file_path: &Path,
     dm_blob: &[u8],
     col_descs: &[&ColumnDescContents],
     target_col_idx: usize,
     selected_rows: &[usize],
+    cells: &mut R,
 ) -> Result<Option<Vec<Option<R::Cell>>>, StorageError> {
     if selected_rows.is_empty() {
         return Ok(Some(Vec::new()));
@@ -227,15 +248,15 @@ fn read<R: ReadCell>(
                             "SSM indirect array: expected Int64 offsets".to_string(),
                         ));
                     };
-                    R::indirect(
+                    cells.indirect(
                         array_reader.as_mut(),
                         offsets[row - first_row],
                         data_type,
                         col_desc,
-                        row,
+                        (row, slot),
                     )?
                 }
-                None => R::direct(&raw, col_desc, row - first_row, nrrow)?,
+                None => cells.direct(&raw, col_desc, (row - first_row, slot), nrrow)?,
             };
         }
         start = end;

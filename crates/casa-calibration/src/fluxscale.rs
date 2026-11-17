@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 
 use casa_tables::{Table, TableError, TableOptions};
 use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
-use ndarray::ArrayD;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -16,6 +15,8 @@ use thiserror::Error;
 use crate::constants::COL_CPARAM;
 use crate::summary::CalibrationTableError;
 
+mod cell;
+use cell::GainCell;
 mod fit;
 mod full_output;
 pub(crate) mod history;
@@ -232,8 +233,8 @@ struct GainSampleRow {
     time_seconds: f64,
     interval_seconds: f64,
     scan_number: i32,
-    gains: ArrayD<Complex32>,
-    flags: ArrayD<bool>,
+    gains: GainCell<Complex32>,
+    flags: GainCell<bool>,
 }
 
 #[derive(Debug, Clone)]

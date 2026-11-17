@@ -6,6 +6,7 @@ mod array_sources;
 pub(crate) mod canonical;
 mod cell_elements;
 pub(crate) mod data_type;
+mod fixed_arrays;
 pub(crate) mod incremental_stman;
 mod scalar_sources;
 mod selected_cells;

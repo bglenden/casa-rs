@@ -115,6 +115,21 @@ impl WholeCellRead<'_> {
         load_2d(self.column, &self.cells()?, channel_start, channel_count)
     }
 
+    /// Whole cells of exactly the requested shape, with no channel slicing.
+    pub(super) fn load_fixed_2d(
+        &self,
+        shape: [usize; 2],
+    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
+        let cells = self.cells()?;
+        if cells
+            .iter()
+            .any(|cell| cell.as_ref().is_none_or(|cell| cell.shape() != shape))
+        {
+            return Ok(None);
+        }
+        load_2d(self.column, &cells, 0, shape[1])
+    }
+
     /// Fill a 2-D channel-range destination; `None` when a selected cell is
     /// undefined.
     pub(super) fn fill_2d(

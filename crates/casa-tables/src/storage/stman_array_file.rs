@@ -38,6 +38,9 @@ use std::path::Path;
 use casa_types::{ArrayValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
+mod typed;
+pub(crate) use typed::CanonicalArrayElement;
+
 use super::StorageError;
 use super::data_type::CasacoreDataType;
 
@@ -289,8 +292,20 @@ impl StManArrayFileReader {
         &mut self,
         offset: i64,
     ) -> Result<Option<Vec<usize>>, StorageError> {
+        let mut shape = Vec::new();
+        self.read_shape_into(offset, &mut shape)
+            .map(|defined| defined.then_some(shape))
+    }
+
+    /// Read shape metadata into a reusable buffer. False denotes undefined.
+    pub(crate) fn read_shape_into(
+        &mut self,
+        offset: i64,
+        shape: &mut Vec<usize>,
+    ) -> Result<bool, StorageError> {
+        shape.clear();
         if offset == 0 {
-            return Ok(None);
+            return Ok(false);
         }
         let target = u64::try_from(offset).map_err(|_| {
             StorageError::FormatMismatch("negative indirect array offset".to_string())
@@ -310,7 +325,7 @@ impl StManArrayFileReader {
             let _ref_count = read_u32(&mut self.file, self.bo)?;
         }
         let ndim = read_u32(&mut self.file, self.bo)? as usize;
-        let mut shape = Vec::with_capacity(ndim);
+        shape.reserve_exact(ndim);
         for _ in 0..ndim {
             let dimension = read_i32(&mut self.file, self.bo)?;
             shape.push(usize::try_from(dimension).map_err(|_| {
@@ -321,7 +336,7 @@ impl StManArrayFileReader {
         if ndim == 0 {
             shape.push(0);
         }
-        Ok(Some(shape))
+        Ok(true)
     }
 
     /// Read an array at the given file offset; zero is undefined.
