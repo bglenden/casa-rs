@@ -106,6 +106,13 @@ fn effective(task: &TaskInvocation<'_>, name: &str) -> Option<ParameterValue> {
             | "observation"
             | "msselect"
     ) && current == ParameterValue::String("none".into())
+        && task
+            .session()
+            .bundle()
+            .surface
+            .bindings()
+            .iter()
+            .any(|binding| binding.name == name && binding.concept.semantic_revision.0 == 1)
     {
         current = ParameterValue::String(String::new());
     }

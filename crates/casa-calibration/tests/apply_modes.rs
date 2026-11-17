@@ -12,6 +12,69 @@ use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 #[test]
+fn empty_selection_is_an_error_in_every_mode_with_casa_column_setup() {
+    for mode in [
+        ApplyMode::CalFlag,
+        ApplyMode::CalFlagStrict,
+        ApplyMode::CalOnly,
+        ApplyMode::FlagOnly,
+        ApplyMode::FlagOnlyStrict,
+        ApplyMode::Trial,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = common::create_apply_fixture_ms(dir.path(), false);
+        let rows = [0, 1].map(|antenna_id| common::SyntheticGainSolutionRow {
+            time_seconds: 100.,
+            field_id: 0,
+            spectral_window_id: 0,
+            antenna_id,
+            gains: vec![Complex32::new(2., 0.); 2],
+            flags: vec![false; 2],
+        });
+        let gain =
+            common::create_apply_gain_caltable(&dir.path().join("gain.gcal"), &["TARGET0"], &rows);
+        let error = execute_apply_from_path(
+            &path,
+            &ApplyPlanRequest {
+                selection: MsSelection {
+                    scan: Some("999".into()),
+                    ..MsSelection::new()
+                },
+                apply_mode: mode,
+                parang: false,
+                calibration_tables: vec![ApplyCalibrationTableSpec::new(gain)],
+            },
+        )
+        .expect_err("Calibrater::selectvis rejects zero rows before correction");
+        assert!(error.to_string().contains("selection produced no rows"));
+        let ms = MeasurementSet::open(&path).unwrap();
+        let writes_data = matches!(
+            mode,
+            ApplyMode::CalFlag | ApplyMode::CalFlagStrict | ApplyMode::CalOnly
+        );
+        assert_eq!(
+            ms.main_table()
+                .schema()
+                .unwrap()
+                .contains_column("CORRECTED_DATA"),
+            writes_data
+        );
+        if writes_data {
+            for row in 0..ms.row_count() {
+                let cell = |column| {
+                    ms.main_table()
+                        .cell_accessor(row, column)
+                        .unwrap()
+                        .array()
+                        .unwrap()
+                };
+                assert_eq!(cell("CORRECTED_DATA"), cell("DATA"));
+            }
+        }
+    }
+}
+
+#[test]
 fn flag_only_modes_preserve_corrected_columns_and_weights() {
     // CASA task_applycal.makecorr and Calibrater::correct2 write only FLAG for
     // FLAGONLY modes. A flagged antenna is identity; its valid partner is 2.

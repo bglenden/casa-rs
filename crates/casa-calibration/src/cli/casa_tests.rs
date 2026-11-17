@@ -182,6 +182,20 @@ fn docallib_chooses_the_calibration_library() {
 }
 
 #[test]
+fn applycal_selectors_are_scalar_text_and_only_empty_text_is_absent() {
+    let defaults = apply(json!({"vis":"d.ms", "gaintable":["g.cal"]}));
+    assert!(defaults.selection.intent.is_none());
+    assert!(defaults.selection.uvrange.is_none());
+    for text in ["none", "auto", " CALIBRATE_PHASE* ", "/.*$/"] {
+        let request = apply(json!({
+            "vis":"d.ms", "gaintable":["g.cal"], "intent":text, "uvrange":text
+        }));
+        assert_eq!(request.selection.intent.as_deref(), Some(text));
+        assert_eq!(request.selection.uvrange.as_deref(), Some(text));
+    }
+}
+
+#[test]
 fn selectdata_false_keeps_field_and_spw_and_drops_the_other_selectors() {
     let selection = |selectdata: bool| {
         apply(json!({
@@ -190,6 +204,8 @@ fn selectdata_false_keeps_field_and_spw_and_drops_the_other_selectors() {
             "selectdata": selectdata,
             "field": "1",
             "spw": "0",
+            "intent": "CALIBRATE_PHASE*",
+            "uvrange": "<50m",
             "antenna": "A0",
             "scan": "2",
         }))
@@ -198,6 +214,7 @@ fn selectdata_false_keeps_field_and_spw_and_drops_the_other_selectors() {
     let all = MsSelection {
         field: Some("1".into()),
         spw: Some("0".into()),
+        intent: Some("CALIBRATE_PHASE*".into()),
         ..MsSelection::new()
     };
     assert_eq!(selection(false), all);
@@ -206,6 +223,7 @@ fn selectdata_false_keeps_field_and_spw_and_drops_the_other_selectors() {
         MsSelection {
             antenna: Some("A0".into()),
             scan: Some("2".into()),
+            uvrange: Some("<50m".into()),
             ..all
         }
     );

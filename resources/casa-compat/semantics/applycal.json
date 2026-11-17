@@ -2,10 +2,10 @@
   "schema_version": 1,
   "task": "applycal",
   "casa_version": "6.7.6.14",
-  "audit_revision": "0fbb69b2a11850f27a9037ccbd7ad096f1cde330",
+  "audit_revision": "7cc88e0d13f2b3f051f8c9a620ed0a90bbb7969d",
   "parameters": {
     "vis": {
-      "scope": "Mutable MS paths; all 58 current cases agree on MAIN, task HISTORY and observed error/trial mutation. Full path/coercion forms and error domains remain.",
+      "scope": "Mutable MS paths; all 105 current cases agree on MAIN, task HISTORY and observed error/trial setup and mutation. Full path/coercion forms and remaining error domains stay on #1518.",
       "evidence": [
         "oracle",
         "source"
@@ -38,17 +38,18 @@
       "status": "Partial"
     },
     "intent": {
-      "scope": "Default-only runtime refusal; implement every CASA-supported non-default intent selector under #1518.",
+      "scope": "Native STATE grammar handles exact comma-separated OBS_MODE components, patterns, quoted patterns, regexes, intersections, IDs/ranges/bounds, flagged states, and partial numeric lists. Scalar literal text is preserved, including none. Intent remains active with selectdata=False. Current same-input cases pass; full callable/coercion and cross-parameter domains remain. Bounds mask flagged states while explicit IDs/ranges may select them; empty combined bounds reject before unioning, as CASA does.",
       "evidence": [
         "oracle",
         "source"
       ],
       "behaviors": [
         "common-application"
-      ]
+      ],
+      "status": "Partial"
     },
     "selectdata": {
-      "scope": "Native selection gate exists; inactive detailed arguments and coercions still need full public-CASA comparison.",
+      "scope": "When false, applycal accepts and ignores timerange/uvrange/antenna/scan/observation/msselect while retaining their original inputs for HISTORY. Field, SPW and intent still select. Public CASA comparisons pass; complete remaining API/coercion domains stay open.",
       "evidence": [
         "oracle",
         "source"
@@ -70,14 +71,15 @@
       "status": "Partial"
     },
     "uvrange": {
-      "scope": "Default-only runtime refusal; implement CASA-supported UV distance selectors under #1518.",
+      "scope": "Native UV-distance selection supports meter/km, lambda/klambda, default units, bounds/ranges, mixed-unit unions and whitespace; CASA comparisons cover combined selection, disabled values and errors/empty results. Full callable/coercion and cross-parameter domains remain.",
       "evidence": [
         "oracle",
         "source"
       ],
       "behaviors": [
         "common-application"
-      ]
+      ],
+      "status": "Partial"
     },
     "antenna": {
       "scope": "Native antenna/baseline selection exists; full grammar, baseline forms and public-state comparisons remain.",
@@ -212,7 +214,7 @@
       "status": "Partial"
     },
     "applymode": {
-      "scope": "All six modes are implemented and CASA-compared, including unavailable SPWs, preserved flag-only data/weights, selected channels, new/existing corrected data and trial validation without publication. Full parameter/error combinations remain.",
+      "scope": "All six modes are implemented and CASA-compared, including unavailable SPWs, flag-only preservation, selected channels, new/existing corrected data and trial validation. Empty selections error in every native mode. Full remaining parameter/error combinations stay open.",
       "evidence": [
         "oracle",
         "source"
@@ -223,7 +225,7 @@
       "status": "Partial"
     },
     "flagbackup": {
-      "scope": "Existing shared backup integration and fresh backup-count comparison; full version contents/metadata and API/error combinations remain.",
+      "scope": "Backup is saved before selection/table validation in flag-writing modes, including rejected requests, matching CASA. Existing native restore checks and public backup counts pass. Full version contents/metadata and remaining API/error combinations remain.",
       "evidence": [
         "oracle",
         "source"
@@ -239,8 +241,8 @@
       "id": "common-application",
       "title": "Apply chains while preserving unselected data and calibrated weight semantics",
       "status": "Partial",
-      "scope": "G/B common modes, all six apply modes, task HISTORY and standalone linear/circular parang are delivered in bounded batches; full 21-parameter/common-engine acceptance remains on #1518.",
-      "gap": "Full selection/callibrary/interpolation/mapping/coercion/error and existing-family/state/interchange domains remain. Detailed performance tuning and final qualification follow functionality equivalence under owner direction on #979.",
+      "scope": "G/B common application, all six modes, HISTORY, standalone linear/circular parang and intent/UV selection are implemented in bounded batches. Full 21-parameter/common-engine acceptance remains on #1518.",
+      "gap": "Full callibrary/gainfield/interpolation/SPW-mapping and remaining selection/coercion/error and existing-family/chain/state/interchange domains remain. Detailed performance tuning and final qualification follow functionality equivalence under owner direction on #979.",
       "evidence": [
         "oracle",
         "performance"
@@ -252,11 +254,11 @@
     "oracle": {
       "kind": "Same-input public-Python MAIN/API/state comparison",
       "state": "passed",
-      "scope": "Full current 58-case corpus with no skipped comparisons: MAIN, complete HISTORY, return/error catchability and backup counts; bidirectional native/CASA readback and both byte orders for selected array writes.",
-      "result": "All 58 current MAIN/API/state comparisons pass; full 21-parameter value-domain acceptance remains unfinished on #1518.",
+      "scope": "Full current 105-case corpus with no skipped comparisons: MAIN, complete HISTORY, return/error catchability and backup counts; native/CASA readback and both byte orders. This run uses a debug native CLI for functional evidence, with no performance acceptance claim.",
+      "result": "All 105 current MAIN/API/state comparisons pass; full 21-parameter value-domain acceptance remains unfinished on #1518.",
       "casa_version": "6.7.6.14",
-      "revision": "123b78520093196bcdfce31397c8da5ef415e285",
-      "command": "python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/modes-final-123b78520 --native-bin target/calibration-1518/calibrate-modes-123b78520",
+      "revision": "7cc88e0d13f2b3f051f8c9a620ed0a90bbb7969d",
+      "command": "python tools/casa-compat/applycal_oracle.py --work target/calibration-1518/selection-reviewed --native-bin target/calibration-1518/calibrate-selection-reviewed-debug",
       "receipt": "resources/casa-compat/evidence/applycal-20261117.json",
       "links": [
         "tools/casa-compat/applycal_oracle.py",
@@ -264,16 +266,18 @@
         "crates/casa-calibration/tests/apply_weights.rs",
         "crates/casa-calibration/tests/apply_flagged_gains.rs",
         "crates/casa-calibration/tests/apply_modes.rs",
-        "crates/casa-calibration/tests/gain_solve.rs"
+        "crates/casa-calibration/tests/gain_solve.rs",
+        "crates/casa-calibration/src/cli/casa_tests.rs",
+        "crates/casa-ms/src/selection/intent.rs"
       ],
-      "source_revision": "123b78520093196bcdfce31397c8da5ef415e285"
+      "source_revision": "7cc88e0d13f2b3f051f8c9a620ed0a90bbb7969d"
     },
     "source": {
       "kind": "Independent CASA source inspection",
       "state": "inspected",
-      "scope": "Calibrater::correct2, task_applycal.py/mstools.write_history, PJones::syncMeta2/calcOneJones, Jones flag propagation/inversion, VisEquation::collapse2, SIGMA reset, CTPatchedInterp frequency interpolation, BJones::calcWtScale and BPOLY::setApply. BPOLY loading samples only planned applicable SPW grids.",
-      "result": "All six modes, full task history, inverse linear-feed rotation and flags, trial validation and unavailable solver priors follow source laws, alongside the delivered channel/weight conventions. Review found an unavailable-BPOLY grid error; ordinary/strict/trial application and solver preapply regressions fail before and pass after the fix.",
-      "revision": "0fbb69b2a11850f27a9037ccbd7ad096f1cde330",
+      "scope": "Calibrater::correct2, task_applycal.py/mstools.write_history, PJones::syncMeta2/calcOneJones, Jones flag propagation/inversion, VisEquation::collapse2, SIGMA reset, CTPatchedInterp frequency interpolation, BJones::calcWtScale and BPOLY::setApply. BPOLY loading samples only planned applicable SPW grids. MSStateGram/MSStateIndex and task selection activation, literal scalar text and selection-error setup.",
+      "result": "All six modes, full task history, inverse linear-feed rotation and flags, trial validation and unavailable solver priors follow source laws, alongside the delivered channel/weight conventions. Review found an unavailable-BPOLY grid error; ordinary/strict/trial application and solver preapply regressions fail before and pass after the fix. Intent grammar, inactive argument retention, rejected-call corrected-column initialization/backups and empty-selection errors follow independent source and CASA comparisons. The two reviewed STATE-bound edge cases are fixed with independently failing-before CASA comparisons and native regressions.",
+      "revision": "7cc88e0d13f2b3f051f8c9a620ed0a90bbb7969d",
       "links": [
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/Calibrater.cc",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/CalTables/CTPatchedInterp.cc",
@@ -281,13 +285,17 @@
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/VisEquation.cc",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatasks/src/private/task_applycal.py",
         "crates/casa-calibration/tests/apply_modes.rs",
-        "crates/casa-calibration/tests/gain_solve.rs"
+        "crates/casa-calibration/tests/gain_solve.rs",
+        "https://github.com/casacore/casacore/blob/master/ms/MSSel/MSStateGram.yy",
+        "https://github.com/casacore/casacore/blob/master/ms/MSSel/MSStateGram.ll",
+        "https://github.com/casacore/casacore/blob/master/ms/MSSel/MSStateIndex.cc",
+        "crates/casa-task-runtime/src/invocation.rs"
       ]
     },
     "performance": {
       "kind": "Matched public-Python performance",
       "state": "failed",
-      "scope": "175 MB, 12000 rows, 6144000 complex samples; same MAIN products, one worker, 5 alternating public-Python pairs per cache policy. Full API/HISTORY equivalence remains unfinished and these timings are not acceptance.",
+      "scope": "Historical 175 MB, 12000 rows, 6144000 complex samples; one worker, five alternating public-Python pairs per cache policy, predating completed HISTORY/modes. Full 21-parameter/state equivalence remains unfinished; final matched qualification follows functionality.",
       "result": "Scalar gain reuse reduces compute median 0.228\u21920.077 s warm and 0.213\u21920.076 s cold. Full native 0.661 s warm/0.624 s cold versus CASA 0.259/0.349 s: still slower and CPU-limited. Gross repeated sampling is corrected; detailed tuning and final qualification follow functionality equivalence under owner direction on #979.",
       "casa_version": "6.7.6.14",
       "revision": "665d698e0dd5e0e169edcd9f069f518b69e4108e",

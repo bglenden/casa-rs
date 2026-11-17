@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 612
+- Concepts: 614
 - Surfaces: 31 (31 task, 0 session)
 - Surface bindings: 896
 
@@ -27,7 +27,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 5 | <code>image_analysis</code> | 12 | Export CASA images to FITS |
 | [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 5 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
 | [Split](#surface-split)<br><code>split</code> | task | 5 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
-| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 6 | <code>calibration</code> | 25 | Apply one or more calibration tables to a MeasurementSet. |
+| [Applycal](#surface-applycal)<br><code>applycal</code> | task | 7 | <code>calibration</code> | 25 | Apply one or more calibration tables to a MeasurementSet. |
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 6 | <code>calibration</code> | 42 | Solve antenna gain calibration for a MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 7 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
@@ -604,7 +604,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Applycal (<code>applycal</code>)
 
 - Kind: `task`
-- Contract version: `6`
+- Contract version: `7`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: Apply one or more calibration tables to a MeasurementSet.
@@ -614,10 +614,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
 | <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers. |
 | <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
 | <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
 | <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
 | <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |

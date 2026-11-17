@@ -33,6 +33,7 @@ use thiserror::Error;
 
 pub mod antenna_expr;
 mod edit;
+mod intent;
 pub(crate) mod parser;
 pub mod spw_expr;
 pub mod syntax;

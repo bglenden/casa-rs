@@ -14185,7 +14185,7 @@
     {
       "kind": "task",
       "id": "applycal",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "Applycal",
       "category": "Calibration",
       "summary": "Apply one or more calibration tables to a MeasurementSet.",
@@ -14271,18 +14271,18 @@
         },
         {
           "name": "intent",
-          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 3},
           "order": 3,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal takes a scalar CASA selector string and preserves its literal text, including empty text and names such as none. Legacy normalization and per-MeasurementSet list consumers keep their existing revisions."},
           "projections": {
             "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
-            "provider": {"field": "intent"},
+            "provider": {"field": "intent", "adapter": "identity"},
             "python": {"name": "intent"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 979}
+          }
         },
         {
           "name": "selectdata",
@@ -14305,7 +14305,7 @@
           "order": 5,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "START:END"},
             "provider": {"field": "timerange", "adapter": "omit_none"},
@@ -14315,18 +14315,18 @@
         },
         {
           "name": "uvrange",
-          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 3},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal takes a scalar CASA selector string and preserves its literal text, including empty text and names such as none. Legacy normalization and per-MeasurementSet list consumers keep their existing revisions."},
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
-            "provider": {"field": "uvrange"},
+            "provider": {"field": "uvrange", "adapter": "identity"},
             "python": {"name": "uvrange"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "antenna",
@@ -14334,7 +14334,7 @@
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--antenna"], "metavar": "IDS"},
             "provider": {"field": "antenna", "adapter": "omit_none"},
@@ -14348,7 +14348,7 @@
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--scan"], "metavar": "IDS"},
             "provider": {"field": "scan", "adapter": "omit_none"},
@@ -14362,7 +14362,7 @@
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--observation"], "metavar": "IDS"},
             "provider": {"field": "observation", "adapter": "omit_none"},
@@ -14377,7 +14377,7 @@
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--msselect"], "metavar": "EXPR"},
             "provider": {"field": "msselect", "adapter": "omit_none"},

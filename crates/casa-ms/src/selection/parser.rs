@@ -963,30 +963,9 @@ fn parse_two_or_four_digit_year(value: &str, original: &str) -> MsResult<i32> {
 pub(crate) fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> {
     let state = ms.state()?;
     let modes = (0..state.row_count())
-        .map(|row| state.string(row, "OBS_MODE"))
+        .map(|row| Ok((state.string(row, "OBS_MODE")?, state.bool(row, "FLAG_ROW")?)))
         .collect::<MsResult<Vec<_>>>()?;
-    let mut ids = Vec::new();
-    for selector in super::syntax::parse_intent_selector(value) {
-        match &selector {
-            super::syntax::IntentSelector::State(id) => ids.push(*id),
-            super::syntax::IntentSelector::Mode(pattern) => {
-                let before = ids.len();
-                ids.extend(
-                    modes
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, mode)| selector.matches(mode))
-                        .map(|(row, _)| row as i32),
-                );
-                if ids.len() == before {
-                    return Err(MsError::VersionError(format!(
-                        "intent selector {pattern:?} did not match any STATE rows"
-                    )));
-                }
-            }
-        }
-    }
-    Ok(dedup_i32(ids))
+    super::intent::resolve(value, &modes)
 }
 
 pub(crate) fn parse_correlation_selector(value: &str) -> MsResult<Vec<i32>> {
