@@ -383,8 +383,8 @@ pub enum NormalizationRule {
     BooleanAsInteger,
     /// Preserve tclean FIELD text, including literal dollar signs.
     TcleanField,
-    /// FIELD expressions are data parsed natively; preserve every literal
-    /// character, including quoted names containing dollar signs or commas.
+    /// CASA selector expressions are data parsed natively; preserve every
+    /// literal character, including quoted names and regex dollar anchors.
     CasaField,
     Trim,
     Lowercase,
