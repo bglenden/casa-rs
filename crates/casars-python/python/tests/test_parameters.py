@@ -282,3 +282,16 @@ cell = "1arcsec"
     with pytest.raises(ValueError, match="too old.*recreate the profile"):
         load()
     assert path.read_text(encoding="utf-8") == source
+
+
+def test_inactive_applycal_spwmap_preserves_the_callers_collection(tmp_path):
+    import json
+    from casars.parameters import TaskParameters
+
+    task = TaskParameters.defaults("applycal", workspace=tmp_path)
+    task.set_many(dict(vis="data.ms", docallib=True, callib="apply.callib", spwmap=[999]))
+    request = json.loads(task.provider_invocation().stdin)
+    assert request["values"]["spwmap"] == [999]
+    task.set("docallib", False)
+    request = json.loads(task.provider_invocation().stdin)
+    assert request["values"]["spwmap"] == [[999]]
