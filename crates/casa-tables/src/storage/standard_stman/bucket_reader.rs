@@ -17,7 +17,7 @@ impl ReadBuckets {
     pub(super) fn new(file: File) -> Result<Self, StorageError> {
         let length = file.metadata()?.len();
         Ok(Self {
-            file: BufReader::with_capacity(64 * 1024, file),
+            file: BufReader::with_capacity(32 * 1024, file),
             length,
             position: None,
             bucket: Vec::new(),
@@ -33,6 +33,14 @@ impl ReadBuckets {
                 header.bucket_size, self.length
             )));
         }
+        let size = header.bucket_size as usize;
+        if size > self.bucket.len() {
+            self.bucket
+                .try_reserve_exact(size - self.bucket.len())
+                .map_err(|error| {
+                    StorageError::FormatMismatch(format!("cannot allocate SSM bucket: {error}"))
+                })?;
+        }
         let relative = self
             .position
             .take()
@@ -42,7 +50,7 @@ impl ReadBuckets {
         } else {
             self.file.seek(SeekFrom::Start(offset))?;
         }
-        self.bucket.resize(header.bucket_size as usize, 0);
+        self.bucket.resize(size, 0);
         self.file.read_exact(&mut self.bucket)?;
         self.position = Some(end);
         Ok(&self.bucket)
@@ -57,13 +65,13 @@ mod tests {
     fn forward_backward_and_invalid_bucket_reads_preserve_bytes() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("buckets");
-        let bytes = (0..2048)
+        let bytes = (0..512 + 1024 * 128)
             .map(|index| (index % 251) as u8)
             .collect::<Vec<_>>();
         std::fs::write(&path, &bytes).unwrap();
         let header = SsmHeader {
             bucket_size: 128,
-            nr_buckets: 12,
+            nr_buckets: 1024,
             pers_cache_size: 0,
             nr_free_buckets: 0,
             first_free_bucket: -1,
@@ -77,14 +85,14 @@ mod tests {
             io_order: ByteOrder::LittleEndian,
         };
         let mut reader = ReadBuckets::new(File::open(path).unwrap()).unwrap();
-        for number in [2, 0, 2, 1, 11, 0] {
+        for number in [2, 0, 2, 1, 1000, 500, 11, 0] {
             let start = SSM_HEADER_SIZE as usize + number as usize * 128;
             assert_eq!(
                 reader.read(&header, number).unwrap(),
                 &bytes[start..start + 128]
             );
         }
-        assert!(reader.read(&header, 12).is_err());
+        assert!(reader.read(&header, 1024).is_err());
         assert_eq!(reader.read(&header, 0).unwrap(), &bytes[512..640]);
     }
 }
