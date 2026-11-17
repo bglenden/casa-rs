@@ -485,7 +485,7 @@ fn bandpass_returns_its_tables_and_selected_data() {
 #[test]
 fn fluxscale_returns_flux_densities_per_field_and_window() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = fluxscale_ms(dir.path());
     let row = |time_seconds, field_id, gain| common::SyntheticGainSolutionRow {
         time_seconds,
         field_id,
@@ -524,14 +524,16 @@ fn fluxscale_returns_flux_densities_per_field_and_window() {
 #[test]
 fn fluxscale_fits_the_spectrum_across_windows() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = fluxscale_ms(dir.path());
     let mut rows = Vec::new();
     for (spectral_window_id, transfer) in [(0, 2.0_f32), (1, 2.5)] {
         for antenna_id in 0..3 {
             let scatter = 1.0 + 0.02 * antenna_id as f32;
-            for (time_seconds, field_id, gain) in
-                [(10.0, 0, scatter), (20.0, 1, transfer * scatter)]
-            {
+            // Common antenna scatter cancels in CASA's paired means. Give
+            // the transfer independent scatter so both flux errors are
+            // positive and this tests a determined, weighted spectral fit.
+            let transfer_gain = transfer * scatter * (1.0 + 0.01 * (antenna_id as f32 - 1.0));
+            for (time_seconds, field_id, gain) in [(10.0, 0, scatter), (20.0, 1, transfer_gain)] {
                 rows.push(common::SyntheticGainSolutionRow {
                     time_seconds,
                     field_id,
@@ -593,6 +595,86 @@ fn fluxscale_fits_the_spectrum_across_windows() {
     assert_eq!(floats(entry(field, "covarMat")).0, [2, 2]);
 }
 
+/// Fluxscale resolves names against vis.FIELD. Match the synthetic gains'
+/// names rather than relying on the former implementation ignoring vis.
+fn fluxscale_ms(root: &Path) -> std::path::PathBuf {
+    let path = common::create_apply_fixture_ms(root, false);
+    let mut ms = casa_ms::MeasurementSet::open(&path).unwrap();
+    let fields = ms.subtable_mut(casa_ms::schema::SubtableId::Field).unwrap();
+    for (row, name) in ["REF0", "TARGET0"].into_iter().enumerate() {
+        fields
+            .cell_accessor_mut(row, "NAME")
+            .unwrap()
+            .set(casa_types::Value::Scalar(casa_types::ScalarValue::String(
+                name.into(),
+            )))
+            .unwrap();
+    }
+    ms.save().unwrap();
+    path
+}
+
+#[test]
+fn implemented_fluxscale_options_select_samples_and_set_the_fit_order() {
+    let dir = TempDir::new().unwrap();
+    let ms = fluxscale_ms(dir.path());
+    let samples = [
+        (10., 0, 1., 1),
+        (11., 0, 3., 2),
+        (20., 1, 2., 1),
+        (21., 1, 10., 2),
+        (30., 1, 12., 1),
+    ];
+    let rows = samples.map(
+        |(time_seconds, field_id, gain, _)| common::SyntheticGainSolutionRow {
+            time_seconds,
+            field_id,
+            spectral_window_id: 0,
+            antenna_id: 0,
+            gains: vec![Complex32::new(gain, 0.); 2],
+            flags: vec![false; 2],
+        },
+    );
+    let gain = common::create_apply_gain_caltable(
+        &dir.path().join("gain.gcal"),
+        &["REF0", "TARGET0"],
+        &rows,
+    );
+    let mut table = casa_tables::Table::open(casa_tables::TableOptions::new(&gain)).unwrap();
+    for (row, (_, _, _, scan)) in samples.into_iter().enumerate() {
+        table
+            .cell_accessor_mut(row, "SCAN_NUMBER")
+            .unwrap()
+            .set(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
+                scan,
+            )))
+            .unwrap();
+    }
+    table.save(casa_tables::TableOptions::new(&gain)).unwrap();
+    let value = returned(
+        dir.path(),
+        "fluxscale",
+        json!({
+            "vis": ms.to_str().unwrap(), "caltable": gain.to_str().unwrap(),
+            "fluxtable": "flux.gcal", "reference": "REF0", "transfer": "TARGET0",
+            "fitorder": 2, "scan": "1",
+            "timerange": "1858/11/17/00:00:09~1858/11/17/00:00:25",
+        }),
+    );
+    let field = entry(&value, "1");
+    let CasaValue::FloatArray { data, .. } = entry(entry(field, "0"), "fluxd") else {
+        panic!("fluxd")
+    };
+    // Time excludes gain 12; scan excludes gains 3 and 10. The retained
+    // transfer/reference amplitude ratio is 2, independently giving 4 Jy.
+    assert_eq!(data[0].0, 4.);
+    let CasaValue::FloatArray { shape, data, .. } = entry(field, "spidx") else {
+        panic!("spidx")
+    };
+    assert_eq!(shape, &[3]);
+    assert!(data.iter().all(|value| value.0 == 0.));
+}
+
 #[test]
 fn applycal_and_gencal_return_none() {
     let dir = TempDir::new().unwrap();
@@ -639,23 +721,8 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
     ] {
         refused_naming_979(dir.path(), surface, with(&solve, name, value), name);
     }
-    let flux = json!({
-        "vis": ms, "caltable": "g.gcal", "fluxtable": "f.gcal", "reference": ["REF0"],
-    });
-    refused_naming_979(
-        dir.path(),
-        "fluxscale",
-        with(&flux, "fitorder", json!(2)),
-        "fitorder",
-    );
-    // CASA's fluxscale passes timerange and scan to the solve whatever
-    // antenna is, though its task XML shows them under antenna.
-    for (name, value) in [
-        ("timerange", json!("2030/01/01~2030/01/02")),
-        ("scan", json!("1")),
-    ] {
-        refused_naming_979(dir.path(), "fluxscale", with(&flux, name, value), name);
-    }
+    // Fluxscale's former fitorder/time/scan refusals are replaced by the
+    // positive scientific check above now that those behaviors are implemented.
     // gencal reads infile only for the caltypes CASA's task XML shows it
     // under, antpos among them.
     let gencal = json!({"vis": ms, "caltable": "o.cal", "caltype": "antpos"});
