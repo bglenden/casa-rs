@@ -142,6 +142,7 @@ def main():
         cases = [
             ('gaincal_replace','gaincal',dict(common,calmode='ap')),
             ('gaincal_append','gaincal',dict(common,calmode='ap',append=True)),
+            ('gaincal_model_replace','gaincal',dict(common,calmode='ap',smodel=[])),
             ('bandpass_replace','bandpass',dict(common,field='FLUX')),
             ('bandpass_append','bandpass',dict(common,field='FLUX',append=True)),
             ('gencal_update','gencal',dict(vis=vis,caltype='opac',parameter=[0.001])),

@@ -55,6 +55,27 @@ impl SampleAccumulation<'_> {
             .model
             .map(|model| model.index_axis_move(Axis(0), correlation));
         let point = Complex32::new(stokes_i, 0.0);
+        let correlations = samples.data.nrows();
+        if all_channels
+            && model.is_none()
+            && !weights.is_empty()
+            && weights.strides()[0] == 0
+            && samples.data.strides()[0] == 1
+            && usize::try_from(samples.data.strides()[1]) == Ok(correlations)
+            && let Some(packed) = samples.data.as_slice_memory_order()
+        {
+            // Scalar SIGMA broadcasts a single weight. Casacore's packed
+            // channel cells avoid generic strided array iteration as well.
+            let weight = weights[0];
+            return self.add::<true>(packed.chunks_exact(correlations).zip(flags).map(
+                |(channel, &flagged)| Sample {
+                    data: channel[correlation],
+                    model: point,
+                    weight,
+                    flagged,
+                },
+            ));
+        }
         if all_channels {
             // Strided row iterators avoid repeated two-dimensional indexing;
             // scalar weights retain their broadcast stride of zero.

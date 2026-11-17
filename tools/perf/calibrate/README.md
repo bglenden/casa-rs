@@ -32,7 +32,8 @@ profile and a cumulative-time summary. The trace does not instrument CASA.
 
 ## Calibration product lifecycle
 
-`lifecycle.py` compares replacement/append gain and B-bandpass solves,
+`lifecycle.py` compares replacement/append gain and B-bandpass solves
+(explicit point sources, plus gaincal's default `MODEL_DATA` input),
 opacity accumulation, flux-table append and corrected-data exports through
 both public Python APIs. Run it with the pinned CASA Python and an installed
 `casars`, on an idle host, after building release `calibrate`:
