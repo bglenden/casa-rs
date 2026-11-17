@@ -1146,6 +1146,13 @@ fn median_with_even_mean(values: &mut [f32]) -> f32 {
     }
     let middle = values.len() / 2;
     let even = values.len().is_multiple_of(2);
+    let first = values[0];
+    if values
+        .iter()
+        .all(|value| value.to_bits() == first.to_bits())
+    {
+        return if even { (first + first) / 2.0 } else { first };
+    }
     let (lower, upper, _) = values.select_nth_unstable_by(middle, f32::total_cmp);
     let upper = *upper;
     if even {

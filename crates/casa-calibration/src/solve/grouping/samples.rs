@@ -8,6 +8,17 @@ use super::{SolveEdgeAccumulation, SolveSamples, median_with_even_mean};
 
 /// CASA's correlation-independent flags are shared by every receptor.
 pub(super) fn channel_flags(samples: &SolveSamples<'_>) -> Vec<bool> {
+    let correlations = samples.flags.shape()[0];
+    if correlations > 0
+        && samples.flags.strides()[0] == 1
+        && usize::try_from(samples.flags.strides()[1]) == Ok(correlations)
+        && let Some(flags) = samples.flags.as_slice_memory_order()
+    {
+        return flags
+            .chunks_exact(correlations)
+            .map(|channel| channel.iter().any(|flag| *flag))
+            .collect();
+    }
     samples
         .flags
         .axis_iter(Axis(1))
@@ -48,18 +59,16 @@ impl SampleAccumulation<'_> {
             // scalar weights retain their broadcast stride of zero.
             let values = data.iter().zip(weights.iter()).zip(flags);
             if let Some(model) = &model {
-                self.add(
-                    values
-                        .zip(model)
-                        .map(|(((&data, &weight), &flagged), &model)| Sample {
-                            data,
-                            model,
-                            weight,
-                            flagged,
-                        }),
-                )
+                self.add::<false>(values.zip(model).map(
+                    |(((&data, &weight), &flagged), &model)| Sample {
+                        data,
+                        model,
+                        weight,
+                        flagged,
+                    },
+                ))
             } else {
-                self.add(values.map(|((&data, &weight), &flagged)| Sample {
+                self.add::<true>(values.map(|((&data, &weight), &flagged)| Sample {
                     data,
                     model: point,
                     weight,
@@ -67,7 +76,7 @@ impl SampleAccumulation<'_> {
                 }))
             }
         } else {
-            self.add(channels.iter().map(|&channel| Sample {
+            self.add::<false>(channels.iter().map(|&channel| Sample {
                 data: data[channel],
                 model: model.as_ref().map_or(point, |model| model[channel]),
                 weight: weights[channel],
@@ -76,15 +85,15 @@ impl SampleAccumulation<'_> {
         }
     }
 
-    fn add(&mut self, samples: impl Iterator<Item = Sample>) -> f64 {
+    fn add<const POINT: bool>(&mut self, samples: impl Iterator<Item = Sample>) -> f64 {
         if self.channelized {
-            self.add_ordered::<true>(samples)
+            self.add_ordered::<true, POINT>(samples)
         } else {
-            self.add_ordered::<false>(samples)
+            self.add_ordered::<false, POINT>(samples)
         }
     }
 
-    fn add_ordered<const CHANNELIZED: bool>(
+    fn add_ordered<const CHANNELIZED: bool, const POINT: bool>(
         &mut self,
         samples: impl Iterator<Item = Sample>,
     ) -> f64 {
@@ -95,7 +104,7 @@ impl SampleAccumulation<'_> {
         let mut summed_weight = 0.0_f64;
         for (channel, sample) in samples.enumerate() {
             let output = if CHANNELIZED { channel } else { 0 };
-            let weight = self.values[output].add_sample(self.attempted, sample);
+            let weight = self.values[output].add_sample::<POINT>(self.attempted, sample);
             if CHANNELIZED {
                 weights.push(weight);
             } else {
@@ -113,7 +122,7 @@ impl SampleAccumulation<'_> {
 impl SolveEdgeAccumulation {
     /// Accumulate w |M|² (D/M) = w D conj(M), with power w |D|².
     /// Cancelling the model division avoids two scalar divides per sample.
-    fn add_sample(&mut self, attempted: &mut bool, sample: Sample) -> f32 {
+    fn add_sample<const POINT: bool>(&mut self, attempted: &mut bool, sample: Sample) -> f32 {
         if sample.weight <= 0.0 || sample.flagged {
             return 0.0;
         }
@@ -127,8 +136,18 @@ impl SolveEdgeAccumulation {
             return 0.0;
         }
         let weight = sample.weight * model_norm_sqr;
-        self.weighted_sum +=
-            (sample.data * sample.model.conj()) * Complex32::new(sample.weight, 0.0);
+        self.weighted_sum += if POINT
+            && power.is_finite()
+            && model_norm_sqr.is_finite()
+            && sample.weight.is_finite()
+        {
+            // A point Stokes-I model is real. Keep the general expression for
+            // non-finite values so its existing propagation is preserved.
+            let scale = sample.weight * sample.model.re;
+            Complex32::new(sample.data.re * scale, sample.data.im * scale)
+        } else {
+            (sample.data * sample.model.conj()) * Complex32::new(sample.weight, 0.0)
+        };
         self.weight += weight;
         self.weighted_sample_power += f64::from(sample.weight) * f64::from(power);
         self.sample_count += 1;
