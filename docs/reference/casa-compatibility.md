@@ -135,10 +135,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="applycal-evidence-performance"></a>
 ##### performance
 
-**Matched public-Python performance — failed.** Warm native 0.683143288 s vs CASA 0.282755591 s; cold 0.752097765 vs 0.382432721 s. Slower and materially CPU limited; profiling/correction required. 175 MB, 12000 rows, 6144000 complex samples; same MAIN products, one worker, 5 alternating public-Python pairs per cache policy. Full API/HISTORY equivalence remains unfinished and these timings are not acceptance.
+**Matched public-Python performance — failed.** Scalar gain reuse reduces compute median 0.228→0.077 s warm and 0.213→0.076 s cold. Full native 0.661 s warm/0.624 s cold versus CASA 0.259/0.349 s: still slower and CPU-limited. Gross repeated sampling is corrected; detailed tuning and final qualification follow functionality equivalence under owner direction on #979. 175 MB, 12000 rows, 6144000 complex samples; same MAIN products, one worker, 5 alternating public-Python pairs per cache policy. Full API/HISTORY equivalence remains unfinished and these timings are not acceptance.
 
 - [tools/perf/calibrate/applycal.py](https://github.com/bglenden/casa-rs/blob/3028d0d08178c35f5d175310376c5893dbd88b82/tools/perf/calibrate/applycal.py)
-- Revision: `66850cc503f318931b56fb93e8ad2572aa151c0c`; CASA: `6.7.6.14`.
+- Revision: `665d698e0dd5e0e169edcd9f069f518b69e4108e`; CASA: `6.7.6.14`.
 - Command: `python tools/perf/calibrate/applycal.py --vis <175MB-MS> --gain <constant.gcal> --native-bin <66850cc50-release> --out <receipt> --repeats 5 --cache warm|cold`.
 - Receipt: `resources/casa-compat/evidence/applycal-performance-20261117.json`.
 
