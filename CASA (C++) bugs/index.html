@@ -3739,6 +3739,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#calibration-append-accepts-numpy-booleans-in-validation-but-rejects-them-in-c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Calibration append accepts NumPy booleans in validation but rejects them in C++
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9581,6 +9592,22 @@ positions.</p>
 <code>tb.summary(recurse=True)</code> without invalid memory access, and in <code>tb.statistics</code>
 ignores <code>NaN</code> for <code>min</code>/<code>max</code> while returning <code>NaN</code> deterministically for moments
 and order statistics on <code>NaN</code> inputs. <a href="https://github.com/bglenden/casa-rs/issues/1028">Table tool issue #1028</a></p>
+<h2 id="calibration-append-accepts-numpy-booleans-in-validation-but-rejects-them-in-c">Calibration append accepts NumPy booleans in validation but rejects them in C++<a class="headerlink" href="#calibration-append-accepts-numpy-booleans-in-validation-but-rejects-them-in-c" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-17</li>
+<li>CASA version: 6.7.6.14</li>
+</ul>
+<p><code>gaincal(..., append=numpy.bool_(True))</code> passes the generated <code>cBool</code>
+validator, which explicitly accepts <code>bool</code> and <code>numpy.bool_</code>. The unchanged
+scalar reaches <code>calibrater.setsolve</code>, whose SWIG bool conversion raises
+<code>TypeError</code> instead of appending. The existing calibration table is unchanged.
+The same call with builtin <code>True</code> succeeds.</p>
+<p>casa-rs converts the valid NumPy scalar to a native boolean and appends the
+same solutions as builtin <code>True</code>. This follows the validator's declared
+domain. <code>tools/casa-compat/calibration_lifecycle_oracle.py</code> reproduces the
+CASA error and compares the two native append products. Invalid boolean
+arguments retain the native exception policy documented in
+<code>docs/python/api.md</code>.</p>
 
 
 
