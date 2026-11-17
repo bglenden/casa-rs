@@ -2190,69 +2190,84 @@
 <a href=#2190 id=2190 data-nosnippet>2190</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(pending_values) = table.inner.pending_array_cells(<span class="kw-2">&amp;</span>col_desc.col_name) <span class="kw">else </span>{
 <a href=#2191 id=2191 data-nosnippet>2191</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
 <a href=#2192 id=2192 data-nosnippet>2192</a>        };
-<a href=#2193 id=2193 data-nosnippet>2193</a>        <span class="kw">let </span>pending_by_row: std::collections::HashMap&lt;usize, <span class="kw-2">&amp;</span>ArrayValue&gt; = pending_values
-<a href=#2194 id=2194 data-nosnippet>2194</a>            .iter()
-<a href=#2195 id=2195 data-nosnippet>2195</a>            .map(|(row_index, value)| (<span class="kw-2">*</span>row_index, value))
-<a href=#2196 id=2196 data-nosnippet>2196</a>            .collect();
-<a href=#2197 id=2197 data-nosnippet>2197</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::with_capacity(row_indices.len());
-<a href=#2198 id=2198 data-nosnippet>2198</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>row_index <span class="kw">in </span>row_indices {
-<a href=#2199 id=2199 data-nosnippet>2199</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = pending_by_row.get(<span class="kw-2">&amp;</span>row_index) {
-<a href=#2200 id=2200 data-nosnippet>2200</a>                values.push((row_index, <span class="prelude-val">Some</span>((<span class="kw-2">*</span>value).clone())));
-<a href=#2201 id=2201 data-nosnippet>2201</a>            }
-<a href=#2202 id=2202 data-nosnippet>2202</a>        }
-<a href=#2203 id=2203 data-nosnippet>2203</a>        columns.push(<span class="prelude-val">Some</span>(values));
-<a href=#2204 id=2204 data-nosnippet>2204</a>    }
-<a href=#2205 id=2205 data-nosnippet>2205</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(columns))
-<a href=#2206 id=2206 data-nosnippet>2206</a>}
-<a href=#2207 id=2207 data-nosnippet>2207</a>
-<a href=#2208 id=2208 data-nosnippet>2208</a><span class="kw">fn </span>current_value_for_column(
-<a href=#2209 id=2209 data-nosnippet>2209</a>    table: <span class="kw-2">&amp;</span>Table,
-<a href=#2210 id=2210 data-nosnippet>2210</a>    row_index: usize,
-<a href=#2211 id=2211 data-nosnippet>2211</a>    col_desc: <span class="kw-2">&amp;</span><span class="kw">crate</span>::storage::table_control::ColumnDescContents,
-<a href=#2212 id=2212 data-nosnippet>2212</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Value&gt;, TableError&gt; {
-<a href=#2213 id=2213 data-nosnippet>2213</a>    <span class="kw">if </span>col_desc.is_record() {
-<a href=#2214 id=2214 data-nosnippet>2214</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2215 id=2215 data-nosnippet>2215</a>            <span class="string">"partial in-place save does not support record column {}"</span>,
-<a href=#2216 id=2216 data-nosnippet>2216</a>            col_desc.col_name
-<a href=#2217 id=2217 data-nosnippet>2217</a>        )));
-<a href=#2218 id=2218 data-nosnippet>2218</a>    }
-<a href=#2219 id=2219 data-nosnippet>2219</a>    <span class="kw">if </span>col_desc.is_array {
-<a href=#2220 id=2220 data-nosnippet>2220</a>        <span class="kw">match </span>table
-<a href=#2221 id=2221 data-nosnippet>2221</a>            .column_accessor(<span class="kw-2">&amp;</span>col_desc.col_name)
-<a href=#2222 id=2222 data-nosnippet>2222</a>            .and_then(|column| column.array_cell(row_index))
-<a href=#2223 id=2223 data-nosnippet>2223</a>        {
-<a href=#2224 id=2224 data-nosnippet>2224</a>            <span class="prelude-val">Ok</span>(value) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(Value::Array(value.clone()))),
-<a href=#2225 id=2225 data-nosnippet>2225</a>            <span class="prelude-val">Err</span>(TableError::ColumnNotFound { .. }) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
-<a href=#2226 id=2226 data-nosnippet>2226</a>            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
-<a href=#2227 id=2227 data-nosnippet>2227</a>        }
-<a href=#2228 id=2228 data-nosnippet>2228</a>    } <span class="kw">else </span>{
-<a href=#2229 id=2229 data-nosnippet>2229</a>        <span class="kw">match </span>table
-<a href=#2230 id=2230 data-nosnippet>2230</a>            .column_accessor(<span class="kw-2">&amp;</span>col_desc.col_name)
-<a href=#2231 id=2231 data-nosnippet>2231</a>            .and_then(|column| column.scalar_cell(row_index))
-<a href=#2232 id=2232 data-nosnippet>2232</a>        {
-<a href=#2233 id=2233 data-nosnippet>2233</a>            <span class="prelude-val">Ok</span>(value) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(Value::Scalar(value.clone()))),
-<a href=#2234 id=2234 data-nosnippet>2234</a>            <span class="prelude-val">Err</span>(TableError::ColumnNotFound { .. }) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
-<a href=#2235 id=2235 data-nosnippet>2235</a>            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
-<a href=#2236 id=2236 data-nosnippet>2236</a>        }
-<a href=#2237 id=2237 data-nosnippet>2237</a>    }
-<a href=#2238 id=2238 data-nosnippet>2238</a>}
-<a href=#2239 id=2239 data-nosnippet>2239</a>
-<a href=#2240 id=2240 data-nosnippet>2240</a><span class="doccomment">/// The byte order of the table at `path`, following reference tables to the
-<a href=#2241 id=2241 data-nosnippet>2241</a>/// table they refer to (`depth` bounds a chain that loops).
-<a href=#2242 id=2242 data-nosnippet>2242</a></span><span class="kw">fn </span>stored_endian_format_of(path: <span class="kw-2">&amp;</span>Path, depth: usize) -&gt; <span class="prelude-ty">Option</span>&lt;EndianFormat&gt; {
-<a href=#2243 id=2243 data-nosnippet>2243</a>    <span class="kw">use </span><span class="kw">crate</span>::storage::table_control::{TableDatResult, read_table_dat_dispatch};
-<a href=#2244 id=2244 data-nosnippet>2244</a>    <span class="kw">let </span>control_path = path.join(<span class="kw">crate</span>::storage::TABLE_CONTROL_FILE);
-<a href=#2245 id=2245 data-nosnippet>2245</a>    <span class="kw">match </span>read_table_dat_dispatch(<span class="kw-2">&amp;</span>control_path).ok()<span class="question-mark">? </span>{
-<a href=#2246 id=2246 data-nosnippet>2246</a>        TableDatResult::Plain(table_dat) =&gt; <span class="prelude-val">Some</span>(<span class="kw">if </span>table_dat.big_endian {
-<a href=#2247 id=2247 data-nosnippet>2247</a>            EndianFormat::BigEndian
-<a href=#2248 id=2248 data-nosnippet>2248</a>        } <span class="kw">else </span>{
-<a href=#2249 id=2249 data-nosnippet>2249</a>            EndianFormat::LittleEndian
-<a href=#2250 id=2250 data-nosnippet>2250</a>        }),
-<a href=#2251 id=2251 data-nosnippet>2251</a>        TableDatResult::Ref(reference) <span class="kw">if </span>depth &lt; <span class="number">32 </span>=&gt; stored_endian_format_of(
-<a href=#2252 id=2252 data-nosnippet>2252</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::table_path::add_directory_for_link(<span class="kw-2">&amp;</span>reference.parent_relative_path, path),
-<a href=#2253 id=2253 data-nosnippet>2253</a>            depth + <span class="number">1</span>,
-<a href=#2254 id=2254 data-nosnippet>2254</a>        ),
-<a href=#2255 id=2255 data-nosnippet>2255</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#2256 id=2256 data-nosnippet>2256</a>    }
-<a href=#2257 id=2257 data-nosnippet>2257</a>}
+<a href=#2193 id=2193 data-nosnippet>2193</a>        <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::with_capacity(row_indices.len());
+<a href=#2194 id=2194 data-nosnippet>2194</a>        <span class="kw">if </span>row_indices.windows(<span class="number">2</span>).all(|pair| pair[<span class="number">0</span>] &lt; pair[<span class="number">1</span>])
+<a href=#2195 id=2195 data-nosnippet>2195</a>            &amp;&amp; pending_values.windows(<span class="number">2</span>).all(|pair| pair[<span class="number">0</span>].<span class="number">0 </span>&lt; pair[<span class="number">1</span>].<span class="number">0</span>)
+<a href=#2196 id=2196 data-nosnippet>2196</a>        {
+<a href=#2197 id=2197 data-nosnippet>2197</a>            <span class="kw">let </span><span class="kw-2">mut </span>slot = <span class="number">0</span>;
+<a href=#2198 id=2198 data-nosnippet>2198</a>            <span class="kw">for </span><span class="kw-2">&amp;</span>row_index <span class="kw">in </span>row_indices {
+<a href=#2199 id=2199 data-nosnippet>2199</a>                <span class="kw">while </span>slot &lt; pending_values.len() &amp;&amp; pending_values[slot].<span class="number">0 </span>&lt; row_index {
+<a href=#2200 id=2200 data-nosnippet>2200</a>                    slot += <span class="number">1</span>;
+<a href=#2201 id=2201 data-nosnippet>2201</a>                }
+<a href=#2202 id=2202 data-nosnippet>2202</a>                <span class="kw">if </span>slot &lt; pending_values.len() &amp;&amp; pending_values[slot].<span class="number">0 </span>== row_index {
+<a href=#2203 id=2203 data-nosnippet>2203</a>                    values.push((row_index, <span class="prelude-val">Some</span>(pending_values[slot].<span class="number">1</span>.clone())));
+<a href=#2204 id=2204 data-nosnippet>2204</a>                }
+<a href=#2205 id=2205 data-nosnippet>2205</a>            }
+<a href=#2206 id=2206 data-nosnippet>2206</a>        } <span class="kw">else </span>{
+<a href=#2207 id=2207 data-nosnippet>2207</a>            <span class="comment">// Unsorted pending updates can repeat a row: the last value wins.
+<a href=#2208 id=2208 data-nosnippet>2208</a>            </span><span class="kw">let </span>pending_by_row: std::collections::HashMap&lt;usize, <span class="kw-2">&amp;</span>ArrayValue&gt; = pending_values
+<a href=#2209 id=2209 data-nosnippet>2209</a>                .iter()
+<a href=#2210 id=2210 data-nosnippet>2210</a>                .map(|(row_index, value)| (<span class="kw-2">*</span>row_index, value))
+<a href=#2211 id=2211 data-nosnippet>2211</a>                .collect();
+<a href=#2212 id=2212 data-nosnippet>2212</a>            <span class="kw">for </span><span class="kw-2">&amp;</span>row_index <span class="kw">in </span>row_indices {
+<a href=#2213 id=2213 data-nosnippet>2213</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = pending_by_row.get(<span class="kw-2">&amp;</span>row_index) {
+<a href=#2214 id=2214 data-nosnippet>2214</a>                    values.push((row_index, <span class="prelude-val">Some</span>((<span class="kw-2">*</span>value).clone())));
+<a href=#2215 id=2215 data-nosnippet>2215</a>                }
+<a href=#2216 id=2216 data-nosnippet>2216</a>            }
+<a href=#2217 id=2217 data-nosnippet>2217</a>        }
+<a href=#2218 id=2218 data-nosnippet>2218</a>        columns.push(<span class="prelude-val">Some</span>(values));
+<a href=#2219 id=2219 data-nosnippet>2219</a>    }
+<a href=#2220 id=2220 data-nosnippet>2220</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(columns))
+<a href=#2221 id=2221 data-nosnippet>2221</a>}
+<a href=#2222 id=2222 data-nosnippet>2222</a>
+<a href=#2223 id=2223 data-nosnippet>2223</a><span class="kw">fn </span>current_value_for_column(
+<a href=#2224 id=2224 data-nosnippet>2224</a>    table: <span class="kw-2">&amp;</span>Table,
+<a href=#2225 id=2225 data-nosnippet>2225</a>    row_index: usize,
+<a href=#2226 id=2226 data-nosnippet>2226</a>    col_desc: <span class="kw-2">&amp;</span><span class="kw">crate</span>::storage::table_control::ColumnDescContents,
+<a href=#2227 id=2227 data-nosnippet>2227</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Value&gt;, TableError&gt; {
+<a href=#2228 id=2228 data-nosnippet>2228</a>    <span class="kw">if </span>col_desc.is_record() {
+<a href=#2229 id=2229 data-nosnippet>2229</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2230 id=2230 data-nosnippet>2230</a>            <span class="string">"partial in-place save does not support record column {}"</span>,
+<a href=#2231 id=2231 data-nosnippet>2231</a>            col_desc.col_name
+<a href=#2232 id=2232 data-nosnippet>2232</a>        )));
+<a href=#2233 id=2233 data-nosnippet>2233</a>    }
+<a href=#2234 id=2234 data-nosnippet>2234</a>    <span class="kw">if </span>col_desc.is_array {
+<a href=#2235 id=2235 data-nosnippet>2235</a>        <span class="kw">match </span>table
+<a href=#2236 id=2236 data-nosnippet>2236</a>            .column_accessor(<span class="kw-2">&amp;</span>col_desc.col_name)
+<a href=#2237 id=2237 data-nosnippet>2237</a>            .and_then(|column| column.array_cell(row_index))
+<a href=#2238 id=2238 data-nosnippet>2238</a>        {
+<a href=#2239 id=2239 data-nosnippet>2239</a>            <span class="prelude-val">Ok</span>(value) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(Value::Array(value.clone()))),
+<a href=#2240 id=2240 data-nosnippet>2240</a>            <span class="prelude-val">Err</span>(TableError::ColumnNotFound { .. }) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
+<a href=#2241 id=2241 data-nosnippet>2241</a>            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
+<a href=#2242 id=2242 data-nosnippet>2242</a>        }
+<a href=#2243 id=2243 data-nosnippet>2243</a>    } <span class="kw">else </span>{
+<a href=#2244 id=2244 data-nosnippet>2244</a>        <span class="kw">match </span>table
+<a href=#2245 id=2245 data-nosnippet>2245</a>            .column_accessor(<span class="kw-2">&amp;</span>col_desc.col_name)
+<a href=#2246 id=2246 data-nosnippet>2246</a>            .and_then(|column| column.scalar_cell(row_index))
+<a href=#2247 id=2247 data-nosnippet>2247</a>        {
+<a href=#2248 id=2248 data-nosnippet>2248</a>            <span class="prelude-val">Ok</span>(value) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(Value::Scalar(value.clone()))),
+<a href=#2249 id=2249 data-nosnippet>2249</a>            <span class="prelude-val">Err</span>(TableError::ColumnNotFound { .. }) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
+<a href=#2250 id=2250 data-nosnippet>2250</a>            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
+<a href=#2251 id=2251 data-nosnippet>2251</a>        }
+<a href=#2252 id=2252 data-nosnippet>2252</a>    }
+<a href=#2253 id=2253 data-nosnippet>2253</a>}
+<a href=#2254 id=2254 data-nosnippet>2254</a>
+<a href=#2255 id=2255 data-nosnippet>2255</a><span class="doccomment">/// The byte order of the table at `path`, following reference tables to the
+<a href=#2256 id=2256 data-nosnippet>2256</a>/// table they refer to (`depth` bounds a chain that loops).
+<a href=#2257 id=2257 data-nosnippet>2257</a></span><span class="kw">fn </span>stored_endian_format_of(path: <span class="kw-2">&amp;</span>Path, depth: usize) -&gt; <span class="prelude-ty">Option</span>&lt;EndianFormat&gt; {
+<a href=#2258 id=2258 data-nosnippet>2258</a>    <span class="kw">use </span><span class="kw">crate</span>::storage::table_control::{TableDatResult, read_table_dat_dispatch};
+<a href=#2259 id=2259 data-nosnippet>2259</a>    <span class="kw">let </span>control_path = path.join(<span class="kw">crate</span>::storage::TABLE_CONTROL_FILE);
+<a href=#2260 id=2260 data-nosnippet>2260</a>    <span class="kw">match </span>read_table_dat_dispatch(<span class="kw-2">&amp;</span>control_path).ok()<span class="question-mark">? </span>{
+<a href=#2261 id=2261 data-nosnippet>2261</a>        TableDatResult::Plain(table_dat) =&gt; <span class="prelude-val">Some</span>(<span class="kw">if </span>table_dat.big_endian {
+<a href=#2262 id=2262 data-nosnippet>2262</a>            EndianFormat::BigEndian
+<a href=#2263 id=2263 data-nosnippet>2263</a>        } <span class="kw">else </span>{
+<a href=#2264 id=2264 data-nosnippet>2264</a>            EndianFormat::LittleEndian
+<a href=#2265 id=2265 data-nosnippet>2265</a>        }),
+<a href=#2266 id=2266 data-nosnippet>2266</a>        TableDatResult::Ref(reference) <span class="kw">if </span>depth &lt; <span class="number">32 </span>=&gt; stored_endian_format_of(
+<a href=#2267 id=2267 data-nosnippet>2267</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::table_path::add_directory_for_link(<span class="kw-2">&amp;</span>reference.parent_relative_path, path),
+<a href=#2268 id=2268 data-nosnippet>2268</a>            depth + <span class="number">1</span>,
+<a href=#2269 id=2269 data-nosnippet>2269</a>        ),
+<a href=#2270 id=2270 data-nosnippet>2270</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#2271 id=2271 data-nosnippet>2271</a>    }
+<a href=#2272 id=2272 data-nosnippet>2272</a>}
 </code></pre></div></section></main></body></html>
