@@ -6268,3 +6268,21 @@ casa-rs safely canonicalizes and deduplicates `Table:` keyword subtable paths in
 `tb.summary(recurse=True)` without invalid memory access, and in `tb.statistics`
 ignores `NaN` for `min`/`max` while returning `NaN` deterministically for moments
 and order statistics on `NaN` inputs. [Table tool issue #1028](https://github.com/bglenden/casa-rs/issues/1028)
+
+## Calibration append accepts NumPy booleans in validation but rejects them in C++
+
+- Date noted: 2026-11-17
+- CASA version: 6.7.6.14
+
+`gaincal(..., append=numpy.bool_(True))` passes the generated `cBool`
+validator, which explicitly accepts `bool` and `numpy.bool_`. The unchanged
+scalar reaches `calibrater.setsolve`, whose SWIG bool conversion raises
+`TypeError` instead of appending. The existing calibration table is unchanged.
+The same call with builtin `True` succeeds.
+
+casa-rs converts the valid NumPy scalar to a native boolean and appends the
+same solutions as builtin `True`. This follows the validator's declared
+domain. `tools/casa-compat/calibration_lifecycle_oracle.py` reproduces the
+CASA error and compares the two native append products. Invalid boolean
+arguments retain the native exception policy documented in
+`docs/python/api.md`.

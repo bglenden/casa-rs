@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import inspect
 import os
 from pathlib import Path
 import tempfile
@@ -141,6 +142,59 @@ def run(root: Path, native_bin: Path) -> dict:
             assert path.exists() == (function is getattr(native,name))
         evidence['cases'].append(f'{name} append-to-absent native creation (documented CASA defect)')
 
+
+    # The public cBool domain is bool/numpy.bool_. CASA's SWIG bool bridge
+    # rejects the latter despite its validator; native implements that valid
+    # scalar. Invalid types follow the documented native exception policy.
+    args = dict(vis=str(vis), refant='A0', calmode='ap', smodel=[1.0], minsnr=0.0, minblperant=2)
+    for function, engine in [(casa.gaincal, 'casa'), (native.gaincal, 'native')]:
+        path = root / f'gaincal.{engine}.cal'
+        before = snapshot(path)
+        for bad in [0, 1, None, [], [True], 'True']:
+            try:
+                function(caltable=str(path), append=bad, **args)
+            except (AssertionError, TypeError) as error:
+                assert isinstance(error, AssertionError if engine == 'casa' else TypeError)
+            else:
+                raise AssertionError(f'{engine} accepted invalid append={bad!r}')
+            assert snapshot(path) == before
+    evidence['cases'].append('append invalid domains refuse before changing products; documented native error classes')
+    casa_path = root / 'gaincal.casa.cal'
+    casa_before = snapshot(casa_path)
+    try:
+        casa.gaincal(caltable=str(casa_path), append=np.bool_(True), **args)
+    except TypeError as error:
+        assert 'bool' in str(error)
+    else:
+        raise AssertionError('CASA NumPy bool bridge behavior changed')
+    assert snapshot(casa_path) == casa_before
+    native_path = root / 'gaincal.native.cal'
+    control = root / 'gaincal.bool-control.cal'
+    shutil.copytree(native_path, control)
+    native.gaincal(caltable=str(native_path), append=np.bool_(True), **args)
+    native.gaincal(caltable=str(control), append=True, **args)
+    equal(native_path, control, ['CPARAM','FLAG','TIME','ANTENNA1','ANTENNA2'])
+    evidence['cases'].append('native NumPy-bool append equals builtin bool; documented CASA SWIG defect')
+    paths = [root/f'positional.{engine}.cal' for engine in ['casa','native']]
+    for function,path in zip([casa.gaincal,native.gaincal],paths):
+        bound = inspect.signature(function).bind_partial(caltable=str(path), append=False, **args)
+        bound.apply_defaults()
+        positional = [bound.arguments[name] for name,parameter in inspect.signature(function).parameters.items()
+                      if parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)]
+        function(*positional)
+    equal(*paths,['CPARAM','FLAG','TIME','ANTENNA1','ANTENNA2'])
+    evidence['cases'].append('positional lifecycle arguments agree with CASA')
+
+    # Keep lifecycle row-order checks on their original fixture. The larger
+    # input exercises multiple batches and non-unit arithmetic independently.
+    batched_vis = root / 'batched.ms'
+    make_cal_ms(str(batched_vis), integration_seconds=1)
+    for name, extra in [('gaincal', {'calmode':'ap'}), ('bandpass', {'field':'FLUX'})]:
+        paths = [root/f'nonunit.{name}.{engine}.cal' for engine in ['casa','native']]
+        for module,path in zip([casa,native],paths):
+            getattr(module,name)(vis=str(batched_vis),caltable=str(path),refant='A0',smodel=[1.7],minsnr=0.0,minblperant=2,**extra)
+        equal(*paths,['CPARAM','FLAG','TIME','ANTENNA1','ANTENNA2'])
+        evidence['cases'].append(f'{name} multi-batch non-unit point model agrees with CASA')
 
     # MAIN may reference user-added local subtables. Both implementations
     # must keep them readable after appending and replacing the old directory.

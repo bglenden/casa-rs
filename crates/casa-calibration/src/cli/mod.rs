@@ -103,6 +103,7 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         None => rendered,
     };
+    crate::timing::report_process_memory();
     Ok(TaskSuccess::new(value, &result)?.with_text(text))
 }
 

@@ -9,7 +9,7 @@ use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_types::{ArrayValue, Complex32};
-use ndarray::{ArrayD, ArrayView2, Ix2};
+use ndarray::{ArrayD, ArrayView2, Axis, Ix2, IxDyn, ShapeBuilder};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
@@ -74,18 +74,245 @@ pub(crate) fn build_solve_groups(
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut correlations_by_ddid = HashMap::new();
-    for (row, base_key, bucket_key) in bucketed_rows(rows, options.solve_interval, options.combine)
-    {
-        // A group takes its field from its earliest row, as CASA's
-        // `SDBList::aggregateFld` takes the first buffer's.
-        let group = groups.entry((base_key, bucket_key)).or_insert_with(|| {
-            SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id)
-        });
-        let preapplied = preapplied_rows.and_then(|rows| rows.get(&row.row_index));
-        group.observe(ms, row, preapplied, &options, &mut correlations_by_ddid)?;
+    let ordered = bucketed_rows(rows, options.solve_interval, options.combine);
+    let pipelined = overlap_inputs(ordered.len());
+    if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
+        eprintln!("calibration_workers {}", if pipelined { 2 } else { 1 });
+    }
+    let read = |batch: &[BucketedRow<'_>]| {
+        let _phase = crate::timing::Phase::start("solve_read_decode");
+        let indices = batch
+            .iter()
+            .map(|(row, _, _)| row.row_index)
+            .collect::<Vec<_>>();
+        read_input_batch(
+            ms,
+            &indices,
+            preapplied_rows.is_none(),
+            options.model_source,
+        )
+    };
+    let mut consume = |batch: &[BucketedRow<'_>], inputs: SolveInputBatch| {
+        let _accumulate_phase = crate::timing::Phase::start("solve_accumulate");
+        for (index, &(row, base_key, bucket_key)) in batch.iter().enumerate() {
+            // A group takes its field from its earliest row, as CASA's
+            // `SDBList::aggregateFld` takes the first buffer's.
+            let group = groups.entry((base_key, bucket_key)).or_insert_with(|| {
+                SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id)
+            });
+            let preapplied = preapplied_rows.and_then(|rows| rows.get(&row.row_index));
+            group.observe(
+                ms,
+                row,
+                preapplied,
+                &options,
+                &mut correlations_by_ddid,
+                (&inputs, index),
+            )?;
+        }
+        Ok::<_, GainSolveError>(())
+    };
+    if pipelined {
+        std::thread::scope(|scope| {
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            let producer_rows = &ordered;
+            scope.spawn(move || {
+                for batch in producer_rows.chunks(256) {
+                    let input = read(batch);
+                    let failed = input.is_err();
+                    if sender.send(input).is_err() || failed {
+                        break;
+                    }
+                }
+            });
+            // Drop the receiver before scope joins the reader on an error,
+            // unblocking a producer that is waiting to send its next batch.
+            (|| {
+                for (batch, input) in ordered.chunks(256).zip(receiver) {
+                    consume(batch, input?)?;
+                }
+                Ok::<_, GainSolveError>(())
+            })()
+        })?;
+    } else {
+        for batch in ordered.chunks(256) {
+            consume(batch, read(batch)?)?;
+        }
     }
 
     Ok(groups)
+}
+
+type BucketedRow<'a> = (&'a SelectedSolveRow, SolveBaseKey, SolveBucketKey);
+
+/// One reader and the calling accumulation thread, within the CPU budget.
+fn overlap_inputs(rows: usize) -> bool {
+    let available = std::thread::available_parallelism().map_or(1, usize::from);
+    let requested = std::env::var("RAYON_NUM_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(available);
+    rows > 256 && available.min(requested) >= 2
+}
+
+/// Array payloads live for one batch, without filling the table's row cache.
+pub(crate) struct SolveInputBatch {
+    columns: Vec<(&'static str, Vec<Option<ArrayValue>>)>,
+}
+
+/// Read selected arrays together so headers and tiles are shared by a batch;
+/// release the payloads after accumulation instead of retaining the whole MS.
+fn read_input_batch(
+    ms: &MeasurementSet,
+    rows: &[usize],
+    read_visibilities: bool,
+    model: GainSolveModelSource,
+) -> Result<SolveInputBatch, GainSolveError> {
+    let schema = ms.main_table().schema();
+    let spectra = ["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"]
+        .iter()
+        .all(|name| schema.is_some_and(|schema| schema.contains_column(name)));
+    let mut columns = vec![if spectra { "SIGMA_SPECTRUM" } else { "SIGMA" }];
+    if read_visibilities {
+        columns.extend(["DATA", "FLAG"]);
+    }
+    if model == GainSolveModelSource::ModelColumn {
+        columns.push("MODEL_DATA");
+    }
+    let mut inputs = SolveInputBatch {
+        columns: Vec::with_capacity(columns.len()),
+    };
+    for column in columns {
+        let values = ms
+            .main_table()
+            .column_accessor(column)
+            .and_then(|accessor| {
+                read_column_inputs(
+                    &accessor,
+                    column,
+                    schema
+                        .and_then(|s| s.column(column))
+                        .and_then(|c| c.data_type()),
+                    rows,
+                )
+            })
+            .map_err(|source| ms_read_error(ms, source))?;
+        inputs.columns.push((column, values));
+    }
+    Ok(inputs)
+}
+
+/// Homogeneous cells use the typed selected reader, avoiding reconstruction
+/// of complete tiled cubes. Mixed shapes and pending edits use the ordinary
+/// owned-cell reader, preserving their existing validation and semantics.
+fn read_column_inputs(
+    column: &casa_tables::TableColumn<'_>,
+    name: &str,
+    kind: Option<casa_types::PrimitiveType>,
+    rows: &[usize],
+) -> Result<Vec<Option<ArrayValue>>, casa_tables::TableError> {
+    if name != "SIGMA"
+        && let Ok(shapes) = column.array_shapes_uncached(rows)
+        && let Some(Some(shape)) = shapes.first()
+        && shape.len() == 2
+        && shape.iter().all(|n| *n > 0)
+        && shapes.iter().all(|other| other.as_ref() == Some(shape))
+    {
+        use casa_tables::SelectedArray2DCellsMut;
+        use casa_types::PrimitiveType;
+        let values = match kind {
+            Some(PrimitiveType::Complex32) => read_row_packed(
+                column,
+                rows,
+                shape[1],
+                |values| SelectedArray2DCellsMut::RowChannelComplex32(values),
+                ArrayValue::Complex32,
+            )?,
+            Some(PrimitiveType::Bool) => read_row_packed(
+                column,
+                rows,
+                shape[1],
+                |values| SelectedArray2DCellsMut::RowChannelBool(values),
+                ArrayValue::Bool,
+            )?,
+            Some(PrimitiveType::Float32) => read_row_packed(
+                column,
+                rows,
+                shape[1],
+                |values| SelectedArray2DCellsMut::RowChannelFloat32(values),
+                ArrayValue::Float32,
+            )?,
+            _ => None,
+        };
+        if let Some(values) = values {
+            return Ok(values);
+        }
+    }
+    column.array_cells_owned_uncached(rows)
+}
+
+/// Request contiguous row cells directly, avoiding a channel/row transpose.
+fn read_row_packed<T: Clone>(
+    column: &casa_tables::TableColumn<'_>,
+    rows: &[usize],
+    channels: usize,
+    destination: for<'a> fn(&'a mut Vec<T>) -> casa_tables::SelectedArray2DCellsMut<'a>,
+    wrap: fn(ArrayD<T>) -> ArrayValue,
+) -> Result<Option<Vec<Option<ArrayValue>>>, casa_tables::TableError> {
+    let mut values = Vec::new();
+    let Some(shape) = column.fill_array_cells_2d_channel_range_typed_uncached(
+        rows,
+        0,
+        channels,
+        destination(&mut values),
+    )?
+    else {
+        return Ok(None);
+    };
+    let shape = [shape.axis0_count, shape.channel_count];
+    let capacity = shape[0].checked_mul(shape[1]).ok_or_else(|| {
+        casa_tables::TableError::Storage("solve input cell size overflows".to_string())
+    })?;
+    values
+        .chunks_exact(capacity)
+        .map(|row| {
+            ArrayD::from_shape_vec(IxDyn(&shape).f(), row.to_vec())
+                .map(|array| Some(wrap(array)))
+                .map_err(|e| casa_tables::TableError::Storage(e.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn input_cell<'a>(
+    ms: &'a MeasurementSet,
+    row: usize,
+    inputs: (&'a SolveInputBatch, usize),
+    column: &str,
+) -> Result<&'a ArrayValue, GainSolveError> {
+    if let Some((_, values)) = inputs.0.columns.iter().find(|(name, _)| *name == column) {
+        return values[inputs.1].as_ref().ok_or_else(|| {
+            ms_read_error(
+                ms,
+                casa_tables::TableError::ColumnNotFound {
+                    row_index: row,
+                    column: column.to_string(),
+                },
+            )
+        });
+    }
+    main_cell(ms, row, column)
+}
+
+fn ms_read_error(ms: &MeasurementSet, source: casa_tables::TableError) -> GainSolveError {
+    GainSolveError::OpenMeasurementSet {
+        path: ms
+            .path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<in-memory>".to_string()),
+        source: MsError::from(source),
+    }
 }
 
 /// Each cross-correlation row of `rows`, in solve order, with the group and
@@ -457,8 +684,8 @@ struct WeightedTime {
     weight: f64,
 }
 
-/// One MAIN row's arrays for the solve, `[correlation, channel]`, checked
-/// two-dimensional and of one shape.
+/// One MAIN row's checked two-dimensional solve arrays. Scalar SIGMA weights
+/// have one channel, broadcast to the data's channel count without copying.
 struct SolveRowInputs<'a> {
     data: &'a ArrayD<Complex32>,
     flags: Cow<'a, ArrayD<bool>>,
@@ -472,7 +699,12 @@ impl SolveRowInputs<'_> {
         SolveSamples {
             data: two_dimensional(self.data),
             flags: two_dimensional(&self.flags),
-            weights: two_dimensional(&self.weights),
+            weights: self
+                .weights
+                .broadcast(self.data.raw_dim())
+                .expect("checked receptor/channel weight shape")
+                .into_dimensionality::<Ix2>()
+                .expect("checked two-dimensional"),
             model: self.model.map(two_dimensional),
         }
     }
@@ -520,8 +752,9 @@ impl SolveAccumulator {
         preapplied_row: Option<&EvaluatedApplyRow>,
         options: &SolveGroupOptions,
         correlations_by_ddid: &mut HashMap<i32, Vec<i32>>,
+        inputs: (&SolveInputBatch, usize),
     ) -> Result<(), GainSolveError> {
-        let inputs = read_row_inputs(ms, row, preapplied_row, options.model_source)?;
+        let inputs = read_row_inputs(ms, row, preapplied_row, options.model_source, inputs)?;
         let correlation_types = match correlations_by_ddid.entry(row.data_desc_id) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => {
@@ -600,7 +833,12 @@ impl SolveAccumulator {
                     correlation_index: corr_index,
                 })
                 .or_insert_with(|| vec![SolveEdgeAccumulation::default(); solution_channels]);
-            let mut channel_weights = Vec::with_capacity(channels.len());
+            let mut channel_weights = Vec::with_capacity(if options.channelized {
+                channels.len()
+            } else {
+                0
+            });
+            let mut summed_weight = 0.0_f64;
             for (solution_channel, &chan_index) in channels.iter().enumerate() {
                 let output_channel = if options.channelized {
                     solution_channel
@@ -615,15 +853,16 @@ impl SolveAccumulator {
                     corr_index,
                     chan_index,
                 );
-                channel_weights.push(weight);
+                if options.channelized {
+                    channel_weights.push(weight);
+                } else {
+                    summed_weight += f64::from(weight);
+                }
             }
             row_weight += if options.channelized {
                 f64::from(median_with_even_mean(&mut channel_weights))
             } else {
-                channel_weights
-                    .iter()
-                    .map(|weight| f64::from(*weight))
-                    .sum()
+                summed_weight
             };
         }
         if row_weight > 0.0 {
@@ -676,14 +915,15 @@ impl SolveAccumulator {
         }
         *attempted = true;
         let sample = samples.data[[corr_index, chan_index]] / model;
-        if sample.norm() <= f32::EPSILON {
+        let sample_power = sample.norm_sqr();
+        // Squared amplitude has the same threshold without per-sample hypot.
+        if sample_power <= f32::EPSILON * f32::EPSILON {
             return 0.0;
         }
         let effective_weight = weight * model_norm_sqr;
         accumulation.weighted_sum += sample * Complex32::new(effective_weight, 0.0);
         accumulation.weight += effective_weight;
-        accumulation.weighted_sample_power +=
-            f64::from(effective_weight) * f64::from(sample.norm_sqr());
+        accumulation.weighted_sample_power += f64::from(effective_weight) * f64::from(sample_power);
         accumulation.sample_count += 1;
         effective_weight
     }
@@ -848,12 +1088,13 @@ fn read_row_inputs<'a>(
     row: &SelectedSolveRow,
     preapplied_row: Option<&'a EvaluatedApplyRow>,
     model_source: GainSolveModelSource,
+    inputs: (&'a SolveInputBatch, usize),
 ) -> Result<SolveRowInputs<'a>, GainSolveError> {
     let (data, flags) = match preapplied_row {
         Some(preapplied) => (&preapplied.corrected_data, &preapplied.flags),
         None => (
-            main_cell(ms, row.row_index, "DATA")?,
-            main_cell(ms, row.row_index, "FLAG")?,
+            input_cell(ms, row.row_index, inputs, "DATA")?,
+            input_cell(ms, row.row_index, inputs, "FLAG")?,
         ),
     };
     let ArrayValue::Complex32(data) = data else {
@@ -870,7 +1111,7 @@ fn read_row_inputs<'a>(
     }
     let model = match model_source {
         GainSolveModelSource::ModelColumn => {
-            let model = main_cell(ms, row.row_index, "MODEL_DATA")?;
+            let model = input_cell(ms, row.row_index, inputs, "MODEL_DATA")?;
             match model {
                 ArrayValue::Complex32(model) if model.shape() == data.shape() => Some(model),
                 other => return Err(unsupported_shape("MODEL_DATA", other)),
@@ -878,15 +1119,18 @@ fn read_row_inputs<'a>(
         }
         GainSolveModelSource::PointSource => None,
     };
-    let mut weights = solve_weights(ms, row.row_index, data.shape())?;
+    let mut weights = solve_weights(ms, row.row_index, data.shape(), inputs)?;
     if let Some(factors) = preapplied_row.and_then(|row| row.weight_factors.as_ref()) {
-        if factors.shape() != weights.shape() {
+        if factors.shape() != data.shape() {
             return Err(GainSolveError::UnsupportedParameterShape {
                 path: "<pre-applied weight factors>".to_string(),
                 shape: factors.shape().to_vec(),
             });
         }
-        weights *= factors;
+        weights = &weights
+            .broadcast(data.raw_dim())
+            .expect("checked weight shape")
+            * factors;
     }
     Ok(SolveRowInputs {
         data,
@@ -900,6 +1144,7 @@ fn solve_weights(
     ms: &MeasurementSet,
     row_index: usize,
     shape: &[usize],
+    inputs: (&SolveInputBatch, usize),
 ) -> Result<ArrayD<f32>, GainSolveError> {
     let has_column = |name| {
         ms.main_table()
@@ -914,13 +1159,13 @@ fn solve_weights(
         }
     };
     if has_column("WEIGHT_SPECTRUM") && has_column("SIGMA_SPECTRUM") {
-        let sigma = main_cell(ms, row_index, "SIGMA_SPECTRUM")?;
+        let sigma = input_cell(ms, row_index, inputs, "SIGMA_SPECTRUM")?;
         return match sigma {
             ArrayValue::Float32(sigma) if sigma.shape() == shape => Ok(sigma.mapv(inverse_square)),
             other => Err(unsupported_shape("SIGMA_SPECTRUM", other)),
         };
     }
-    let sigma = main_cell(ms, row_index, "SIGMA")?;
+    let sigma = input_cell(ms, row_index, inputs, "SIGMA")?;
     let ArrayValue::Float32(sigma) = sigma else {
         return Err(unsupported_shape("SIGMA", sigma));
     };
@@ -930,9 +1175,7 @@ fn solve_weights(
             shape: sigma.shape().to_vec(),
         });
     }
-    Ok(ArrayD::from_shape_fn(shape, |index| {
-        inverse_square(sigma[[index[0]]])
-    }))
+    Ok(sigma.mapv(inverse_square).insert_axis(Axis(1)))
 }
 
 fn main_cell<'a>(
@@ -943,13 +1186,7 @@ fn main_cell<'a>(
     ms.main_table()
         .cell_accessor(row_index, column)
         .and_then(|cell| cell.array())
-        .map_err(|source| GainSolveError::OpenMeasurementSet {
-            path: ms
-                .path()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "<in-memory>".to_string()),
-            source: MsError::from(source),
-        })
+        .map_err(|source| ms_read_error(ms, source))
 }
 
 fn unsupported_shape(column: &str, value: &ArrayValue) -> GainSolveError {
@@ -966,12 +1203,19 @@ fn median_with_even_mean(values: &mut [f32]) -> f32 {
     if values.is_empty() {
         return 0.0;
     }
-    values.sort_by(f32::total_cmp);
     let middle = values.len() / 2;
-    if values.len().is_multiple_of(2) {
-        (values[middle - 1] + values[middle]) / 2.0
+    let even = values.len().is_multiple_of(2);
+    let (lower, upper, _) = values.select_nth_unstable_by(middle, f32::total_cmp);
+    let upper = *upper;
+    if even {
+        let lower = lower
+            .iter()
+            .copied()
+            .max_by(f32::total_cmp)
+            .expect("nonempty even lower half");
+        (lower + upper) / 2.0
     } else {
-        values[middle]
+        upper
     }
 }
 
