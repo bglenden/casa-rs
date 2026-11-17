@@ -31,7 +31,7 @@ fn fluxscale_retains_the_incremental_storage_gain_reader_fallback() {
 fn use_incremental_gain_storage(input_table: &std::path::Path) {
     use casa_tables::{ColumnBinding, ColumnOptions, ColumnSchema, DataManagerKind, TableSchema};
     use casa_types::PrimitiveType;
-    let mut table = Table::open(TableOptions::new(&input_table)).unwrap();
+    let mut table = Table::open(TableOptions::new(input_table)).unwrap();
     let mut columns = table.schema().unwrap().columns().to_vec();
     for column in &mut columns {
         let primitive = match column.name() {
@@ -114,7 +114,7 @@ fn use_incremental_gain_storage(input_table: &std::path::Path) {
         })
         .collect();
     table
-        .save_with_bindings(TableOptions::new(&input_table), &bindings)
+        .save_with_bindings(TableOptions::new(input_table), &bindings)
         .unwrap();
 }
 
