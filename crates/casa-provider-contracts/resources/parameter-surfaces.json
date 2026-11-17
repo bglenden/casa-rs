@@ -14276,6 +14276,7 @@
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal takes a scalar CASA selector string and preserves its literal text, including empty text and names such as none. Legacy normalization and per-MeasurementSet list consumers keep their existing revisions."},
           "projections": {
             "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
             "provider": {"field": "intent", "adapter": "identity"},
@@ -14319,6 +14320,7 @@
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal takes a scalar CASA selector string and preserves its literal text, including empty text and names such as none. Legacy normalization and per-MeasurementSet list consumers keep their existing revisions."},
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
             "provider": {"field": "uvrange", "adapter": "identity"},
