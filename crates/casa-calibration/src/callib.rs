@@ -61,6 +61,43 @@ pub enum CallibError {
     },
 }
 
+/// Observation mapping used by a callibrary slice.
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub enum CallibraryObservationMap {
+    /// Merge all available calibration observations in time.
+    #[default]
+    All,
+    /// Use the data observation's own calibration observation.
+    SelfMap,
+    /// Map each listed data observation; unlisted observations are outside the slice.
+    Indices(Vec<i32>),
+}
+
+impl CallibraryObservationMap {
+    pub(crate) fn active(&self) -> bool {
+        !matches!(self, Self::All)
+    }
+    pub(crate) fn covers(&self, observation: i32) -> bool {
+        match self {
+            Self::Indices(ids) => usize::try_from(observation).is_ok_and(|id| id < ids.len()),
+            _ => true,
+        }
+    }
+    pub(crate) fn map(&self, observation: i32) -> i32 {
+        match self {
+            Self::All => -1,
+            Self::SelfMap => observation,
+            Self::Indices(ids) => usize::try_from(observation)
+                .ok()
+                .and_then(|id| ids.get(id))
+                .copied()
+                .unwrap_or(-1),
+        }
+    }
+}
+
 /// Callibrary-specific data selection and retained upstream configuration.
 /// Mapping and interpolation follow CLPatchPanel rather than traditional setapply.
 #[derive(
@@ -69,6 +106,12 @@ pub enum CallibError {
 pub struct CallibraryOptions {
     /// MS slice to which this library instance contributes.
     pub selection: casa_ms::MsSelection,
+    /// Explicit data FIELD_ID to calibration FIELD_ID map.
+    pub field_map: Vec<i32>,
+    /// Explicit observation grouping, independent of traditional perobs admission.
+    pub observation_map: CallibraryObservationMap,
+    /// Antenna map; hardware IDs beyond its length repeat the last value.
+    pub antenna_map: Vec<i32>,
     /// Recorded by CASA's parser; CLPatchPanel 6.7.6 does not consume reach.
     pub reach: String,
 }
@@ -192,30 +235,39 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
         .remove("reach")
         .map(|v| strip_quotes(&v))
         .unwrap_or_default();
-    let callibrary = Some(CallibraryOptions { selection, reach });
+    let observation_map = match values.remove("obsmap") {
+        None => CallibraryObservationMap::All,
+        Some(value) if value.trim().starts_with('[') => {
+            CallibraryObservationMap::Indices(parse_int_array(&value, "obsmap")?)
+        }
+        Some(value) if strip_quotes(&value) == "self" => CallibraryObservationMap::SelfMap,
+        Some(value) => return Err(format!("unrecognized observation mapping {value}")),
+    };
+    let antenna_map = match values.remove("antmap") {
+        Some(value) if value.trim().starts_with('[') => parse_int_array(&value, "antmap")?,
+        // CLPatchPanel only consumes an integer array for antmap.
+        _ => Vec::new(),
+    };
+    let field_value = values
+        .remove("fldmap")
+        .or_else(|| values.remove("gainfield"));
+    let (gainfield, field_map) = match field_value {
+        Some(value) if value.trim().starts_with('[') => (None, parse_int_array(&value, "fldmap")?),
+        Some(value) => (parse_gainfield_selector(&value)?, Vec::new()),
+        None => (None, Vec::new()),
+    };
+    let callibrary = Some(CallibraryOptions {
+        selection,
+        reach,
+        field_map,
+        observation_map,
+        antenna_map,
+    });
     let apply_to = ApplyTableSelection::default();
     if let Some(scanmap) = values.remove("scanmap") {
         return Err(format!("scanmap={scanmap} is not implemented yet (#1518)"));
     }
-    if let Some(obsmap) = values.remove("obsmap")
-        && !strip_quotes(&obsmap).is_empty()
-        && strip_quotes(&obsmap) != "[]"
-    {
-        return Err("obsmap= is not supported in this callibrary slice".to_string());
-    }
-    if let Some(antmap) = values.remove("antmap")
-        && !strip_quotes(&antmap).is_empty()
-        && strip_quotes(&antmap) != "[]"
-    {
-        return Err("antmap= is not supported in this callibrary slice".to_string());
-    }
 
-    let gainfield = values
-        .remove("fldmap")
-        .or_else(|| values.remove("gainfield"))
-        .map(|value| parse_gainfield_selector(&value))
-        .transpose()?
-        .flatten();
     let spwmap = values
         .remove("spwmap")
         .map(|value| parse_int_array(&value, "spwmap"))
@@ -264,6 +316,25 @@ fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> Stri
             if let Some(value) = value {
                 parts.push(format!("{key}='{}'", escape_callib_string(value)));
             }
+        }
+        for (name, map) in [
+            ("fldmap", &library.field_map),
+            ("antmap", &library.antenna_map),
+        ] {
+            if !map.is_empty() {
+                parts.push(format!(
+                    "{name}=[{}]",
+                    map.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
+                ));
+            }
+        }
+        match &library.observation_map {
+            CallibraryObservationMap::All => {}
+            CallibraryObservationMap::SelfMap => parts.push("obsmap='self'".to_string()),
+            CallibraryObservationMap::Indices(ids) => parts.push(format!(
+                "obsmap=[{}]",
+                ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
+            )),
         }
         if !library.reach.is_empty() {
             parts.push(format!("reach='{}'", escape_callib_string(&library.reach)));
@@ -476,7 +547,9 @@ fn parse_int_array(value: &str, label: &str) -> Result<Vec<i32>, String> {
         .and_then(|value| value.strip_suffix(']'))
         .unwrap_or(value.as_str());
     if inner.trim().is_empty() {
-        return Ok(Vec::new());
+        return Err(format!(
+            "empty {label} list is not accepted by CalLibraryGram"
+        ));
     }
     inner
         .split(',')

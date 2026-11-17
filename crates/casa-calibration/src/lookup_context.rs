@@ -451,6 +451,13 @@ pub(crate) struct ApplyTimeContext {
     scope: TimeScope,
 }
 
+impl ApplyTimeContext {
+    /// Explicit callibrary maps partition even a partial calibration observation set.
+    pub(crate) fn mapped_observations(&mut self) {
+        self.scope = TimeScope::Observation;
+    }
+}
+
 fn selected_scope(
     path: &Path,
     rows: &[[i32; 5]],

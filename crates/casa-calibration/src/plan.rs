@@ -34,6 +34,13 @@ use crate::summary::{CalibrationTableError, summarize_table};
 mod fields;
 use fields::resolve_gainfield;
 
+#[path = "plan_callibrary.rs"]
+mod library;
+
+#[path = "plan_spw.rs"]
+mod windows;
+use windows::resolve_spw_mapping;
+
 /// Calibration-application mode planned for the executor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ApplyMode {
@@ -280,6 +287,12 @@ impl ApplyCalibrationTablePlan {
     /// Whether this table contributes to the selected physical MS row.
     pub fn applies_to(&self, row: &ApplyRowPlan) -> bool {
         self.spec.apply_to.matches(row)
+            && self.spec.callibrary.as_ref().is_none_or(|library| {
+                library.observation_map.covers(row.observation_id)
+                    && (library.field_map.is_empty()
+                        || usize::try_from(row.field_id)
+                            .is_ok_and(|id| id < library.field_map.len()))
+            })
             && self
                 .applicable_row_indices
                 .as_ref()
@@ -803,27 +816,17 @@ fn build_table_plan(
         });
     }
 
-    let applicable_row_indices = if let Some(library) = spec
-        .callibrary
-        .as_ref()
-        .filter(|library| library.selection != MsSelection::new())
-    {
-        let resolved = resolve_calibration_selection(ms, &library.selection).map_err(|error| {
-            ApplyPlanError::Selection {
-                source: MsError::InvalidInput(error.to_string()),
-            }
-        })?;
-        let mut rows = resolved.row_indices().collect::<Vec<_>>();
-        rows.sort_unstable();
-        rows.dedup();
-        Some(rows)
-    } else {
-        None
-    };
+    let applicable_row_indices = library::selected_rows(ms, spec, selected_rows)?;
     let applicable_rows = selected_rows
         .iter()
         .filter(|row| {
             spec.apply_to.matches(row)
+                && spec.callibrary.as_ref().is_none_or(|library| {
+                    library.observation_map.covers(row.observation_id)
+                        && (library.field_map.is_empty()
+                            || usize::try_from(row.field_id)
+                                .is_ok_and(|id| id < library.field_map.len()))
+                })
                 && applicable_row_indices
                     .as_ref()
                     .is_none_or(|indices| indices.binary_search(&row.row_index).is_ok())
@@ -916,81 +919,6 @@ fn k_antpos_default_spwmap_spec(
         .unwrap_or_default();
     spec.spwmap = vec![0; len];
     spec
-}
-
-fn resolve_spw_mapping(
-    spec: &ApplyCalibrationTableSpec,
-    available: &[i32],
-    calibration_window_count: usize,
-    selected: &[i32],
-) -> Result<Vec<ApplySpwMapping>, ApplyPlanError> {
-    if spec.callibrary.is_some() {
-        return Ok(selected
-            .iter()
-            .map(|&data_spw_id| {
-                let calibration_spw_id = spec
-                    .spwmap
-                    .get(data_spw_id as usize)
-                    .or_else(|| spec.spwmap.last())
-                    .copied()
-                    .filter(|id| *id >= 0)
-                    .unwrap_or(data_spw_id);
-                ApplySpwMapping {
-                    data_spw_id,
-                    calibration_spw_id,
-                }
-            })
-            .collect());
-    }
-    let automatic = spec.spwmap.first() == Some(&-999);
-    let identity = spec.spwmap.is_empty() || spec.spwmap == [-1];
-    if !automatic
-        && !identity
-        && let Some(&invalid) = spec
-            .spwmap
-            .iter()
-            .find(|&&window| window < 0 || window as usize >= calibration_window_count)
-    {
-        return Err(ApplyPlanError::MissingCalibrationSpectralWindow {
-            path: spec.path.display().to_string(),
-            calibration_spw_id: invalid,
-        });
-    }
-    let first = if automatic {
-        Some(
-            *available
-                .first()
-                .ok_or_else(|| ApplyPlanError::UnsupportedCalibrationTable {
-                    path: spec.path.display().to_string(),
-                    reason: "no calibration window is available for automatic fanout".to_string(),
-                })?,
-        )
-    } else {
-        None
-    };
-    Ok(selected
-        .iter()
-        .map(|&data_spw_id| {
-            let calibration_spw_id = if let Some(first) = first {
-                first
-            } else if identity {
-                data_spw_id
-            } else {
-                spec.spwmap
-                    .get(if spec.spwmap.len() == 1 {
-                        0
-                    } else {
-                        data_spw_id as usize
-                    })
-                    .copied()
-                    .unwrap_or(data_spw_id)
-            };
-            ApplySpwMapping {
-                data_spw_id,
-                calibration_spw_id,
-            }
-        })
-        .collect())
 }
 
 fn load_bpoly_spectral_window_ids(path: &Path) -> Result<Vec<i32>, ApplyPlanError> {

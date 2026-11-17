@@ -2027,12 +2027,25 @@ fn apply_row_all_channels(
             .find(|spw| spw.spw_id == cal_spw_id)
             .expect("planner guarantees mapped caltable spectral windows");
 
-        let field_id = table_plan
+        let mut field_id = table_plan
             .resolved_nearest_gainfields
             .iter()
             .find(|mapping| mapping.measurement_set_field_id == row.field_id)
             .map(|mapping| mapping.calibration_field_id)
             .unwrap_or(-1);
+
+        if let Some(library) = table_plan
+            .spec
+            .callibrary
+            .as_ref()
+            .filter(|library| !library.field_map.is_empty())
+        {
+            field_id = usize::try_from(row.field_id)
+                .ok()
+                .and_then(|id| library.field_map.get(id))
+                .copied()
+                .unwrap_or(-1);
+        }
 
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
             let mut key = calibration_lookup_key(
@@ -3411,6 +3424,7 @@ fn pol_id_of_ddid(ddid_row: usize) -> i32 {
 
 pub(crate) struct LoadedCalibrationTable {
     pub(crate) path: PathBuf,
+    callibrary: Option<crate::CallibraryOptions>,
     time_plans: HashMap<i32, crate::lookup::TimePlan>,
     missing_grids: HashMap<i32, Arc<CalibrationGrid>>,
     time_is_delay: bool,
@@ -4270,6 +4284,7 @@ fn load_parameters(
         supports_calwt,
         engine: geometry_engine.cloned(),
         solutions,
+        callibrary: None,
         time_plans: HashMap::new(),
         missing_grids: HashMap::new(),
         time_is_delay: false,
@@ -4342,6 +4357,7 @@ fn load_bpoly_calibration_table(
         supports_calwt: false,
         engine: None,
         solutions,
+        callibrary: None,
         time_plans: HashMap::new(),
         missing_grids: HashMap::new(),
         time_is_delay: false,
