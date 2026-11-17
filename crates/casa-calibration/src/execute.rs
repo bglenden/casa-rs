@@ -2142,14 +2142,26 @@ fn apply_row_all_channels(
             profile.row_dependent_materialized_pairs += 1;
         }
 
-        if !(table_plan.calwt && loaded_table.supports_calwt)
-            && matches!(
-                (ant1.as_ref(), ant2.as_ref()),
-                (CalibrationGrid::Complex(_), CalibrationGrid::Complex(_))
-            )
+        if let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) =
+            (ant1.as_ref(), ant2.as_ref())
         {
-            fast_gain_pairs.push(FastGainPair::Complex(ant1, ant2));
-            continue;
+            let calibrate_weights = table_plan.calwt && loaded_table.supports_calwt;
+            let scalar_weights =
+                !is_bandpass && first.channel_count == 1 && second.channel_count == 1;
+            if !calibrate_weights || scalar_weights {
+                if calibrate_weights {
+                    weights::apply_scalar_pair(
+                        first,
+                        second,
+                        correlation_types,
+                        row.data_desc_id,
+                        weight_spectrum.as_mut(),
+                        implicit_weight_spectrum.as_mut(),
+                    )?;
+                }
+                fast_gain_pairs.push(FastGainPair::Complex(ant1, ant2));
+                continue;
+            }
         }
 
         if !fast_gain_pairs.is_empty() {
