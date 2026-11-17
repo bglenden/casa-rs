@@ -425,6 +425,21 @@ impl EncodedCells {
         big_endian: bool,
         encode: impl Fn(Option<&Value>) -> Vec<u8>,
     ) -> Result<(), StorageError> {
+        self.fill_with(sources, column, rows, data_type, big_endian, |value| {
+            Ok(encode(value))
+        })
+    }
+
+    /// Encode cells with a fallible callback, for codecs that write a side file.
+    pub(crate) fn fill_with(
+        &mut self,
+        sources: &ColumnSources<'_>,
+        column: usize,
+        rows: Range<usize>,
+        data_type: CasacoreDataType,
+        big_endian: bool,
+        mut encode: impl FnMut(Option<&Value>) -> Result<Vec<u8>, StorageError>,
+    ) -> Result<(), StorageError> {
         self.bytes.clear();
         self.ends.clear();
         let cells = rows.len();
@@ -434,7 +449,7 @@ impl EncodedCells {
         }
         for row in rows {
             let value = sources.cell(column, row)?;
-            self.bytes.extend_from_slice(&encode(value.as_deref()));
+            self.bytes.extend_from_slice(&encode(value.as_deref())?);
             self.ends.push(self.bytes.len());
         }
         Ok(())

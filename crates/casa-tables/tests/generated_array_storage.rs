@@ -892,26 +892,22 @@ fn saves_generated_cells_cannot_take_are_refused() {
     ));
 }
 
-/// IncrementalStMan refuses a fixed-shape array column without the Direct
-/// option, which casacore keeps as an `ISMIndColumn` in `table.fNi`,
-/// whether the column is generated or written from rows.
+/// Fixed arrays without Direct and variable arrays live in the ISM
+/// manager's shared array file, with offsets in the buckets.
 #[test]
-fn incremental_saves_refuse_arrays_that_are_not_direct() {
+fn incremental_saves_round_trip_indirect_arrays() {
     let root = tempfile::tempdir().expect("tempdir");
     let rows = 4;
+    let options = |name: &str| {
+        TableOptions::new(root.path().join(name))
+            .with_data_manager(DataManagerKind::IncrementalStMan)
+    };
+    let fixed = |row: usize| ArrayValue::Float64(array(&[2, 1], vec![row as f64, 0.5]));
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar("ANTENNA_ID", PrimitiveType::Int32),
         ColumnSchema::array_fixed("DIRECTION", PrimitiveType::Float64, vec![2, 1]),
     ])
     .expect("schema");
-    let cell = |row: usize| ArrayValue::Float64(array(&[2, 1], vec![row as f64, 0.5]));
-    let options = |name: &str| {
-        TableOptions::new(root.path().join(name))
-            .with_data_manager(DataManagerKind::IncrementalStMan)
-    };
-    let expected = "IncrementalStMan array column DIRECTION is not Direct: \
-                    casacore stores it as an ISMIndColumn in table.fNi";
-
     let mut overrides = ColumnOverrides::for_row_count(rows);
     overrides.insert_generated_scalar(
         "ANTENNA_ID",
@@ -919,50 +915,74 @@ fn incremental_saves_refuse_arrays_that_are_not_direct() {
     );
     overrides.insert_generated_array(
         "DIRECTION",
-        GeneratedArrayColumn::new(rows, move |row| Some(cell(row))),
+        GeneratedArrayColumn::new(rows, move |row| Some(fixed(row))),
     );
+    // Array overrides do not use the row writer and still require Direct.
+    let generated = options("generated");
     let message = refusal(
         Table::with_schema(schema.clone())
             .prepare_write()
-            .save_with_column_overrides(options("generated"), &HashMap::new(), &overrides),
+            .save_with_column_overrides(generated, &HashMap::new(), &overrides),
     );
-    assert!(message.contains(expected), "{message}");
-
+    assert!(
+        message.contains("IncrementalStMan array column DIRECTION is not Direct"),
+        "{message}"
+    );
     let mut table = Table::with_schema(schema);
     for row in 0..rows {
         table
             .add_row(RecordValue::new(vec![
                 RecordField::new("ANTENNA_ID", Value::Scalar(ScalarValue::Int32(row as i32))),
-                RecordField::new("DIRECTION", Value::Array(cell(row))),
+                RecordField::new("DIRECTION", Value::Array(fixed(row))),
             ]))
             .expect("add row");
     }
-    let message = refusal(table.save(options("rows")));
-    assert!(message.contains(expected), "{message}");
+    let from_rows = options("rows");
+    table.save(from_rows.clone()).expect("save rows");
+    assert!(from_rows.path().join("table.f0i").is_file());
+    let saved = Table::open(from_rows).expect("reopen");
+    for row in 0..rows {
+        assert_eq!(
+            saved
+                .cell_accessor(row, "DIRECTION")
+                .unwrap()
+                .array()
+                .unwrap(),
+            &fixed(row)
+        );
+    }
 
-    // A variable-shape array, which the row writer's buckets held only the
-    // first element of.
     let mut table = Table::with_schema(
         TableSchema::new(vec![ColumnSchema::array_variable(
             "DIRECTION",
             PrimitiveType::Float64,
-            Some(2),
+            Some(1),
         )])
         .expect("schema"),
     );
+    let variable = |row: usize| ArrayValue::Float64(array(&[row + 1], vec![row as f64; row + 1]));
     for row in 0..rows {
-        table
-            .add_row(RecordValue::new(vec![RecordField::new(
+        let record = if row == 2 {
+            RecordValue::default()
+        } else {
+            RecordValue::new(vec![RecordField::new(
                 "DIRECTION",
-                Value::Array(cell(row)),
-            )]))
-            .expect("add row");
+                Value::Array(variable(row)),
+            )])
+        };
+        table.add_row(record).expect("add variable row");
     }
-    let message = refusal(table.save(options("variable")));
-    assert!(
-        message.contains("IncrementalStMan does not write variable-shape array column DIRECTION"),
-        "{message}"
-    );
+    let path = options("variable");
+    table.save(path.clone()).expect("save variable arrays");
+    let saved = Table::open(path).expect("reopen");
+    for row in 0..rows {
+        let cell = saved.cell_accessor(row, "DIRECTION").unwrap();
+        if row == 2 {
+            assert!(!cell.is_defined().unwrap());
+        } else {
+            assert_eq!(cell.array().unwrap(), &variable(row));
+        }
+    }
 }
 
 #[test]
