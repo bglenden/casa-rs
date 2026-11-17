@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use casa_aipsio::{AipsIo, AipsOpenOption};
 use casa_types::{
-    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, Value,
+    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
@@ -1831,6 +1831,94 @@ pub(crate) fn load_tiled_columns(
             cube_map,
             pos_map,
         ),
+    }
+}
+
+pub(crate) fn collect_tiled_scalar_columns(
+    table_path: &Path,
+    dm: &DataManagerEntry,
+    table_desc: &TableDescContents,
+    all_bound_cols: &[(usize, &PlainColumnEntry)],
+    requested_columns: Option<&HashSet<&str>>,
+    nrrow: usize,
+    columns: &mut HashMap<String, Vec<Option<ScalarValue>>>,
+) -> Result<(), StorageError> {
+    let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    let col_descs: Vec<&ColumnDescContents> = all_bound_cols
+        .iter()
+        .map(|(desc_idx, _)| &table_desc.columns[*desc_idx])
+        .collect();
+    let tiles = tile_columns(&variant, Cow::Owned(header), &col_descs, table_desc, nrrow)?;
+    let header = &*tiles.header;
+
+    match variant {
+        TiledVariant::Data {
+            ref row_map,
+            ref cube_map,
+            ..
+        } => {
+            if row_map.len() != cube_map.len() {
+                return Err(StorageError::FormatMismatch(
+                    "invalid TiledDataStMan row-map lengths".to_string(),
+                ));
+            }
+            for (col_idx, col_desc) in col_descs.iter().enumerate() {
+                if col_desc.is_array
+                    || requested_columns
+                        .is_some_and(|requested| !requested.contains(col_desc.col_name.as_str()))
+                {
+                    continue;
+                }
+                if tiles.tile_index[col_idx].is_some() {
+                    return Err(untiled_column_error(
+                        variant.manager_name(),
+                        &col_desc.col_name,
+                    ));
+                }
+                let mut values = vec![None; nrrow];
+                let mut cube_scalars: Vec<Option<ScalarValue>> = vec![None; header.cubes.len()];
+                for (row_idx, slot) in values.iter_mut().enumerate() {
+                    let chunk = match row_map.binary_search(&(row_idx as u64)) {
+                        Ok(i) => i,
+                        Err(0) => continue,
+                        Err(i) => i - 1,
+                    };
+                    let Some(&cube_idx) = cube_map.get(chunk) else {
+                        continue;
+                    };
+                    let cube_idx = cube_idx as usize;
+                    if cube_idx >= header.cubes.len() {
+                        continue;
+                    }
+                    if cube_scalars[cube_idx].is_none() {
+                        let Value::Scalar(scalar) = tile_columns::hypercube_cell(
+                            &header.cubes[cube_idx],
+                            &col_desc.col_name,
+                        )?
+                        else {
+                            return Err(untiled_column_error(
+                                variant.manager_name(),
+                                &col_desc.col_name,
+                            ));
+                        };
+                        cube_scalars[cube_idx] = Some(scalar);
+                    }
+                    *slot = cube_scalars[cube_idx].clone();
+                }
+                columns.insert(col_desc.col_name.clone(), values);
+            }
+            Ok(())
+        }
+        TiledVariant::Column { .. } | TiledVariant::Shape { .. } | TiledVariant::Cell { .. } => {
+            if let Some(untiled) = tiles.first_untiled(&col_descs) {
+                return Err(untiled_column_error(
+                    variant.manager_name(),
+                    &untiled.col_name,
+                ));
+            }
+            Ok(())
+        }
     }
 }
 

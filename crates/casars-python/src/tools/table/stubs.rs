@@ -71,19 +71,6 @@ impl PyTableTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnname, startrow = None, nrow = None, rowincr = None, torecord = None), text_signature = "($self, columnname, startrow=0, nrow=-1, rowincr=1, torecord=False)")]
-    fn getcoliter(
-        &self,
-        columnname: &Bound<'_, PyAny>,
-        startrow: Option<&Bound<'_, PyAny>>,
-        nrow: Option<&Bound<'_, PyAny>>,
-        rowincr: Option<&Bound<'_, PyAny>>,
-        torecord: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getcoliter")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (query = None, name = None, sortlist = None, columns = None, style = None), text_signature = "($self, query='String', name='', sortlist='', columns='', style='')")]
     fn query(
         &self,
@@ -94,16 +81,6 @@ impl PyTableTool {
         style: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("query")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columnnames = None, exclude = None), text_signature = "($self, columnnames=[], exclude=False)")]
-    fn row(
-        &self,
-        columnnames: Option<&Bound<'_, PyAny>>,
-        exclude: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("row")
     }
 
     /// Not yet implemented in casa-rs.

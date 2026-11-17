@@ -44,7 +44,7 @@ IMPLEMENTED["table"] = {
     "endianformat", "flush", "resync", "datachanged", "ismultiused", "setmaxcachesize",
     "clearlocks", "copyrows", "copy", "create", "createmultitable", "rownumbers", "getdesc",
     "isopened", "showcache", "listlocks", "testincrstman", "statistics", "selectrows",
-    "summary", "browse",
+    "summary", "browse", "getcoliter", "row",
 }  # fmt: skip
 
 

@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use casa_tables::{LockMode, LockOptions, LockType, Table, TableError, TableOptions};
@@ -185,6 +185,15 @@ pub(super) struct Open {
     /// Present on a `selectrows` view: maps view row indices `0..len` to row
     /// indices in `root.table`.
     pub(super) row_map: Option<Vec<usize>>,
+    /// Remains `true` while this `Open` handle is attached to its parent `table`
+    /// tool; dropping or closing `Open` clears it so `tablerow` handles notice.
+    pub(super) alive: Arc<AtomicBool>,
+}
+
+impl Drop for Open {
+    fn drop(&mut self) {
+        self.alive.store(false, Ordering::Release);
+    }
 }
 
 impl Open {
@@ -199,6 +208,7 @@ impl Open {
             plain_paths,
             is_memory,
             row_map: None,
+            alive: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -210,6 +220,7 @@ impl Open {
             plain_paths: self.plain_paths.clone(),
             is_memory: self.is_memory,
             row_map: Some(row_map),
+            alive: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -349,27 +360,36 @@ impl State {
     pub(super) fn synchronize(&mut self) -> Result<(), Fail> {
         if let Some(open) = self.open.as_ref() {
             let mut root = open.root();
-            if root.lock.reads_lock() {
-                root.table.lock(LockType::Read, 0)?;
-            }
-            let epoch = root.keyword_epoch.load(Ordering::Acquire);
-            if epoch != root.seen_keyword_epoch {
-                let already_locked = root.table.has_lock(LockType::Read);
-                if !already_locked && !root.table.lock(LockType::Read, 0)? {
-                    return Err(Fail::Runtime(
-                        "Cannot lock table to refresh keywords".into(),
-                    ));
-                }
-                root.table.resync_locked()?;
-                if !already_locked {
-                    root.table.unlock_metadata_only()?;
-                }
-                root.seen_keyword_epoch = epoch;
-            }
+            synchronize_root(&mut root)?;
         }
         Ok(())
     }
+}
 
+/// Synchronizes `root`'s read lock and refreshes any concurrent in-process
+/// component-list keyword updates.
+pub(super) fn synchronize_root(root: &mut RootOpen) -> Result<(), Fail> {
+    if root.lock.reads_lock() {
+        root.table.lock(LockType::Read, 0)?;
+    }
+    let epoch = root.keyword_epoch.load(Ordering::Acquire);
+    if epoch != root.seen_keyword_epoch {
+        let already_locked = root.table.has_lock(LockType::Read);
+        if !already_locked && !root.table.lock(LockType::Read, 0)? {
+            return Err(Fail::Runtime(
+                "Cannot lock table to refresh keywords".into(),
+            ));
+        }
+        root.table.resync_locked()?;
+        if !already_locked {
+            root.table.unlock_metadata_only()?;
+        }
+        root.seen_keyword_epoch = epoch;
+    }
+    Ok(())
+}
+
+impl State {
     /// `lockoptions()`: the settings the table was opened with.
     pub(super) fn lock_settings(&self) -> Option<(&'static str, f64, i64)> {
         self.open.as_ref().map(|open| {
