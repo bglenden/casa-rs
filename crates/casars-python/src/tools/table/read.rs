@@ -791,7 +791,7 @@ impl State {
             return Ok(CasaValue::empty_record());
         };
         let root = open.root();
-        if root.table.is_memory() {
+        if root.table.is_memory() && root.table.data_manager_info().is_empty() {
             let mut columns: Vec<String> = open
                 .visible_columns(&root.table)
                 .into_iter()

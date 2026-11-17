@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's `table` tool (tb) over [`casa_tables::Table`]: every method of CASA
-//! 6.7.6.14's binding, with its signature (ADR-0017, #1025). A method
-//! casa-rs does not implement yet raises `NotImplementedError` naming #1028
-//! (`stubs.rs`).
+//! 6.7.6.14's binding, with its signature (ADR-0017, #1025).
 //!
 //! Implemented so far: `open`, `close`, `done`, `ok`, `name`, `iswritable`,
 //! the lock calls, and the read side (`state`, `read`): sizes and names,
@@ -17,6 +15,7 @@
 //! goes to the Python logger `casars.tools.table`, its INFO at INFO, WARN at
 //! WARNING and SEVERE at ERROR.
 
+mod asdm_io;
 mod cache;
 mod cell_convert;
 mod cell_value;
@@ -25,6 +24,7 @@ mod copy;
 mod create;
 mod create_multi_move;
 mod description;
+mod fits_io;
 mod housekeeping;
 mod keyword_value;
 mod new_column;
@@ -36,9 +36,9 @@ mod rownumbers;
 mod slices;
 mod state;
 mod statistics;
-mod stubs;
 pub(crate) mod surface;
 mod testincr;
+mod text_io;
 pub(crate) mod values;
 mod write;
 mod write_cells;
@@ -51,7 +51,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::convert::value::CasaValue;
-use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use crate::tools::{LogLine, emit};
 pub(crate) use coliter::PyTableColIter;
 use copy::CopyRequest;
 use keyword_value::Incoming;
@@ -130,16 +130,8 @@ pub(crate) fn define_component_keyword(
     })
 }
 
-/// The issue that records the methods casa-rs refuses.
-const ISSUE: u32 = 1028;
-
 /// The Python logger CASA's `tb` messages go to.
 pub(super) const LOGGER: &str = "casars.tools.table";
-
-/// A method casa-rs does not implement yet.
-fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented_in("table", method, ISSUE)
-}
 
 /// The tool keeps its table behind a `Mutex` and releases the GIL around
 /// Rust work (ADR-0017), which needs the table to be `Send`.

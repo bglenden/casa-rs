@@ -32,8 +32,17 @@ impl Table {
         options: TableOptions,
         lock_opts: LockOptions,
     ) -> Result<Self, TableError> {
+        Self::open_with_lock_using(options, lock_opts, Self::open)
+    }
+
+    #[cfg(unix)]
+    pub(super) fn open_with_lock_using(
+        options: TableOptions,
+        lock_opts: LockOptions,
+        load: impl FnOnce(TableOptions) -> Result<Self, TableError>,
+    ) -> Result<Self, TableError> {
         if lock_opts.mode == LockMode::NoLocking {
-            return Self::open(options);
+            return load(options);
         }
 
         let perm = matches!(
@@ -86,7 +95,7 @@ impl Table {
         // opening first would retain the stale pre-publication descriptor.
         // Ordinary open remains lazy, so retained readers do not materialize
         // row payloads here.
-        let mut table = Self::open(options.clone())?;
+        let mut table = load(options.clone())?;
 
         // Read sync data if available.
         let sync_data = lock_file
@@ -135,7 +144,7 @@ impl Table {
     pub fn lock(&mut self, lock_type: LockType, nattempts: u32) -> Result<bool, TableError> {
         // Memory tables always succeed — no file-based locking needed.
         // C++ equivalent: MemoryTable::lock() returns True.
-        if self.kind == TableKind::Memory {
+        if self.kind == TableKind::Memory && !self.is_named_memory_manager() {
             return Ok(true);
         }
 
@@ -315,7 +324,7 @@ impl Table {
     /// (`PlainTable::putFile`).
     #[cfg(unix)]
     pub fn publish_writes(&mut self) -> Result<bool, TableError> {
-        if self.kind == TableKind::Memory {
+        if self.kind == TableKind::Memory && !self.is_named_memory_manager() {
             return Ok(false);
         }
         self.publish_pending_write()
@@ -477,7 +486,7 @@ impl Table {
     fn unlock_with_metadata_only_flush(&mut self, metadata_only: bool) -> Result<(), TableError> {
         // Memory tables have no lock to release.
         // C++ equivalent: MemoryTable::unlock() is a no-op.
-        if self.kind == TableKind::Memory {
+        if self.kind == TableKind::Memory && !self.is_named_memory_manager() {
             return Ok(());
         }
         // Extract the info we need before borrowing self for save/schema.
@@ -507,7 +516,9 @@ impl Table {
         // its write before it starts, so a save that fails part way is still
         // published, by a later unlock or the drop.
         if flush {
-            if metadata_only {
+            if self.is_named_memory_manager() {
+                self.finish_memory_manager_write(true)?;
+            } else if metadata_only {
                 self.save_metadata_only(save_opts)?;
             } else {
                 self.save(save_opts)?;
@@ -547,7 +558,7 @@ impl Table {
     pub fn has_lock(&self, lock_type: LockType) -> bool {
         // Memory tables always report holding the lock.
         // C++ equivalent: MemoryTable::hasLock() returns True.
-        if self.kind == TableKind::Memory {
+        if self.kind == TableKind::Memory && !self.is_named_memory_manager() {
             return true;
         }
         self.lock_state
@@ -587,7 +598,7 @@ impl Table {
     pub fn is_multi_used(&self) -> bool {
         // Memory tables are never shared with another process.
         // C++ equivalent: MemoryTable::isMultiUsed() returns False.
-        if self.kind == TableKind::Memory {
+        if self.kind == TableKind::Memory && !self.is_named_memory_manager() {
             return false;
         }
         self.lock_state
@@ -633,7 +644,7 @@ impl Table {
 
     #[cfg(unix)]
     pub(super) fn begin_write_operation(&mut self, operation: &str) -> Result<bool, TableError> {
-        if self.kind == TableKind::Memory {
+        if self.kind == TableKind::Memory && !self.is_named_memory_manager() {
             return Ok(false);
         }
         // Some write operations change only the data managers or the files

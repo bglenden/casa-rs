@@ -47,6 +47,7 @@ zarrs = { version = "=0.23.14", default-features = false, features = ["filesyste
 # lock per key touched, never removed, so it grows with the distinct keys a
 # process visits, not with passes).
 zarrs_filesystem = { version = "=0.3.14", optional = true }
+quick-xml = { version = "0.42", default-features = false }
 
 [dev-dependencies]
 casa-simulation = { path = "../casa-simulation" }
