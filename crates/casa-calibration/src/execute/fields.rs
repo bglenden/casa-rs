@@ -47,6 +47,12 @@ pub(super) fn load(
             })?
             .row_count();
         let mut options = plan.interp.time_options(observation_count);
+        // CLPatchPanel partitions through explicit maps, not these traditional
+        // interpolation-string modifiers. Library maps are handled separately.
+        if plan.spec.callibrary.is_some() {
+            options.per_observation = false;
+            options.per_scan = false;
+        }
         // CASA's legacy BPOLY conversion emits unpartitioned modern headers.
         if plan.summary.table_subtype == "BPOLY" {
             options.per_scan = false;

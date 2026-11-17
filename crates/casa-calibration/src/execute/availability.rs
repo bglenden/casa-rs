@@ -6,7 +6,7 @@ use super::*;
 pub(super) fn available(row: &ApplyRowPlan, plan: &ApplyPlan) -> bool {
     plan.calibration_tables
         .iter()
-        .filter(|table| table.spec.apply_to.matches(row))
+        .filter(|table| table.applies_to(row))
         .all(|table| {
             table
                 .spw_mapping

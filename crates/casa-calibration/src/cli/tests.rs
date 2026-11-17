@@ -834,6 +834,7 @@ fn sample_apply_plan() -> ApplyPlan {
         selected_data_spw_ids: vec![3],
         measurement_set_spectral_windows: Vec::new(),
         calibration_tables: vec![ApplyCalibrationTablePlan {
+            applicable_row_indices: None,
             spec,
             applicable_selected_row_count: 9,
             summary: sample_summary("phase.gcal"),

@@ -61,6 +61,18 @@ pub enum CallibError {
     },
 }
 
+/// Callibrary-specific data selection and retained upstream configuration.
+/// Mapping and interpolation follow CLPatchPanel rather than traditional setapply.
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct CallibraryOptions {
+    /// MS slice to which this library instance contributes.
+    pub selection: casa_ms::MsSelection,
+    /// Recorded by CASA's parser; CLPatchPanel 6.7.6 does not consume reach.
+    pub reach: String,
+}
+
 /// Load supported apply specs from a CASA callibrary file.
 pub fn load_apply_specs_from_callib(
     path: impl AsRef<Path>,
@@ -155,31 +167,36 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
         .map(|value| parse_bool(&value))
         .transpose()?
         .unwrap_or(true);
-    let apply_to = ApplyTableSelection {
-        field_ids: values
-            .remove("field")
-            .map(|value| parse_numeric_selector(&value, "field"))
-            .transpose()?
-            .unwrap_or_default(),
-        spectral_window_ids: values
-            .remove("spw")
-            .map(|value| parse_numeric_selector(&value, "spw"))
-            .transpose()?
-            .unwrap_or_default(),
-        observation_ids: values
-            .remove("obs")
-            .map(|value| parse_numeric_selector(&value, "obs"))
-            .transpose()?
-            .unwrap_or_default(),
-    };
-    if let Some(intent) = values.remove("intent")
-        && !strip_quotes(&intent).is_empty()
-    {
-        return Err("intent= is not supported in this callibrary slice".to_string());
+    let mut selection = casa_ms::MsSelection::new();
+    selection.field = values
+        .remove("field")
+        .map(|v| strip_quotes(&v))
+        .filter(|v| !v.is_empty());
+    selection.spw = values
+        .remove("spw")
+        .map(|v| strip_quotes(&v))
+        .filter(|v| !v.is_empty());
+    selection.observation = values
+        .remove("obs")
+        .map(|v| strip_quotes(&v))
+        .filter(|v| !v.is_empty());
+    selection.scan = values
+        .remove("scan")
+        .map(|v| strip_quotes(&v))
+        .filter(|v| !v.is_empty());
+    selection.intent = values
+        .remove("intent")
+        .map(|v| strip_quotes(&v))
+        .filter(|v| !v.is_empty());
+    let reach = values
+        .remove("reach")
+        .map(|v| strip_quotes(&v))
+        .unwrap_or_default();
+    let callibrary = Some(CallibraryOptions { selection, reach });
+    let apply_to = ApplyTableSelection::default();
+    if let Some(scanmap) = values.remove("scanmap") {
+        return Err(format!("scanmap={scanmap} is not implemented yet (#1518)"));
     }
-    // The C++ parser records reach, but 6.7.6 CLPatchPanel never consumes it.
-    // Preserve its supported no-op rather than inventing a reach restriction.
-    values.remove("reach");
     if let Some(obsmap) = values.remove("obsmap")
         && !strip_quotes(&obsmap).is_empty()
         && strip_quotes(&obsmap) != "[]"
@@ -217,6 +234,7 @@ fn parse_callib_line(line: &str, base_dir: &Path) -> Result<ApplyCalibrationTabl
     }
 
     Ok(ApplyCalibrationTableSpec {
+        callibrary,
         path: caltable_path,
         apply_to,
         gainfield,
@@ -235,6 +253,22 @@ fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> Stri
         format!("calwt={}", if spec.calwt { "T" } else { "F" }),
     ];
 
+    if let Some(library) = &spec.callibrary {
+        for (key, value) in [
+            ("field", &library.selection.field),
+            ("spw", &library.selection.spw),
+            ("obs", &library.selection.observation),
+            ("scan", &library.selection.scan),
+            ("intent", &library.selection.intent),
+        ] {
+            if let Some(value) = value {
+                parts.push(format!("{key}='{}'", escape_callib_string(value)));
+            }
+        }
+        if !library.reach.is_empty() {
+            parts.push(format!("reach='{}'", escape_callib_string(&library.reach)));
+        }
+    }
     if !spec.apply_to.field_ids.is_empty() {
         parts.push(format!(
             "field='{}'",
@@ -542,6 +576,7 @@ caltable='bandpass.bcal' calwt=F spwmap=[0,0] tinterp='nearest' finterp='linear'
         let callib = dir.path().join("apply.callib");
         let specs = vec![
             ApplyCalibrationTableSpec {
+                callibrary: None,
                 path: dir.path().join("phase.gcal"),
                 apply_to: ApplyTableSelection {
                     field_ids: vec![0, 1],
@@ -554,6 +589,7 @@ caltable='bandpass.bcal' calwt=F spwmap=[0,0] tinterp='nearest' finterp='linear'
                 calwt: false,
             },
             ApplyCalibrationTableSpec {
+                callibrary: None,
                 path: dir.path().join("bandpass.bcal"),
                 apply_to: ApplyTableSelection::default(),
                 gainfield: Some(GainFieldSelector::FieldId(2)),

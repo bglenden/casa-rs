@@ -589,6 +589,7 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
             apply_mode: ApplyMode::CalOnly,
             parang: false,
             calibration_tables: vec![ApplyCalibrationTableSpec {
+                callibrary: None,
                 path: caltable_path.clone(),
                 apply_to: Default::default(),
                 gainfield: Some(GainFieldSelector::Nearest),
@@ -1083,6 +1084,7 @@ fn execute_apply_respects_per_table_applicability_selection() {
             parang: false,
             calibration_tables: vec![
                 ApplyCalibrationTableSpec {
+                    callibrary: None,
                     path: field0_table,
                     apply_to: ApplyTableSelection {
                         field_ids: vec![0],
@@ -1095,6 +1097,7 @@ fn execute_apply_respects_per_table_applicability_selection() {
                     calwt: false,
                 },
                 ApplyCalibrationTableSpec {
+                    callibrary: None,
                     path: field1_table,
                     apply_to: ApplyTableSelection {
                         field_ids: vec![1],

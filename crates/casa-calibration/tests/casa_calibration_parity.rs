@@ -557,6 +557,7 @@ fn apply_nearest_gainfield_matches_casa_on_real_ms() {
             apply_mode: ApplyMode::CalFlag,
             parang: false,
             calibration_tables: vec![ApplyCalibrationTableSpec {
+                callibrary: None,
                 path: caltable,
                 apply_to: Default::default(),
                 gainfield: Some(GainFieldSelector::Nearest),

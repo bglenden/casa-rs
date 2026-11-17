@@ -2005,7 +2005,7 @@ fn apply_row_all_channels(
         .zip(loaded_tables)
         .enumerate()
     {
-        if !table_plan.spec.apply_to.matches(row) {
+        if !table_plan.applies_to(row) {
             continue;
         }
         let calibrate_weights = plan.apply_mode.writes_corrected_data()
@@ -5057,7 +5057,9 @@ mod tests {
             selected_data_spw_ids: vec![2],
             measurement_set_spectral_windows: vec![spw_plan.clone()],
             calibration_tables: vec![ApplyCalibrationTablePlan {
+                applicable_row_indices: None,
                 spec: crate::plan::ApplyCalibrationTableSpec {
+                    callibrary: None,
                     path: cal_path.clone(),
                     apply_to: Default::default(),
                     gainfield: None,

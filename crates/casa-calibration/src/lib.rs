@@ -56,7 +56,9 @@ pub use bandpass::{
     BandpassSolveCombine, BandpassSolveCuts, BandpassSolveError, BandpassSolveReport,
     BandpassSolveRequest, BandpassType,
 };
-pub use callib::{CallibError, load_apply_specs_from_callib, save_apply_specs_to_callib};
+pub use callib::{
+    CallibError, CallibraryOptions, load_apply_specs_from_callib, save_apply_specs_to_callib,
+};
 pub use casa_return::{fluxscale_record, solve_record};
 pub use cli::{CALIBRATION_SURFACES, task_front_end};
 pub use corrected_export::{
