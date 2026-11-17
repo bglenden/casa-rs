@@ -12396,7 +12396,7 @@
       "normalization": {"kind": "casa_field"},
       "base_constraints": [],
       "unit_dimension": null,
-      "semantic_role": "input",
+      "semantic_role": "input_data",
       "documentation": {"summary": "Calibration library path supplied verbatim to applycal.", "details": null, "examples": [""]},
       "persistence_class": "profile"
     }
