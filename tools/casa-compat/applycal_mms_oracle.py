@@ -78,6 +78,18 @@ def compare_case(root, name, source, gain, arguments, native):
             assert 'taskname=applycal' in a and 'taskname=applycal' in b
             assert a[a.index('taskname=applycal'):] == b[b.index('taskname=applycal'):], (a, b)
         assert Path(str(left)+'.flagversions').exists() == Path(str(right)+'.flagversions').exists()
+    if name == 'default':
+        native_ms = paths['native']
+        backup = Path(str(native_ms)+'.flagversions')/'flags.applycal_1'
+        flags_before = contents(backup)
+        applied = contents(native_ms)
+        changed = int(np.count_nonzero(applied['FLAG'] != flags_before['FLAG']))
+        assert changed > 0
+        casatasks.flagmanager(vis=str(native_ms), mode='restore', versionname='applycal_1')
+        restored = contents(native_ms)
+        for column in ['FLAG', 'FLAG_ROW']:
+            np.testing.assert_array_equal(restored[column], flags_before[column])
+        records['native']['restored_with_casa'] = changed
     return records
 
 
