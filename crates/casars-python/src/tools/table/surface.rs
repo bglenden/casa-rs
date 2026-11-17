@@ -234,7 +234,7 @@ const METHODS: &[Method] = &[
             param("torecord", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getcolkeyword",
@@ -522,7 +522,7 @@ const METHODS: &[Method] = &[
             param("exclude", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "rownumbers",

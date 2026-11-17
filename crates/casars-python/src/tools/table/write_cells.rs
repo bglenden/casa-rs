@@ -68,7 +68,7 @@ fn keeps_cell_shapes(table: &Table, column: &str) -> bool {
 
 /// What a column asks of the shape of the arrays written to it, worked out
 /// once for all the cells of a call.
-struct ShapeRule {
+pub(super) struct ShapeRule {
     /// The one shape every cell has.
     fixed: Option<Vec<usize>>,
     /// Whether a cell keeps the shape it has once set (a tiled manager).
@@ -76,7 +76,7 @@ struct ShapeRule {
 }
 
 impl ShapeRule {
-    fn of(table: &Table, column: &str) -> Self {
+    pub(super) fn of(table: &Table, column: &str) -> Self {
         let contract = table
             .schema()
             .and_then(|schema| schema.column(column))
@@ -91,7 +91,13 @@ impl ShapeRule {
     }
 
     /// Checks an array cell's shape against its column's.
-    fn check(&self, table: &Table, column: &str, row: usize, cell: &Value) -> Result<(), Fail> {
+    pub(super) fn check(
+        &self,
+        table: &Table,
+        column: &str,
+        row: usize,
+        cell: &Value,
+    ) -> Result<(), Fail> {
         let Value::Array(array) = cell else {
             return Ok(());
         };
@@ -116,7 +122,11 @@ impl ShapeRule {
 /// of a scalar or array column is set where it is, without loading the
 /// rest of the table (a table is read lazily, and a MeasurementSet's visibilities
 /// would not fit in memory); a record cell goes through the row store.
-fn set_cells(table: &mut Table, column: &str, cells: Vec<(usize, Value)>) -> Result<(), Fail> {
+pub(super) fn set_cells(
+    table: &mut Table,
+    column: &str,
+    cells: Vec<(usize, Value)>,
+) -> Result<(), Fail> {
     let record_column = matches!(
         table
             .schema()
@@ -254,7 +264,10 @@ impl State {
                 &column,
                 rows.iter().map(|row| (*row, cell.clone())).collect(),
             )?;
-            Ok(Persist::Rows { column, rows })
+            Ok(Persist::Rows {
+                columns: vec![column],
+                rows,
+            })
         })
     }
 
@@ -303,7 +316,7 @@ impl State {
             }
             set_cells(table, &column, cells)?;
             Ok(Persist::Rows {
-                column,
+                columns: vec![column],
                 rows: selected,
             })
         })
@@ -366,7 +379,7 @@ impl State {
             }
             set_cells(table, &column, cells)?;
             Ok(Persist::Rows {
-                column,
+                columns: vec![column],
                 rows: selected,
             })
         })

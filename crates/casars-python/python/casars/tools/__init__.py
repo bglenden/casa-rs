@@ -26,6 +26,7 @@ from .._core import (
     quanta,
     simulator,
     table,
+    tablerow,
 )
 
 __all__ = [
@@ -38,4 +39,5 @@ __all__ = [
     "quanta",
     "simulator",
     "table",
+    "tablerow",
 ]

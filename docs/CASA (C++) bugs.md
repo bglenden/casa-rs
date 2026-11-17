@@ -6286,3 +6286,15 @@ domain. `tools/casa-compat/calibration_lifecycle_oracle.py` reproduces the
 CASA error and compares the two native append products. Invalid boolean
 arguments retain the native exception policy documented in
 `docs/python/api.md`.
+
+## `tablerow.__getitem__` process abort in CASA 6.7.6.14
+
+In CASA 6.7.6.14, indexing a `tablerow` accessor via `r[rownr]` (including valid
+and out-of-range row indices, e.g. `r[0]` or `r[10]`) terminates Python with
+segmentation fault (signal 11, exit code 139) inside the SWIG `casac::tablerow`
+wrapper (`__getitem__`), even though `r.get(rownr)` and `len(r)` succeed.
+
+casa-rs implements `tablerow.__getitem__` safely under the GIL-detached Rust
+table accessor, supporting negative indices, slices, and sequences of row
+indices, and raising `IndexError` cleanly on out-of-range indices.
+[Table tool issue #1028](https://github.com/bglenden/casa-rs/issues/1028)

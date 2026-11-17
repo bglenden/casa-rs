@@ -2322,7 +2322,13 @@ impl CompositeStorage {
             }
         }
 
-        let snapshot = self.load_plain_scalar_columns(table_path, table_dat, row_hint)?;
+        let requested = HashSet::from([column]);
+        let snapshot = self.load_plain_scalar_columns_filtered(
+            table_path,
+            table_dat,
+            row_hint,
+            Some(&requested),
+        )?;
         snapshot.columns.get(column).cloned().ok_or_else(|| {
             StorageError::FormatMismatch(format!("scalar column '{column}' not found"))
         })
@@ -2347,7 +2353,13 @@ impl CompositeStorage {
             .any(|dm| is_virtual_engine(&dm.type_name))
         {
             let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
-            return Ok(scalar_columns_from_snapshot(&snapshot));
+            let mut scalar_columns = scalar_columns_from_snapshot(&snapshot);
+            if let Some(requested) = requested_columns {
+                scalar_columns
+                    .columns
+                    .retain(|name, _| requested.contains(name.as_str()));
+            }
+            return Ok(scalar_columns);
         }
 
         let mut columns = HashMap::new();
@@ -2424,9 +2436,15 @@ impl CompositeStorage {
                         .iter()
                         .any(|(desc_idx, _)| !table_dat.table_desc.columns[*desc_idx].is_array)
                     {
-                        let snapshot =
-                            self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
-                        return Ok(scalar_columns_from_snapshot(&snapshot));
+                        tiled_stman::collect_tiled_scalar_columns(
+                            table_path,
+                            dm,
+                            &table_dat.table_desc,
+                            &all_bound_cols,
+                            requested_columns,
+                            nrrow,
+                            &mut columns,
+                        )?;
                     }
                 }
                 other => {
@@ -4449,11 +4467,12 @@ fn scalar_columns_from_snapshot(snapshot: &StorageSnapshot) -> ScalarColumnSnaps
             });
         }
         for field in row.fields() {
-            if let Value::Scalar(value) = &field.value {
-                let entry = columns
-                    .entry(field.name.clone())
-                    .or_insert_with(|| vec![None; row_index]);
-                entry.push(Some(value.clone()));
+            if let Value::Scalar(value) = &field.value
+                && !columns.contains_key(&field.name)
+            {
+                let mut values = vec![None; row_index];
+                values.push(Some(value.clone()));
+                columns.insert(field.name.clone(), values);
             }
         }
     }
