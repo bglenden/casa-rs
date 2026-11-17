@@ -24,6 +24,22 @@ import time
 from lifecycle import usage, block_io, evict_files
 
 
+@contextlib.contextmanager
+def fixed_history(vis, scratch):
+    """Hold the owned benchmark MS's HISTORY input fixed between calls."""
+    history = vis/'HISTORY'
+    shutil.copytree(history, scratch)
+
+    def reset():
+        shutil.rmtree(history)
+        shutil.copytree(scratch, history)
+
+    try:
+        yield reset
+    finally:
+        reset()
+
+
 def repeated_gain(source, destination, repetitions):
     import numpy as np
     from casatools import table
@@ -96,7 +112,9 @@ def main():
     evidence = dict(host=platform.platform(), cache=args.cache, casa_version=casa.version_string(),
                     worker_environment={name: os.getenv(name) for name in ['RAYON_NUM_THREADS', 'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS']},
                     cases={}, fresh={})
-    with tempfile.TemporaryDirectory(prefix='fluxscale-perf-', dir=args.out.parent) as scratch:
+    evidence['history_policy'] = 'Restore identical input HISTORY before every call, outside timing; restore original HISTORY on exit.'
+    with tempfile.TemporaryDirectory(prefix='fluxscale-perf-', dir=args.out.parent) as scratch, \
+            fixed_history(vis, Path(scratch)/'input-HISTORY') as reset_history:
         root = Path(scratch)
         gain = root/'input.gcal'
         rows = repeated_gain(original, gain, args.repeat_input)
@@ -104,6 +122,7 @@ def main():
         evidence['input_table_bytes'] = sum(path.stat().st_size for path in gain.rglob('*') if path.is_file())
         base = dict(vis=str(vis), caltable=str(gain), reference=['FLUX'], transfer=['PHASE'])
         for name, module in [('casa', 'casatasks'), ('native', 'casars.tasks')]:
+            reset_history()
             evidence['fresh'][name] = fresh(module, dict(base, fluxtable=str(root/f'fresh.{name}')), root)
         for label, extra in [('full', {}), ('incremental', dict(incremental=True))]:
             paths = {name: root/f'{label}.{name}' for name in ['casa', 'native']}
@@ -112,6 +131,7 @@ def main():
             def call(name):
                 path = paths[name]
                 shutil.rmtree(path, ignore_errors=True)
+                reset_history()
                 if args.cache == 'cold':
                     evict_files(vis, gain)
                 captured = io.StringIO()
