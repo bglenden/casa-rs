@@ -28,6 +28,7 @@ pub(crate) struct CalibrationOutput {
     mode: CalibrationOutputMode,
     table_type: &'static str,
     _reservation: Reservation,
+    simulated_marker: bool,
 }
 
 /// A destination-wide claim survives a killed writer. Only its owner removes it.
@@ -45,7 +46,18 @@ impl CalibrationOutput {
         path: &Path,
         mode: CalibrationOutputMode,
     ) -> Result<Self, CalibrationTableWriteError> {
-        Self::prepare_type(path, mode, crate::constants::TABLE_INFO_TYPE)
+        Self::prepare_type(path, mode, crate::constants::TABLE_INFO_TYPE, false)
+    }
+
+    /// Simulation already validates the destination against its MS and has
+    /// historically replaced an incomplete table identified by table.dat.
+    pub(crate) fn prepare_simulated(path: &Path) -> Result<Self, CalibrationTableWriteError> {
+        Self::prepare_type(
+            path,
+            CalibrationOutputMode::Replace,
+            crate::constants::TABLE_INFO_TYPE,
+            true,
+        )
     }
 
     pub(crate) fn prepare_measurement_set(
@@ -60,6 +72,7 @@ impl CalibrationOutput {
                 CalibrationOutputMode::Create
             },
             "Measurement Set",
+            false,
         )
     }
 
@@ -67,6 +80,7 @@ impl CalibrationOutput {
         path: &Path,
         mode: CalibrationOutputMode,
         table_type: &'static str,
+        simulated_marker: bool,
     ) -> Result<Self, CalibrationTableWriteError> {
         let fail = |reason| CalibrationTableWriteError::Prepare {
             path: path.display().to_string(),
@@ -110,7 +124,7 @@ impl CalibrationOutput {
                     "output already exists; use append or replacement explicitly".to_string(),
                 ));
             }
-            validate_destination(path, table_type)?;
+            validate_product(path, table_type, simulated_marker)?;
         }
         let staging = sibling(path, "casa-rs-incomplete")?;
         fs::create_dir(&staging).map_err(|e| fail(format!("cannot reserve staging path {} (an interrupted or concurrent write may exist): {e}", staging.display())))?;
@@ -120,6 +134,7 @@ impl CalibrationOutput {
             mode,
             table_type,
             _reservation: reservation,
+            simulated_marker,
         })
     }
 
@@ -137,7 +152,7 @@ impl CalibrationOutput {
                 "destination appeared while the table was being built".to_string(),
             ));
         }
-        validate_destination(&self.destination, self.table_type)?;
+        validate_product(&self.destination, self.table_type, self.simulated_marker)?;
         let replaced = sibling(&self.destination, "casa-rs-replaced")?;
         if replaced.exists() {
             return Err(fail(format!(
@@ -176,6 +191,14 @@ pub(crate) fn validate_destination(
     path: &Path,
     table_type: &str,
 ) -> Result<(), CalibrationTableWriteError> {
+    validate_product(path, table_type, false)
+}
+
+fn validate_product(
+    path: &Path,
+    table_type: &str,
+    simulated_marker: bool,
+) -> Result<(), CalibrationTableWriteError> {
     let table = casa_tables::Table::open(casa_tables::TableOptions::new(path));
     if table
         .as_ref()
@@ -183,9 +206,16 @@ pub(crate) fn validate_destination(
     {
         return Ok(());
     }
+    if simulated_marker && table.is_err() && path.is_dir() && path.join("table.dat").is_file() {
+        return Ok(());
+    }
     Err(CalibrationTableWriteError::Prepare {
         path: path.display().to_string(),
-        reason: format!("exists and is not a {table_type} table; prior product is unchanged"),
+        reason: if simulated_marker && !path.join("table.dat").is_file() {
+            "exists and is not a table; prior product is unchanged".to_string()
+        } else {
+            format!("exists and is not a {table_type} table; prior product is unchanged")
+        },
     })
 }
 

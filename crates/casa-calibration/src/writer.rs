@@ -69,14 +69,25 @@ pub(crate) struct CalibrationTableWriter<'a> {
     output: CalibrationOutput,
     table: Table,
     mode: CalibrationOutputMode,
+    sort_for_casa: bool,
 }
 
 impl<'a> CalibrationTableWriter<'a> {
-    pub(crate) fn create_replacing(
+    pub(crate) fn create_simulated(
         measurement_set: &'a MeasurementSet,
         descriptor: CalibrationTableDescriptor<'_>,
     ) -> Result<Self, CalibrationTableWriteError> {
-        Self::with_mode(measurement_set, descriptor, CalibrationOutputMode::Replace)
+        let output = CalibrationOutput::prepare_simulated(descriptor.output)?;
+        let mut writer = Self::staged(
+            measurement_set,
+            descriptor,
+            output,
+            CalibrationOutputMode::Replace,
+        );
+        // Simulation supplies its established row order and budgets one
+        // materialized table. Do not duplicate it for task storeNCT sorting.
+        writer.sort_for_casa = false;
+        Ok(writer)
     }
 
     pub(crate) fn with_mode(
@@ -143,6 +154,7 @@ impl<'a> CalibrationTableWriter<'a> {
             output,
             table,
             mode,
+            sort_for_casa: true,
         }
     }
 
@@ -205,7 +217,19 @@ impl<'a> CalibrationTableWriter<'a> {
                 self.table = old;
             }
         }
-        output_merge::save_sorted(&mut self.table, &self.output.staging)?;
+        if self.sort_for_casa {
+            output_merge::save_sorted(&mut self.table, &self.output.staging)?;
+        } else {
+            self.table
+                .save(
+                    TableOptions::new(&self.output.staging)
+                        .with_data_manager(casa_tables::DataManagerKind::StandardStMan),
+                )
+                .map_err(|source| CalibrationTableWriteError::Save {
+                    path: self.output.staging.display().to_string(),
+                    source: Box::new(source),
+                })?;
+        }
         self.output.commit()
     }
 }
