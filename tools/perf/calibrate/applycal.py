@@ -120,6 +120,8 @@ def main():
             after_io, after_cpu = block_io(), usage()
             assert value is None
             record = dict(wall_seconds=wall, cpu_seconds=sum(after_cpu.values())-sum(before_cpu.values()),
+                          user_seconds=after_cpu['user']-before_cpu['user'],
+                          system_seconds=after_cpu['system']-before_cpu['system'],
                           block_io={key: after_io[key]-before_io[key] for key in before_io},
                           native_peak_rss_kib=max((int(line.split()[1]) for line in captured.getvalue().splitlines()
                                                   if line.startswith('calibration_peak_rss_kib ')), default=None))

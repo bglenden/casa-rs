@@ -60,6 +60,7 @@ use crate::plan::{
 
 mod gain_validity;
 use gain_validity::correcting_gain;
+mod bandpass;
 mod channels;
 mod weights;
 use channels::{DataChannelGrid, apply_row};
@@ -2042,9 +2043,40 @@ fn apply_row_all_channels(
             continue;
         };
 
+        let is_bandpass = table_plan.summary.table_subtype == "B Jones";
+        let bandpass_weights = (is_bandpass && table_plan.calwt && loaded_table.supports_calwt)
+            .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types))
+            .flatten();
+        let (ant1, ant2) = if is_bandpass {
+            let ant1 = bandpass::prepare(
+                ant1,
+                &cal_spw.channel_frequencies_hz,
+                data_spw,
+                row,
+                row.antenna1,
+                geometry_cache.as_deref_mut(),
+                &loaded_table.path,
+            )?;
+            let ant2 = bandpass::prepare(
+                ant2,
+                &cal_spw.channel_frequencies_hz,
+                data_spw,
+                row,
+                row.antenna2,
+                geometry_cache.as_deref_mut(),
+                &loaded_table.path,
+            )?;
+            (ant1, ant2)
+        } else {
+            (ant1, ant2)
+        };
         let sampling_context = CalibrationSamplingContext {
             data_channels,
-            cal_frequencies_hz: &cal_spw.channel_frequencies_hz,
+            cal_frequencies_hz: if is_bandpass {
+                &data_spw.channel_frequencies_hz
+            } else {
+                &cal_spw.channel_frequencies_hz
+            },
             cal_ref_frequency_hz: cal_spw_reference_frequency_hz(cal_spw),
             interp: table_plan.interp,
             path: &loaded_table.path,
@@ -2181,7 +2213,10 @@ fn apply_row_all_channels(
                 let denom = value1 * value2.conj();
                 corrected[[corr_index, chan_index]] /= denom;
                 if table_plan.calwt && loaded_table.supports_calwt {
-                    let factor = value1.norm_sqr() * value2.norm_sqr();
+                    let factor = bandpass_weights.as_ref().map_or_else(
+                        || value1.norm_sqr() * value2.norm_sqr(),
+                        |factors| factors[corr_index],
+                    );
                     if let Some(weight_spectrum) = weight_spectrum.as_mut() {
                         weight_spectrum[[corr_index, chan_index]] *= factor;
                     }

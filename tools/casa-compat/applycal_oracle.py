@@ -37,10 +37,10 @@ def history(vis):
     return contents(vis/'HISTORY')
 
 
-def copy_ms(source, destination):
+def copy_ms(source, destination, endian='aipsrc'):
     tool = table()
     tool.open(str(source))
-    copied = tool.copy(str(destination), deep=True, valuecopy=True)
+    copied = tool.copy(str(destination), deep=True, valuecopy=True, endian=endian)
     copied.close()
     tool.close()
 
@@ -77,6 +77,22 @@ def run(root, native_bin):
     flags[:, 4, :] = True
     tool.putcol('FLAG', flags)
     tool.close()
+    phase_bandpass = root/'phase.bcal'
+    descending_bandpass = root/'descending.bcal'
+    for destination in [phase_bandpass, descending_bandpass]:
+        copy_ms(channelized, destination)
+    tool.open(str(phase_bandpass), nomodify=False)
+    phases = np.deg2rad([0., 10., 20., 170., -170., -160., -150., -140.])
+    tool.putcol('CPARAM', gains*np.exp(1.j*phases)[None, :, None])
+    tool.close()
+    tool.open(str(descending_bandpass), nomodify=False)
+    tool.putcol('CPARAM', gains[:, ::-1, :])
+    tool.putcol('FLAG', flags[:, ::-1, :])
+    tool.close()
+    tool.open(str(descending_bandpass/'SPECTRAL_WINDOW'), nomodify=False)
+    tool.putcol('CHAN_FREQ', tool.getcol('CHAN_FREQ')[::-1, :])
+    tool.putcol('CHAN_WIDTH', -tool.getcol('CHAN_WIDTH')[::-1, :])
+    tool.close()
     tool.open(str(source), nomodify=False)
     if 'CORRECTED_DATA' in tool.colnames():
         tool.removecols(['CORRECTED_DATA'])
@@ -84,13 +100,13 @@ def run(root, native_bin):
     result = dict(casa_version=casa.version_string(), signature=str(reference), cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
-    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False):
+    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc'):
         records, paths = {}, {}
         before_gain = snapshot(gain)
         for engine, module in [('casa', casa), ('native', native)]:
             path = root/f'{name}.{engine}.ms'
             paths[engine] = path
-            copy_ms(source, path)
+            copy_ms(source, path, endian)
             if precorrected:
                 tool.open(str(path), nomodify=False)
                 descriptor = tool.getcoldesc('DATA')
@@ -166,7 +182,7 @@ def run(root, native_bin):
                                      ('HISTORY', compare_history), ('flagbackup', compare_backup)]:
             check(component, operation)
         result['cases'][name] = dict(arguments=plain(extra or {}), repetitions=repetitions,
-                                    weight_seed=weight_seed, spectral_sigma=spectral_sigma, records=records)
+                                    weight_seed=weight_seed, spectral_sigma=spectral_sigma, endian=endian, records=records)
         (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
         print(name, 'FAILED' if any(item['case'] == name for item in result['failures']) else 'passed', flush=True)
 
@@ -190,6 +206,12 @@ def run(root, native_bin):
     case('channels-trial', dict(spw='0:0~6^2', applymode='trial'), precorrected=True, spectral_sigma=True)
     case('channels-bandpass', dict(spw='0:2~6^2'), gain=channelized, precorrected=True)
     case('channels-bandpass-no-calwt', dict(spw='0:2~6^2', calwt=False), gain=channelized, precorrected=True)
+    case('bandpass-full', gain=channelized)
+    case('channels-bandpass-spectral', dict(spw='0:2~6^2'), gain=channelized, precorrected=True, spectral_sigma=True)
+    case('channels-bandpass-phase', dict(spw='0:2~6^2'), gain=phase_bandpass, precorrected=True, spectral_sigma=True)
+    case('channels-bandpass-descending', dict(spw='0:2~6^2'), gain=descending_bandpass, precorrected=True)
+    for endian in ['big', 'little']:
+        case('channels-'+endian, dict(spw='0:0~6^2'), precorrected=True, spectral_sigma=True, endian=endian)
     case('flagbackup', dict(flagbackup=True))
     case('solved-gains', gain=solved)
     for mode in ['calflagstrict', 'flagonly', 'flagonlystrict']:
