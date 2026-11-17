@@ -98,6 +98,64 @@ fn replace_and_append_then_no_solutions_preserve_the_product() {
 }
 
 #[test]
+fn failed_pipelined_input_finishes_and_preserves_the_prior_product() {
+    let dir = TempDir::new().unwrap();
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let output = dir.path().join("g.cal");
+    solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
+    let before = snapshot(&output);
+    let mut main = table(&ms);
+    let template = main.rows().unwrap()[0].clone();
+    while main.row_count() < 1024 {
+        main.add_row(template.clone()).unwrap();
+    }
+    main.cell_accessor_mut(300, "FLAG")
+        .unwrap()
+        .set(Value::Array(ArrayValue::Bool(ndarray::ArrayD::from_elem(
+            ndarray::IxDyn(&[1, 1]),
+            false,
+        ))))
+        .unwrap();
+    main.save(TableOptions::new(&ms)).unwrap();
+    drop(main);
+    let request = dir.path().join("request.json");
+    std::fs::write(
+        &request,
+        serde_json::to_vec(&serde_json::json!({
+            "surface": "gaincal",
+            "values": {"vis": ms, "caltable": output, "append": true,
+                "refant": "0", "smodel": [1], "minsnr": 0, "minblperant": 0}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let stderr = dir.path().join("stderr");
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_calibrate"))
+        .arg("--json-run")
+        .arg(request)
+        .env("RAYON_NUM_THREADS", "2")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&stderr).unwrap())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("failed input must release a blocked batch reader");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert!(!status.success());
+    assert!(std::fs::read_to_string(stderr).unwrap().contains("shape"));
+    assert_eq!(snapshot(&output), before);
+}
+
+#[test]
 fn incompatible_append_and_interrupted_staging_preserve_every_prior_byte() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);

@@ -25,7 +25,26 @@ import time
 
 def usage():
     own, child = (resource.getrusage(kind) for kind in [resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN])
-    return own.ru_utime + own.ru_stime + child.ru_utime + child.ru_stime
+    return dict(user=own.ru_utime+child.ru_utime,system=own.ru_stime+child.ru_stime)
+
+
+def block_io():
+    own, child = (resource.getrusage(kind) for kind in [resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN])
+    return dict(read_bytes=(own.ru_inblock+child.ru_inblock)*512,
+                write_bytes=(own.ru_oublock+child.ru_oublock)*512)
+
+
+def evict_files(*roots):
+    """Evict only the owned benchmark inputs/products, never global caches."""
+    for root in roots:
+        for path in Path(root).rglob('*'):
+            if path.is_file():
+                descriptor = os.open(path, os.O_RDONLY)
+                try:
+                    os.fsync(descriptor)
+                    os.posix_fadvise(descriptor, 0, 0, os.POSIX_FADV_DONTNEED)
+                finally:
+                    os.close(descriptor)
 
 
 def cold_imports():
@@ -41,14 +60,54 @@ def cold_imports():
     return result
 
 
+def fresh_gaincal(vis, native_bin, root):
+    """First public call and memory in separate fresh Python processes."""
+    root.mkdir(parents=True,exist_ok=True)
+    probe = '''import importlib,json,resource,sys,time
+from pathlib import Path
+start=time.perf_counter()
+tasks=importlib.import_module(sys.argv[1])
+imports=time.perf_counter()-start
+def cpu():
+    return sum(r.ru_utime+r.ru_stime for r in [resource.getrusage(resource.RUSAGE_SELF),resource.getrusage(resource.RUSAGE_CHILDREN)])
+before=cpu();start=time.perf_counter()
+tasks.gaincal(vis=sys.argv[2],caltable=sys.argv[3],refant='A0',calmode='ap',smodel=[1.0],minsnr=0.0,minblperant=2)
+wall=time.perf_counter()-start
+peak=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/(1024 if sys.platform=='darwin' else 1)
+if sys.platform.startswith('linux'):
+    peak=next(int(line.split()[1]) for line in Path('/proc/self/status').read_text().splitlines() if line.startswith('VmHWM:'))
+print(json.dumps(dict(import_seconds=imports,task_wall_seconds=wall,task_cpu_seconds=cpu()-before,
+    python_peak_kib=peak)))
+'''
+    result = {}
+    for engine,module in [('casa','casatasks'),('native','casars.tasks')]:
+        environment = os.environ.copy()
+        environment['CASARS_CALIBRATE_BIN'] = str(native_bin.resolve())
+        if engine == 'native': environment.pop('LD_PRELOAD',None)
+        started = time.perf_counter()
+        process = subprocess.run([sys.executable,'-c',probe,module,vis,str(root/engine)],
+                                 env=environment,text=True,capture_output=True,check=True)
+        result[engine] = json.loads(process.stdout.splitlines()[-1])
+        result[engine]['process_seconds'] = time.perf_counter()-started
+        peaks = [int(line.split()[1]) for line in process.stderr.splitlines() if line.startswith('calibration_peak_rss_kib ')]
+        if engine == 'native' and sys.platform.startswith('linux'):
+            assert peaks, 'native first-call VmHWM measurement missing'
+        result[engine]['native_task_peak_kib'] = max(peaks,default=None)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--vis', type=Path, required=True, help='staged five-antenna FLUX/PHASE fixture')
     parser.add_argument('--native-bin', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--repeats', type=int, default=5)
-    parser.add_argument('--case', help='measure only this workflow label')
+    parser.add_argument('--case', action='append', help='measure only these workflow labels (repeatable)')
+    parser.add_argument('--cache', choices=['warm','cold'], default='warm',
+                        help='cold evicts input/product file pages before every measured call (Linux)')
     args = parser.parse_args()
+    if args.cache == 'cold' and not hasattr(os, 'posix_fadvise'):
+        parser.error('cold file-cache measurements require posix_fadvise')
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
     os.environ['CASA_RS_CALIBRATION_TIMING'] = '1'
     imports = {}
@@ -76,7 +135,7 @@ def main():
         rows = tool.nrows(); samples = tool.getcell('DATA', 0).size * rows
         tool.close()
         evidence = dict(host=platform.platform(), workers={key: os.getenv(key) for key in ['OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','RAYON_NUM_THREADS']},
-                        cache='warm imports and inputs; alternating sequential calls; outputs prepared outside timing',
+                        cache=f'{args.cache} file pages; warm imports; alternating sequential calls; preparation/eviction outside timing',
                         controller_imports_seconds=imports, input_rows=rows, input_complex_samples=samples,
                         input_data_bytes=samples*8, runs={})
         common = dict(vis=vis, refant='A0', smodel=[1.0], minsnr=0.0, minblperant=2)
@@ -90,9 +149,10 @@ def main():
             ('corrected_export','split',dict(vis=vis,datacolumn='corrected')),
         ]
         if args.case:
-            cases = [case for case in cases if case[0] == args.case]
-            if not cases:
-                parser.error(f'unknown workflow label: {args.case}')
+            unknown = set(args.case) - {case[0] for case in cases}
+            if unknown:
+                parser.error(f'unknown workflow labels: {sorted(unknown)}')
+            cases = [case for case in cases if case[0] in args.case]
         # An attainable warm-cache read/write baseline on this same filesystem.
         block = bytearray(64 * 1024 * 1024)
         disk = root / 'throughput.bin'
@@ -104,6 +164,12 @@ def main():
         with disk.open('rb') as stream: stream.readinto(block)
         read_seconds = time.perf_counter() - start
         evidence['attainable_warm_mib_per_second'] = dict(read=64/read_seconds,write_fsync=64/write_seconds)
+        if args.cache == 'cold':
+            evict_files(root)
+            before = block_io(); start = time.perf_counter()
+            with disk.open('rb') as stream: stream.readinto(block)
+            evidence['attainable_cold_read'] = dict(mib_per_second=64/(time.perf_counter()-start),
+                                                    block_bytes=block_io()['read_bytes']-before['read_bytes'])
         disk.unlink()
         for label, task, kwargs in cases:
             paths = {engine: root / (label+'.'+engine) for engine in ['casa','native']}
@@ -116,7 +182,10 @@ def main():
                 else:
                     key = 'fluxtable' if task == 'fluxscale' else 'caltable'
                     function = lambda: getattr(casa if engine=='casa' else native,task)(**{**kwargs,key:str(output)})
+                if args.cache == 'cold':
+                    evict_files(vis, gain, output)
                 captured = io.StringIO()
+                before_io = block_io()
                 cpu = usage(); start = time.perf_counter()
                 preload = os.environ.pop('LD_PRELOAD',None) if engine == 'native' else None
                 try:
@@ -124,11 +193,26 @@ def main():
                 finally:
                     if preload is not None: os.environ['LD_PRELOAD'] = preload
                 elapsed = time.perf_counter()-start
+                after_cpu = usage()
+                cpu_elapsed = sum(after_cpu.values())-sum(cpu.values())
+                after_io = block_io()
                 phases = {}
+                peaks = []
+                worker_counts = []
                 for line in captured.getvalue().splitlines():
                     if line.startswith('calibration_phase '):
-                        _,name,value=line.split();phases[name]=float(value)
-                return dict(wall_seconds=elapsed,cpu_seconds=usage()-cpu,native_phases_seconds=phases)
+                        _,name,value=line.split();phases[name]=phases.get(name,0.0)+float(value)
+                    elif line.startswith('calibration_peak_rss_kib '):
+                        peaks.append(int(line.split()[1]))
+                    elif line.startswith('calibration_workers '):
+                        worker_counts.append(int(line.split()[1]))
+                if engine == 'native' and sys.platform.startswith('linux'):
+                    assert peaks, 'native VmHWM measurement missing'
+                return dict(wall_seconds=elapsed,cpu_seconds=cpu_elapsed,native_phases_seconds=phases,
+                            cpu_breakdown_seconds={key:after_cpu[key]-cpu[key] for key in cpu},
+                            native_peak_rss_kib=max(peaks,default=None),
+                            native_workers=max(worker_counts,default=None),
+                            block_io={key:after_io[key]-before_io[key] for key in before_io})
             # CASA's append-to-absent path does not initialize its SPW table;
             # prepare a normal first product outside the append timing.
             if kwargs.get('append'):
@@ -148,9 +232,12 @@ def main():
             print(label,evidence['runs'][label]['medians'],flush=True)
         evidence['memory_peak_kib'] = dict(controller_with_both_imports=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                                           native_task_children=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
-        evidence['memory_note'] = 'Linux ru_maxrss; controller includes CASA and casars; child peak is cumulative across workflows'
+        evidence['memory_note'] = 'diagnostic getrusage peaks can inherit pre-exec parent RSS; use per-native-call and fresh-process VmHWM for comparisons on Linux'
         evidence['cold_imports_seconds'] = cold_imports()
         evidence['cold_import_note'] = 'fresh interpreters; filesystem cache warm; normal native environment without the CASA wheel library preloads'
+        evidence['fresh_gaincal'] = fresh_gaincal(vis,args.native_bin,root/'fresh')
+        equal(root/'fresh/casa',root/'fresh/native',['CPARAM','FLAG','TIME','ANTENNA1','ANTENNA2','FIELD_ID'])
+        evidence['fresh_gaincal_note'] = 'fresh interpreters and first task, warm file pages; Linux VmHWM reports each current process; Python/native task peaks are separate, not simultaneous totals'
         evidence['export_product_note'] = 'native export retains CORRECTED_DATA and MODEL_DATA; equivalent DATA/flags/row identities validated against CASA split; output bytes recorded'
         args.out.write_text(json.dumps(evidence,indent=2)+'\n')
 

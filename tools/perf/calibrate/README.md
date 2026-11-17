@@ -51,9 +51,29 @@ startup-dominated inputs. Stage it before timing. Output preparation is
 excluded equally; public task launch stays included. The output records
 alternating samples, CPU/wall time, imports separately, input size, memory,
 workers, a local warm-file throughput baseline and native phase timings.
+Use repeatable `--case` labels to measure only changed workflows. On Linux,
+`--cache cold` flushes and evicts only the staged input and product file pages
+before each call, outside timing. Block-I/O counters verify physical reads;
+user and system CPU are recorded separately. The local cold-read baseline
+records its own physical-read count too.
+
 The native solver phases use `CASA_RS_CALIBRATION_TIMING=1`; the input phase
-includes selection, read/decode and averaging, so it alone cannot establish
-an I/O bound. Profile it if low throughput or CPU time warrants investigation.
+includes selection, read/decode and averaging. `solve_read_decode` and
+`solve_accumulate` split batch input from accumulation. Read/decode includes
+format conversion, so its duration alone cannot establish a disk I/O limit.
+Profile it if low throughput or CPU time warrants investigation.
+
+With at least two available/requested workers and more than 256 selected rows,
+one reader overlaps input with ordered accumulation on the calling thread.
+The channel holds one 256-row batch; including reader and consumer, at most
+three batches are live. A one-worker budget keeps the serial path. The output
+records the actual native worker count. Overlapping phase durations must not
+be summed to infer wall time; compare matched worker budgets for both engines.
+
+Fresh-process gaincal calls record import, first-call and process times and
+verify their products too. Linux per-call native and fresh-Python peaks use
+`/proc/self/status`'s `VmHWM`: `getrusage` can retain a parent's pre-exec peak.
+Process peaks are reported separately and are not simultaneous totals.
 Formal bandpass error estimates remain CAL-02's numerical work; the lifecycle
 oracle checks their preservation separately from the cross-CASA gain/flag
 comparison. `calibration_lifecycle_oracle.py` performs bidirectional table
