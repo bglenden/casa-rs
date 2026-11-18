@@ -3,6 +3,11 @@
 use super::*;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
+pub(crate) struct Packed2DSelection<'a> {
+    pub(crate) rows: &'a [usize],
+    pub(crate) widen_complex: bool,
+}
+
 impl TiledReadMetadata {
     /// Read uniformly shaped cells into a single Fortran-order column.
     /// Determine eligibility from the shape map before reading tile data.
@@ -13,8 +18,12 @@ impl TiledReadMetadata {
         bound: &[&ColumnDescContents],
         table_desc: &TableDescContents,
         bound_index: usize,
-        rows: &[usize],
+        selection: Packed2DSelection<'_>,
     ) -> Result<Option<ArrayValue>, StorageError> {
+        let Packed2DSelection {
+            rows,
+            widen_complex,
+        } = selection;
         let read = self.header(seq_nr)?;
         let TiledVariant::Shape {
             nr_used_row_map,
@@ -65,6 +74,7 @@ impl TiledReadMetadata {
                     0,
                     channels,
                     SelectedArray2DCellsMut::$dest(&mut values),
+                    widen_complex,
                 )?;
                 if filled.is_none() {
                     return Ok(None);
@@ -77,6 +87,7 @@ impl TiledReadMetadata {
         match dt {
             CasacoreDataType::TpBool => read_column!(RowChannelBool, Bool),
             CasacoreDataType::TpFloat => read_column!(RowChannelFloat32, Float32),
+            CasacoreDataType::TpComplex if widen_complex => read_column!(Complex64, Complex64),
             CasacoreDataType::TpComplex => read_column!(RowChannelComplex32, Complex32),
             _ => Ok(None),
         }

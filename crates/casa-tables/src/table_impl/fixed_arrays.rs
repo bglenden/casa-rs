@@ -10,6 +10,7 @@ impl TableImpl {
         &self,
         column: &str,
         rows: &[usize],
+        widen_complex: bool,
     ) -> Result<Option<ArrayValue>, TableError> {
         if self.loaded_rows.get().is_some()
             || self.rows_reshaped()
@@ -24,7 +25,7 @@ impl TableImpl {
             return Ok(None);
         };
         CompositeStorage
-            .load_uniform_2d_from_plain(&source.path, metadata, column, rows)
+            .load_uniform_2d_from_plain(&source.path, metadata, column, rows, widen_complex)
             .map_err(TableError::from)
     }
 

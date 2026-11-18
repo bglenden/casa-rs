@@ -386,6 +386,7 @@ mod shape_cube;
 mod spec;
 #[cfg(test)]
 mod split_axis0_tests;
+pub(crate) use metadata_shapes::Packed2DSelection;
 use shape_cube::{DirectShapeCubeWriter, ShapeCubeWorkingSet};
 pub(crate) use spec::tiled_spec;
 mod tile_columns;
@@ -2141,6 +2142,7 @@ pub(crate) fn fill_tiled_column_rows_2d_channel_range_typed(
             channel_start,
             channel_count,
             destination,
+            false,
         ),
         _ => Err(StorageError::FormatMismatch(format!(
             "typed selected 2-D channel reads for column {} require TiledShapeStMan Shape variant",
@@ -3677,6 +3679,7 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
     channel_start: usize,
     channel_count: usize,
     destination: SelectedArray2DCellsMut<'_>,
+    widen_complex: bool,
 ) -> Result<Option<SelectedArray2DShape>, StorageError> {
     let n_intervals = mapping.nr_used_row_map as usize;
     if n_intervals == 0 {
@@ -3748,12 +3751,13 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
         corr_count,
         channel_start,
         channel_count,
-        row_major: matches!(
-            &destination,
-            SelectedArray2DCellsMut::RowChannelBool(_)
-                | SelectedArray2DCellsMut::RowChannelFloat32(_)
-                | SelectedArray2DCellsMut::RowChannelComplex32(_)
-        ),
+        row_major: widen_complex
+            || matches!(
+                &destination,
+                SelectedArray2DCellsMut::RowChannelBool(_)
+                    | SelectedArray2DCellsMut::RowChannelFloat32(_)
+                    | SelectedArray2DCellsMut::RowChannelComplex32(_)
+            ),
     };
     match (dt, destination) {
         (
@@ -3796,6 +3800,15 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
         ) => {
             values.resize(sample_count, Complex32::new(0.0, 0.0));
             fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
+        }
+        (CasacoreDataType::TpComplex, SelectedArray2DCellsMut::Complex64(values))
+            if widen_complex =>
+        {
+            values.resize(sample_count, Complex64::default());
+            fill_typed_selected_2d_rows(fill_plan, &mut session, values, |bytes, big| {
+                let value = decode_complex32_scalar(bytes, big);
+                Complex64::new(f64::from(value.re), f64::from(value.im))
+            })?;
         }
         (CasacoreDataType::TpDComplex, SelectedArray2DCellsMut::Complex64(values)) => {
             values.resize(sample_count, Complex64::new(0.0, 0.0));

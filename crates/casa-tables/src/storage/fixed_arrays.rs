@@ -14,6 +14,7 @@ impl CompositeStorage {
         metadata: &RetainedTableReadMetadata,
         column: &str,
         rows: &[usize],
+        widen_complex: bool,
     ) -> Result<Option<ArrayValue>, StorageError> {
         let table = &metadata.table_dat;
         let Some(entry) = table
@@ -55,7 +56,10 @@ impl CompositeStorage {
             &bound,
             &table.table_desc,
             bound_index,
-            rows,
+            tiled_stman::Packed2DSelection {
+                rows,
+                widen_complex,
+            },
         )
     }
 

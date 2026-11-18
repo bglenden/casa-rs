@@ -9,7 +9,7 @@
 //! returns the `int64` array.
 
 use casa_tables::{ColumnSchema, ColumnType, Table, TableOptions};
-use casa_types::{PrimitiveType, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 
 use super::state::{Fail, Open, State, no_table_specified};
 use super::values;
@@ -275,9 +275,16 @@ impl Open {
                 if let Some(block) = root
                     .table
                     .column_accessor(column)?
-                    .packed_2d_cells_uncached(&root_rows)?
+                    .packed_2d_cells_uncached_with_complex_promotion(&root_rows)?
                 {
-                    Ok(values::array(&block))
+                    if let ArrayValue::Complex64(output) = block {
+                        let shape = output.shape().to_vec();
+                        let (values, offset) = output.into_raw_vec_and_offset();
+                        debug_assert_eq!(offset, Some(0));
+                        Ok(CasaValue::Complexes { shape, values })
+                    } else {
+                        Ok(values::array(&block))
+                    }
                 } else {
                     values::stack_rows(&array_cells(&root.table, column, &root_rows)?)
                 }
