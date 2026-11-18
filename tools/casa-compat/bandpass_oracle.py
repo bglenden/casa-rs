@@ -17,8 +17,8 @@ from gaincal_oracle import relative_rms
 from record_casa_returns import make_cal_ms
 
 
-def source_data(path):
-    make_cal_ms(str(path), channels=12)
+def source_data(path, stokes='XX YY'):
+    make_cal_ms(str(path), channels=12, stokes=stokes)
     rng = np.random.default_rng(719)
     tool = table()
     tool.open(str(path), nomodify=False)
@@ -56,20 +56,21 @@ def gapped_data(source, target):
 
 
 def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,),
-            solint='inf', interval_count=None):
+            solint='inf', interval_count=None, parang=False):
     products, corrected, returns = [], [], []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
         copy_ms(source, ms)
         result = engine.bandpass(str(ms), str(output), field='0', refant='A0',
                                  smodel=list(s_model), minsnr=0., solnorm=normalize,
-                                 fillgaps=fillgaps, solint=solint)
+                                 fillgaps=fillgaps, solint=solint, parang=parang)
         if interval_count is not None:
             np.testing.assert_array_equal(result['solvestats']['expected'], [interval_count]*2)
         np.testing.assert_array_equal(result.pop('solve_tables'), [str(output)])
         returns.append(result)
         products.append(contents(output))
-        engine.applycal(str(ms), field='0', gaintable=[str(output)], flagbackup=False)
+        engine.applycal(str(ms), field='0', gaintable=[str(output)], flagbackup=False,
+                        parang=parang)
         corrected.append(contents(ms))
     np.testing.assert_equal(returns[1], returns[0])
     expected, actual = products
@@ -102,6 +103,8 @@ def model_cases(root, source, native):
         channel = np.arange(model.shape[1])[:, None]
         model[0] = 1.4 + .03*channel
         model[1] = 1.7 + .02*channel
+        times = tool.getcol('TIME')
+        model[[0, 1], 3, :] *= times != times.min()
         tool.putcol('MODEL_DATA', model)
     finally:
         tool.close()
@@ -119,6 +122,12 @@ def model_cases(root, source, native):
         reference = contents(folder/'casa.B')['CPARAM']
         no_model = contents(root/'standard'/'casa.B')['CPARAM']
         assert relative_rms(reference, no_model) > .08, label
+    linear = root/'full-linear.ms'
+    source_data(linear, stokes='XX XY YX YY')
+    folder = root/'parang-point'
+    folder.mkdir()
+    results[folder.name] = compare(folder, linear, native, False, s_model=(1.1, .24, .19, .15),
+                                   parang=True)
     return results
 
 

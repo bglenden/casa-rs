@@ -1027,8 +1027,8 @@ impl SolveAccumulator {
                 channelized: options.channelized,
                 retain_zero_model: options.gain_type.is_delay()
                     || options.gain_type == GainType::T
-                    || (!options.channelized
-                        && (samples.model.is_some() || point.norm_sqr() == 0.0)),
+                    || samples.model.is_some()
+                    || point.norm_sqr() == 0.0,
             }
             .observe(
                 samples,

@@ -128,6 +128,14 @@ pub enum GainSolveModelSource {
     FromMeasurementSet,
 }
 
+impl GainSolveModelSource {
+    /// A stored model or a polarized point must be rotated on the model
+    /// side of a diagonal Jones solve to respect the calibration order.
+    pub(crate) fn needs_model_rotation(self, stokes: [f32; 4]) -> bool {
+        self != Self::PointSource || stokes[1..].iter().any(|value| *value != 0.0)
+    }
+}
+
 /// Supported first-wave gain solution intervals.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveInterval {
@@ -441,8 +449,7 @@ pub(crate) fn solve_gain_rows(
     // before a diagonal gain is fitted.
     let rotate_model = request.parang
         && request.gain_type == GainType::G
-        && (request.model_source != GainSolveModelSource::PointSource
-            || request.smodel[1..].iter().any(|value| *value != 0.0));
+        && request.model_source.needs_model_rotation(request.smodel);
     let point_stokes = if request.model_source == GainSolveModelSource::PointSource {
         request.smodel
     } else {

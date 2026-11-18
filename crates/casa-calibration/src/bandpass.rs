@@ -290,13 +290,16 @@ pub(crate) fn solve_bandpass(
     mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
+    let rotate_model = request.parang
+        && request.band_type == BandpassType::B
+        && request.model_source.needs_model_rotation(request.smodel);
     let input_phase = crate::timing::Phase::start("bandpass_select_read_average");
     let context = prepare_calibration_solve(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
-        request.parang,
+        request.parang && !rotate_model,
         false,
         crate::solve::grouping::PriorCalibrationMode::Data,
     )?;
@@ -308,7 +311,7 @@ pub(crate) fn solve_bandpass(
             gain_type: GainType::G,
             model_source: request.model_source,
             point_stokes: request.smodel,
-            rotate_model: false,
+            rotate_model,
             solve_interval: request.solve_interval,
             combine: GainSolveCombine {
                 scans: request.combine.scans,
