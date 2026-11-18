@@ -59,8 +59,7 @@ def test_invalid_inputs_do_not_change_existing_list(tmp_path):
         else:
             assert cl.concatenate(value) is case['result']
         assert labels(cl) == ['existing']
-    with pytest.raises(NotImplementedError, match='#1053'):
-        cl.concatenate({'nelements': 0})
+    assert cl.concatenate({'nelements': 0}) is False
     assert labels(cl) == ['existing']
     for case in ORACLE['pending']:
         assert case['error']['type'] == 'SystemError'

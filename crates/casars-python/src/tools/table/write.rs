@@ -252,6 +252,7 @@ pub(super) fn write_root(
             Target::RowProxy => "TableRowProxy: the given TableRow is not writable".into(),
         });
     }
+    super::state::publish_component_keywords(&root.name)?;
     let named_memory = root.table.is_named_memory_manager();
     if root.table.is_memory() && !named_memory {
         change(&mut root.table, row_map)?;
@@ -356,6 +357,17 @@ pub(super) fn write_root(
     saved?;
     reloaded?;
     released?;
+    if matches!(
+        target,
+        Target::TableKeywords | Target::ColumnKeywords | Target::Info
+    ) {
+        // casacore shares the keyword object across its in-process handles.
+        // Native component caches reload only after a completed metadata write.
+        root.seen_keyword_epoch = root
+            .keyword_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::Release)
+            .wrapping_add(1);
+    }
     Ok(CasaValue::Bool(true))
 }
 

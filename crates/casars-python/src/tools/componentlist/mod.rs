@@ -3,13 +3,10 @@
 //! [`casa_components::ComponentList`].
 //!
 //! The class declares every method of CASA's installed binding with CASA's
-//! names, parameter order and effective defaults ([`surface`]). The methods
-//! CASA's simulation tasks call are implemented (`open`, `addcomponent`,
-//! `rename`, `close`, `done`, `length`, `torecord`, `getspectrum`,
-//! `getrefdir`), with the accessors `getcomponent`, `getfluxvalue`,
-//! `getfluxunit`, `getlabel`, `shapetype`, `spectrumtype`, table keyword
-//! reads and writes, and CASA's `iscomponentlist` placeholder. The surface records
-//! the other implemented methods and refusals naming #1053.
+//! names, parameter order and effective defaults ([`surface`]). Record imports,
+//! sorting, summaries, table persistence, selection and setters share the same
+//! component model. Methods CASA itself leaves as placeholders retain those
+//! outcomes. Unsafe input refusals name #1252 or their narrower issue.
 //!
 //! CASA's outcomes are kept ([`ops`] for the table, `add` for
 //! `addcomponent`): what CASA raises is a `RuntimeError` with CASA's
@@ -26,8 +23,13 @@
 mod add;
 mod convertrefdir;
 mod keywords;
+pub(crate) use keywords::{
+    clear_locks as clear_keyword_locks, flush_pending as flush_pending_keywords,
+};
 mod ops;
 mod placeholder;
+mod record_methods;
+mod records;
 mod replace_args;
 mod selection;
 mod setflux;
@@ -35,6 +37,7 @@ mod setrefdir_args;
 mod setshape;
 mod setspectrum;
 mod setstokesspectrum;
+mod summary;
 pub(crate) mod surface;
 
 use std::ffi::CString;
@@ -50,7 +53,7 @@ use pyo3::types::{PyBool, PyBytes, PyDict, PyInt, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, DoubleList, Variant};
-use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use crate::tools::{LogLine, emit};
 use add::AddComponent;
 use ops::State;
 
@@ -192,12 +195,6 @@ impl Drop for PyComponentList {
     }
 }
 
-/// A method casa-rs does not implement yet, refused naming #1053, which
-/// classifies them.
-fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented_in("componentlist", method, 1053)
-}
-
 #[pymethods]
 #[allow(unused_variables)]
 impl PyComponentList {
@@ -206,16 +203,6 @@ impl PyComponentList {
         Self {
             state: Mutex::new(State::default()),
         }
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (thecomponent, iknow = None), text_signature = "($self, thecomponent, iknow=True)")]
-    fn add(
-        &self,
-        thecomponent: &Bound<'_, PyAny>,
-        iknow: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("add")
     }
 
     /// Add a component, built by CASA's setters from the arguments.
@@ -350,14 +337,17 @@ impl PyComponentList {
         #[pyo3(from_py_with = supplied)] which: Option<Bound<'_, PyAny>>,
         #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let source = match list {
-            Some(value) if value.is_instance_of::<PyDict>() => {
-                return Err(PyNotImplementedError::new_err(
-                    "componentlist.concatenate record input is not yet implemented (#1053)",
-                ));
-            }
-            Some(value) => value.extract::<Variant>()?,
-            None => Variant::Empty,
+        let record = list
+            .as_ref()
+            .filter(|v| v.is_instance_of::<PyDict>())
+            .map(|v| records::argument(py, Some(v), "list"))
+            .transpose()?;
+        let source = if record.is_some() {
+            Variant::Empty
+        } else {
+            list.map(|v| v.extract::<Variant>())
+                .transpose()?
+                .unwrap_or(Variant::Empty)
         };
         let (indices, pending) = match which {
             Some(value) => selection::indices(&value)?,
@@ -369,9 +359,12 @@ impl PyComponentList {
             ));
         }
         let result = self.call(py, move |state, lines| {
-            state
-                .concatenate(&source, &indices, pending, lines)
-                .map(CasaValue::Bool)
+            if let Some(record) = record {
+                state.concatenate_record(&record, &indices, pending, lines)
+            } else {
+                state.concatenate(&source, &indices, pending, lines)
+            }
+            .map(CasaValue::Bool)
         })?;
         if pending {
             return Err(PySystemError::new_err(
@@ -547,10 +540,13 @@ impl PyComponentList {
                 )));
             }
         }
-        let result = self.call(py, |_, lines| {
-            lines.push(LogLine::warning("convertshape not implemented yet"));
-            Ok(CasaValue::Bool(false))
-        })?;
+        // CASA's placeholder never reads state or quantities.
+        emit(
+            py,
+            LOGGER,
+            &[LogLine::warning("convertshape not implemented yet")],
+        )?;
+        let result = CasaValue::Bool(false).into_python(py)?;
         if system_error {
             return Err(PySystemError::new_err(
                 "<built-in function componentlist_convertshape> returned a result with an exception set",
@@ -613,12 +609,6 @@ impl PyComponentList {
             ));
         }
         Ok(result)
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (record = None), text_signature = "($self, record={})")]
-    fn fromrecord(&self, record: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("fromrecord")
     }
 
     /// Component `which`'s record.
@@ -715,7 +705,7 @@ impl PyComponentList {
     ) -> PyResult<Py<PyAny>> {
         let keyword = keywords::argument(py, keyword.as_ref())?;
         self.call(py, move |state, _| {
-            keywords::get(state.keyword_table_path()?, &keyword)
+            keywords::get(state.keyword_table()?, &keyword)
         })
     }
 
@@ -800,9 +790,7 @@ impl PyComponentList {
     /// Component `which`'s spectral model, as its `toRecord` writes it.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
     fn getspectrum(&self, py: Python<'_>, which: i64) -> PyResult<Py<PyAny>> {
-        self.call(py, move |state, _| {
-            ops::record(state.unchecked(which)?.spectrum().to_record())
-        })
+        self.call(py, move |state, _| state.getspectrum(which))
     }
 
     /// Whether the attached table has the named top-level keyword.
@@ -814,7 +802,7 @@ impl PyComponentList {
     ) -> PyResult<Py<PyAny>> {
         let keyword = keywords::argument(py, keyword.as_ref())?;
         self.call(py, move |state, _| {
-            keywords::has(state.keyword_table_path()?, &keyword)
+            keywords::has(state.keyword_table()?, &keyword)
         })
     }
 
@@ -915,7 +903,7 @@ impl PyComponentList {
         let name = keywords::argument(py, keyword.as_ref())?;
         let value = crate::tools::table::component_keyword_value(py, value)?;
         self.call(py, move |state, _| {
-            keywords::put(state.keyword_table_path()?, &name, value)?;
+            keywords::put(state.keyword_table()?, &name, value)?;
             Ok(CasaValue::Bool(true))
         })?;
         Ok(py.None())
@@ -1374,7 +1362,7 @@ impl PyComponentList {
         };
         let frame = DirectionRef::from_str(name).map_err(|_| {
             PyNotImplementedError::new_err(format!(
-                "direction reference {name} is not supported by the shared measure model (#1053)"
+                "direction reference {name} is not supported by the shared measure model (#1252)"
             ))
         })?;
         let result = self.call(py, move |state, _| {
@@ -1445,16 +1433,6 @@ impl PyComponentList {
         Ok(result)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (criteria = None, log = None), text_signature = "($self, criteria='Flux', log=True)")]
-    fn sort(
-        &self,
-        criteria: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("sort")
-    }
-
     /// Component `which`'s spectral-model name (`Constant`, `Spectral
     /// Index`, `Tabular Spectrum`, `Power Logarithmic Polynomial`).
     #[pyo3(signature = (which), text_signature = "($self, which)")]
@@ -1465,12 +1443,6 @@ impl PyComponentList {
                 component.spectrum().spectral_type().casa_name().to_string(),
             ))
         })
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (which = None), text_signature = "($self, which=-1)")]
-    fn summarize(&self, which: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("summarize")
     }
 
     /// The list's record: `nelements` and each component's as

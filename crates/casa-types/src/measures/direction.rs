@@ -120,8 +120,7 @@ const MJD_OFFSET: f64 = 2_400_000.5;
 
 /// Celestial reference frame types for direction measures.
 ///
-/// Corresponds to a subset of C++ `MDirection::Types`; the planet-based
-/// frames are not represented.
+/// Corresponds to C++ `MDirection::Types`, including dynamical body labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DirectionRef {
     /// Mean equator/equinox at J2000.0 (dynamical).
@@ -169,6 +168,28 @@ pub enum DirectionRef {
     /// Topocentric apparent right ascension and declination. For a sky
     /// direction, which has no distance, it equals APP, as in casacore.
     TOPO,
+    /// CASA dynamical direction label MERCURY.
+    MERCURY,
+    /// CASA dynamical direction label VENUS.
+    VENUS,
+    /// CASA dynamical direction label MARS.
+    MARS,
+    /// CASA dynamical direction label JUPITER.
+    JUPITER,
+    /// CASA dynamical direction label SATURN.
+    SATURN,
+    /// CASA dynamical direction label URANUS.
+    URANUS,
+    /// CASA dynamical direction label NEPTUNE.
+    NEPTUNE,
+    /// CASA dynamical direction label PLUTO.
+    PLUTO,
+    /// CASA dynamical direction label SUN.
+    SUN,
+    /// CASA dynamical direction label MOON.
+    MOON,
+    /// CASA dynamical direction label COMET.
+    COMET,
 }
 
 /// Total number of DirectionRef variants.
@@ -251,12 +272,23 @@ impl DirectionRef {
             Self::ITRF => 19,
             Self::TOPO => 20,
             Self::ICRS => 21,
+            Self::MERCURY => 32,
+            Self::VENUS => 33,
+            Self::MARS => 34,
+            Self::JUPITER => 35,
+            Self::SATURN => 36,
+            Self::URANUS => 37,
+            Self::NEPTUNE => 38,
+            Self::PLUTO => 39,
+            Self::SUN => 40,
+            Self::MOON => 41,
+            Self::COMET => 42,
         }
     }
 
     /// Converts a C++ casacore integer code to the corresponding reference type.
     ///
-    /// Returns `None` for unrecognised codes and planet-based frames.
+    /// Returns `None` for unrecognised codes.
     pub fn from_casacore_code(code: i32) -> Option<Self> {
         match code {
             0 => Some(Self::J2000),
@@ -281,11 +313,24 @@ impl DirectionRef {
             19 => Some(Self::ITRF),
             20 => Some(Self::TOPO),
             21 => Some(Self::ICRS),
+            32 => Some(Self::MERCURY),
+            33 => Some(Self::VENUS),
+            34 => Some(Self::MARS),
+            35 => Some(Self::JUPITER),
+            36 => Some(Self::SATURN),
+            37 => Some(Self::URANUS),
+            38 => Some(Self::NEPTUNE),
+            39 => Some(Self::PLUTO),
+            40 => Some(Self::SUN),
+            41 => Some(Self::MOON),
+            42 => Some(Self::COMET),
+
             _ => None,
         }
     }
 
-    /// All reference types in canonical order.
+    /// Coordinate-system references in canonical order. Dynamical source labels
+    /// use the ephemeris path rather than this rotation graph.
     pub const ALL: [DirectionRef; NUM_DIR_REFS] = [
         Self::J2000,
         Self::JMEAN,
@@ -336,6 +381,17 @@ impl DirectionRef {
             Self::AZELSWGEO => "AZELSWGEO",
             Self::ITRF => "ITRF",
             Self::TOPO => "TOPO",
+            Self::MERCURY => "MERCURY",
+            Self::VENUS => "VENUS",
+            Self::MARS => "MARS",
+            Self::JUPITER => "JUPITER",
+            Self::SATURN => "SATURN",
+            Self::URANUS => "URANUS",
+            Self::NEPTUNE => "NEPTUNE",
+            Self::PLUTO => "PLUTO",
+            Self::SUN => "SUN",
+            Self::MOON => "MOON",
+            Self::COMET => "COMET",
         }
     }
 }
@@ -369,6 +425,17 @@ impl FromStr for DirectionRef {
             ("AZELSWGEO", Self::AZELSWGEO),
             ("ITRF", Self::ITRF),
             ("TOPO", Self::TOPO),
+            ("MERCURY", Self::MERCURY),
+            ("VENUS", Self::VENUS),
+            ("MARS", Self::MARS),
+            ("JUPITER", Self::JUPITER),
+            ("SATURN", Self::SATURN),
+            ("URANUS", Self::URANUS),
+            ("NEPTUNE", Self::NEPTUNE),
+            ("PLUTO", Self::PLUTO),
+            ("SUN", Self::SUN),
+            ("MOON", Self::MOON),
+            ("COMET", Self::COMET),
         ];
         references
             .into_iter()
@@ -527,6 +594,19 @@ impl MDirection {
     ) -> Result<MDirection, MeasureError> {
         if self.refer == target {
             return Ok(self.clone());
+        }
+        if self.refer.casacore_code() >= 32 {
+            if self.refer == DirectionRef::COMET {
+                return Err(MeasureError::MissingFrameData { what: "comet" });
+            }
+            return Self::from_source_name(self.refer.as_str(), frame)?.convert_to(target, frame);
+        }
+        if target.casacore_code() >= 32 {
+            // MCDirection routes a dynamical output through J2000 and keeps
+            // the requested label; it does not resolve that output body.
+            let mut converted = self.convert_to(DirectionRef::J2000, frame)?;
+            converted.refer = target;
+            return Ok(converted);
         }
         let path = find_path(self.refer, target)?;
         let ctx = ConvCtx::new();
@@ -1586,6 +1666,7 @@ fn dir_ref_index(r: DirectionRef) -> usize {
         DirectionRef::B1950Vla => 19,
         DirectionRef::BMEAN => 20,
         DirectionRef::BTRUE => 21,
+        _ => unreachable!("dynamical references resolve before rotation routing"),
     }
 }
 
@@ -2551,10 +2632,19 @@ mod tests {
     }
 
     #[test]
-    fn casacore_code_unsupported() {
+    fn casacore_codes_include_dynamical_labels_and_reject_gaps() {
         assert_eq!(DirectionRef::from_casacore_code(-1), None);
         assert_eq!(DirectionRef::from_casacore_code(22), None);
-        assert_eq!(DirectionRef::from_casacore_code(32), None);
+        // MDirection.h defines dynamical labels at codes 32 through 42.
+        assert_eq!(
+            DirectionRef::from_casacore_code(32),
+            Some(DirectionRef::MERCURY)
+        );
+        assert_eq!(
+            DirectionRef::from_casacore_code(42),
+            Some(DirectionRef::COMET)
+        );
+        assert_eq!(DirectionRef::from_casacore_code(43), None);
     }
 
     #[test]

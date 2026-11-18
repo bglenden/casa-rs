@@ -310,6 +310,8 @@ impl Open {
     ) -> Result<RootOpen, Fail> {
         let lock = LockSettings::from_request(request)?;
         let path = Path::new(name);
+        crate::tools::componentlist::flush_pending_keywords(path)
+            .map_err(|e| Fail::Runtime(e.to_string()))?;
         if !path.exists() {
             return Err(Fail::Runtime(format!("Table {name} does not exist")));
         }
@@ -419,9 +421,16 @@ impl State {
     }
 }
 
+/// Publish only the backing table before a call that actually needs its bytes.
+pub(super) fn publish_component_keywords(path: &Path) -> Result<(), Fail> {
+    crate::tools::componentlist::flush_pending_keywords(path)
+        .map_err(|e| Fail::Runtime(e.to_string()))
+}
+
 /// Synchronizes `root`'s read lock and refreshes any concurrent in-process
 /// component-list keyword updates.
 pub(super) fn synchronize_root(root: &mut RootOpen) -> Result<(), Fail> {
+    publish_component_keywords(&root.name)?;
     if root.lock.reads_lock() {
         root.table.lock(LockType::Read, 0)?;
     }
@@ -472,6 +481,7 @@ impl State {
         } else {
             LockType::Read
         };
+        publish_component_keywords(&open.root_name)?;
         Ok(open.root().table.lock(kind, nattempts)?)
     }
 

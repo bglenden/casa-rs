@@ -81,6 +81,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("tclean", "casatasks"),
     ("tsdimaging", "casatasks"),
     ("uvsub", "casatasks"),
+    ("ft", "casatasks"),
 )
 
 PROBE_TIMEOUT_SECONDS = 120

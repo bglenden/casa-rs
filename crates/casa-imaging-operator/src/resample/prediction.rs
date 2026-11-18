@@ -398,10 +398,28 @@ impl SpectralResampler {
         scratch: &mut PredictionScratch,
         out: &mut [Complex32],
     ) -> Result<(), OperatorError> {
+        self.predict_row_with_coverage(operator, backend, model, row, scratch, (out, None))
+    }
+
+    /// Predict a row and optionally mark the samples the gridder assigned.
+    ///
+    /// This distinguishes a sampled zero from an untouched cell in CASA's
+    /// legacy imager, which degrids into the existing model visibility.
+    /// # Errors
+    /// The same errors as [`Self::predict_row`] and a mismatched coverage slice.
+    pub fn predict_row_with_coverage(
+        &self,
+        operator: &MeasurementOperator,
+        backend: &mut dyn GridBackend,
+        model: &PreparedModelGrids,
+        row: &NativeRow<'_>,
+        scratch: &mut PredictionScratch,
+        output: (&mut [Complex32], Option<&mut [bool]>),
+    ) -> Result<(), OperatorError> {
         scratch.begin(operator.polarization().correlations().len());
         let placed = self.place_prediction(operator, model, row, scratch)?;
         scratch.apply(backend, operator.cf(), model)?;
-        self.finish_prediction(operator, row, placed, scratch, out)
+        self.finish_prediction_with_coverage(operator, row, placed, scratch, output)
     }
 
     /// The axis and order by which `row`'s prediction interpolates
@@ -789,6 +807,17 @@ impl SpectralResampler {
         scratch: &mut PredictionScratch,
         out: &mut [Complex32],
     ) -> Result<(), OperatorError> {
+        self.finish_prediction_with_coverage(operator, row, placed, scratch, (out, None))
+    }
+
+    fn finish_prediction_with_coverage(
+        &self,
+        operator: &MeasurementOperator,
+        row: &NativeRow<'_>,
+        placed: PlacedRow,
+        scratch: &mut PredictionScratch,
+        (out, coverage): (&mut [Complex32], Option<&mut [bool]>),
+    ) -> Result<(), OperatorError> {
         if out.len() != row.values.len() {
             return Err(OperatorError::NativeRow {
                 reason: "the prediction holds one value per selected sample",
@@ -797,6 +826,25 @@ impl SpectralResampler {
         let npol = operator.polarization().correlations().len();
         let first = scratch.terms.len();
         self.native_terms(row, npol, placed, scratch, 0);
+        if let Some(coverage) = coverage {
+            if coverage.len() != out.len() {
+                return Err(OperatorError::NativeRow {
+                    reason: "coverage holds one bit per selected sample",
+                });
+            }
+            let polarization = operator.polarization().pol_map();
+            for (term, covered) in scratch.terms[first..]
+                .iter()
+                .zip(coverage.chunks_exact_mut(npol))
+            {
+                let has_sample = term.points.iter().any(|&point| point != NO_CELL);
+                for (index, value) in covered.iter_mut().enumerate() {
+                    *value = has_sample
+                        && polarization[index].is_some()
+                        && term.flags & (1 << index) == 0;
+                }
+            }
+        }
         interpolate_terms(
             &scratch.predicted,
             npol,

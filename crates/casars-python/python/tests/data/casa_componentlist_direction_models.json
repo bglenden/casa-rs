@@ -1,0 +1,731 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "frame": "J2000",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "J2000",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "B1950_VLA",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "B1950_VLA",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "B1950_VLA",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.1630558830251519,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3442768575907977,
+          "unit": "rad"
+        },
+        "refer": "B1950_VLA",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "BMEAN",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "BMEAN",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "BMEAN",
+      "method": "convertrefdir",
+      "error": "Missing information in Frame specified for conversion",
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "BTRUE",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "BTRUE",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "BTRUE",
+      "method": "convertrefdir",
+      "error": "Missing information in Frame specified for conversion",
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "MERCURY",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "MERCURY",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "MERCURY",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "MERCURY",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "VENUS",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "VENUS",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "VENUS",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "VENUS",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "MARS",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "MARS",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "MARS",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "MARS",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "JUPITER",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "JUPITER",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "JUPITER",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "JUPITER",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "SATURN",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "SATURN",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "SATURN",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "SATURN",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "URANUS",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "URANUS",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "URANUS",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "URANUS",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "NEPTUNE",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "NEPTUNE",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "NEPTUNE",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "NEPTUNE",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "PLUTO",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "PLUTO",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "PLUTO",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "PLUTO",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "SUN",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "SUN",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "SUN",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "SUN",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "MOON",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "MOON",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "MOON",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "MOON",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "COMET",
+      "method": "setrefdirframe",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "COMET",
+        "type": "direction"
+      }
+    },
+    {
+      "frame": "COMET",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "COMET",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "SUN",
+      "frame": "J2000",
+      "method": "convertrefdir",
+      "error": "No MeasFrame epoch specified for conversion of Direction",
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "SUN",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "SUN",
+      "frame": "SUN",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "SUN",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "SUN",
+      "frame": "SUN",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "SUN",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "SUN",
+      "frame": "MARS",
+      "method": "convertrefdir",
+      "error": "No MeasFrame epoch specified for conversion of Direction",
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "SUN",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "MARS",
+      "frame": "J2000",
+      "method": "convertrefdir",
+      "error": "No MeasFrame epoch specified for conversion of Direction",
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "MARS",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "MARS",
+      "frame": "MARS",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "MARS",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "MARS",
+      "frame": "SUN",
+      "method": "convertrefdir",
+      "error": "No MeasFrame epoch specified for conversion of Direction",
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "MARS",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "MARS",
+      "frame": "MARS",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "MARS",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "COMET",
+      "frame": "J2000",
+      "method": "convertrefdir",
+      "error": "No MeasFrame comet specified for conversion of Direction",
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "COMET",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "COMET",
+      "frame": "COMET",
+      "method": "convertrefdir",
+      "result": true,
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "COMET",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "COMET",
+      "frame": "SUN",
+      "method": "convertrefdir",
+      "error": "No MeasFrame comet specified for conversion of Direction",
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "COMET",
+        "type": "direction"
+      }
+    },
+    {
+      "source": "COMET",
+      "frame": "MARS",
+      "method": "convertrefdir",
+      "error": "No MeasFrame comet specified for conversion of Direction",
+      "after": {
+        "m0": {
+          "value": 0.17453292519943295,
+          "unit": "rad"
+        },
+        "m1": {
+          "value": 0.3490658503988659,
+          "unit": "rad"
+        },
+        "refer": "COMET",
+        "type": "direction"
+      }
+    }
+  ]
+}

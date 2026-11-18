@@ -222,5 +222,13 @@ fn casa_types_measures_round_trip() {
         refer: "SUN",
         value: MeasureValue::Direction([0.0, 0.0, 1.0]),
     };
-    assert!(sun.to_casa().unwrap_err().contains("SUN direction frame"));
+    // CASA MeasureHolder retains a planetary label without resolving it.
+    // The shared direction model now represents that label as well.
+    let converted = sun.to_casa().unwrap();
+    let CasaMeasure::Direction(direction) = &converted else {
+        panic!("a direction");
+    };
+    assert_eq!(direction.refer(), DirectionRef::SUN);
+    assert_eq!(direction.cosines(), [0.0, 0.0, 1.0]);
+    assert_eq!(Measure::from_casa(&converted), sun);
 }

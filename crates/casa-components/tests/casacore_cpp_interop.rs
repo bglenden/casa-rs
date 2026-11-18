@@ -71,3 +71,50 @@ fn casacore_reads_the_lists_casa_rs_writes() {
         cpp.nrow, cpp.ncol
     );
 }
+
+#[test]
+fn casacore_reads_dynamical_direction_labels_without_a_frame() {
+    use casa_components::{ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel};
+    use casa_types::measures::direction::DirectionRef;
+    use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+
+    if !casacore_oracle_available() {
+        eprintln!("skipped: casacore C++ is not available (pkg-config casacore)");
+        return;
+    }
+    // MDirection.h's dynamical labels. These are stored directions; reading
+    // their coordinates does not resolve a body or require an epoch.
+    let labels = [
+        "MERCURY", "VENUS", "MARS", "JUPITER", "SATURN", "URANUS", "NEPTUNE", "PLUTO", "SUN",
+        "MOON", "COMET",
+    ];
+    let mut list = ComponentList::new();
+    for name in labels {
+        list.push(SkyComponent::new(
+            Flux::stokes_jy(1.0, 0.0, 0.0, 0.0),
+            ComponentShape::point(MDirection::from_angles(
+                10_f64.to_radians(),
+                20_f64.to_radians(),
+                name.parse::<DirectionRef>().unwrap(),
+            )),
+            SpectralModel::new(
+                MFrequency::new(1e9, FrequencyRef::LSRK),
+                SpectralKind::Constant,
+            ),
+        ));
+    }
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("models.cl");
+    list.write_table(&path).unwrap();
+    let (values, frames) = TableMeasuresOracle::read_directions(
+        path.to_str().unwrap(),
+        "Reference_Direction",
+        labels.len(),
+    )
+    .unwrap();
+    assert_eq!(frames, labels);
+    for angles in values.chunks_exact(2) {
+        assert!((angles[0] - 10_f64.to_radians()).abs() < 1e-15);
+        assert!((angles[1] - 20_f64.to_radians()).abs() < 1e-15);
+    }
+}

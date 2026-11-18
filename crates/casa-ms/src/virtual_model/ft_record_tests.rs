@@ -14,8 +14,8 @@ use super::*;
 /// `name` (`casa_mfs_source`, `casa_mtmfs_source`).
 fn casa_container(name: &str) -> RecordValue {
     let root = tempfile::tempdir().expect("root");
-    let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../casa-ms/tests/fixtures/virtual_model_casa.tgz");
+    let archive =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/virtual_model_casa.tgz");
     tar::Archive::new(flate2::read::GzDecoder::new(
         std::fs::File::open(archive).expect("fixture"),
     ))

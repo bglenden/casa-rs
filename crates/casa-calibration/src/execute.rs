@@ -3336,7 +3336,7 @@ fn feed_row_distance(row: &FeedAngleRow, time_seconds: f64) -> f64 {
 }
 
 pub(crate) fn load_parallactic_angle_state(ms: &MeasurementSet) -> MsResult<ParallacticAngleState> {
-    let engine = MsCalEngine::new(ms)?.with_field_ephemerides(ms)?;
+    let engine = MsCalEngine::for_calibration(ms)?;
     let mut feed_rows = HashMap::<(i32, i32), Vec<FeedAngleRow>>::new();
     if let Ok(feed) = ms.feed() {
         for row_index in 0..feed.row_count() {
@@ -4134,7 +4134,7 @@ fn geometry_engine_for_plan(
         return Ok(None);
     }
     let ms_path = display_ms_path(ms);
-    MsCalEngine::new(ms)
+    MsCalEngine::for_calibration(ms)
         .map(Arc::new)
         .map(Some)
         .map_err(|source| ApplyExecutionError::MutateMeasurementSet {

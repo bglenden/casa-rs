@@ -1,0 +1,402 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! CASA ft task selection, prediction and provenance.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use casa_components::ComponentList;
+use casa_ms::virtual_model::{put_virtual_model_holding, virtual_model_target};
+use casa_ms::{
+    MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
+};
+use casa_provider_contracts::CasaValue;
+use casa_tables::TableWriteLock;
+use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+use casa_types::quanta::Quantity;
+
+use crate::ft::image::{ImageModel, TaylorTerm, prepare_image, reference_frequency};
+use crate::ft::{model_entry, write_model_scratch};
+use crate::model_columns::initialize_model_column;
+use crate::session::resolve_casa_calibration_selection;
+
+pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let selection = selection(task)?;
+    let scratch = task.flag("usescratch")?;
+    if !scratch
+        && [
+            &selection.timerange,
+            &selection.uvrange,
+            &selection.antenna,
+            &selection.scan,
+            &selection.observation,
+            &selection.intent,
+        ]
+        .into_iter()
+        .any(Option::is_some)
+    {
+        return Err(TaskFailure::validation(
+            "If any of the selection parameters timerange, uvrange, antenna, scan, observation or intent are not the default ones then usescratch must be set to True",
+        )
+        .at("usescratch"));
+    }
+    let path = task.input_path("vis")?;
+    let mut ms = OpenedMs::open(&path, false)?;
+    let mut parts = super::multi_ms::partition_paths(&path)?
+        .unwrap_or_default()
+        .iter()
+        .map(|path| OpenedMs::open(path, scratch))
+        .collect::<Result<Vec<_>, _>>()?;
+    if scratch && parts.is_empty() {
+        ms = ms.initialize()?;
+    }
+    let selected =
+        resolve_casa_calibration_selection(&ms.measurement_set, &selection).map_err(execution)?;
+    let request = read_model(task, scratch)?;
+    if !selected.selected_rows.is_empty() && request.images_are_tables(task) {
+        if parts.is_empty() || !scratch {
+            let models = read_models(task, &ms.measurement_set, &selected, &request)?;
+            if scratch {
+                write_scratch(&mut ms, &selected, &request, models)?;
+            } else {
+                write_virtual(&mut ms, &mut parts, &request, models)?;
+            }
+        } else {
+            write_partition_scratch(task, parts.as_mut_slice(), selected, &request)?;
+        }
+    }
+    for part in parts {
+        part.release()?;
+    }
+    ms.release()?;
+    super::history::record_task(task, &path);
+    TaskSuccess::new(CasaValue::None, &())
+}
+
+struct OpenedMs {
+    measurement_set: MeasurementSet,
+    lock: TableWriteLock,
+}
+
+impl OpenedMs {
+    fn open(path: &Path, scratch: bool) -> Result<Self, TaskFailure> {
+        let lock = TableWriteLock::acquire_to_reread(path, 0).map_err(execution)?;
+        let measurement_set = MeasurementSet::open(path).map_err(execution)?;
+        let opened = Self {
+            measurement_set,
+            lock,
+        };
+        if scratch {
+            opened.initialize()
+        } else {
+            Ok(opened)
+        }
+    }
+
+    fn initialize(mut self) -> Result<Self, TaskFailure> {
+        self.lock =
+            initialize_model_column(&mut self.measurement_set, self.lock).map_err(execution)?;
+        Ok(self)
+    }
+
+    fn release(self) -> Result<(), TaskFailure> {
+        drop(self.measurement_set);
+        self.lock.release().map_err(execution)
+    }
+}
+
+struct ModelRequest {
+    images: Vec<String>,
+    component: String,
+    scratch: bool,
+    incremental: bool,
+    terms: i64,
+}
+
+impl ModelRequest {
+    fn images_are_tables(&self, task: &TaskInvocation<'_>) -> bool {
+        if self
+            .images
+            .iter()
+            .filter(|name| !name.is_empty())
+            .any(|name| !task.workspace().join(name).join("table.dat").is_file())
+        {
+            // The legacy imager's ft returns false for an existing FITS
+            // file or another path that cannot name a CASA image table.
+            tracing::warn!("ft requires a CASA image table");
+            return false;
+        }
+        true
+    }
+}
+
+fn read_model(task: &TaskInvocation<'_>, scratch: bool) -> Result<ModelRequest, TaskFailure> {
+    let models = task.texts("model").map_err(|_| {
+        TaskFailure::validation(
+            "The model image must be a string or a list of strings (or '' or [])",
+        )
+        .at("model")
+    })?;
+    let component = task.text("complist")?.unwrap_or_default();
+    if (models.is_empty() || models == [""]) && component.is_empty() {
+        return Err(TaskFailure::validation(
+            "Please specify a model image or component list to ft",
+        )
+        .at("model"));
+    }
+    for model in &models {
+        if !model.is_empty() && !task.workspace().join(model).exists() {
+            return Err(
+                TaskFailure::validation(format!("Model image {model} cannot be found")).at("model"),
+            );
+        }
+    }
+    if !component.is_empty() && !task.workspace().join(&component).exists() {
+        return Err(
+            TaskFailure::validation(format!("Componentlist {component} cannot be found"))
+                .at("complist"),
+        );
+    }
+    let terms = task.integer("nterms")?;
+    validate_terms(terms, models.len())?;
+    Ok(ModelRequest {
+        images: models,
+        component,
+        scratch,
+        incremental: task.flag("incremental")?,
+        terms,
+    })
+}
+
+type Models = (Vec<VirtualModelEntry>, Vec<ImageModel>);
+
+fn read_models(
+    task: &TaskInvocation<'_>,
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    request: &ModelRequest,
+) -> Result<Models, TaskFailure> {
+    let mut entries = Vec::new();
+    if !request.component.is_empty() && !request.incremental {
+        let list = ComponentList::read_table(task.workspace().join(&request.component))
+            .map_err(execution)?;
+        let container = list.to_record().map_err(execution)?;
+        entries.push(
+            model_entry(ms, selected, VirtualModelKind::ComponentList, container)
+                .map_err(execution)?,
+        );
+    }
+    let images = image_models(task, ms, selected, request, entries.is_empty())?;
+    Ok((entries, images))
+}
+
+fn write_scratch(
+    ms: &mut OpenedMs,
+    selected: &ResolvedMsSelection,
+    request: &ModelRequest,
+    (mut entries, images): Models,
+) -> Result<(), TaskFailure> {
+    entries.extend(images.iter().map(|image| image.entry.clone()));
+    write_model_scratch(
+        &mut ms.measurement_set,
+        selected,
+        &entries,
+        request.incremental,
+        &mut ms.lock,
+    )
+    .map_err(execution)
+}
+
+fn write_partition_scratch(
+    task: &TaskInvocation<'_>,
+    parts: &mut [OpenedMs],
+    mut selected: ResolvedMsSelection,
+    request: &ModelRequest,
+) -> Result<(), TaskFailure> {
+    let rows = std::mem::take(&mut selected.selected_rows);
+    let mut rows = rows.into_iter().peekable();
+    let mut start = 0;
+    for part in parts {
+        let end = start + part.measurement_set.main_table().row_count();
+        while let Some(row) = rows.next_if(|row| row.row_index < end) {
+            selected
+                .selected_rows
+                .push(casa_ms::ResolvedMsSelectionRow {
+                    row_index: row.row_index - start,
+                    ..row
+                });
+        }
+        if !selected.selected_rows.is_empty() {
+            let models = read_models(task, &part.measurement_set, &selected, request)?;
+            write_scratch(part, &selected, request, models)?;
+            selected.selected_rows.clear();
+        }
+        start = end;
+    }
+    if rows.next().is_some() {
+        return Err(TaskFailure::execution(
+            "selected Multi-MS row is outside its partitions",
+        ));
+    }
+    Ok(())
+}
+
+fn write_virtual(
+    root: &mut OpenedMs,
+    parts: &mut [OpenedMs],
+    request: &ModelRequest,
+    (entries, mut images): Models,
+) -> Result<(), TaskFailure> {
+    let Some(first) = entries
+        .first()
+        .or_else(|| images.first().map(|image| &image.entry))
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let is_multi_ms = !parts.is_empty();
+    let mut written = BTreeSet::new();
+    for (partition, target) in std::iter::once(root).chain(parts).enumerate() {
+        let path = virtual_model_target(&target.measurement_set, &first).map_err(execution)?;
+        if partition == 0 && is_multi_ms && target.measurement_set.main_table().path() == Some(path)
+        {
+            // Concatenated MAIN has no independently writable keyword set.
+            continue;
+        }
+        if !written.insert(path.canonicalize().map_err(execution)?) {
+            continue;
+        }
+        // CASA appends repeated component recipes when no image is written.
+        for entry in &entries {
+            put_virtual_model_holding(&mut target.measurement_set, entry, true, &mut target.lock)
+                .map_err(execution)?;
+        }
+        if partition == 0 {
+            put_image_models(target, &mut images, request.incremental)?;
+        } else {
+            // Independent SOURCE tables must not share a backing path.
+            // Replacing a record owns deletion of the grid named in it.
+            let mut copies = images
+                .iter()
+                .map(|model| model.copy_to(&target.measurement_set))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(execution)?;
+            put_image_models(target, &mut copies, request.incremental)?;
+        }
+    }
+    Ok(())
+}
+
+fn put_image_models(
+    target: &mut OpenedMs,
+    images: &mut [ImageModel],
+    incremental: bool,
+) -> Result<(), TaskFailure> {
+    for (index, model) in images.iter_mut().enumerate() {
+        put_virtual_model_holding(
+            &mut target.measurement_set,
+            &model.entry,
+            index > 0 || incremental,
+            &mut target.lock,
+        )
+        .map_err(execution)?;
+        model.retain();
+    }
+    Ok(())
+}
+
+fn image_models(
+    task: &TaskInvocation<'_>,
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    request: &ModelRequest,
+    no_components: bool,
+) -> Result<Vec<ImageModel>, TaskFailure> {
+    let models = &request.images;
+    let terms = request.terms;
+    let zero = request.scratch && !request.incremental && no_components;
+    let reference = if terms > 1 {
+        let quantity = task.text("reffreq")?.unwrap_or_default();
+        let explicit = if quantity.is_empty() {
+            0.0
+        } else {
+            quantity
+                .parse::<Quantity>()
+                .map_err(|_| {
+                    TaskFailure::execution(format!(
+                        "In conversion of reffreq={quantity:?} to a numerical value"
+                    ))
+                    .at("reffreq")
+                })?
+                .get_si_value()
+        };
+        Some(if explicit == 0.0 {
+            reference_frequency(&task.workspace().join(&models[0])).map_err(execution)?
+        } else {
+            explicit
+        })
+    } else {
+        None
+    };
+    let mut images = Vec::new();
+    for (index, path) in models
+        .iter()
+        .enumerate()
+        .filter(|(_, path)| !path.is_empty())
+    {
+        let taylor = reference.map(|reference_hz| TaylorTerm {
+            count: terms as i32,
+            index: index as i32,
+            reference_hz,
+        });
+        if let Some(model) = prepare_image(
+            ms,
+            selected,
+            &task.workspace().join(path),
+            taylor,
+            zero && index == 0,
+            request.scratch,
+        )
+        .map_err(execution)?
+        {
+            images.push(model);
+        }
+    }
+    Ok(images)
+}
+
+fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
+    let text = |name| {
+        task.text(name)
+            .map(|value| value.filter(|value| !value.is_empty()))
+    };
+    Ok(MsSelection {
+        field: text("field")?,
+        spw: text("spw")?,
+        timerange: text("timerange")?,
+        uvrange: text("uvrange")?,
+        antenna: text("antenna")?,
+        scan: text("scan")?,
+        observation: text("observation")?,
+        intent: text("intent")?,
+        ..MsSelection::default()
+    })
+}
+
+fn validate_terms(terms: i64, images: usize) -> Result<(), TaskFailure> {
+    if terms < 1 {
+        return Err(
+            TaskFailure::validation("nterms must be greater than or equal to 1").at("nterms"),
+        );
+    }
+    if terms > 1 && images != terms as usize {
+        return Err(TaskFailure::validation(
+            "For nterms>1, please provide a list of nterms model-image names",
+        )
+        .at("model"));
+    }
+    Ok(())
+}
+
+fn execution(error: impl std::fmt::Display) -> TaskFailure {
+    TaskFailure::execution(error.to_string())
+}

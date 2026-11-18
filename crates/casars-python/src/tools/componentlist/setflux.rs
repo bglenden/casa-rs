@@ -87,12 +87,12 @@ pub(super) fn prepare(
     for item in values.iter().chain(errors.iter().flatten()) {
         if !item.re.is_finite() || !item.im.is_finite() {
             return Err(ConvertError::runtime(
-                "non-finite flux or error refused (#1053)",
+                "non-finite flux or error refused (#1252)",
             ));
         }
         if item.im != 0.0 {
             return Err(ConvertError::runtime(
-                "imaginary flux or error would be discarded by CASA (#1053)",
+                "imaginary flux or error would be discarded by CASA (#1252)",
             ));
         }
     }

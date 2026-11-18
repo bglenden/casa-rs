@@ -14,7 +14,6 @@ from casars.data import schema_bundle
 DATA = Path(__file__).parent / "data"
 ORACLE = json.loads((DATA / "casa_componentlist_setrefdirframe.json").read_text())
 INVALID = json.loads((DATA / "casa_componentlist_setrefdirframe_invalid.json").read_text())
-UNSUPPORTED = {"MARS", "SUN"}
 
 
 def components(cl):
@@ -46,11 +45,7 @@ def test_setrefdirframe_matches_casa():
         before = snapshot(cl)
         args = [bytes(arg["bytes"]) if isinstance(arg, dict) and "bytes" in arg else arg for arg in case["args"]]
         frame = args[1]
-        if isinstance(frame, str) and frame in UNSUPPORTED:
-            with pytest.raises(NotImplementedError, match="shared measure model.*#1053"):
-                cl.setrefdirframe(*args, **case["kwargs"])
-            assert_directions(snapshot(cl), before)
-        elif "error" in case:
+        if "error" in case:
             expected = case["error"]
             error_type = {"TypeError": TypeError, "RuntimeError": RuntimeError}[expected["type"]]
             with pytest.raises(error_type) as error:

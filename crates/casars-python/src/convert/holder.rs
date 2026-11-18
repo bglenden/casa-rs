@@ -42,11 +42,6 @@ use casa_types::quanta::{Dimension, Quantity, UnitDim, unique_prefix_index};
 use super::value::CasaValue;
 use super::{Variant, quantity_record};
 
-/// The speed of light, m/s (casacore's `QC::c`).
-const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
-/// Planck's constant, J s, as casacore's `QC::h` gives it (the 1986 CODATA
-/// value).
-const PLANCK_J_S: f64 = 6.626_075_5e-34;
 /// The band of vector lengths in which casacore encodes WGS84 heights
 /// (`MVPosition::loLimit` and `hiLimit`).
 const LO_LIMIT_M: f64 = 743.568;
@@ -700,35 +695,7 @@ fn frequency_value(values: &[Quantity]) -> Result<MeasureValue, HolderError> {
     }
 }
 
-/// `MVFrequency::makeF`: `quantity` in Hz, or `None` for a unit that is not
-/// frequency-like.
-pub(crate) fn frequency_hz(quantity: &Quantity) -> Option<f64> {
-    let unit = quantity.unit().val();
-    let (value, factor) = (quantity.value(), unit.factor);
-    let basis = UnitDim::basis;
-    let time = basis(Dimension::Time);
-    let length = basis(Dimension::Length);
-    let energy = basis(Dimension::Mass) * length * length / time / time;
-    let momentum = basis(Dimension::Mass) * length;
-    let dim = unit.dim;
-    if dim == time {
-        Some(1.0 / factor / value)
-    } else if dim == UnitDim::NODIM / time {
-        Some(value * factor)
-    } else if dim == basis(Dimension::Angle) / time {
-        Some(value * (factor / std::f64::consts::PI / 2.0))
-    } else if dim == length {
-        Some(SPEED_OF_LIGHT_M_S / factor / value)
-    } else if dim == UnitDim::NODIM / length {
-        Some(value * (SPEED_OF_LIGHT_M_S * factor / std::f64::consts::PI / 2.0))
-    } else if dim == energy {
-        Some(value * (factor / PLANCK_J_S))
-    } else if dim == momentum {
-        Some(value * (factor * SPEED_OF_LIGHT_M_S / PLANCK_J_S))
-    } else {
-        None
-    }
-}
+pub(crate) use casa_types::quanta::casacore::frequency_hz;
 
 fn norm(xyz: [f64; 3]) -> f64 {
     (xyz[0] * xyz[0] + xyz[1] * xyz[1] + xyz[2] * xyz[2]).sqrt()

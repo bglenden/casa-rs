@@ -34,7 +34,7 @@ pub(super) fn argument(value: Option<Bound<'_, PyAny>>) -> PyResult<(Variant, bo
             let identity = value.as_ptr() as usize;
             if !active.insert(identity) {
                 return Err(PyValueError::new_err(
-                    "cyclic component direction record (CASA crashes: #1053)",
+                    "cyclic component direction record (CASA crashes: #1252)",
                 ));
             }
             let values: Vec<_> = record.iter().map(|(_, item)| item).collect();

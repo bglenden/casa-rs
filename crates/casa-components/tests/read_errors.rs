@@ -43,15 +43,31 @@ fn set_string(table: &mut Table, row: usize, column: &str, value: &str) {
 }
 
 #[test]
-fn frames_casa_types_lacks_are_named() {
+fn direction_frame_labels_are_checked_and_planetary_labels_are_retained() {
     let scratch = tempfile::tempdir().expect("scratch");
     let altered = altered_fixture(scratch.path(), |table| {
         set_string(table, 0, "Direction_Frame", "MOON")
     });
-    let error = ComponentList::read_table(&altered).expect_err("MOON is not a casa-types frame");
+    // CASA-written dynamical-frame fixtures now read without resolving a
+    // body. The first CASA fixture row stores 45 degrees, 10 degrees.
+    let list = ComponentList::read_table(&altered).expect("stored MOON reference");
+    let direction = list.get(0).unwrap().shape().reference_direction();
+    assert_eq!(
+        direction.refer(),
+        casa_types::measures::direction::DirectionRef::MOON
+    );
+    let (longitude, latitude) = direction.as_angles();
+    assert!((longitude - 45_f64.to_radians()).abs() < 1e-15);
+    assert!((latitude - 10_f64.to_radians()).abs() < 1e-15);
+    drop(list);
+    let scratch = tempfile::tempdir().expect("scratch");
+    let altered = altered_fixture(scratch.path(), |table| {
+        set_string(table, 0, "Direction_Frame", "NOT_A_FRAME")
+    });
+    let error = ComponentList::read_table(&altered).expect_err("unknown reference");
     assert!(
         matches!(&error, ComponentListError::Cell { row: 0, column, reason, .. }
-            if column == "Reference_Direction" && reason.contains("MOON")),
+            if column == "Reference_Direction" && reason.contains("NOT_A_FRAME")),
         "{error}"
     );
 }

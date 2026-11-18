@@ -58,7 +58,7 @@ CASA = casa_signatures("componentlist")
 TOOL = json.loads((DATA / "casa_componentlist_tool.json").read_text(encoding="utf-8"))
 
 IMPLEMENTED = {
-    "addcomponent", "asciitocomponentlist", "close", "concatenate", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
+    "add", "fromrecord", "sort", "summarize", "addcomponent", "asciitocomponentlist", "close", "concatenate", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
     "getfluxerror", "getfluxpol", "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
     "indices", "getkeyword", "haskeyword", "getrefdir", "getrefdirra", "getrefdirdec", "getrefdirframe", "getshape", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
     "select", "deselect", "selected", "setlabel", "setflux", "setfreq", "setfreqframe", "setrefdir", "setrefdirframe", "setshape", "setspectrum", "setstokesspectrum", "simulate", "remove", "recover", "purge", "putkeyword", "sample", "convertfluxpol", "convertfluxunit", "convertfrequnit", "convertrefdir", "convertshape", "edit", "replace", "torecord", "isphysical", "iscomponentlist",
@@ -160,12 +160,6 @@ def test_the_bundle_describes_the_class() -> None:
         "componentlist",
         {"implemented": IMPLEMENTED, "not_yet_implemented": NOT_YET_IMPLEMENTED},
     )
-
-
-def test_methods_casa_rs_does_not_implement_yet_raise() -> None:
-    cl = componentlist()
-    with pytest.raises(NotImplementedError, match="componentlist.fromrecord"):
-        cl.fromrecord({})
 
 
 def untagged(value: Any) -> Any:
@@ -446,6 +440,10 @@ def test_a_dropped_tool_waits_for_the_write_lock_without_the_gil(tmp_path: Path)
     add_point(cl, 2.0)
     # Reading the table opens it with locking, which makes its `table.lock`.
     assert fluxes(path) == [1.0]
+    # CASA keeps the component table's read lock. Relinquish it so this
+    # fixture's external holder can take the write lock before the drop.
+    from casars.tools import table
+    assert table().clearlocks()
     holder = subprocess.Popen(
         [sys.executable, "-c", HOLD_THE_WRITE_LOCK, str(path / "table.lock"), "2"],
         stdout=subprocess.PIPE,
@@ -532,3 +530,33 @@ def test_casa_reads_what_casars_writes_when_casa_is_importable(tmp_path: Path) -
     for index, record in enumerate(records):
         assert_same(si(casa.getcomponent(index)), record, f"component {index}")
     casa.done()
+
+
+
+def test_logger_retention_keeps_levels_dynamic_and_allows_reentrant_handlers():
+    cl = componentlist()
+    logger = logging.getLogger(LOGGER)
+    previous = logger.level
+    messages = []
+
+    class Handler(logging.Handler):
+        def emit(self, record):
+            # Logging must run after tool and logger-cache locks are released.
+            assert cl.length() == 0
+            messages.append(record.getMessage())
+            if record.getMessage() == "getfreq not implemented yet":
+                assert cl.getfluxpol(0) == ""
+
+    handler = Handler()
+    logger.addHandler(handler)
+    try:
+        logger.setLevel(logging.ERROR)
+        assert cl.getfreq(0) == {}
+        assert messages == []
+        logger.setLevel(logging.WARNING)
+        assert cl.getfreq(0) == {}
+        assert messages == ["getfreq not implemented yet", "getfluxpol not implemented yet"]
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+        cl.done()
