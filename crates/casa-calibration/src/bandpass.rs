@@ -401,6 +401,14 @@ pub(crate) fn solve_bandpass(
 
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
     validate_smodel(request.smodel)?;
+    if matches!(
+        request.refant,
+        RefAntSelector::Unspecified | RefAntSelector::Expression { .. }
+    ) {
+        return Err(BandpassSolveError::UnsupportedConfiguration {
+            reason: "bandpass requires one reference antenna by ID or name".to_string(),
+        });
+    }
     if matches!(request.band_type, BandpassType::BPoly)
         && (request.amplitude_degree > 31 || request.phase_degree > 31)
     {

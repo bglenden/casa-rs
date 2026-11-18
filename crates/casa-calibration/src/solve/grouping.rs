@@ -363,8 +363,14 @@ fn bucketed_rows(
                     interval_bits: row.interval_seconds.to_bits(),
                 },
                 GainSolveInterval::Seconds(seconds) => {
-                    let start = *bucket_starts.entry(base_key).or_insert(row.time_seconds);
-                    let index = ((row.time_seconds - start) / seconds).floor().max(0.0);
+                    // MSIter2 starts its time grid 10 ms before the first
+                    // timestamp and receives solint as a Float.
+                    let start = *bucket_starts
+                        .entry(base_key)
+                        .or_insert(row.time_seconds - 0.01);
+                    let index = ((row.time_seconds - start) / f64::from(seconds as f32))
+                        .floor()
+                        .max(0.0);
                     SolveBucketKey::Seconds(index as u64)
                 }
             };
@@ -658,7 +664,7 @@ pub(crate) struct SolveAccumulator {
     /// whether or not the solve succeeds.
     pub(crate) attempted: bool,
     baseline_centroids: HashMap<AveragedBaseline, WeightedTime>,
-    preaverage_starts: HashMap<(i32, i32), f64>,
+    preaverage_starts: HashMap<AveragedBaseline, f64>,
     receptor_accumulations: Vec<HashMap<SolveAccumulationKey, Vec<SolveEdgeAccumulation>>>,
 }
 
@@ -696,6 +702,7 @@ struct SolveAccumulationKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct AveragedBaseline {
     antennas: (i32, i32),
+    field_id: i32,
     start_bits: u64,
 }
 
@@ -870,21 +877,24 @@ impl SolveAccumulator {
         let flags = samples::channel_flags(samples);
         let no_weighted_data =
             flags.iter().all(|flag| *flag) || samples.weights.iter().all(|weight| *weight <= 0.0);
-        let antennas = (row.antenna1, row.antenna2);
+        // CASA gathers a separate field buffer into the solution. Keep
+        // the complex averages separate until enforcing the solve mode.
+        let mut baseline = AveragedBaseline {
+            antennas: (row.antenna1, row.antenna2),
+            field_id: if options.channelized { 0 } else { row.field_id },
+            start_bits: 0,
+        };
         let start_bits = options.preaverage_max_span.map_or(0, |max_span| {
             let start = self
                 .preaverage_starts
-                .entry(antennas)
+                .entry(baseline)
                 .or_insert(row.time_seconds);
             if row.time_seconds - *start > max_span {
                 *start = row.time_seconds;
             }
             start.to_bits()
         });
-        let baseline = AveragedBaseline {
-            antennas,
-            start_bits,
-        };
+        baseline.start_bits = start_bits;
         let solution_channels = self.solution_channels;
         let mut row_weight = 0.0_f64;
         for (corr_index, &correlation_type) in correlation_types.iter().enumerate() {
@@ -1316,6 +1326,7 @@ mod tests {
     fn unaveraged_baseline(antennas: (i32, i32)) -> AveragedBaseline {
         AveragedBaseline {
             antennas,
+            field_id: 0,
             start_bits: 0,
         }
     }

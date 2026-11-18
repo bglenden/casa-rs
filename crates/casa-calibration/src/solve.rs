@@ -389,6 +389,17 @@ pub(crate) fn solve_gain_rows(
         &request.prior_calibration_tables,
         request.parang,
     )?;
+    let requested_preaverage = request.preaverage_seconds as f32;
+    let preaverage = (requested_preaverage > f32::EPSILON && requested_preaverage.is_finite())
+        .then_some(requested_preaverage);
+    let averaging_interval = match request.solve_interval {
+        GainSolveInterval::Infinite => preaverage,
+        GainSolveInterval::Integration => None,
+        GainSolveInterval::Seconds(seconds) => {
+            let solint = seconds as f32;
+            Some(preaverage.map_or(solint, |preavg| preavg.min(solint)))
+        }
+    };
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -399,17 +410,8 @@ pub(crate) fn solve_gain_rows(
             stokes_i: request.smodel[0],
             solve_interval: request.solve_interval,
             combine: request.combine,
-            preaverage_max_span: match request.solve_interval {
-                GainSolveInterval::Infinite => Some(request.preaverage_seconds),
-                GainSolveInterval::Seconds(seconds) if request.preaverage_seconds < seconds => {
-                    Some(request.preaverage_seconds)
-                }
-                _ => None,
-            }
-            .filter(|seconds| *seconds > f64::from(f32::EPSILON) && seconds.is_finite())
-            // CASA stores preavg as a Float. VbAvg allows a 0.1 percent
-            // tolerance at the end of each baseline's averaging span.
-            .map(|seconds| f64::from(seconds as f32) * 0.999),
+            // VbAvg applies this boundary to either source of the interval.
+            preaverage_max_span: averaging_interval.map(|seconds| f64::from(seconds) * 0.999),
             channelized: false,
         },
     )?;
@@ -643,7 +645,6 @@ pub(crate) fn apply_reference_antenna(
     for ((spw_id, _, _), current) in group_indices {
         if last_spw != Some(spw_id) {
             previous = None;
-            choices[1] = preferred_refant_id;
             last_spw = Some(spw_id);
         }
         let receptors = receptor_counts[&spw_id];

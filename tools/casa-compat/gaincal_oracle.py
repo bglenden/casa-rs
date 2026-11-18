@@ -33,7 +33,7 @@ def relative_rms(a, b):
     return float(np.linalg.norm(a-b)/max(np.linalg.norm(b), 1e-30))
 
 
-def alternating_fields(root, source, native, first):
+def alternating_fields(root, source, native, first, calmode='ap', short_interval=False):
     label = f'combined-first-field-{first}'
     case = root/f'{label}.ms'
     copy_ms(source, case)
@@ -45,17 +45,26 @@ def alternating_fields(root, source, native, first):
         times = epoch + 10.*index
         t.putcol('TIME', times)
         t.putcol('TIME_CENTROID', times)
-        t.putcol('FIELD_ID', ((first+index)%2).astype(np.int32))
+        fields = np.zeros(len(index), dtype=np.int32) if short_interval else ((first+index)%2).astype(np.int32)
+        t.putcol('FIELD_ID', fields)
         t.putcol('SCAN_NUMBER', np.full(len(index), 1, dtype=np.int32))
         data = t.getcol('DATA')
         data[:] = (1.+.2*index)[None, None, :]
+        if calmode == 'a':
+            a, b = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+            phase = (np.pi/2) * (index%2) * ((a==1).astype(int)-(b==1).astype(int))
+            data[:] *= (1.+.08*(a==2)*(b==4))*np.exp(1j*phase)
         t.putcol('DATA', data)
         t.putcol('FLAG', np.zeros(data.shape, dtype=bool))
         t.putcol('FLAG_ROW', np.zeros(len(index), dtype=bool))
     finally:
         t.close()
 
-    options = dict(gaintype='G', calmode='ap', solint='25s', combine='field')
+    options = dict(gaintype='G', calmode=calmode, solint='25s', combine='field')
+    if calmode == 'a':
+        options['preavg'] = 20.
+    if short_interval:
+        options.update(solint='10.005s', combine='')
     casa_input, native_input = root/f'{label}-casa.ms', root/f'{label}-native.ms'
     copy_ms(case, casa_input)
     copy_ms(case, native_input)
@@ -72,12 +81,18 @@ def alternating_fields(root, source, native, first):
         )
     # Both field orders produce the same five bins, anchored at the first
     # selected time. In each bin both fields occur. CASA labels it with field 0.
-    np.testing.assert_allclose(records['casa']['interval_times_s'], [10., 35., 60., 85., 105.], atol=1e-4)
+    if not short_interval:
+        np.testing.assert_allclose(records['casa']['interval_times_s'], [10., 35., 60., 85., 105.], atol=1e-4)
     np.testing.assert_allclose(actual['TIME'], expected['TIME'], rtol=0., atol=1e-4)
     for column in ['FIELD_ID', 'ANTENNA1', 'SCAN_NUMBER', 'SPECTRAL_WINDOW_ID', 'FLAG']:
         np.testing.assert_array_equal(actual[column], expected[column], err_msg=column)
     records['cparam_relative_rms'] = relative_rms(actual['CPARAM'], expected['CPARAM'])
     assert records['cparam_relative_rms'] < 1e-3, records
+    if calmode == 'a':
+        for name in ['PARAMERR', 'SNR']:
+            error = relative_rms(actual[name], expected[name])
+            assert error < 1e-3, (name, error)
+            records[name+'_relative_rms'] = error
     return records
 
 
@@ -192,11 +207,47 @@ def ranked_references(root, source, native):
     return results
 
 
+def spectral_window_reference(root, source, native):
+    t = table()
+    for subtable, overrides in [('SPECTRAL_WINDOW', {'NAME': 'SPW1'}),
+                               ('DATA_DESCRIPTION', {'SPECTRAL_WINDOW_ID': 1})]:
+        t.open(str(source/subtable), nomodify=False)
+        try:
+            t.addrows(1)
+            for col in t.colnames():
+                if t.iscelldefined(col, 0):
+                    t.putcell(col, 1, overrides.get(col, t.getcell(col, 0)))
+        finally:
+            t.close()
+    t.open(str(source), nomodify=False)
+    try:
+        fields = t.getcol('FIELD_ID')
+        t.putcol('DATA_DESC_ID', fields)
+        a, b = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+        time = t.getcol('TIME')
+        zeroth = (a==0) | (b==0)
+        third = (a==3) | (b==3)
+        late_first = (fields==0) & (time-time.min()>=30.)
+        flags = t.getcol('FLAG')
+        flags[..., (late_first & (zeroth|third)) | ((fields==1) & zeroth)] = True
+        t.putcol('FLAG', flags)
+    finally:
+        t.close()
+    errors = gain_and_apply(root, source, native, 'G', '30s', calmode='ap', refant='A0,A3,A1', minblperant=2)
+    expected = contents(root/'ap-G-30s-mean-norm0-casa.cal')
+    times, antenna2, spws = (expected[name] for name in ['TIME', 'ANTENNA2', 'SPECTRAL_WINDOW_ID'])
+    for spw in [0, 1]:
+        selected = times[spws==spw]
+        time = np.max(selected) if spw == 0 else np.min(selected)
+        np.testing.assert_array_equal(antenna2[(spws==spw) & (times==time)], 1)
+    return errors
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -242,6 +293,12 @@ def main():
             np.testing.assert_array_equal(expected['ANTENNA2'], -1)
     elif args.case == 'ranked-refant':
         results = ranked_references(root, amplitude_data(root, source), native)
+    elif args.case == 'combined-amplitude':
+        results = {str(first): alternating_fields(root, source, native, first, 'a') for first in [1, 0]}
+    elif args.case == 'finite-averaging':
+        results = alternating_fields(root, source, native, 0, 'a', short_interval=True)
+    elif args.case == 'spw-refant':
+        results = spectral_window_reference(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
