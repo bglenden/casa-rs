@@ -842,7 +842,7 @@ application catalog exposes it as these task surfaces:</p>
   <code>export_corrected_data</code>, <code>fluxscale</code>, <code>gencal</code>, <code>solve_bandpass</code>,
   <code>solve_gain</code>, <code>stats</code>, or <code>summary</code></li>
 <li><code>gaincal</code>, <code>bandpass</code>, <code>applycal</code>, <code>fluxscale</code>, <code>gencal</code>, <code>clearcal</code>,
-  <code>delmod</code>: CASA's tasks, with CASA 6.7.6's parameters and defaults</li>
+  <code>delmod</code>, <code>uvsub</code>: CASA's tasks, with CASA 6.7.6's parameters and defaults</li>
 </ul>
 <p>Every surface is a one-shot task. Run it as <code>calibrate &lt;surface&gt;</code>
 (<code>calibrate bandpass --ms ...</code>; <code>calibrate</code> alone is the general surface),
@@ -978,6 +978,12 @@ recipes for the selected fields. An empty <code>field</code> selects all fields.
 Set <code>scr=True</code> to drop the whole <code>MODEL_DATA</code> column. Set <code>otf=False</code> to
 retain the virtual recipes. Both tasks update the MeasurementSet in place
 and return <code>None</code>.</p>
+<p><code>tasks.uvsub(vis, reverse=False)</code> writes the residual to <code>CORRECTED_DATA</code>.
+When the corrected column is absent, it starts from the observed data. It
+reads a field's virtual model, its scratch model, or the default unit model
+in that order. Set <code>reverse=True</code> to add the model. The <code>casars.tools.ms</code>
+tool exposes the same operation through <code>uvsub(reverse=False)</code> on a
+MeasurementSet opened with <code>nomodify=False</code>.</p>
 <h2 id="current-limitations">Current limitations<a class="headerlink" href="#current-limitations" title="Permanent link">&para;</a></h2>
 <ul>
 <li>there is not yet a dedicated <code>setjy</code> task</li>

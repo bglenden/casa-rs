@@ -2434,6 +2434,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#uvsub" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uvsub
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7404,6 +7415,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#uvsub" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uvsub
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -10438,6 +10460,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">33</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">13</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>uvsub</td>
+<td>uvsub</td>
+<td>yes</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 </tr>
@@ -13547,6 +13580,18 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Accepted only at CASA's default until #938: <code>field</code>, <code>scan</code>, <code>timerange</code>, <code>outframe</code>, <code>mode</code>, <code>veltype</code>, <code>specmode</code>, <code>interpolation</code>, <code>pointingcolumn</code>, <code>convertfirst</code>, <code>projection</code>, <code>stokes</code>, <code>clipminmax</code></li>
 <li>casa-rs parameters CASA lacks: none</li>
 <li>Shared parameters: 33, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
+</ul>
+<h3 id="uvsub">uvsub<a class="headerlink" href="#uvsub" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/uvsub.py</code>, 2 parameters</li>
+<li>Implementation: <code>casatasks/private/task_uvsub.py</code>, <code>uvsub</code> (line 15): 1 return statements, 1 raise statements</li>
+<li>returns at line 44: <code>None</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 2, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
 </ul>
 <h2 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h2>

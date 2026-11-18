@@ -567,6 +567,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#subtract-visibility-model-uvsub" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subtract Visibility Model (uvsub)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#clear-calibration-clearcal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1259,6 +1270,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#subtract-visibility-model-uvsub" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subtract Visibility Model (uvsub)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#clear-calibration-clearcal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1484,9 +1506,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 626</li>
-<li>Surfaces: 33 (33 task, 0 session)</li>
-<li>Surface bindings: 905</li>
+<li>Concepts: 627</li>
+<li>Surfaces: 34 (34 task, 0 session)</li>
+<li>Surface bindings: 907</li>
 </ul>
 <table>
 <thead>
@@ -1619,6 +1641,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">18</td>
 <td>Scale gain solutions using reference calibrator fields.</td>
+</tr>
+<tr>
+<td><a href="#surface-uvsub">Subtract Visibility Model</a><br><code>uvsub</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">2</td>
+<td>Subtract or restore the current visibility model in corrected data.</td>
 </tr>
 <tr>
 <td><a href="#surface-clearcal">Clear Calibration</a><br><code>clearcal</code></td>
@@ -6364,6 +6394,45 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"text"</code>; optional</td>
 <td>Output</td>
 <td>Execution report format</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-uvsub"></a></p>
+<h2 id="subtract-visibility-model-uvsub">Subtract Visibility Model (<code>uvsub</code>)<a class="headerlink" href="#subtract-visibility-model-uvsub" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Subtract or restore the current visibility model in corrected data.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input MeasurementSet path or paths.</td>
+</tr>
+<tr>
+<td><code>reverse</code></td>
+<td><code>parameter.reverse@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Scratch columns</td>
+<td>Add the visibility model back to corrected data.</td>
 </tr>
 </tbody>
 </table>

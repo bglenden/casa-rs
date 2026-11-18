@@ -55,7 +55,7 @@
 <a href=#55 id=55 data-nosnippet>55</a>
 <a href=#56 id=56 data-nosnippet>56</a><span class="doccomment">/// Run one resolved calibration request and write its report.
 <a href=#57 id=57 data-nosnippet>57</a></span><span class="kw">fn </span>run_task(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
-<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">if </span><span class="macro">matches!</span>(task.surface(), <span class="string">"clearcal" </span>| <span class="string">"delmod"</span>) {
+<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">if </span><span class="macro">matches!</span>(task.surface(), <span class="string">"clearcal" </span>| <span class="string">"delmod" </span>| <span class="string">"uvsub"</span>) {
 <a href=#59 id=59 data-nosnippet>59</a>        <span class="kw">return </span>model_columns::run(task);
 <a href=#60 id=60 data-nosnippet>60</a>    }
 <a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">let </span>report = read::report(task)<span class="question-mark">?</span>;
