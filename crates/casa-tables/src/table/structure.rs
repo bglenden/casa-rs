@@ -18,9 +18,12 @@
 //! table description and the column set and leave a storage manager that
 //! keeps other columns where it is.
 
+use std::cell::RefCell;
+
 use super::*;
 use crate::storage::StorageError;
-use crate::storage::table_control::{TableDatContents, TableDatResult};
+use crate::storage::standard_stman::{dm_name_from_blob, rewrite_ssm_columns};
+use crate::storage::table_control::{ColumnDescContents, TableDatContents, TableDatResult};
 
 /// Prefix of the files of the storage manager with sequence number `seq_nr`:
 /// `table.f<seq_nr>`, the `_TSM<n>` files of a tiled manager, and the `i`
@@ -120,7 +123,7 @@ impl Table {
     ///
     /// `Table::renameColumn`.
     pub fn rename_column_in_place(&mut self, old: &str, new: &str) -> Result<(), TableError> {
-        self.edit_structure_in_place("rename_column_in_place", |dat, _| {
+        self.edit_structure_in_place("rename_column_in_place", false, |_, dat, _| {
             let index = column_index(dat, old)?;
             if column_index(dat, new).is_ok() {
                 return Err(SchemaError::DuplicateColumn(new.to_string()).into());
@@ -163,82 +166,43 @@ impl Table {
     ///
     /// `Table::removeColumn`.
     pub fn remove_columns_in_place(&mut self, names: &[&str]) -> Result<(), TableError> {
-        self.edit_structure_in_place("remove_columns_in_place", |dat, _| {
-            let mut indices = Vec::with_capacity(names.len());
-            for name in names {
-                let index = column_index(dat, name)?;
-                if !indices.contains(&index) {
-                    indices.push(index);
-                }
-            }
-            let mut gone = Vec::new();
-            for &index in &indices {
-                let seq_nr = dat.column_set.columns[index].dm_seq_nr;
-                if gone.contains(&seq_nr) {
-                    continue;
-                }
-                let held = dat
-                    .column_set
-                    .columns
+        self.remove_persisted_columns(names, false)
+    }
+
+    /// Remove persisted columns, allowing shared StandardStMan managers.
+    /// A shared StandardStMan is rebuilt from its surviving columns while
+    /// other managers keep their existing files and bindings. A compressed
+    /// virtual column and its backing columns may be removed together.
+    /// Shared groups whose storage managers cannot remove individual
+    /// columns are refused before the table is changed.
+    pub fn remove_columns_preserving_managers(&mut self, names: &[&str]) -> Result<(), TableError> {
+        self.remove_persisted_columns(names, true)
+    }
+
+    fn remove_persisted_columns(
+        &mut self,
+        names: &[&str],
+        allow_shared_standard: bool,
+    ) -> Result<(), TableError> {
+        self.edit_structure_in_place(
+            "remove_columns_in_place",
+            allow_shared_standard,
+            |table, dat, path| {
+                let mut indices = names
                     .iter()
-                    .filter(|entry| entry.dm_seq_nr == seq_nr)
-                    .count();
-                let removed = indices
-                    .iter()
-                    .filter(|&&other| dat.column_set.columns[other].dm_seq_nr == seq_nr)
-                    .count();
-                if held != removed {
-                    return Err(TableError::Storage(format!(
-                        "column \"{}\" shares storage manager {seq_nr} with {} other columns, \
-                         which a removal in place would leave without their data's owner",
-                        dat.table_desc.columns[index].col_name,
-                        held - removed,
-                    )));
+                    .map(|name| column_index(dat, name))
+                    .collect::<Result<Vec<_>, _>>()?;
+                indices.sort_unstable();
+                indices.dedup();
+                let (mut gone, shared) = removal_groups(dat, &indices, allow_shared_standard)?;
+                if allow_shared_standard {
+                    check_virtual_dependencies(table, dat, names)?;
+                    gone.extend(rewrite_standard_groups(table, dat, path, &shared)?);
                 }
-                gone.push(seq_nr);
-            }
-            let removed_names: Vec<String> = indices
-                .iter()
-                .map(|&index| dat.table_desc.columns[index].col_name.clone())
-                .collect();
-            indices.sort_unstable_by(|a, b| b.cmp(a));
-            for index in indices {
-                dat.table_desc.columns.remove(index);
-                dat.column_set.columns.remove(index);
-            }
-            for name in &removed_names {
-                dat.names_on_file.remove(name);
-            }
-            dat.column_set
-                .data_managers
-                .retain(|manager| !gone.contains(&manager.seq_nr));
-            // A hypercolumn loses the columns it listed; one left with no
-            // data column is gone (the rule `adjustHypercolumns` applies to
-            // data columns; this is the native policy for the others).
-            edit_hypercolumns(&mut dat.table_desc.private_keywords, |list| {
-                list.retain(|name| !removed_names.contains(name));
-            });
-            let keywords = &mut dat.table_desc.private_keywords;
-            let emptied: Vec<String> = keywords
-                .fields()
-                .iter()
-                .filter(|field| field.name.starts_with("Hypercolumn_"))
-                .filter(|field| match &field.value {
-                    Value::Record(definition) => {
-                        matches!(
-                            definition.get("data"),
-                            Some(Value::Array(array)) if array.shape().iter().product::<usize>() == 0
-                        )
-                    }
-                    _ => false,
-                })
-                .map(|field| field.name.clone())
-                .collect();
-            for name in emptied {
-                keywords.remove(&name);
-            }
-            Ok(gone)
-        })
+                detach_columns(dat, indices, names, &gone);
+                Ok(gone)
+            },
+        )
     }
 
     /// Applies `edit` to the table's `table.dat` and writes it, then deletes
@@ -248,14 +212,17 @@ impl Table {
     fn edit_structure_in_place(
         &mut self,
         operation: &str,
-        edit: impl FnOnce(&mut TableDatContents, &Path) -> Result<Vec<u32>, TableError>,
+        allow_persisted_virtual: bool,
+        edit: impl FnOnce(&Self, &mut TableDatContents, &Path) -> Result<Vec<u32>, TableError>,
     ) -> Result<(), TableError> {
         if self.kind != TableKind::Plain {
             return Err(TableError::Storage(format!(
                 "{operation} requires a plain disk-backed table"
             )));
         }
-        if !self.virtual_columns.is_empty() || !self.virtual_bindings.is_empty() {
+        if !self.virtual_bindings.is_empty()
+            || (!allow_persisted_virtual && !self.virtual_columns.is_empty())
+        {
             return Err(TableError::Storage(format!(
                 "{operation} does not support virtual columns"
             )));
@@ -283,7 +250,7 @@ impl Table {
             };
             let persisted_rows = self.require_persisted_rows(&path, &table_dat)?;
             table_dat.raise_row_count(persisted_rows);
-            let removed_managers = edit(&mut table_dat, &path)?;
+            let removed_managers = edit(self, &mut table_dat, &path)?;
             self.note_persisted_write(&path);
             wrote = true;
             crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
@@ -307,6 +274,208 @@ impl Table {
         };
         self.finish_write_operation(auto_unlock, result)
     }
+}
+
+type SharedStandardGroup = (u32, Vec<usize>);
+
+fn removal_groups(
+    dat: &TableDatContents,
+    removed: &[usize],
+    allow_shared_standard: bool,
+) -> Result<(Vec<u32>, Vec<SharedStandardGroup>), TableError> {
+    let mut drop_managers = Vec::new();
+    let mut shared = Vec::new();
+    for manager in &dat.column_set.data_managers {
+        let columns = dat
+            .column_set
+            .columns
+            .iter()
+            .enumerate()
+            .filter_map(|(index, column)| (column.dm_seq_nr == manager.seq_nr).then_some(index));
+        let (retain, discard): (Vec<_>, Vec<_>) =
+            columns.partition(|index| removed.binary_search(index).is_err());
+        if discard.is_empty() {
+            continue;
+        }
+        if retain.is_empty() {
+            drop_managers.push(manager.seq_nr);
+        } else if allow_shared_standard && manager.type_name == "StandardStMan" {
+            shared.push((manager.seq_nr, retain));
+        } else {
+            let name = &dat.table_desc.columns[discard[0]].col_name;
+            return Err(TableError::Storage(format!(
+                "column {name:?} shares storage manager {} ({}) with {} other columns",
+                manager.seq_nr,
+                manager.type_name,
+                retain.len()
+            )));
+        }
+    }
+    Ok((drop_managers, shared))
+}
+
+fn check_virtual_dependencies(
+    table: &Table,
+    dat: &TableDatContents,
+    removed: &[&str],
+) -> Result<(), TableError> {
+    for column in &dat.table_desc.columns {
+        if !table.virtual_columns.contains(&column.col_name)
+            || removed.contains(&column.col_name.as_str())
+        {
+            continue;
+        }
+        let depends_on_removed = column
+            .keywords
+            .fields()
+            .iter()
+            .any(|field| match &field.value {
+                Value::Scalar(ScalarValue::String(value)) if field.name.starts_with('_') => {
+                    removed.iter().any(|name| value.contains(name))
+                }
+                _ => false,
+            });
+        if depends_on_removed {
+            return Err(TableError::Storage(format!(
+                "removing columns required by virtual column {:?}",
+                column.col_name
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn detach_columns(dat: &mut TableDatContents, indices: Vec<usize>, names: &[&str], gone: &[u32]) {
+    for index in indices.into_iter().rev() {
+        dat.table_desc.columns.remove(index);
+        dat.column_set.columns.remove(index);
+    }
+    for name in names {
+        dat.names_on_file.remove(*name);
+    }
+    dat.column_set
+        .data_managers
+        .retain(|manager| !gone.contains(&manager.seq_nr));
+    edit_hypercolumns(&mut dat.table_desc.private_keywords, |list| {
+        list.retain(|name| !names.contains(&name.as_str()));
+    });
+    let keywords = &mut dat.table_desc.private_keywords;
+    let emptied: Vec<_> = keywords
+        .fields()
+        .iter()
+        .filter(|field| field.name.starts_with("Hypercolumn_"))
+        .filter(|field| match &field.value {
+            Value::Record(definition) => matches!(definition.get("data"),
+                Some(Value::Array(array)) if array.shape().iter().product::<usize>() == 0),
+            _ => false,
+        })
+        .map(|field| field.name.clone())
+        .collect();
+    for name in emptied {
+        keywords.remove(&name);
+    }
+}
+
+fn rewrite_standard_groups(
+    table: &Table,
+    dat: &mut TableDatContents,
+    path: &Path,
+    groups: &[SharedStandardGroup],
+) -> Result<Vec<u32>, TableError> {
+    let mut next_seq = dat
+        .column_set
+        .data_managers
+        .iter()
+        .map(|entry| entry.seq_nr)
+        .max()
+        .map_or(0, |seq| seq + 1);
+    let mut new_managers = Vec::new();
+    for (seq_nr, indices) in groups {
+        let columns: Vec<_> = indices
+            .iter()
+            .map(|&index| dat.table_desc.columns[index].clone())
+            .collect();
+        let manager = dat
+            .column_set
+            .data_managers
+            .iter()
+            .find(|manager| manager.seq_nr == *seq_nr)
+            .expect("shared StandardStMan is present");
+        let name = dm_name_from_blob(&manager.data)
+            .unwrap_or_else(|| columns[0].data_manager_group.clone());
+        let staged = path.join(format!("table.f{next_seq}"));
+        let source = path.join(format!("table.f{seq_nr}"));
+        let cache = RefCell::new((usize::MAX, 0, Vec::new()));
+        let result = rewrite_ssm_columns(
+            &source,
+            &staged,
+            &columns,
+            table.row_count(),
+            &name,
+            |column, row| {
+                let mut slot = cache.borrow_mut();
+                if slot.0 != column || row < slot.1 || row - slot.1 >= slot.2.len() {
+                    let values = structural_cells(table, &columns[column], row)
+                        .map_err(|error| StorageError::FormatMismatch(error.to_string()))?;
+                    *slot = (column, row, values);
+                }
+                let offset = row - slot.1;
+                Ok(slot.2[offset].take())
+            },
+        );
+        let data = match result {
+            Ok(data) => data,
+            Err(error) => {
+                for (entry, _) in &new_managers {
+                    let _ = remove_manager_files(path, *entry);
+                }
+                let _ = remove_manager_files(path, next_seq);
+                return Err(error.into());
+            }
+        };
+        new_managers.push((
+            next_seq,
+            crate::storage::table_control::DataManagerEntry {
+                seq_nr: next_seq,
+                type_name: manager.type_name.clone(),
+                data,
+            },
+        ));
+        for &index in indices {
+            dat.column_set.columns[index].dm_seq_nr = next_seq;
+        }
+        next_seq += 1;
+    }
+    dat.column_set
+        .data_managers
+        .extend(new_managers.into_iter().map(|(_, manager)| manager));
+    dat.column_set.seq_count = next_seq.max(dat.column_set.seq_count);
+    Ok(groups.iter().map(|(seq, _)| *seq).collect())
+}
+
+fn structural_cells(
+    table: &Table,
+    column: &ColumnDescContents,
+    row: usize,
+) -> Result<Vec<Option<Value>>, TableError> {
+    let reader = table.column_accessor(&column.col_name)?;
+    // Keep at most one array cell, or a small block of scalar cells.
+    if column.is_record() {
+        return Ok(vec![Some(Value::Record(reader.record_cell(row)?))]);
+    }
+    if column.is_array {
+        return Ok(reader
+            .array_cells_owned_uncached(&[row])?
+            .into_iter()
+            .map(|value| value.map(Value::Array))
+            .collect());
+    }
+    let rows: Vec<_> = (row..table.row_count().min(row.saturating_add(512))).collect();
+    Ok(reader
+        .scalar_cells_owned_for_rows(&rows)?
+        .into_iter()
+        .map(|value| value.map(Value::Scalar))
+        .collect())
 }
 
 /// The position of column `name` in the table description (the column set

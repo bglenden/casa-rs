@@ -350,6 +350,9 @@ fn nest<T>(shape: &[usize], data: &[T], element: impl Fn(&T) -> Value + Copy) ->
         element: impl Fn(&T) -> Value + Copy,
     ) -> Value {
         match shape.split_first() {
+            // Array data is Fortran-ordered, casacore's own order, and
+            // nests back into that order: the Python surface reshapes
+            // it with `order="F"` too.
             None => data.get(offset).map_or(Value::Null, element),
             Some((&count, rest)) => Value::Array(
                 (0..count)

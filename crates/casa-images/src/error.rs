@@ -7,7 +7,7 @@
 //! invalid metadata.
 
 use casa_coordinates::CoordinateError;
-use casa_lattices::LatticeError;
+use casa_lattices::{LatticeError, RobustStatsError};
 use casa_tables::TableError;
 
 /// Errors that can occur during image operations.
@@ -23,6 +23,16 @@ pub enum ImageError {
     /// A table-layer error occurred (opening, saving, cell access, etc.).
     #[error("table error: {0}")]
     Table(String),
+
+    /// A robust-statistics algorithm could not run on the selection, with
+    /// CASA's wording of why.
+    #[error("{0}")]
+    RobustStats(String),
+
+    /// A selection CASA refuses, with CASA's wording of why, reported as
+    /// CASA reports it rather than as an image failure.
+    #[error("{0}")]
+    CasaSelection(String),
 
     /// A lattice-layer error occurred (indexing, slicing, tiling, etc.).
     #[error("lattice error: {0}")]
@@ -78,6 +88,12 @@ impl From<LatticeError> for ImageError {
 impl From<CoordinateError> for ImageError {
     fn from(e: CoordinateError) -> Self {
         Self::Coordinate(e.to_string())
+    }
+}
+
+impl From<RobustStatsError> for ImageError {
+    fn from(e: RobustStatsError) -> Self {
+        Self::RobustStats(e.to_string())
     }
 }
 

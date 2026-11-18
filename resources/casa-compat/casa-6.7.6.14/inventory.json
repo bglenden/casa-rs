@@ -3,7 +3,9 @@
   "tasks": [
     "applycal",
     "bandpass",
+    "clearcal",
     "concat",
+    "delmod",
     "exportfits",
     "feather",
     "flagdata",
@@ -28,6 +30,7 @@
     "simobserve",
     "split",
     "tclean",
-    "tsdimaging"
+    "tsdimaging",
+    "uvsub"
   ]
 }

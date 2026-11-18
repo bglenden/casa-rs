@@ -206,12 +206,15 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         for name, value in arguments.items()
         if not _is_default(value, defaults.get(name, _MISSING))
     }
-    if wrapper.__name__ == "applycal":
-        return _call_applycal(values, arguments["vis"])
-    return run(wrapper.__name__, **values).value
+    name = wrapper.__name__
+    if name in ("applycal", "clearcal", "delmod", "uvsub"):
+        _validate_required_vis(values, arguments["vis"])
+    if name == "applycal":
+        return _call_applycal(values)
+    return run(name, **values).value
 
 
-def _call_applycal(values: dict[str, Any], vis: Any) -> Any:
+def _validate_required_vis(values: dict[str, Any], vis: Any) -> None:
     # CASA's required-path validation runs before calibrater opens the MS.
     # Keep PathLike as the native API's additional path form.
     if isinstance(vis, (str, PathLike)):
@@ -222,6 +225,9 @@ def _call_applycal(values: dict[str, Any], vis: Any) -> Any:
             values["vis"] = path
     else:
         raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
+
+
+def _call_applycal(values: dict[str, Any]) -> Any:
     _check_applycal_selectors(values)
     try:
         return run("applycal", **values).value

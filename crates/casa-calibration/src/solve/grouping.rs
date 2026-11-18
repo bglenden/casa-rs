@@ -11,9 +11,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use casa_ms::ChannelSelection;
-use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
+use casa_ms::{MsError, ResolvedMsSelectionRow, scratch_columns};
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, ArrayView2};
 
@@ -329,28 +329,104 @@ pub(crate) fn collect_selected_rows(
         .selected_rows
         .into_iter()
         .map(|row| {
-            Ok(SelectedSolveRow {
-                row_index: row.row_index,
-                array_id: get_i32(ms.main_table(), row.row_index, "ARRAY_ID")?,
-                field_id: row.field_id,
-                observation_id: get_i32(ms.main_table(), row.row_index, "OBSERVATION_ID")?,
-                data_desc_id: row.data_desc_id,
-                data_spw_id: row.spectral_window_id,
-                channel_selection: if full_selection {
-                    channels.get(&row.spectral_window_id).cloned()
-                } else {
-                    selection.channel_selection_for_spw(row.spectral_window_id)
-                },
-                antenna1: row.antenna1_id,
-                antenna2: row.antenna2_id,
-                time_seconds: row.time_mjd_seconds,
-                time_centroid_seconds: get_f64(ms.main_table(), row.row_index, "TIME_CENTROID")?,
-                interval_seconds: get_f64(ms.main_table(), row.row_index, "INTERVAL")?,
-                scan_number: get_i32(ms.main_table(), row.row_index, "SCAN_NUMBER")?,
-                flag_row: row.flag_row,
-            })
+            let channel_selection = if full_selection {
+                channels.get(&row.spectral_window_id).cloned()
+            } else {
+                selection.channel_selection_for_spw(row.spectral_window_id)
+            };
+            selected_solve_row(ms, &row, channel_selection)
         })
         .collect()
+}
+
+fn selected_solve_row(
+    ms: &MeasurementSet,
+    row: &ResolvedMsSelectionRow,
+    channel_selection: Option<ChannelSelection>,
+) -> Result<SelectedSolveRow, GainSolveError> {
+    Ok(SelectedSolveRow {
+        row_index: row.row_index,
+        array_id: get_i32(ms.main_table(), row.row_index, "ARRAY_ID")?,
+        field_id: row.field_id,
+        observation_id: get_i32(ms.main_table(), row.row_index, "OBSERVATION_ID")?,
+        data_desc_id: row.data_desc_id,
+        data_spw_id: row.spectral_window_id,
+        channel_selection,
+        antenna1: row.antenna1_id,
+        antenna2: row.antenna2_id,
+        time_seconds: row.time_mjd_seconds,
+        time_centroid_seconds: get_f64(ms.main_table(), row.row_index, "TIME_CENTROID")?,
+        interval_seconds: get_f64(ms.main_table(), row.row_index, "INTERVAL")?,
+        scan_number: get_i32(ms.main_table(), row.row_index, "SCAN_NUMBER")?,
+        flag_row: row.flag_row,
+    })
+}
+
+/// The MODEL_DATA or virtual model visible to the old visibility iterator.
+pub(crate) struct VisibilityModels {
+    rows: BTreeMap<usize, SelectedSolveRow>,
+    models: super::model::ModelInputs,
+}
+
+impl VisibilityModels {
+    pub(crate) fn new(
+        ms: &MeasurementSet,
+        rows: &[ResolvedMsSelectionRow],
+    ) -> Result<Self, GainSolveError> {
+        let virtual_fields = scratch_columns::virtual_model_fields(ms);
+        let rows = rows
+            .iter()
+            .filter(|row| virtual_fields.contains(&row.field_id))
+            .map(|row| selected_solve_row(ms, row, None))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut models =
+            super::model::ModelInputs::new(ms, &rows, GainSolveModelSource::FromMeasurementSet)?;
+        let combine = GainSolveCombine {
+            scans: true,
+            observations: true,
+            ..GainSolveCombine::default()
+        };
+        // VisBuffer chooses the first physical row at a timestamp. Solves
+        // order tied timestamps by interval, which can choose a different state.
+        let mut ordered: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row,
+                    SolveBaseKey::for_row(row, combine),
+                    SolveBucketKey::Infinite,
+                )
+            })
+            .collect();
+        ordered.sort_unstable_by_key(|(row, _, _)| row.row_index);
+        models.bind_buffers(ms, &ordered, combine)?;
+        models.phase_times = weights::chunk_phase_times(&ordered, combine, models.dynamic_fields());
+        Ok(Self {
+            rows: rows.into_iter().map(|row| (row.row_index, row)).collect(),
+            models,
+        })
+    }
+
+    pub(crate) fn reads_column(&self, field: i32) -> bool {
+        self.models.reads_column(field)
+    }
+
+    pub(crate) fn uses_fourier(&self, field: i32) -> bool {
+        self.models.uses_fourier(field)
+    }
+
+    pub(crate) fn predict(
+        &self,
+        ms: &MeasurementSet,
+        row: usize,
+        correlations: &[i32],
+        flags: &ArrayD<bool>,
+    ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
+        match self.rows.get(&row) {
+            Some(row) => self.models.predict(ms, row, correlations, flags),
+            None => Ok(None),
+        }
+    }
 }
 
 pub(crate) fn correlation_types_for_ddid(
@@ -496,6 +572,31 @@ pub(crate) struct SolveBaseKey {
     pub(crate) data_desc_id: i32,
     pub(crate) observation_id: i32,
     pub(crate) scan_number: i32,
+}
+
+impl SolveBaseKey {
+    fn for_row(row: &SelectedSolveRow, combine: GainSolveCombine) -> Self {
+        Self {
+            array_id: row.array_id,
+            field_id: if combine.fields { 0 } else { row.field_id },
+            spw_id: if combine.spectral_windows {
+                0
+            } else {
+                row.data_spw_id
+            },
+            data_desc_id: if combine.spectral_windows {
+                0
+            } else {
+                row.data_desc_id
+            },
+            observation_id: if combine.observations {
+                0
+            } else {
+                row.observation_id
+            },
+            scan_number: if combine.scans { 0 } else { row.scan_number },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

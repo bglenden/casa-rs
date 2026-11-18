@@ -34,6 +34,7 @@ mod lookup;
 mod lookup_frequency;
 mod managed_output;
 mod model;
+mod model_columns;
 mod output;
 mod output_merge;
 mod paths;
@@ -48,7 +49,12 @@ mod stats;
 mod summary;
 mod task_contract;
 mod timing;
+mod uvsub;
 mod writer;
+
+pub use uvsub::{
+    subtract_visibility_model, subtract_visibility_model_holding, visibility_model_source_paths,
+};
 
 pub use output::CalibrationOutputMode;
 

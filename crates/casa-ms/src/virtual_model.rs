@@ -45,13 +45,15 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use casa_tables::{ColumnSchema, Table};
+use casa_tables::{ColumnSchema, Table, TableWriteLock};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use crate::schema::SubtableId;
 use crate::schema::main_table::VisibilityDataColumn;
-use crate::scratch_columns::{Write, change_in_place, held_open, prepare_write};
+use crate::scratch_columns::{
+    Write, change_in_place, held_open, prepare_write, prepare_write_holding,
+};
 use crate::selection::MsSelection;
 use crate::{MeasurementSet, MsError, MsResult};
 
@@ -314,8 +316,31 @@ pub fn put_virtual_model(
 ///
 /// Any error reading a record or locking and writing SOURCE or MAIN.
 pub fn clear_virtual_model(ms: &mut MeasurementSet, fields: &[i32], spws: &[i32]) -> MsResult<()> {
+    clear(ms, fields, spws, None)
+}
+
+/// Clear a virtual model while the caller holds the MAIN write lock.
+#[doc(hidden)]
+pub fn clear_virtual_model_holding(
+    ms: &mut MeasurementSet,
+    fields: &[i32],
+    spws: &[i32],
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    clear(ms, fields, spws, Some(lock))
+}
+
+fn clear(
+    ms: &mut MeasurementSet,
+    fields: &[i32],
+    spws: &[i32],
+    lock: Option<&mut TableWriteLock>,
+) -> MsResult<()> {
     if fields.is_empty() {
-        return prepare_write(ms, VisibilityDataColumn::ModelData, false);
+        return match lock {
+            Some(lock) => prepare_write_holding(ms, VisibilityDataColumn::ModelData, false, lock),
+            None => prepare_write(ms, VisibilityDataColumn::ModelData, false),
+        };
     }
     let mut state = ModelState::read(ms)?;
     let mut images = Vec::new();
@@ -343,7 +368,7 @@ pub fn clear_virtual_model(ms: &mut MeasurementSet, fields: &[i32], spws: &[i32]
             state.remove_source_keyword(&pointer);
         }
     }
-    state.write(ms)?;
+    state.write_holding(ms, lock)?;
     delete_images(ms, &images);
     Ok(())
 }
@@ -1101,10 +1126,19 @@ impl ModelState {
     /// Write SOURCE in full and MAIN's metadata, each only when it changed,
     /// under casacore's write lock on each.
     fn write(self, ms: &mut MeasurementSet) -> MsResult<()> {
+        self.write_holding(ms, None)
+    }
+
+    fn write_holding(
+        self,
+        ms: &mut MeasurementSet,
+        lock: Option<&mut TableWriteLock>,
+    ) -> MsResult<()> {
         if let Some(models) = self.source.filter(|source| source.changed)
             && let Some(table) = ms.subtable_mut(SubtableId::Source)
         {
-            change_in_place(table, 0, Write::Full, None, |table| {
+            let attempts = if lock.is_some() { 1 } else { 0 };
+            change_in_place(table, attempts, Write::Full, None, |table| {
                 if models.adds_column {
                     table.add_column(ColumnSchema::record(SOURCE_MODEL), None)?;
                 }
@@ -1120,7 +1154,7 @@ impl ModelState {
         }
         if self.main_changed {
             let keywords = self.main;
-            change_in_place(ms.main_table_mut(), 0, Write::Metadata, None, |main| {
+            change_in_place(ms.main_table_mut(), 0, Write::Metadata, lock, |main| {
                 *main.keywords_mut() = keywords;
                 Ok(())
             })?;

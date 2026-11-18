@@ -50,12 +50,23 @@
     "interp": "cStrVec",
     "parang": "cBool"
   },
+  "clearcal": {
+    "field": "cStr",
+    "spw": "cStr",
+    "intent": "cStr",
+    "addmodel": "cBool"
+  },
   "concat": {
     "concatvis": "cStr",
     "respectname": "cBool",
     "timesort": "cBool",
     "copypointing": "cBool",
     "visweightscale": "cFloatVec"
+  },
+  "delmod": {
+    "otf": "cBool",
+    "field": "cStr",
+    "scr": "cBool"
   },
   "exportfits": {
     "fitsimage": "cStr",
@@ -634,5 +645,8 @@
     "clipminmax": "cBool",
     "minweight": "cFloat",
     "brightnessunit": "cStr"
+  },
+  "uvsub": {
+    "reverse": "cBool"
   }
 }

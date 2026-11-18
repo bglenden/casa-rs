@@ -440,6 +440,11 @@ impl MeasurementSet {
         validate::validate_ms(&self.main, &self.subtables)
     }
 
+    /// Check the MAIN identities verified by CASA when opening with `check=True`.
+    pub fn check_referential_integrity(&self) -> MsResult<()> {
+        validate::check_referential_integrity(self)
+    }
+
     /// Build a structured MeasurementSet summary for this MeasurementSet.
     ///
     /// The returned summary is richer than CASA's returned `listobs` Python

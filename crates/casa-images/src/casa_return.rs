@@ -7,9 +7,13 @@
 //! entries casa-rs computes. The keys CASA returns that casa-rs does not
 //! compute yet are listed with each function and tracked in #977.
 
-use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
+use casa_provider_contracts::{CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype};
 
-use crate::analysis::{ImageHeaderSummary, ImageStatisticsSummary, RestoringBeamSummary};
+use crate::analysis::{
+    ImageHeaderSummary, ImageStatisticsSummary, ImstatPlanesSummary, RestoringBeamSummary,
+};
+
+use casa_lattices::StatisticsAlgorithmKind;
 
 mod imhead_get;
 pub use imhead_get::{ImheadGetError, imhead_get_value};
@@ -23,7 +27,7 @@ pub use imhead_get::{ImheadGetError, imhead_get_value};
 /// Not computed yet (#977): `blcf`, `trcf`, `minposf` and `maxposf` (the
 /// formatted world coordinates) and the robust statistics `medabsdevmed`,
 /// `q1`, `q3` and `quartile`.
-pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
+pub fn imstat_record(summary: &ImageStatisticsSummary, kind: StatisticsAlgorithmKind) -> CasaValue {
     let empty = summary.npts == 0.0;
     let statistic = |value: f64| {
         if empty {
@@ -32,18 +36,40 @@ pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
             CasaValue::float64_vector([value])
         }
     };
+    if kind == StatisticsAlgorithmKind::Biweight {
+        // The biweight reports only its location and scale, with the
+        // sample's count and extrema; no flux, positions or order
+        // statistics.
+        return sorted(vec![
+            ("blc", pixels(&summary.blc)),
+            ("blcf", CasaValue::string(summary.blcf.clone())),
+            ("max", statistic(summary.max)),
+            ("mean", statistic(summary.mean)),
+            ("min", statistic(summary.min)),
+            ("npts", statistic(summary.npts)),
+            ("sigma", statistic(summary.sigma)),
+            ("trc", pixels(&summary.trc)),
+            ("trcf", CasaValue::string(summary.trcf.clone())),
+        ]);
+    }
     let mut entries = vec![
         ("blc", pixels(&summary.blc)),
+        ("blcf", CasaValue::string(summary.blcf.clone())),
         ("max", statistic(summary.max)),
         ("mean", statistic(summary.mean)),
+        ("medabsdevmed", statistic(summary.medabsdevmed)),
         ("median", statistic(summary.median)),
         ("min", statistic(summary.min)),
         ("npts", statistic(summary.npts)),
+        ("q1", statistic(summary.q1)),
+        ("q3", statistic(summary.q3)),
+        ("quartile", statistic(summary.quartile)),
         ("rms", statistic(summary.rms)),
         ("sigma", statistic(summary.sigma)),
         ("sum", statistic(summary.sum)),
         ("sumsq", statistic(summary.sumsq)),
         ("trc", pixels(&summary.trc)),
+        ("trcf", CasaValue::string(summary.trcf.clone())),
     ];
     if let Some(flux) = summary.flux {
         entries.push(("flux", statistic(flux)));
@@ -51,10 +77,73 @@ pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
     if !empty {
         if let Some(position) = &summary.maxpos {
             entries.push(("maxpos", pixels(position)));
+            if let Some(text) = &summary.maxposf {
+                entries.push(("maxposf", CasaValue::string(text.clone())));
+            }
         }
         if let Some(position) = &summary.minpos {
             entries.push(("minpos", pixels(position)));
+            if let Some(text) = &summary.minposf {
+                entries.push(("minposf", CasaValue::string(text.clone())));
+            }
         }
+    }
+    sorted(entries)
+}
+
+/// `imstat`'s per-plane record: every statistic an array over the
+/// display positions, with CASA's degenerate display axes dropped and
+/// no extremum positions.
+pub fn imstat_planes_record(summary: &ImstatPlanesSummary) -> CasaValue {
+    let shape = &summary.display_shape;
+    let planes = |values: &[f64]| {
+        if values.is_empty() {
+            CasaValue::float64_vector([])
+        } else {
+            CasaValue::FloatArray {
+                dtype: FloatDtype::Float64,
+                shape: shape.clone(),
+                data: values.iter().map(|value| CasaFloat(*value)).collect(),
+            }
+        }
+    };
+    if summary.biweight {
+        // The biweight reports only its location and scale, with each
+        // plane's count and extrema; no flux, positions or order
+        // statistics.
+        return sorted(vec![
+            ("blc", pixels(&summary.blc)),
+            ("blcf", CasaValue::string(summary.blcf.clone())),
+            ("max", planes(&summary.max)),
+            ("mean", planes(&summary.mean)),
+            ("min", planes(&summary.min)),
+            ("npts", planes(&summary.npts)),
+            ("sigma", planes(&summary.sigma)),
+            ("trc", pixels(&summary.trc)),
+            ("trcf", CasaValue::string(summary.trcf.clone())),
+        ]);
+    }
+    let mut entries = vec![
+        ("blc", pixels(&summary.blc)),
+        ("blcf", CasaValue::string(summary.blcf.clone())),
+        ("max", planes(&summary.max)),
+        ("mean", planes(&summary.mean)),
+        ("medabsdevmed", planes(&summary.medabsdevmed)),
+        ("median", planes(&summary.median)),
+        ("min", planes(&summary.min)),
+        ("npts", planes(&summary.npts)),
+        ("q1", planes(&summary.q1)),
+        ("q3", planes(&summary.q3)),
+        ("quartile", planes(&summary.quartile)),
+        ("rms", planes(&summary.rms)),
+        ("sigma", planes(&summary.sigma)),
+        ("sum", planes(&summary.sum)),
+        ("sumsq", planes(&summary.sumsq)),
+        ("trc", pixels(&summary.trc)),
+        ("trcf", CasaValue::string(summary.trcf.clone())),
+    ];
+    if let Some(flux) = &summary.flux {
+        entries.push(("flux", planes(flux)));
     }
     sorted(entries)
 }
@@ -403,12 +492,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn imstat_returns_casas_keys_in_casas_order_with_its_dtypes() {
-        let summary = ImageStatisticsSummary {
+    fn classic_summary() -> ImageStatisticsSummary {
+        ImageStatisticsSummary {
             imagename: "ramp.im".into(),
             blc: vec![0, 0, 0, 0],
             trc: vec![15, 15, 0, 7],
+            blcf: "00:00:16.000, -00.04.00.000, I, 1.415e+09Hz".into(),
+            trcf: "23:59:48.000, +00.03.00.000, I, 1.415e+09Hz".into(),
             npts: 2048.0,
             min: 0.0,
             max: 20.47,
@@ -418,27 +508,84 @@ mod tests {
             rms: 4.0,
             sigma: 5.0,
             median: 6.0,
+            medabsdevmed: 7.0,
+            q1: 8.0,
+            q3: 9.0,
+            quartile: 1.0,
             minpos: Some(vec![0, 0, 0, 0]),
+            minposf: Some("00:00:16.000, -00.04.00.000, I, 1.415e+09Hz".into()),
             maxpos: Some(vec![15, 15, 0, 7]),
+            maxposf: Some("23:59:48.000, +00.03.00.000, I, 1.415e+09Hz".into()),
             flux: Some(1.5),
             units: "Jy/beam".into(),
-        };
-        let record = imstat_record(&summary);
+        }
+    }
+
+    #[test]
+    fn imstat_returns_casas_keys_in_casas_order_with_its_dtypes() {
+        let summary = classic_summary();
+        let record = imstat_record(&summary, StatisticsAlgorithmKind::Classic);
         assert_eq!(
             keys(&record),
             [
-                "blc", "flux", "max", "maxpos", "mean", "median", "min", "minpos", "npts", "rms",
-                "sigma", "sum", "sumsq", "trc"
+                "blc",
+                "blcf",
+                "flux",
+                "max",
+                "maxpos",
+                "maxposf",
+                "mean",
+                "medabsdevmed",
+                "median",
+                "min",
+                "minpos",
+                "minposf",
+                "npts",
+                "q1",
+                "q3",
+                "quartile",
+                "rms",
+                "sigma",
+                "sum",
+                "sumsq",
+                "trc",
+                "trcf"
             ]
         );
         let plain = record.to_plain_json();
         assert_eq!(plain["npts"], serde_json::json!([2048.0]));
         assert_eq!(plain["trc"], serde_json::json!([15, 15, 0, 7]));
+        assert_eq!(
+            plain["blcf"],
+            serde_json::json!("00:00:16.000, -00.04.00.000, I, 1.415e+09Hz")
+        );
         let unbeamed = ImageStatisticsSummary {
             flux: None,
             ..summary
         };
-        assert!(!keys(&imstat_record(&unbeamed)).contains(&"flux".to_string()));
+        assert!(
+            !keys(&imstat_record(&unbeamed, StatisticsAlgorithmKind::Classic))
+                .contains(&"flux".to_string())
+        );
+    }
+
+    #[test]
+    fn imstat_returns_the_biweights_reduced_record() {
+        let summary = ImageStatisticsSummary {
+            npts: 2048.0,
+            min: 0.0,
+            max: 20.47,
+            mean: 10.235,
+            sigma: 6.3021,
+            ..classic_summary()
+        };
+        let record = imstat_record(&summary, StatisticsAlgorithmKind::Biweight);
+        assert_eq!(
+            keys(&record),
+            [
+                "blc", "blcf", "max", "mean", "min", "npts", "sigma", "trc", "trcf"
+            ]
+        );
     }
 
     #[test]

@@ -1,0 +1,241 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! CASA-style display formatting of world coordinates.
+//!
+//! casacore's `CoordinateSystem::format` chain renders each world axis
+//! for display, and the statistics surfaces join one field per world
+//! axis with `", "`. This module reproduces that rendering for the
+//! forms those surfaces reach:
+//!
+//! - direction longitudes as hours `HH:MM:SS.sss` and latitudes as
+//!   signed `±DDD.MM.SS.sss` (casacore's `MVAngle` TIME and ANGLE
+//!   forms with the statistics surfaces' three decimals),
+//! - Stokes parameters by name,
+//! - every other axis as C++'s default `ostream <<` rendering of the
+//!   world value with its unit appended directly.
+
+use crate::coordinate::CoordinateModel;
+use crate::coordinate_system::CoordinateSystem;
+use crate::error::CoordinateError;
+
+/// Format the world coordinates of `pixel` the way CASA's statistics
+/// surfaces render them: one field per world axis, comma-separated.
+///
+/// The pixel vector has one value per pixel axis, in axis order. The
+/// returned string is casacore's `CoordinateSystem::format` rendering
+/// of every world axis, joined with `", "` as `ia.statistics` builds
+/// its `blcf`, `trcf`, `minposf` and `maxposf` strings.
+///
+/// # Errors
+///
+/// A pixel the projection cannot place or whose length is not the
+/// coordinate system's pixel-axis count.
+///
+/// # Examples
+///
+/// ```
+/// use casa_coordinates::format_world_display;
+/// use casa_coordinates::{
+///     DirectionCoordinate, Projection, ProjectionType, StokesCoordinate, StokesType,
+/// };
+/// use casa_types::measures::direction::DirectionRef;
+///
+/// let arcmin = std::f64::consts::PI / 180.0 / 60.0;
+/// let mut coords = casa_coordinates::CoordinateSystem::new();
+/// coords.add_coordinate(
+///     DirectionCoordinate::new(
+///         DirectionRef::J2000,
+///         Projection::new(ProjectionType::SIN),
+///         [0.0, 0.0],
+///         [-arcmin, arcmin],
+///         [4.0, 4.0],
+///     )
+///     .with_world_units(["'", "'"])
+///     .expect("arcminutes"),
+/// );
+/// coords.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+/// let text = format_world_display(&coords, &[0.0, 0.0, 0.0]).expect("inside the projection");
+/// assert_eq!(text, "00:00:16.000, -00.04.00.000, I");
+/// ```
+pub fn format_world_display(
+    coords: &CoordinateSystem,
+    pixel: &[f64],
+) -> Result<String, CoordinateError> {
+    let n_pix = coords.n_pixel_axes();
+    if pixel.len() != n_pix {
+        return Err(CoordinateError::DimensionMismatch {
+            expected: n_pix,
+            got: pixel.len(),
+        });
+    }
+
+    let mut fields = Vec::with_capacity(coords.n_world_axes());
+    let mut pixel_offset = 0;
+    for index in 0..coords.n_coordinates() {
+        let coord: &CoordinateModel = coords.coordinate(index);
+        let n = coord.n_pixel_axes();
+        let world = coord.to_world(&pixel[pixel_offset..pixel_offset + n])?;
+        pixel_offset += n;
+        match coord {
+            CoordinateModel::Direction(_) => {
+                fields.push(format_longitude_hours(world[0]));
+                fields.push(format_latitude_dms(world[1]));
+            }
+            CoordinateModel::Stokes(_) => {
+                let code = world.first().copied().unwrap_or_default() as i32;
+                let name = crate::stokes::StokesType::from_code(code)
+                    .map(|kind| kind.name().to_string())
+                    .unwrap_or_else(|| code.to_string());
+                fields.push(name);
+            }
+            _ => {
+                let units = coord.axis_units();
+                for (axis, value) in world.iter().enumerate() {
+                    fields.push(format!("{}{}", format_stream_value(*value), units[axis]));
+                }
+            }
+        }
+    }
+    Ok(fields.join(", "))
+}
+
+/// Format a longitude in radians as hours `HH:MM:SS.sss`, wrapped into
+/// one revolution, with the seconds rounded to three decimals.
+pub fn format_longitude_hours(radians: f64) -> String {
+    let hours = (radians * 12.0 / std::f64::consts::PI).rem_euclid(24.0);
+    let mut hour = hours.floor() as u32;
+    let mut minute = ((hours - hour as f64) * 60.0).floor() as u32;
+    let seconds = (hours - hour as f64) * 3600.0 - minute as f64 * 60.0;
+    let seconds = (seconds * 1000.0).round() / 1000.0;
+    if seconds >= 60.0 {
+        minute += 1;
+        if minute >= 60 {
+            minute = 0;
+            hour = (hour + 1) % 24;
+        }
+        return format!("{hour:02}:{minute:02}:00.000");
+    }
+    format!("{hour:02}:{minute:02}:{seconds:06.3}")
+}
+
+/// Format a latitude in radians as signed `DDD.MM.SS.sss` with the
+/// seconds rounded to three decimals and the sign carried at zero
+/// degrees, as casacore's ANGLE rendering gives it.
+pub fn format_latitude_dms(radians: f64) -> String {
+    let degrees = radians * 180.0 / std::f64::consts::PI;
+    let sign = if degrees.is_sign_negative() { "-" } else { "+" };
+    let absolute = degrees.abs();
+    let mut degree = absolute.floor() as u32;
+    let mut minute = ((absolute - degree as f64) * 60.0).floor() as u32;
+    let seconds = (absolute - degree as f64) * 3600.0 - minute as f64 * 60.0;
+    let seconds = (seconds * 1000.0).round() / 1000.0;
+    if seconds >= 60.0 {
+        minute += 1;
+        if minute >= 60 {
+            minute = 0;
+            degree += 1;
+        }
+        return format!("{sign}{degree:02}.{minute:02}.00.000");
+    }
+    format!("{sign}{degree:02}.{minute:02}.{seconds:06.3}")
+}
+
+/// Format a world value as C++'s default `ostream <<` rendering: `%g`
+/// with six significant digits, trailing zeros stripped.
+pub fn format_stream_value(value: f64) -> String {
+    if value == 0.0 {
+        return "0".to_string();
+    }
+    if !value.is_finite() {
+        return if value.is_nan() {
+            "nan".to_string()
+        } else if value > 0.0 {
+            "inf".to_string()
+        } else {
+            "-inf".to_string()
+        };
+    }
+
+    // Six significant digits in scientific form: the mantissa carries
+    // the digits, and the exponent decides %g's fixed-versus-scientific
+    // choice.
+    let scientific = format!("{value:.5e}");
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .expect("scientific formatting carries an exponent");
+    let exponent: i32 = exponent.parse().expect("a decimal exponent");
+    let digits: String = mantissa.chars().filter(|c| c.is_ascii_digit()).collect();
+    let sign = if mantissa.starts_with('-') { "-" } else { "" };
+
+    if !(-4..6).contains(&exponent) {
+        let mut text = format!("{}.{}", &digits[..1], &digits[1..]);
+        while text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+        let sign_char = if exponent < 0 { '-' } else { '+' };
+        let magnitude = exponent.unsigned_abs();
+        format!("{sign}{text}e{sign_char}{magnitude:02}")
+    } else {
+        let decimals = (5 - exponent).max(0) as usize;
+        let mut text = format!("{:.decimals$}", value.abs());
+        if text.contains('.') {
+            while text.ends_with('0') {
+                text.pop();
+            }
+            if text.ends_with('.') {
+                text.pop();
+            }
+        }
+        format!("{sign}{text}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hours_wrap_and_round() {
+        let to_hours = |deg: f64| deg * std::f64::consts::PI / 180.0;
+        assert_eq!(format_longitude_hours(to_hours(0.0)), "00:00:00.000");
+        assert_eq!(
+            format_longitude_hours(to_hours(-1.0 / 60.0)),
+            "23:59:56.000"
+        );
+        assert_eq!(format_longitude_hours(to_hours(180.0)), "12:00:00.000");
+        // Four arcminutes of sky is sixteen seconds of time.
+        let arcmin = to_hours(1.0 / 60.0);
+        assert_eq!(format_longitude_hours(4.0 * arcmin), "00:00:16.000");
+        // Rounding past a whole second carries into the minute.
+        let nearly = to_hours(10.0) + 59.9996 * std::f64::consts::PI / 12.0 / 3600.0;
+        assert_eq!(format_longitude_hours(nearly), "00:41:00.000");
+    }
+
+    #[test]
+    fn latitude_carries_the_sign_at_every_magnitude() {
+        let to_deg = |deg: f64| deg * std::f64::consts::PI / 180.0;
+        assert_eq!(format_latitude_dms(to_deg(0.0)), "+00.00.00.000");
+        assert_eq!(format_latitude_dms(to_deg(-4.0 / 60.0)), "-00.04.00.000");
+        assert_eq!(format_latitude_dms(to_deg(-90.0)), "-90.00.00.000");
+        assert_eq!(format_latitude_dms(to_deg(45.5)), "+45.30.00.000");
+        assert_eq!(format_latitude_dms(to_deg(3.0 / 60.0)), "+00.03.00.000");
+        // Rounding past a whole second carries into the minute.
+        let nearly = to_deg(45.0) + 59.9996 * std::f64::consts::PI / 180.0 / 3600.0;
+        assert_eq!(format_latitude_dms(nearly), "+45.01.00.000");
+    }
+
+    #[test]
+    fn stream_values_match_cxx_default_formatting() {
+        assert_eq!(format_stream_value(0.0), "0");
+        assert_eq!(format_stream_value(1.415002e9), "1.415e+09");
+        assert_eq!(format_stream_value(-2.5), "-2.5");
+        assert_eq!(format_stream_value(0.25), "0.25");
+        assert_eq!(format_stream_value(1e-7), "1e-07");
+        assert_eq!(format_stream_value(123456.0), "123456");
+        assert_eq!(format_stream_value(1234567.0), "1.23457e+06");
+        assert_eq!(format_stream_value(999999.5), "1e+06");
+        assert_eq!(format_stream_value(-1e-5), "-1e-05");
+    }
+}

@@ -1216,7 +1216,7 @@ enum MeasurementSetWriteSessionState {
     Mutation {
         /// casacore's MAIN write lock, held until the session finishes or is
         /// dropped.
-        write_lock: TableWriteLock,
+        write_lock: Option<TableWriteLock>,
         /// Canonical path of the locked MeasurementSet; every batch must
         /// write this one.
         target: PathBuf,
@@ -1787,7 +1787,7 @@ impl MeasurementSetWriteSession {
         measurement_set: &mut MeasurementSet,
         plan: MeasurementSetWritePlan,
     ) -> Result<Self, MeasurementSetWriteError> {
-        Self::start_mutation(measurement_set, plan, None)
+        Self::start_mutation(measurement_set, plan, None, None)
     }
 
     /// Start a selected-row mutation, as
@@ -1809,13 +1809,27 @@ impl MeasurementSetWriteSession {
         plan: MeasurementSetWritePlan,
         write_lock: TableWriteLock,
     ) -> Result<Self, MeasurementSetWriteError> {
-        Self::start_mutation(measurement_set, plan, Some(write_lock))
+        Self::start_mutation(measurement_set, plan, Some(write_lock), None)
+    }
+
+    /// Use a write lock retained by a tool, and leave it held even on error.
+    #[doc(hidden)]
+    pub fn mutate_selected_rows_with_lock(
+        measurement_set: &mut MeasurementSet,
+        plan: MeasurementSetWritePlan,
+        lock: &mut TableWriteLock,
+        mutate: impl FnOnce(&mut Self, &mut MeasurementSet) -> Result<(), MeasurementSetWriteError>,
+    ) -> Result<MeasurementSetWriteTelemetry, MeasurementSetWriteError> {
+        let mut session = Self::start_mutation(measurement_set, plan, None, Some(lock))?;
+        mutate(&mut session, measurement_set)?;
+        session.complete_mutation().map(|(telemetry, _)| telemetry)
     }
 
     fn start_mutation(
         measurement_set: &mut MeasurementSet,
         plan: MeasurementSetWritePlan,
         held: Option<TableWriteLock>,
+        borrowed: Option<&mut TableWriteLock>,
     ) -> Result<Self, MeasurementSetWriteError> {
         if plan.operation != MeasurementSetWriteOperation::SelectedRowMutation {
             return Err(MeasurementSetWriteError::InvalidPlan(
@@ -1875,22 +1889,25 @@ impl MeasurementSetWriteSession {
             }
         }
         let target = canonical_measurement_set_path(path)?;
-        let mut write_lock = match held {
-            Some(lock) if canonical_measurement_set_path(lock.path())? == target => lock,
-            Some(lock) => {
-                return Err(MeasurementSetWriteError::InvalidPlan(format!(
-                    "the write lock held on {} is not on MAIN of {}",
-                    lock.path().display(),
-                    path.display()
-                )));
-            }
-            None => TableWriteLock::acquire(path, 0).map_err(|source| {
+        let mut write_lock = held;
+        if write_lock.is_none() && borrowed.is_none() {
+            write_lock = Some(TableWriteLock::acquire(path, 0).map_err(|source| {
                 MeasurementSetWriteError::WriteLock {
                     path: path.display().to_string(),
                     source,
                 }
-            })?,
-        };
+            })?);
+        }
+        let active_lock = borrowed
+            .or(write_lock.as_mut())
+            .expect("mutation holds MAIN");
+        if canonical_measurement_set_path(active_lock.path())? != target {
+            return Err(MeasurementSetWriteError::InvalidPlan(format!(
+                "the write lock held on {} is not on MAIN of {}",
+                active_lock.path().display(),
+                path.display()
+            )));
+        }
         for column in &plan.columns {
             if column.mode == MeasurementSetColumnWriteMode::Create {
                 let already_persisted = measurement_set
@@ -1903,7 +1920,7 @@ impl MeasurementSetWriteSession {
                     // write before each one means that when an installation
                     // fails, the lock still publishes the columns installed
                     // before it, and any part of this one, as persisted.
-                    write_lock.record_write();
+                    active_lock.record_write();
                     if let Some(source) = &column.create_source_column {
                         measurement_set
                             .main_table_mut()
@@ -1926,7 +1943,7 @@ impl MeasurementSetWriteSession {
                 }
             }
         }
-        write_lock.record_write();
+        active_lock.record_write();
         Ok(Self {
             plan,
             state: MeasurementSetWriteSessionState::Mutation {
@@ -2164,6 +2181,19 @@ impl MeasurementSetWriteSession {
     pub fn finish_mutation_holding(
         self,
     ) -> Result<(MeasurementSetWriteTelemetry, TableWriteLock), MeasurementSetWriteError> {
+        let (telemetry, lock) = self.complete_mutation()?;
+        let lock = lock.ok_or_else(|| {
+            MeasurementSetWriteError::InvalidPlan(
+                "borrowed mutation lock remains with caller".to_owned(),
+            )
+        })?;
+        Ok((telemetry, lock))
+    }
+
+    fn complete_mutation(
+        self,
+    ) -> Result<(MeasurementSetWriteTelemetry, Option<TableWriteLock>), MeasurementSetWriteError>
+    {
         let MeasurementSetWriteSession { plan, state } = self;
         let MeasurementSetWriteSessionState::Mutation {
             write_lock,

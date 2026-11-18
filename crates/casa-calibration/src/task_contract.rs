@@ -29,6 +29,19 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 /// Stable protocol version advertised by `calibrate --protocol-info`.
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
+/// The surfaces `calibrate` hosts, with the default surface first.
+pub const CALIBRATION_SURFACES: [&str; 9] = [
+    "calibrate",
+    "applycal",
+    "gaincal",
+    "bandpass",
+    "fluxscale",
+    "gencal",
+    "clearcal",
+    "delmod",
+    "uvsub",
+];
+
 /// Build the current shared calibration protocol descriptor.
 pub fn calibration_protocol_descriptor() -> ProviderProtocolDescriptor {
     ProviderProtocolDescriptor::new(
@@ -63,21 +76,14 @@ pub fn calibration_task_schema_bundle() -> TaskProviderContract {
             }),
             python: None,
         },
-        parameter_surfaces: [
-            "calibrate",
-            "applycal",
-            "gaincal",
-            "bandpass",
-            "fluxscale",
-            "gencal",
-        ]
-        .into_iter()
-        .map(|surface| {
-            builtin_surface_bundle(surface).unwrap_or_else(|error| {
-                panic!("built-in calibration parameter surface {surface:?}: {error}")
+        parameter_surfaces: CALIBRATION_SURFACES
+            .into_iter()
+            .map(|surface| {
+                builtin_surface_bundle(surface).unwrap_or_else(|error| {
+                    panic!("built-in calibration parameter surface {surface:?}: {error}")
+                })
             })
-        })
-        .collect(),
+            .collect(),
         domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
@@ -676,6 +682,9 @@ mod tests {
                 "bandpass",
                 "fluxscale",
                 "gencal",
+                "clearcal",
+                "delmod",
+                "uvsub",
             ]
         );
         assert!(
@@ -689,7 +698,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            6
+            9
         );
         assert!(
             bundle

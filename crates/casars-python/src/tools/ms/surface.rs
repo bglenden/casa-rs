@@ -40,7 +40,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("close", &[], R::Any, No),
+    method("close", &[], R::Bool, Yes),
     method(
         "concatenate",
         &[
@@ -150,7 +150,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("done", &[], R::Any, No),
+    method("done", &[], R::Bool, Yes),
     method(
         "fromfits",
         &[
@@ -388,8 +388,8 @@ const METHODS: &[Method] = &[
             param("lock", K::Bool, Bool(false)),
             param("check", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "partition",
@@ -695,8 +695,8 @@ const METHODS: &[Method] = &[
     method(
         "uvsub",
         &[param("reverse", K::Bool, Bool(false))],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "virtconcatenate",

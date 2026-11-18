@@ -185,6 +185,42 @@
       "include_in_suite": true
     },
     {
+      "id": "uvsub",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "clearcal",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "delmod",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
       "id": "gencal",
       "launch": {
         "executable": "calibrate",

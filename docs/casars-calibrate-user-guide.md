@@ -11,8 +11,8 @@ application catalog exposes it as these task surfaces:
 - `calibrate`: the general surface; `--mode` selects `apply`,
   `export_corrected_data`, `fluxscale`, `gencal`, `solve_bandpass`,
   `solve_gain`, `stats`, or `summary`
-- `gaincal`, `bandpass`, `applycal`, `fluxscale`, `gencal`: CASA's tasks,
-  with CASA 6.7.6's parameters, defaults and values
+- `gaincal`, `bandpass`, `applycal`, `fluxscale`, `gencal`, `clearcal`,
+  `delmod`, `uvsub`: CASA's tasks, with CASA 6.7.6's parameters and defaults
 
 Every surface is a one-shot task. Run it as `calibrate <surface>`
 (`calibrate bandpass --ms ...`; `calibrate` alone is the general surface),
@@ -156,6 +156,27 @@ writer leaves its reservation and staging or backup directories beside the
 product; a later writer refuses them. Inspect those directories and recover the
 prior product before removing the reservation and retrying. Append refuses
 symbolic-link subtables rather than risking their loss during replacement.
+
+## Reset and remove visibility models
+
+`tasks.clearcal(vis, field='', spw='', intent='', addmodel=False)` resets
+`CORRECTED_DATA` from `DATA` and initializes an existing `MODEL_DATA` to an
+unpolarized unit model on the same selected rows and channels. Any missing
+scratch columns it creates are initialized across the whole MeasurementSet.
+Set `addmodel=True` to create `MODEL_DATA` when it is absent.
+
+`tasks.delmod(vis, otf=True, field='', scr=False)` removes the virtual model
+recipes for the selected fields. An empty `field` selects all fields.
+Set `scr=True` to drop the whole `MODEL_DATA` column. Set `otf=False` to
+retain the virtual recipes. Both tasks update the MeasurementSet in place
+and return `None`.
+
+`tasks.uvsub(vis, reverse=False)` writes the residual to `CORRECTED_DATA`.
+When the corrected column is absent, it starts from the observed data. It
+reads a field's virtual model, its scratch model, or the default unit model
+in that order. Set `reverse=True` to add the model. The `casars.tools.ms`
+tool exposes the same operation through `uvsub(reverse=False)` on a
+MeasurementSet opened with `nomodify=False`.
 
 ## Current limitations
 

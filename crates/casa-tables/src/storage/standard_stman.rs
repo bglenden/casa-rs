@@ -1377,9 +1377,15 @@ pub(crate) fn save_ssm_file_scalar_columns_sparse_rows_in_place(
     }
     if changed_rows.is_empty()
         || sparse_columns.iter().all(Option::is_none)
-        || col_descs.iter().any(|column| {
-            column.is_array || column.is_record() || column.data_type == CasacoreDataType::TpString
-        })
+        || col_descs
+            .iter()
+            .zip(sparse_columns)
+            .any(|(column, patches)| {
+                patches.is_some()
+                    && (column.is_array
+                        || column.is_record()
+                        || column.data_type == CasacoreDataType::TpString)
+            })
     {
         return Ok(false);
     }
@@ -1942,6 +1948,46 @@ pub(crate) fn rewrite_ssm_rows(
         destination,
         columns,
         &column_writer::RowCells::new(rows, None, columns),
+        header.big_endian,
+        false,
+        name,
+        Some((Some(header.bucket_size), header.pers_cache_size)),
+    )
+}
+
+/// Replace one manager from retained cells, preserving its bucket layout options.
+pub(crate) fn rewrite_ssm_columns(
+    original: &Path,
+    destination: &Path,
+    columns: &[ColumnDescContents],
+    row_count: usize,
+    name: &str,
+    cell: impl Fn(usize, usize) -> Result<Option<Value>, StorageError>,
+) -> Result<Vec<u8>, StorageError> {
+    struct Cells<F> {
+        row_count: usize,
+        cell: F,
+    }
+    impl<F: Fn(usize, usize) -> Result<Option<Value>, StorageError>> column_writer::SsmCells
+        for Cells<F>
+    {
+        fn row_count(&self) -> usize {
+            self.row_count
+        }
+
+        fn cell(
+            &self,
+            column: usize,
+            row: usize,
+        ) -> Result<Option<std::borrow::Cow<'_, Value>>, StorageError> {
+            Ok((self.cell)(column, row)?.map(std::borrow::Cow::Owned))
+        }
+    }
+    let header = parse_ssm_header(&mut File::open(original)?)?;
+    column_writer::write_ssm_file_columns_with_layout(
+        destination,
+        columns,
+        &Cells { row_count, cell },
         header.big_endian,
         false,
         name,

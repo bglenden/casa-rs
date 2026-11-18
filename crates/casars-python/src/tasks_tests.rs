@@ -114,7 +114,18 @@ fn simulation_figures_validate_payload_bounds_and_declared_destinations() {
 #[test]
 fn the_application_catalog_lists_every_launch_entry() {
     let applications = applications().expect("application catalog");
-    assert_eq!(applications.len(), 31);
+    let catalog = builtin_application_catalog().expect("native application catalog");
+    assert_eq!(
+        applications
+            .iter()
+            .map(|entry| &entry.id)
+            .collect::<Vec<_>>(),
+        catalog
+            .applications
+            .iter()
+            .map(|entry| &entry.id)
+            .collect::<Vec<_>>(),
+    );
     assert!(
         applications
             .iter()

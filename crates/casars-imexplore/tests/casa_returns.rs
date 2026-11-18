@@ -273,20 +273,7 @@ fn imstat_returns_casas_statistics_record() {
         "imstat",
         json!({"imagename": image, "box": "0,0,3,3"}),
     );
-    assert_casa_dict(
-        &value,
-        "imstat no beam",
-        &[
-            "blcf",
-            "maxposf",
-            "medabsdevmed",
-            "minposf",
-            "q1",
-            "q3",
-            "quartile",
-            "trcf",
-        ],
-    );
+    assert_casa_dict(&value, "imstat no beam", &[]);
 }
 
 /// `flux` is CASA's: integrated over the selected channels when there are
@@ -348,8 +335,24 @@ fn imstat_of_no_pixels_returns_empty_statistics() {
     assert_eq!(
         keys,
         [
-            "blc", "flux", "max", "mean", "median", "min", "npts", "rms", "sigma", "sum", "sumsq",
-            "trc"
+            "blc",
+            "blcf",
+            "flux",
+            "max",
+            "mean",
+            "medabsdevmed",
+            "median",
+            "min",
+            "npts",
+            "q1",
+            "q3",
+            "quartile",
+            "rms",
+            "sigma",
+            "sum",
+            "sumsq",
+            "trc",
+            "trcf"
         ]
     );
     for entry in entries {
@@ -360,6 +363,15 @@ fn imstat_of_no_pixels_returns_empty_statistics() {
                 data,
             } => assert!(shape == &[0] && data.is_empty(), "{:?}", entry.key),
             CasaValue::IntArray { .. } => {}
+            CasaValue::String { value } => match &entry.key {
+                CasaKey::String(key) if key == "blcf" => {
+                    assert_eq!(value, "00:00:08.000, -00.02.00.000, I, 1.415e+09Hz")
+                }
+                CasaKey::String(key) if key == "trcf" => {
+                    assert_eq!(value, "23:59:56.000, +00.01.00.000, I, 1.415e+09Hz")
+                }
+                other => panic!("unexpected string entry {other:?}"),
+            },
             other => panic!("{:?}: {other:?}", entry.key),
         }
     }
@@ -1116,7 +1128,7 @@ fn a_parameter_casa_rs_takes_only_at_its_default_is_refused_otherwise() {
     let (output, reply) = json_run(
         workspace.path(),
         "imstat",
-        json!({"imagename": image, "axes": [0, 1]}),
+        json!({"imagename": image, "listit": false}),
     );
     assert_eq!(output.status.code(), Some(2));
     let Some(TaskReply::Failed {
@@ -1125,21 +1137,17 @@ fn a_parameter_casa_rs_takes_only_at_its_default_is_refused_otherwise() {
     else {
         panic!("{reply:?}");
     };
-    assert_eq!(parameter.as_deref(), Some("axes"));
+    assert_eq!(parameter.as_deref(), Some("listit"));
     assert!(message.contains("#977"), "{message}");
     // CASA's default is accepted, on the command line as from Python.
-    let (output, _) = json_run(
-        workspace.path(),
-        "imstat",
-        json!({"imagename": image, "axes": []}),
-    );
+    let (output, _) = json_run(workspace.path(), "imstat", json!({"imagename": image}));
     assert!(output.status.success());
     let command_line = Command::new(env!("CARGO_BIN_EXE_imexplore"))
         .args([
             "imstat",
             image.to_str().unwrap(),
-            "--stokes",
-            "I",
+            "--mask",
+            "other.im",
             "--no-save-last",
         ])
         .current_dir(workspace.path())
@@ -1197,11 +1205,11 @@ fn imstat_takes_casas_spellings_of_its_defaults() {
         "{}",
         String::from_utf8_lossy(&command_line.stderr)
     );
-    // Another algorithm is not yet, and with it the control it reads.
+    // Another parameter is not yet, and with it the control it reads.
     let (output, reply) = json_run(
         workspace.path(),
         "imstat",
-        json!({"imagename": image, "algorithm": "chauvenet", "zscore": 3.0}),
+        json!({"imagename": image, "mask": "other.im", "stretch": true}),
     );
     assert_eq!(output.status.code(), Some(2));
     let Some(TaskReply::Failed {
@@ -1210,11 +1218,8 @@ fn imstat_takes_casas_spellings_of_its_defaults() {
     else {
         panic!("{reply:?}");
     };
-    assert_eq!(parameter.as_deref(), Some("algorithm"));
-    assert!(
-        message.contains("#977") && message.contains("zscore"),
-        "{message}"
-    );
+    assert_eq!(parameter.as_deref(), Some("mask"));
+    assert!(message.contains("#977"), "{message}");
 }
 
 /// An absent or missing `imagename` is a refusal naming it (exit 2), as

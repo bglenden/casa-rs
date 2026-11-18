@@ -10,8 +10,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_add_delete,
-    imhead_extrema, imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
+    ImageError, ImageHeaderSummary, ImageStatisticsSummary, ImstatOutcome, ImstatPlanesSummary,
+    ImstatRequest, image_task_front_end, imhead, imhead_add_delete, imhead_extrema,
+    imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_planes_record,
+    imstat_record, parse_imstat_algorithm,
 };
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
@@ -303,16 +305,72 @@ fn history_value(value: &ParameterValue) -> String {
 
 fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("imagename")?;
-    let summary = imstat(
-        &path,
-        task.text("box")?.as_deref(),
-        task.text("region")?.as_deref(),
-        task.text("chans")?.as_deref(),
-        None,
-    )
-    .map_err(|error| image_error("imstat", &path, error))?;
-    let text = statistics_text(&summary);
-    Ok(TaskSuccess::new(imstat_record(&summary), &summary)?.with_text(text))
+    let request = ImstatRequest {
+        imagename: path.clone(),
+        box_pixels: task.text("box")?,
+        region: task.text("region")?,
+        chans: task.text("chans")?,
+        algorithm: task.required_text("algorithm")?,
+        fence: task.number("fence")?,
+        center: task.required_text("center")?,
+        lside: task.flag("lside")?,
+        zscore: task.number("zscore")?,
+        maxiter: task.integer("maxiter")?,
+        clmethod: task.required_text("clmethod")?,
+        niter: task.integer("niter")?,
+        axes: axes_list(task)?,
+        stokes: task.text("stokes")?,
+        ..ImstatRequest::default()
+    };
+    let algorithm = parse_imstat_algorithm(&request).map_err(TaskFailure::execution)?;
+    let outcome = imstat(&request).map_err(|error| match error {
+        ImageError::RobustStats(message) | ImageError::CasaSelection(message) => {
+            TaskFailure::execution(message)
+        }
+        other => image_error("imstat", &path, other),
+    })?;
+    match outcome {
+        ImstatOutcome::Global(summary) => {
+            let text = statistics_text(&summary);
+            Ok(
+                TaskSuccess::new(imstat_record(&summary, algorithm.kind()), &summary)?
+                    .with_text(text),
+            )
+        }
+        ImstatOutcome::Planes(summary) => {
+            let text = planes_text(&summary);
+            Ok(TaskSuccess::new(imstat_planes_record(&summary), &summary)?.with_text(text))
+        }
+    }
+}
+
+/// CASA's `axes` argument: one integer or a list of them, as the task's
+/// normalized value holds it. An empty list means every axis.
+fn axes_list(task: &TaskInvocation<'_>) -> Result<Option<Vec<i64>>, TaskFailure> {
+    let Some(value) = task.value("axes") else {
+        return Ok(None);
+    };
+    let single = |value: &ParameterValue| -> Option<i64> {
+        match value {
+            ParameterValue::Integer(value) => Some(*value),
+            ParameterValue::NumpyScalar { value, .. } | ParameterValue::ScalarArray(value) => {
+                match value.as_ref() {
+                    ParameterValue::Integer(value) => Some(*value),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    };
+    let list = match value {
+        ParameterValue::Array(values) => values
+            .iter()
+            .map(single)
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default(),
+        one => single(one).map(|value| vec![value]).unwrap_or_default(),
+    };
+    Ok(Some(list))
 }
 
 fn image_error(operation: &str, path: &Path, error: impl Display) -> TaskFailure {
@@ -333,6 +391,25 @@ fn statistics_text(summary: &ImageStatisticsSummary) -> String {
     let _ = writeln!(out, "sigma: {}", summary.sigma);
     if let Some(flux) = summary.flux {
         let _ = writeln!(out, "flux: {flux}");
+    }
+    out
+}
+
+/// One line per plane of a per-plane `imstat` run.
+fn planes_text(summary: &ImstatPlanesSummary) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "planes: {} (display shape {:?})",
+        summary.npts.len(),
+        summary.display_shape
+    );
+    for (plane, npts) in summary.npts.iter().enumerate() {
+        let _ = writeln!(
+            out,
+            "plane {plane}: npts {npts} mean {} sigma {}",
+            summary.mean[plane], summary.sigma[plane]
+        );
     }
     out
 }

@@ -67,7 +67,7 @@ pub enum ImageAnalysisTaskResult {
     /// Result for [`ImageAnalysisTaskRequest::Imhead`].
     Imhead(ImageHeaderSummary),
     /// Result for [`ImageAnalysisTaskRequest::Imstat`].
-    Imstat(ImageStatisticsSummary),
+    Imstat(ImstatOutcome),
     /// Result for [`ImageAnalysisTaskRequest::Immoments`].
     Immoments(MomentMapSummary),
     /// Result for [`ImageAnalysisTaskRequest::Impv`].
@@ -113,6 +113,157 @@ pub struct ImstatRequest {
     /// Inclusive pixel-value range to include.
     #[serde(default)]
     pub includepix: Option<[f64; 2]>,
+    /// CASA `algorithm` selection, minimum-matched: `biweight`,
+    /// `chauvenet`, `classic`, `fit-half` or `hinges-fences`.
+    #[serde(default = "default_algorithm")]
+    pub algorithm: String,
+    /// The `hinges-fences` fence multiplier.
+    #[serde(default = "default_fence")]
+    pub fence: f64,
+    /// The `fit-half` center, minimum-matched: `mean`, `median` or `zero`.
+    #[serde(default = "default_center")]
+    pub center: String,
+    /// Whether `fit-half` uses the values at or above the center.
+    #[serde(default = "default_true")]
+    pub lside: bool,
+    /// The fixed `chauvenet` z-score, or a negative value for
+    /// Chauvenet's criterion.
+    #[serde(default = "default_zscore")]
+    pub zscore: f64,
+    /// The maximum `chauvenet` iterations; negative means until
+    /// convergence.
+    #[serde(default = "default_maxiter")]
+    pub maxiter: i64,
+    /// CASA `clmethod` selection for the classical method: `auto`,
+    /// `tiled` or `framework`, minimum-matched. The strategy does not
+    /// change the statistics.
+    #[serde(default = "default_clmethod")]
+    pub clmethod: String,
+    /// The maximum `biweight` iterations; negative takes the fast pass.
+    #[serde(default = "default_niter")]
+    pub niter: i64,
+    /// CASA `axes` selection: the axes to evaluate the statistics over,
+    /// as a pixel-axis list or `-1` for all of them. The default is all
+    /// axes.
+    #[serde(default)]
+    pub axes: Option<Vec<i64>>,
+    /// CASA `stokes` selection: Stokes plane names, as in `I`, `QU` or
+    /// `IQUV`, comma-separated and concatenated.
+    #[serde(default)]
+    pub stokes: Option<String>,
+}
+
+impl Default for ImstatRequest {
+    /// CASA's defaults, as the task's XML records them.
+    fn default() -> Self {
+        Self {
+            imagename: PathBuf::new(),
+            box_pixels: None,
+            region: None,
+            chans: None,
+            includepix: None,
+            algorithm: default_algorithm(),
+            fence: default_fence(),
+            center: default_center(),
+            lside: default_true(),
+            zscore: default_zscore(),
+            maxiter: default_maxiter(),
+            clmethod: default_clmethod(),
+            niter: default_niter(),
+            axes: None,
+            stokes: None,
+        }
+    }
+}
+
+fn default_algorithm() -> String {
+    "classic".to_string()
+}
+
+fn default_fence() -> f64 {
+    -1.0
+}
+
+fn default_center() -> String {
+    "mean".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_zscore() -> f64 {
+    -1.0
+}
+
+fn default_maxiter() -> i64 {
+    -1
+}
+
+fn default_clmethod() -> String {
+    "auto".to_string()
+}
+
+fn default_niter() -> i64 {
+    3
+}
+
+/// One `imstat` per-plane outcome: statistics evaluated over the
+/// collapsed axes, one value per display position, in display order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImstatPlanesSummary {
+    /// Input image path.
+    pub imagename: String,
+    /// Applied zero-based origin of the selection.
+    pub blc: Vec<usize>,
+    /// Applied zero-based inclusive top-right corner of the selection.
+    pub trc: Vec<usize>,
+    /// CASA-formatted world coordinates of the applied origin.
+    pub blcf: String,
+    /// CASA-formatted world coordinates of the applied top-right corner.
+    pub trcf: String,
+    /// The display shape, with CASA's degenerate display axes dropped.
+    pub display_shape: Vec<usize>,
+    /// Number of points in each plane.
+    pub npts: Vec<f64>,
+    /// Each plane's minimum.
+    pub min: Vec<f64>,
+    /// Each plane's maximum.
+    pub max: Vec<f64>,
+    /// Each plane's sum.
+    pub sum: Vec<f64>,
+    /// Each plane's sum of squares.
+    pub sumsq: Vec<f64>,
+    /// Each plane's mean.
+    pub mean: Vec<f64>,
+    /// Each plane's root-mean-square.
+    pub rms: Vec<f64>,
+    /// Each plane's Bessel-corrected standard deviation.
+    pub sigma: Vec<f64>,
+    /// Each plane's median.
+    pub median: Vec<f64>,
+    /// Each plane's median absolute deviation.
+    pub medabsdevmed: Vec<f64>,
+    /// Each plane's first quartile.
+    pub q1: Vec<f64>,
+    /// Each plane's third quartile.
+    pub q3: Vec<f64>,
+    /// Each plane's interquartile range.
+    pub quartile: Vec<f64>,
+    /// Each plane's flux density, when the image carries a beam.
+    pub flux: Option<Vec<f64>>,
+    /// Whether the biweight's location and scale replace the mean and
+    /// sigma, with no other statistics in the record.
+    pub biweight: bool,
+}
+
+/// One `imstat` outcome: the global statistics, or one per plane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub enum ImstatOutcome {
+    /// The statistics of the whole selection.
+    Global(ImageStatisticsSummary),
+    /// The statistics of each display plane.
+    Planes(ImstatPlanesSummary),
 }
 
 /// CASA `immoments` request.
@@ -601,6 +752,10 @@ pub struct ImageStatisticsSummary {
     pub blc: Vec<usize>,
     /// Applied zero-based inclusive top-right corner.
     pub trc: Vec<usize>,
+    /// CASA-formatted world coordinates of the applied origin.
+    pub blcf: String,
+    /// CASA-formatted world coordinates of the applied top-right corner.
+    pub trcf: String,
     /// Number of selected pixels.
     pub npts: f64,
     /// Minimum selected value.
@@ -619,10 +774,22 @@ pub struct ImageStatisticsSummary {
     pub sigma: f64,
     /// Median selected value.
     pub median: f64,
+    /// Median absolute deviation from the median.
+    pub medabsdevmed: f64,
+    /// First quartile (25th percentile) of the selected values.
+    pub q1: f64,
+    /// Third quartile (75th percentile) of the selected values.
+    pub q3: f64,
+    /// Interquartile range `q3 − q1`.
+    pub quartile: f64,
     /// Minimum position relative to the original image.
     pub minpos: Option<Vec<usize>>,
+    /// CASA-formatted world coordinates of the minimum position.
+    pub minposf: Option<String>,
     /// Maximum position relative to the original image.
     pub maxpos: Option<Vec<usize>>,
+    /// CASA-formatted world coordinates of the maximum position.
+    pub maxposf: Option<String>,
     /// CASA-style flux density when beam and pixel area are available.
     pub flux: Option<f64>,
     /// Image units.

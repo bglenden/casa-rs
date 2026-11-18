@@ -10,9 +10,12 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 pub(super) fn record_applycal(task: &TaskInvocation<'_>, vis: &Path) {
     let _phase = crate::timing::Phase::start("applycal_history");
+    record_task(task, vis);
+}
+
+pub(super) fn record_task(task: &TaskInvocation<'_>, vis: &Path) {
     if let Err(error) = append(task, vis) {
-        // CASA catches HISTORY errors after correction and reports a warning.
-        tracing::warn!("updating applycal HISTORY: {error}");
+        tracing::warn!(task = task.surface(), "updating HISTORY: {error}");
     }
 }
 
@@ -33,7 +36,7 @@ fn append(task: &TaskInvocation<'_>, vis: &Path) -> Result<(), Box<dyn std::erro
         let mut row = RecordValue::new(Vec::new());
         for (name, value) in [
             ("APPLICATION", "ms"),
-            ("ORIGIN", "applycal"),
+            ("ORIGIN", task.surface()),
             ("PRIORITY", "INFO"),
             ("MESSAGE", &message),
         ] {
@@ -60,7 +63,7 @@ fn value(task: &TaskInvocation<'_>, name: &str) -> Option<ParameterValue> {
 
 fn messages(task: &TaskInvocation<'_>) -> Vec<String> {
     let mut messages = vec![
-        "taskname=applycal".into(),
+        format!("taskname={}", task.surface()),
         format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
     ];
     let mut bindings = task
@@ -69,7 +72,7 @@ fn messages(task: &TaskInvocation<'_>) -> Vec<String> {
         .surface
         .bindings()
         .iter()
-        .filter(|binding| binding.order < 21)
+        .filter(|binding| task.surface() != "applycal" || binding.order < 21)
         .collect::<Vec<_>>();
     bindings.sort_by_key(|binding| binding.order);
     for binding in bindings {

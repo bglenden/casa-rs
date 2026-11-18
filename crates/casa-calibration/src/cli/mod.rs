@@ -23,6 +23,7 @@
 
 mod casa_read;
 mod history;
+mod model_columns;
 mod multi_ms;
 mod read;
 mod render;
@@ -37,16 +38,7 @@ use crate::{
     calibration_task_schema_bundle, fluxscale_record, solve_record,
 };
 
-/// The surfaces `calibrate` hosts; the first runs when the command line
-/// names none.
-pub const CALIBRATION_SURFACES: [&str; 6] = [
-    "calibrate",
-    "applycal",
-    "gaincal",
-    "bandpass",
-    "fluxscale",
-    "gencal",
-];
+pub use crate::task_contract::CALIBRATION_SURFACES;
 
 /// The front end of the `calibrate` binary, hosting
 /// [`CALIBRATION_SURFACES`].
@@ -63,6 +55,9 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    if matches!(task.surface(), "clearcal" | "delmod" | "uvsub") {
+        return model_columns::run(task);
+    }
     let report = read::report(task)?;
     let request = read::task_request(task)?;
     // Checked before the task runs, so a refused report changes nothing.

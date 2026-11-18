@@ -11686,10 +11686,6 @@
             "provider": {"field": "axes"},
             "python": {"name": "axes"},
             "presentation": {"label": "Axes", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "equivalent": [{"kind": "array", "value": [{"kind": "integer", "value": -1}]}]
           }
         },
         {
@@ -11701,11 +11697,10 @@
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--stokes"], "metavar": "stokes"},
-            "provider": {"field": "stokes"},
+            "provider": {"field": "stokes", "adapter": "omit_none"},
             "python": {"name": "stokes"},
             "presentation": {"label": "Stokes", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "listit",
@@ -11816,16 +11811,6 @@
             "provider": {"field": "algorithm"},
             "python": {"name": "algorithm"},
             "presentation": {"label": "Algorithm", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "equivalent": [
-              {"kind": "string", "value": "cl"},
-              {"kind": "string", "value": "cla"},
-              {"kind": "string", "value": "clas"},
-              {"kind": "string", "value": "class"},
-              {"kind": "string", "value": "classi"}
-            ]
           }
         },
         {
@@ -11840,15 +11825,11 @@
             "provider": {"field": "fence"},
             "python": {"name": "fence"},
             "presentation": {"label": "Fence", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "hinges-fences"}}
           }
         },
         {
           "name": "center",
-          "concept": {"id": "parameter.center", "semantic_revision": 2},
+          "concept": {"id": "parameter.center", "semantic_revision": 3},
           "order": 14,
           "default": {"kind": "literal", "value": {"kind": "string", "value": "mean"}},
           "required_when": {"kind": "never"},
@@ -11858,10 +11839,6 @@
             "provider": {"field": "center"},
             "python": {"name": "center"},
             "presentation": {"label": "Center", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "fit-half"}}
           }
         },
         {
@@ -11876,10 +11853,6 @@
             "provider": {"field": "lside"},
             "python": {"name": "lside"},
             "presentation": {"label": "Left Side", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "fit-half"}}
           }
         },
         {
@@ -11894,10 +11867,6 @@
             "provider": {"field": "zscore"},
             "python": {"name": "zscore"},
             "presentation": {"label": "Z-score", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "chauvenet"}}
           }
         },
         {
@@ -11912,10 +11881,6 @@
             "provider": {"field": "maxiter"},
             "python": {"name": "maxiter"},
             "presentation": {"label": "Maximum Iterations", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "chauvenet"}}
           }
         },
         {
@@ -11930,11 +11895,6 @@
             "provider": {"field": "clmethod"},
             "python": {"name": "clmethod"},
             "presentation": {"label": "Classic Method", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "equivalent": [{"kind": "string", "value": "a"}, {"kind": "string", "value": "au"}, {"kind": "string", "value": "aut"}],
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "classic"}}
           }
         },
         {
@@ -11953,10 +11913,6 @@
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "imstat's biweight iteration limit is distinct from the imager's minor-cycle iteration budget."
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "biweight"}}
           }
         },
         {
@@ -16659,6 +16615,514 @@
               "label": "Output Format",
               "group": "Output",
               "advanced": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "uvsub",
+      "contract_version": 1,
+      "display_name": "Subtract Visibility Model",
+      "category": "Calibration",
+      "summary": "Subtract or restore the current visibility model in corrected data.",
+      "provider_family": "calibration",
+      "casa_task": "uvsub",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "uvsub"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "reverse",
+          "concept": {
+            "id": "parameter.reverse",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--reverse"
+              ]
+            },
+            "provider": {
+              "field": "reverse"
+            },
+            "python": {
+              "name": "reverse"
+            },
+            "presentation": {
+              "label": "Restore Model",
+              "group": "Scratch columns"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "clearcal",
+      "contract_version": 1,
+      "display_name": "Clear Calibration",
+      "category": "Calibration",
+      "summary": "Initialize or reset scratch visibility columns.",
+      "provider_family": "calibration",
+      "casa_task": "clearcal",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "clearcal"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "Field",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "Spectral Window",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ]
+            },
+            "provider": {
+              "field": "intent"
+            },
+            "python": {
+              "name": "intent"
+            },
+            "presentation": {
+              "label": "Scan Intent",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "addmodel",
+          "concept": {
+            "id": "parameter.addmodel",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--addmodel"
+              ]
+            },
+            "provider": {
+              "field": "addmodel"
+            },
+            "python": {
+              "name": "addmodel"
+            },
+            "presentation": {
+              "label": "Create Model Column",
+              "group": "Scratch columns"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "delmod",
+      "contract_version": 1,
+      "display_name": "Delete Model",
+      "category": "Calibration",
+      "summary": "Remove scratch or virtual model visibilities.",
+      "provider_family": "calibration",
+      "casa_task": "delmod",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "delmod"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "otf",
+          "concept": {
+            "id": "parameter.otf",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--otf"
+              ]
+            },
+            "provider": {
+              "field": "otf"
+            },
+            "python": {
+              "name": "otf"
+            },
+            "presentation": {
+              "label": "Remove Virtual Model",
+              "group": "Scratch columns"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "Field",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "scr",
+          "concept": {
+            "id": "parameter.scr",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scr"
+              ]
+            },
+            "provider": {
+              "field": "scr"
+            },
+            "python": {
+              "name": "scr"
+            },
+            "presentation": {
+              "label": "Remove Scratch Model",
+              "group": "Scratch columns"
             }
           }
         }

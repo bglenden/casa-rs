@@ -1804,27 +1804,23 @@
     },
     {
       "id": "parameter.center",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "center",
       "value_domain": {
-        "kind": "choice",
-        "values": [
-          "mean",
-          "median",
-          "zero"
-        ]
+        "kind": "string"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "lowercase"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Center of the fit-half statistics algorithm: mean, median or zero.",
+        "summary": "Center of the fit-half statistics algorithm: mean, median or zero, by minimum match of three letters for the mean and median and one for zero.",
         "details": null,
         "examples": [
-          "mean"
+          "mean",
+          "med"
         ]
       },
       "persistence_class": "profile"
@@ -5848,6 +5844,28 @@
         "summary": "Multiscale component sizes in pixels",
         "details": null,
         "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.reverse",
+      "semantic_revision": 1,
+      "casa_name": "reverse",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Add the visibility model back to corrected data.",
+        "details": "The default subtracts the current visibility model from corrected data.",
+        "examples": [
+          "True"
+        ]
       },
       "persistence_class": "profile"
     },
