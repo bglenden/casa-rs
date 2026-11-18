@@ -1000,6 +1000,7 @@ fn render_stats_and_solver_outputs_include_grouped_details() {
         solution_row_count: 8,
         channel_count: 64,
         selected_data: Default::default(),
+        selection_failed: false,
         solve_stats: Default::default(),
     });
     assert!(bandpass_text.contains("Bandpass Solve Report: bandpass.bcal"));

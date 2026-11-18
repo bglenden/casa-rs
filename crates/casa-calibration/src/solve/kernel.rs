@@ -169,7 +169,10 @@ pub(crate) struct SolvedGraphs {
 
 pub(crate) enum SolveStart<'a> {
     Guess,
-    BandpassGuess,
+    BandpassGuess {
+        scalar: bool,
+        independent_input_flags: bool,
+    },
     PreviousChannel(Option<&'a SolvedGraphs>),
     LegacyChannel(&'a SolvedGraphs),
 }
@@ -340,8 +343,22 @@ pub(crate) fn solve_graphs(
     if solved_antennas.iter().all(BTreeSet::is_empty) {
         return None;
     }
-    let bandpass_guess = matches!(start, SolveStart::BandpassGuess)
-        .then(|| bandpass_first_guess(&active, &constrained, &solved_antennas, refant_id));
+    let bandpass_guess = if let SolveStart::BandpassGuess {
+        scalar,
+        independent_input_flags,
+    } = start
+    {
+        Some(bandpass_first_guess(
+            &active,
+            &constrained,
+            &solved_antennas,
+            refant_id,
+            scalar,
+            independent_input_flags,
+        ))
+    } else {
+        None
+    };
     let mut first = if let Some(guess) = &bandpass_guess {
         guess
             .iter()
@@ -475,17 +492,30 @@ fn bandpass_first_guess(
     constrained: &BTreeSet<i32>,
     solved_antennas: &[BTreeSet<i32>],
     requested: i32,
+    scalar: bool,
+    independent_input_flags: bool,
 ) -> Vec<HashMap<i32, Complex64>> {
+    if scalar {
+        let mut seed = first_guess(&graphs[..1], &solved_antennas[..1], GainType::G, requested);
+        seed.push(
+            constrained
+                .iter()
+                .map(|&antenna| (antenna, Complex64::new(0.0, 0.0)))
+                .collect(),
+        );
+        return seed;
+    }
     if solved_antennas.iter().all(|ants| ants == constrained) {
         return first_guess(graphs, solved_antennas, GainType::G, requested);
     }
-    // GJones::guessPar chooses one antenna using rows with both parallel
-    // hands present. It initializes absent receptors to the same mean scale.
-    let joint = graphs[0]
-        .weights
-        .keys()
-        .copied()
-        .filter(|&pair| graphs.iter().all(|graph| graph.weight(pair) > 0.0))
+    // GJones::guessPar shares the phase reference and mean scale across
+    // hands. With correlation-dependent flagging a surviving hand can seed it.
+    let joint = graphs
+        .iter()
+        .flat_map(|graph| graph.weights.keys().copied())
+        .filter(|&pair| {
+            independent_input_flags || graphs.iter().all(|graph| graph.weight(pair) > 0.0)
+        })
         .collect::<BTreeSet<_>>();
     let joined_antennas = joint
         .iter()

@@ -177,6 +177,9 @@ pub struct BandpassSolveReport {
     /// The data the solve selected, CASA's `selectvis`.
     #[serde(default)]
     pub selected_data: SelectedData,
+    /// Selection failed before any prior tables were registered.
+    #[serde(default)]
+    pub selection_failed: bool,
     /// How far the solve's intervals got, CASA's `solvestats`.
     #[serde(default)]
     pub solve_stats: SolveStats,
@@ -329,17 +332,7 @@ pub(crate) fn solve_bandpass(
             if request.band_type == BandpassType::B
                 && matches!(request.refant, RefAntSelector::Expression { .. }) =>
         {
-            let selected = prepare_calibration_solve(
-                ms,
-                &request.selection,
-                &RefAntSelector::Unspecified,
-                &[],
-                false,
-                true,
-                crate::solve::grouping::PriorCalibrationMode::Data,
-            )?
-            .selected_data;
-            return Ok(empty_report(request, -1, selected, SolveStats::default()));
+            return skipped_bandpass_report(ms, request);
         }
         Err(
             crate::solve::GainSolveError::EmptySelection
@@ -348,17 +341,7 @@ pub(crate) fn solve_bandpass(
                 ..
             },
         ) if request.band_type == BandpassType::B => {
-            let selected = prepare_calibration_solve(
-                ms,
-                &MsSelection::default(),
-                &RefAntSelector::Unspecified,
-                &[],
-                false,
-                true,
-                crate::solve::grouping::PriorCalibrationMode::Data,
-            )?
-            .selected_data;
-            return Ok(empty_report(request, -1, selected, SolveStats::default()));
+            return skipped_bandpass_report(ms, request);
         }
         Err(error) => return Err(error.into()),
     };
@@ -411,12 +394,16 @@ pub(crate) fn solve_bandpass(
             BandpassType::B => group.finalize_bandpass(),
             BandpassType::BPoly => group.finalize_for_solve(GainSolveMode::AmplitudePhase, false),
         }
-        solve_stats.interval(&IntervalStages::of(
+        let mut stages = IntervalStages::of(
             &group,
             request
                 .cuts
                 .map_or(0, |cuts| cuts.min_baselines_per_antenna),
-        ));
+        );
+        if group.scalar_bandpass && request.band_type == BandpassType::B {
+            stages.with_data[1] = stages.with_data[0].clone();
+        }
+        solve_stats.interval(&stages);
         let (mut rows, refants) = solve_bandpass_group(
             &group,
             &context.available_antennas,
@@ -424,7 +411,10 @@ pub(crate) fn solve_bandpass(
             request.combine,
             request.cuts,
             request.band_type,
-            correlation_dependent_flags,
+            (
+                correlation_dependent_flags,
+                request.correlation_dependent_flags,
+            ),
         );
         if request.band_type == BandpassType::BPoly && request.normalize_average_amplitude {
             normalize_bandpass_rows(&mut rows, group.solution_channels);
@@ -530,8 +520,41 @@ fn empty_report(
         solution_row_count: 0,
         channel_count: 0,
         selected_data,
+        selection_failed: false,
         solve_stats,
     }
+}
+
+fn skipped_bandpass_report(
+    ms: &MeasurementSet,
+    request: &BandpassSolveRequest,
+) -> Result<BandpassSolveReport, BandpassSolveError> {
+    let select = |selection: &MsSelection| {
+        prepare_calibration_solve(
+            ms,
+            selection,
+            &RefAntSelector::Unspecified,
+            &[],
+            false,
+            true,
+            crate::solve::grouping::PriorCalibrationMode::Data,
+        )
+    };
+    let (selection_failed, context) = match select(&request.selection) {
+        Ok(context) => (false, context),
+        Err(
+            crate::solve::GainSolveError::EmptySelection
+            | crate::solve::GainSolveError::OpenMeasurementSet {
+                source: MsError::VersionError(_) | MsError::InvalidInput(_),
+                ..
+            },
+        ) => (true, select(&MsSelection::default())?),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(BandpassSolveReport {
+        selection_failed,
+        ..empty_report(request, -1, context.selected_data, SolveStats::default())
+    })
 }
 
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
@@ -608,7 +631,7 @@ fn solve_bandpass_group(
     combine: BandpassSolveCombine,
     cuts: Option<BandpassSolveCuts>,
     band_type: BandpassType,
-    correlation_dependent_flags: bool,
+    (correlation_dependent_flags, independent_input_flags): (bool, bool),
 ) -> (Vec<BandpassSolutionRow>, BTreeSet<i32>) {
     let channel_count = group.solution_channels;
     // CASA solves the last channel first and starts each channel from the
@@ -633,7 +656,10 @@ fn solve_bandpass_group(
                     .as_ref()
                     .map_or(SolveStart::Guess, SolveStart::LegacyChannel)
             } else if channel + 1 == channel_count {
-                SolveStart::BandpassGuess
+                SolveStart::BandpassGuess {
+                    scalar: group.scalar_bandpass,
+                    independent_input_flags,
+                }
             } else {
                 SolveStart::PreviousChannel(start.as_ref())
             },
@@ -898,6 +924,7 @@ fn write_bandpass_caltable(
         solution_row_count: rows.len(),
         channel_count,
         selected_data: SelectedData::default(),
+        selection_failed: false,
         solve_stats: SolveStats::default(),
     })
 }

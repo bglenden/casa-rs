@@ -2209,6 +2209,7 @@ fn apply_row_all_channels(
         }
 
         if !forward_model
+            && !(is_bandpass && correlation_types.len() == 1)
             && let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) =
                 (ant1.as_ref(), ant2.as_ref())
         {
@@ -2255,16 +2256,18 @@ fn apply_row_all_channels(
 
         let generic_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
         for corr_index in 0..data.shape()[0] {
-            let receptors =
-                correlation_receptors(correlation_types[corr_index]).ok_or_else(|| {
-                    ApplyExecutionError::UnsupportedCorrelationLayout {
-                        data_desc_id: row.data_desc_id,
-                        correlation_types: correlation_types
-                            .iter()
-                            .map(|code| stokes_name(*code).to_string())
-                            .collect(),
-                    }
-                })?;
+            let receptors = if is_bandpass {
+                bandpass::receptors(correlation_types, corr_index)
+            } else {
+                correlation_receptors(correlation_types[corr_index])
+            }
+            .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
+                data_desc_id: row.data_desc_id,
+                correlation_types: correlation_types
+                    .iter()
+                    .map(|code| stokes_name(*code).to_string())
+                    .collect(),
+            })?;
 
             for chan_index in 0..data.shape()[1] {
                 let gain1 = ant1.sample(

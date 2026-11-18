@@ -669,6 +669,8 @@ pub(crate) struct SolveAccumulator {
     /// Data channels per solution: 1 when the selected channels solve
     /// together, else the row's channel count.
     pub(crate) solution_channels: usize,
+    /// A single parallel hand in channelized G solves occupies parameter zero.
+    pub(crate) scalar_bandpass: bool,
     /// `[solution channel][receptor]`, filled by [`Self::finalize_for_solve`].
     pub(crate) channel_graphs: Vec<Vec<SolveGraph>>,
     /// The solution's TIME, set by [`Self::finalize_for_solve`].
@@ -765,6 +767,7 @@ impl SolveAccumulator {
             antenna_ids: BTreeSet::new(),
             unique_time_bits: BTreeSet::new(),
             solution_channels: 1,
+            scalar_bandpass: false,
             channel_graphs: Vec::new(),
             solution_time: 0.0,
             attempted: false,
@@ -933,6 +936,9 @@ impl SolveAccumulator {
             self.solution_channels = self.solution_channels.max(channel_count);
         }
 
+        let scalar_bandpass =
+            options.channelized && options.gain_type == GainType::G && correlation_types.len() == 1;
+        self.scalar_bandpass = scalar_bandpass && (self.sample_rows == 0 || self.scalar_bandpass);
         let graph_count = match options.gain_type {
             GainType::G | GainType::K => 2,
             GainType::T | GainType::KCross => {
@@ -997,6 +1003,7 @@ impl SolveAccumulator {
             }
             let graph_index = match options.gain_type {
                 GainType::K if correlation_types.len() == 1 => 0,
+                GainType::G if scalar_bandpass => 0,
                 GainType::G | GainType::K => receptors.0,
                 GainType::T | GainType::KCross => 0,
             };
@@ -1212,17 +1219,26 @@ impl SolveAccumulator {
         // an integration boundary decides which two solutions CASA blends.
         let mut sum = 0.0;
         let mut total = 0.0;
-        for (baseline, weight) in baselines {
-            let Some(time) = self
-                .baseline_centroids
-                .get(&baseline)
-                .and_then(|time| time.mean())
-            else {
-                continue;
-            };
-            let weight = f64::from(weight as f32);
-            sum += weight * time;
-            total += weight;
+        for buffer in baselines.chunk_by(|(left, _), (right, _)| {
+            (left.field_id, left.data_desc_id, left.start_bits)
+                == (right.field_id, right.data_desc_id, right.start_bits)
+        }) {
+            let mut buffer_sum = 0.0;
+            let mut buffer_total = 0.0;
+            for (baseline, weight) in buffer {
+                let Some(time) = self
+                    .baseline_centroids
+                    .get(baseline)
+                    .and_then(|time| time.mean())
+                else {
+                    continue;
+                };
+                let weight = f64::from(*weight as f32);
+                buffer_sum += weight * time;
+                buffer_total += weight;
+            }
+            sum += buffer_sum;
+            total += buffer_total;
         }
         if total > 0.0 {
             sum / total

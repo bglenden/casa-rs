@@ -102,22 +102,16 @@ pub(super) fn write(
     };
     for row in 0..table.row_count() {
         let spw = row as i32;
-        let present = rows.iter().any(|r| r.spw_id == spw)
-            || aggregate
-                .as_ref()
-                .is_some_and(|(reference, _)| *reference == spw);
+        let present = rows.iter().any(|r| r.spw_id == spw);
         table
             .cell_accessor_mut(row, "FLAG_ROW")
             .and_then(|mut c| c.set(Value::Scalar(ScalarValue::Bool(!present))))
             .map_err(metadata_error)?;
-        if !present {
-            continue;
-        }
         if let Some((reference, combined)) = &aggregate {
             if *reference == spw {
                 combined.write(&mut table, row)?;
             }
-        } else {
+        } else if present {
             grid(&table, spw)?.write(&mut table, row)?;
         }
     }

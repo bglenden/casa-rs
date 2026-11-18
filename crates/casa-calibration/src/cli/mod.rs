@@ -244,7 +244,11 @@ fn casa_value(
             if report.solve_stats.windows.is_empty() =>
         {
             crate::casa_return::skipped_solve_record(
-                applied,
+                if report.selection_failed {
+                    &[]
+                } else {
+                    applied
+                },
                 (!report.selected_data.fields.is_empty()).then_some(&report.selected_data),
             )
         }

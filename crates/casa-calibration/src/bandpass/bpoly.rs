@@ -403,6 +403,7 @@ pub(super) fn write_bpoly_caltable(
         solution_row_count: fitted_rows.len(),
         channel_count,
         selected_data: SelectedData::default(),
+        selection_failed: false,
         solve_stats: SolveStats::default(),
     })
 }
