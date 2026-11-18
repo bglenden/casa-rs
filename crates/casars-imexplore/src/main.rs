@@ -10,8 +10,9 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_add_delete,
-    imhead_extrema, imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
+    ImageError, ImageHeaderSummary, ImageStatisticsSummary, ImstatRequest, image_task_front_end,
+    imhead, imhead_add_delete, imhead_extrema, imhead_list_record, imhead_put,
+    imhead_summary_record, imstat, imstat_record, parse_imstat_algorithm,
 };
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
@@ -303,16 +304,36 @@ fn history_value(value: &ParameterValue) -> String {
 
 fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("imagename")?;
+    let request = ImstatRequest {
+        imagename: path.clone(),
+        box_pixels: task.text("box")?,
+        region: task.text("region")?,
+        chans: task.text("chans")?,
+        algorithm: task.required_text("algorithm")?,
+        fence: task.number("fence")?,
+        center: task.required_text("center")?,
+        lside: task.flag("lside")?,
+        zscore: task.number("zscore")?,
+        maxiter: task.integer("maxiter")?,
+        clmethod: task.required_text("clmethod")?,
+        niter: task.integer("niter")?,
+        ..ImstatRequest::default()
+    };
+    let algorithm = parse_imstat_algorithm(&request).map_err(TaskFailure::execution)?;
     let summary = imstat(
         &path,
-        task.text("box")?.as_deref(),
-        task.text("region")?.as_deref(),
-        task.text("chans")?.as_deref(),
-        None,
+        request.box_pixels.as_deref(),
+        request.region.as_deref(),
+        request.chans.as_deref(),
+        request.includepix,
+        &algorithm,
     )
-    .map_err(|error| image_error("imstat", &path, error))?;
+    .map_err(|error| match error {
+        ImageError::RobustStats(message) => TaskFailure::execution(message),
+        other => image_error("imstat", &path, other),
+    })?;
     let text = statistics_text(&summary);
-    Ok(TaskSuccess::new(imstat_record(&summary), &summary)?.with_text(text))
+    Ok(TaskSuccess::new(imstat_record(&summary, algorithm.kind()), &summary)?.with_text(text))
 }
 
 fn image_error(operation: &str, path: &Path, error: impl Display) -> TaskFailure {

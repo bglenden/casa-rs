@@ -11816,16 +11816,6 @@
             "provider": {"field": "algorithm"},
             "python": {"name": "algorithm"},
             "presentation": {"label": "Algorithm", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "equivalent": [
-              {"kind": "string", "value": "cl"},
-              {"kind": "string", "value": "cla"},
-              {"kind": "string", "value": "clas"},
-              {"kind": "string", "value": "class"},
-              {"kind": "string", "value": "classi"}
-            ]
           }
         },
         {
@@ -11840,15 +11830,11 @@
             "provider": {"field": "fence"},
             "python": {"name": "fence"},
             "presentation": {"label": "Fence", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "hinges-fences"}}
           }
         },
         {
           "name": "center",
-          "concept": {"id": "parameter.center", "semantic_revision": 2},
+          "concept": {"id": "parameter.center", "semantic_revision": 3},
           "order": 14,
           "default": {"kind": "literal", "value": {"kind": "string", "value": "mean"}},
           "required_when": {"kind": "never"},
@@ -11858,10 +11844,6 @@
             "provider": {"field": "center"},
             "python": {"name": "center"},
             "presentation": {"label": "Center", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "fit-half"}}
           }
         },
         {
@@ -11876,10 +11858,6 @@
             "provider": {"field": "lside"},
             "python": {"name": "lside"},
             "presentation": {"label": "Left Side", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "fit-half"}}
           }
         },
         {
@@ -11894,10 +11872,6 @@
             "provider": {"field": "zscore"},
             "python": {"name": "zscore"},
             "presentation": {"label": "Z-score", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "chauvenet"}}
           }
         },
         {
@@ -11912,10 +11886,6 @@
             "provider": {"field": "maxiter"},
             "python": {"name": "maxiter"},
             "presentation": {"label": "Maximum Iterations", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "chauvenet"}}
           }
         },
         {
@@ -11930,11 +11900,6 @@
             "provider": {"field": "clmethod"},
             "python": {"name": "clmethod"},
             "presentation": {"label": "Classic Method", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "equivalent": [{"kind": "string", "value": "a"}, {"kind": "string", "value": "au"}, {"kind": "string", "value": "aut"}],
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "classic"}}
           }
         },
         {
@@ -11953,10 +11918,6 @@
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "imstat's biweight iteration limit is distinct from the imager's minor-cycle iteration budget."
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "algorithm", "value": {"kind": "string", "value": "biweight"}}
           }
         },
         {

@@ -1075,8 +1075,11 @@ impl RunningStats {
             Statistic::Mean => self.sum / n,
             Statistic::Rms => (self.sumsq / n).sqrt(),
             Statistic::Variance => {
+                // casacore's `StatisticsUtilities::combine` gives a
+                // zero variance, not an undefined one, below two
+                // points.
                 if self.npts < 2 {
-                    f64::NAN
+                    0.0
                 } else {
                     let mean = self.sum / n;
                     (self.sumsq - n * mean * mean) / (n - 1.0)
@@ -1084,7 +1087,7 @@ impl RunningStats {
             }
             Statistic::Sigma => {
                 if self.npts < 2 {
-                    f64::NAN
+                    0.0
                 } else {
                     self.finish(Statistic::Variance).sqrt()
                 }

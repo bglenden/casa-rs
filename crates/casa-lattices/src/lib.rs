@@ -51,6 +51,7 @@ mod lc_ellipsoid;
 mod lc_operations;
 mod paged_array;
 mod region;
+pub mod robust_statistics;
 pub mod statistics;
 mod sub_lattice;
 mod temp_lattice;
@@ -76,6 +77,11 @@ pub use lc_ellipsoid::LCEllipsoid;
 pub use lc_operations::{LCComplement, LCDifference, LCIntersection, LCUnion};
 pub use paged_array::PagedArray;
 pub use region::LCRegion;
+pub use robust_statistics::{
+    FitHalfCenter, RobustSampleStats, RobustStats, RobustStatsError, SamplePoint,
+    StatisticsAlgorithm, StatisticsAlgorithmKind, compute_robust_stats, max_zscore,
+    parse_algorithm, parse_center, parse_clmethod,
+};
 pub use statistics::{LatticeStatistics, Statistic, StatsElement};
 pub use sub_lattice::{SubLattice, SubLatticeMut};
 pub use temp_lattice::{ScratchSpace, TempLattice, TempStoragePlan, TempStoragePolicy};

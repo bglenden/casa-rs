@@ -11,6 +11,8 @@ use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
 
 use crate::analysis::{ImageHeaderSummary, ImageStatisticsSummary, RestoringBeamSummary};
 
+use casa_lattices::StatisticsAlgorithmKind;
+
 mod imhead_get;
 pub use imhead_get::{ImheadGetError, imhead_get_value};
 
@@ -23,7 +25,7 @@ pub use imhead_get::{ImheadGetError, imhead_get_value};
 /// Not computed yet (#977): `blcf`, `trcf`, `minposf` and `maxposf` (the
 /// formatted world coordinates) and the robust statistics `medabsdevmed`,
 /// `q1`, `q3` and `quartile`.
-pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
+pub fn imstat_record(summary: &ImageStatisticsSummary, kind: StatisticsAlgorithmKind) -> CasaValue {
     let empty = summary.npts == 0.0;
     let statistic = |value: f64| {
         if empty {
@@ -32,6 +34,22 @@ pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
             CasaValue::float64_vector([value])
         }
     };
+    if kind == StatisticsAlgorithmKind::Biweight {
+        // The biweight reports only its location and scale, with the
+        // sample's count and extrema; no flux, positions or order
+        // statistics.
+        return sorted(vec![
+            ("blc", pixels(&summary.blc)),
+            ("blcf", CasaValue::string(summary.blcf.clone())),
+            ("max", statistic(summary.max)),
+            ("mean", statistic(summary.mean)),
+            ("min", statistic(summary.min)),
+            ("npts", statistic(summary.npts)),
+            ("sigma", statistic(summary.sigma)),
+            ("trc", pixels(&summary.trc)),
+            ("trcf", CasaValue::string(summary.trcf.clone())),
+        ]);
+    }
     let mut entries = vec![
         ("blc", pixels(&summary.blc)),
         ("blcf", CasaValue::string(summary.blcf.clone())),
@@ -415,9 +433,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn imstat_returns_casas_keys_in_casas_order_with_its_dtypes() {
-        let summary = ImageStatisticsSummary {
+    fn classic_summary() -> ImageStatisticsSummary {
+        ImageStatisticsSummary {
             imagename: "ramp.im".into(),
             blc: vec![0, 0, 0, 0],
             trc: vec![15, 15, 0, 7],
@@ -442,8 +459,13 @@ mod tests {
             maxposf: Some("23:59:48.000, +00.03.00.000, I, 1.415e+09Hz".into()),
             flux: Some(1.5),
             units: "Jy/beam".into(),
-        };
-        let record = imstat_record(&summary);
+        }
+    }
+
+    #[test]
+    fn imstat_returns_casas_keys_in_casas_order_with_its_dtypes() {
+        let summary = classic_summary();
+        let record = imstat_record(&summary, StatisticsAlgorithmKind::Classic);
         assert_eq!(
             keys(&record),
             [
@@ -482,7 +504,29 @@ mod tests {
             flux: None,
             ..summary
         };
-        assert!(!keys(&imstat_record(&unbeamed)).contains(&"flux".to_string()));
+        assert!(
+            !keys(&imstat_record(&unbeamed, StatisticsAlgorithmKind::Classic))
+                .contains(&"flux".to_string())
+        );
+    }
+
+    #[test]
+    fn imstat_returns_the_biweights_reduced_record() {
+        let summary = ImageStatisticsSummary {
+            npts: 2048.0,
+            min: 0.0,
+            max: 20.47,
+            mean: 10.235,
+            sigma: 6.3021,
+            ..classic_summary()
+        };
+        let record = imstat_record(&summary, StatisticsAlgorithmKind::Biweight);
+        assert_eq!(
+            keys(&record),
+            [
+                "blc", "blcf", "max", "mean", "min", "npts", "sigma", "trc", "trcf"
+            ]
+        );
     }
 
     #[test]
