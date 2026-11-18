@@ -978,9 +978,7 @@ impl SolveAccumulator {
                 GainType::G | GainType::K => receptors.0,
                 GainType::T | GainType::KCross => 0,
             };
-            let point = if options.channelized && !options.gain_type.is_delay() {
-                Complex32::new(options.point_stokes[0], 0.0)
-            } else if let Some(rotated) = samples.point_model {
+            let point = if let Some(rotated) = samples.point_model {
                 rotated[corr_index]
             } else {
                 samples::point_visibility(

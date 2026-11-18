@@ -17,7 +17,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | Surface | CASA task | CASA's signature | CASA parameters | Shared | CASA's casa-rs lacks | Default only | casa-rs's CASA lacks | Defaults differ |
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
-| bandpass | bandpass | yes | 35 | 35 | 0 | 7 | 4 | 0 |
+| bandpass | bandpass | yes | 35 | 35 | 0 | 6 | 4 | 0 |
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 8 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |

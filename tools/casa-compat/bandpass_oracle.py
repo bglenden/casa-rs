@@ -55,13 +55,13 @@ def gapped_data(source, target):
         tool.close()
 
 
-def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None):
+def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,)):
     products = []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
         copy_ms(source, ms)
         engine.bandpass(str(ms), str(output), field='0', refant='A0',
-                        smodel=[1.], minsnr=0., solnorm=normalize, fillgaps=fillgaps)
+                        smodel=list(s_model), minsnr=0., solnorm=normalize, fillgaps=fillgaps)
         products.append(contents(output))
     expected, actual = products
     for column in ('FLAG', 'ANTENNA1', 'ANTENNA2', 'FIELD_ID', 'SPECTRAL_WINDOW_ID'):
@@ -72,6 +72,37 @@ def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None):
     else:
         np.testing.assert_array_equal(np.flatnonzero(actual['FLAG'].all(axis=(0, 2))), remaining_flags)
     return {key: relative_rms(actual[key], expected[key]) for key in ('CPARAM', 'PARAMERR', 'SNR')}
+
+
+def model_cases(root, source, native):
+    scratch = root/'scratch-model.ms'
+    copy_ms(source, scratch)
+    casa.clearcal(str(scratch), addmodel=True)
+    tool = table()
+    tool.open(str(scratch), nomodify=False)
+    try:
+        model = tool.getcol('MODEL_DATA')
+        channel = np.arange(model.shape[1])[:, None]
+        model[0] = 1.4 + .03*channel
+        model[1] = 1.7 + .02*channel
+        tool.putcol('MODEL_DATA', model)
+    finally:
+        tool.close()
+    virtual = root/'virtual-model.ms'
+    copy_ms(scratch, virtual)
+    casa.setjy(str(virtual), field='0', standard='manual', fluxdensity=[3., 0., 0., 0.],
+               usescratch=False)
+
+    results = {}
+    for label, dataset, point in [('scratch-model', scratch, ()), ('virtual-model', virtual, ()),
+                                   ('polarized-point', source, (1.1, .24, .19, .15))]:
+        folder = root/label
+        folder.mkdir()
+        results[label] = compare(folder, dataset, native, False, s_model=point)
+        reference = contents(folder/'casa.B')['CPARAM']
+        no_model = contents(root/'standard'/'casa.B')['CPARAM']
+        assert relative_rms(reference, no_model) > .08, label
+    return results
 
 
 def main():
@@ -99,6 +130,7 @@ def main():
         folder = root/f'fill-{gaps}'
         folder.mkdir()
         results[folder.name] = compare(folder, gapped, native, False, gaps, flags)
+    results.update(model_cases(root, source, native))
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, report in results.items():
         assert max(report.values()) < 1e-3, (name, report)

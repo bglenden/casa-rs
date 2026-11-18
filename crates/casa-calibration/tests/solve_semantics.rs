@@ -91,6 +91,7 @@ fn bandpass_request(
     prior_calibration_tables: Vec<ApplyCalibrationTableSpec>,
 ) -> BandpassSolveRequest {
     BandpassSolveRequest {
+        model_source: Default::default(),
         selection: MsSelection::new().field(&[0]).spw(&[0]),
         output_table,
         refant: RefAntSelector::AntennaId(0),

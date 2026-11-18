@@ -349,6 +349,9 @@ pub struct SolveBandpassTaskRequest {
     /// Requested phase polynomial degree for `BPOLY`.
     #[serde(default = "default_polynomial_degree")]
     pub phase_degree: usize,
+    /// Source of the visibility model.
+    #[serde(default)]
+    pub model_source: GainSolveModelSource,
     /// Point-source Stokes model.
     #[serde(default = "default_smodel")]
     pub smodel: [f32; 4],
@@ -486,6 +489,7 @@ impl CalibrationTaskRequest {
                     normalize_average_amplitude: request.normalize_average_amplitude,
                     amplitude_degree: request.amplitude_degree,
                     phase_degree: request.phase_degree,
+                    model_source: request.model_source,
                     smodel: request.smodel,
                     cuts: request.cuts,
                 }),

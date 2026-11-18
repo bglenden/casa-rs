@@ -136,7 +136,9 @@ pub struct BandpassSolveRequest {
     pub amplitude_degree: usize,
     /// Requested phase polynomial degree for `BPOLY` output.
     pub phase_degree: usize,
-    /// Point-source Stokes model. Only `[I,0,0,0]` is supported in this wave.
+    /// Visibility model source.
+    pub model_source: GainSolveModelSource,
+    /// Point-source Stokes model when requested.
     pub smodel: [f32; 4],
     /// The per-channel cuts and `BPOLY` edge mask, or none: every antenna
     /// with a baseline is solved, every solution kept and every channel
@@ -310,7 +312,7 @@ pub(crate) fn solve_bandpass(
         context.preapplied_rows.as_ref(),
         SolveGroupOptions {
             gain_type: GainType::G,
-            model_source: GainSolveModelSource::PointSource,
+            model_source: request.model_source,
             point_stokes: request.smodel,
             rotate_model: false,
             solve_interval: GainSolveInterval::Infinite,
@@ -413,7 +415,7 @@ pub(crate) fn solve_bandpass(
 }
 
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
-    crate::solve::validate_smodel(request.smodel, false)?;
+    crate::solve::validate_smodel(request.smodel, request.band_type == BandpassType::B)?;
     if matches!(
         request.refant,
         RefAntSelector::Unspecified | RefAntSelector::Expression { .. }
@@ -512,6 +514,19 @@ fn solve_bandpass_group(
     if refants.is_empty() {
         return (Vec::new(), refants);
     }
+    // CASA keeps the previous formal errors and SNR when a channel fails
+    // to solve, while flagging its gains. It traverses the channels backward.
+    let mut channel_errors = solved_channels
+        .iter()
+        .rev()
+        .scan(None, |previous, channel| {
+            if let Some(channel) = channel {
+                *previous = Some(channel);
+            }
+            Some(*previous)
+        })
+        .collect::<Vec<_>>();
+    channel_errors.reverse();
 
     let mut antenna_ids = available_antennas.clone();
     antenna_ids.extend(group.antenna_ids.iter().copied());
@@ -531,15 +546,12 @@ fn solve_bandpass_group(
             let mut flags = Vec::with_capacity(2 * channel_count);
             let mut param_errors = Vec::with_capacity(2 * channel_count);
             let mut snrs = Vec::with_capacity(2 * channel_count);
-            for solved in &solved_channels {
-                for receptor in 0..2 {
+            for (solved, estimates) in solved_channels.iter().zip(&channel_errors) {
+                for receptor_index in 0..2 {
                     let receptor = solved
                         .as_ref()
-                        .and_then(|solved| solved.receptors.get(receptor));
+                        .and_then(|solved| solved.receptors.get(receptor_index));
                     let snr = receptor.and_then(|fit| fit.snr.get(&antenna_id)).copied();
-                    let error = receptor
-                        .and_then(|fit| fit.param_error.get(&antenna_id))
-                        .copied();
                     let solution = receptor.and_then(|fit| {
                         let above_min_snr =
                             cuts.is_none_or(|cuts| snr.is_some_and(|snr| snr > cuts.min_snr));
@@ -548,8 +560,19 @@ fn solve_bandpass_group(
                     });
                     gains.push(solution.unwrap_or(Complex32::new(1.0, 0.0)));
                     flags.push(solution.is_none());
-                    param_errors.push(error.unwrap_or_default());
-                    snrs.push(snr.unwrap_or_default());
+                    let estimates = estimates.and_then(|fit| fit.receptors.get(receptor_index));
+                    param_errors.push(
+                        estimates
+                            .and_then(|fit| fit.param_error.get(&antenna_id))
+                            .copied()
+                            .unwrap_or_default(),
+                    );
+                    snrs.push(
+                        estimates
+                            .and_then(|fit| fit.snr.get(&antenna_id))
+                            .copied()
+                            .unwrap_or_default(),
+                    );
                 }
             }
             solution_rows.push(BandpassSolutionRow {

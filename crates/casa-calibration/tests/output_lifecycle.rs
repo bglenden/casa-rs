@@ -356,6 +356,7 @@ fn polynomial_bandpass_append_reuses_the_window_descriptor() {
     );
     let output = dir.path().join("poly.cal");
     let request = BandpassSolveRequest {
+        model_source: Default::default(),
         selection: MsSelection::new(),
         output_table: output.clone(),
         refant: RefAntSelector::AntennaId(0),
