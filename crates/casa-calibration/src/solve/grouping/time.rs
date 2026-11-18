@@ -122,16 +122,21 @@ pub(super) fn bucketed_rows(
                     },
                 },
                 GainSolveInterval::Seconds(seconds) => {
-                    let (start, number) = bucket_starts
-                        .entry(base_key)
-                        .or_insert((row.time_seconds - 0.01, 0));
+                    let (start, number) = bucket_starts.entry(base_key).or_insert((
+                        if legacy_intervals {
+                            row.time_seconds
+                        } else {
+                            row.time_seconds - 0.01
+                        },
+                        0,
+                    ));
                     let interval = f64::from(seconds as f32);
                     let elapsed = row.time_seconds - *start;
                     if legacy_intervals {
                         // Old MSIter restarts its interval at the first row
                         // after the previous interval's time limit.
                         if elapsed >= interval {
-                            *start = row.time_seconds - 0.01;
+                            *start = row.time_seconds;
                             *number += 1;
                         }
                         SolveBucketKey::Seconds(*number)

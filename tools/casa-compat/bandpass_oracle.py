@@ -595,6 +595,10 @@ def main():
     cutoff = root/'snr-cutoff'
     cutoff.mkdir()
     results[cutoff.name] = compare(cutoff, source, native, False, minsnr=165.)
+    no_cut = root/'negative-cuts-and-numeric-interval'
+    no_cut.mkdir()
+    results[no_cut.name] = compare(no_cut, source, native, False, solint=25,
+                                   interval_count=3, minblperant=-1, minsnr=-1.)
     results.update(model_cases(root, source, native))
     for interval, count in [('int', 6), ('25s', 3), ('inf,none', 1)]:
         folder = root/f"interval-{interval.replace(',', '-')}"
