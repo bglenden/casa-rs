@@ -131,6 +131,25 @@ def compare(root, source, native, name, options, *, output=True, error=None):
     return {'max_parameter_difference': float(np.max(np.abs(fitted-reference)))}
 
 
+def validation_cases(native, source):
+    cases = [
+        ('default-vis', {}),
+        ('missing-vis', {'vis': str(source.with_name('missing.ms'))}),
+        ('invalid-shape', {'vis': str(source), 'comptype': 'p'}),
+    ]
+    for name, options in cases:
+        failures = []
+        for tool in (casa, native):
+            try:
+                tool.uvmodelfit(**options)
+            except AssertionError as error:
+                failures.append(str(error))
+            else:
+                raise AssertionError(f'{name} did not fail validation')
+        assert failures[0] == failures[1], failures
+        yield name, {'agrees': True}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -181,7 +200,7 @@ def main():
         ('more-than-one-field', point, dict(niter=0)),
         ('wrong-length', point, dict(field='0', comptype='G')),
     ]
-    results = {}
+    results = {} if args.case else dict(validation_cases(tasks, point))
     for name, source, options in rows:
         if args.case and args.case not in name:
             continue

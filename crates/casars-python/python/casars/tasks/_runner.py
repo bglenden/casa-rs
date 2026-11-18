@@ -207,7 +207,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         if not _is_default(value, defaults.get(name, _MISSING))
     }
     name = wrapper.__name__
-    if name in ("applycal", "clearcal", "delmod", "ft", "uvsub"):
+    if name in ("applycal", "clearcal", "delmod", "ft", "uvmodelfit", "uvsub"):
         _validate_required_vis(values, arguments["vis"])
     if name == "applycal":
         return _call_applycal(values)
@@ -222,6 +222,14 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             return run(name, **values).value
         except TaskParameterError:
             raise
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
+    if name == "uvmodelfit":
+        shape = arguments["comptype"]
+        if isinstance(shape, str) and shape not in ("P", "G", "D"):
+            raise AssertionError(str({"comptype": [f"unallowed value {shape}"]}))
+        try:
+            return run(name, **values).value
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
