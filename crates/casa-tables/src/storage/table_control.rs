@@ -1027,9 +1027,8 @@ pub(crate) fn write_table_dat(
 ) -> Result<(), StorageError> {
     let table = path.parent().unwrap_or(path);
     let contents = stored_table_dat_keywords(contents, table);
-    let mut io = AipsIo::open(path, AipsOpenOption::New)?;
-    write_table_dat_contents(&mut io, &contents)?;
-    io.close()?;
+    // Backpatch object lengths in memory, avoiding seek-triggered file flushes.
+    std::fs::write(path, serialize_table_dat(&contents)?)?;
     Ok(())
 }
 

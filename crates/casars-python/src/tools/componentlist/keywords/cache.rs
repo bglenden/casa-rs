@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Retain the attached keyword table, as CASA's ComponentList retains its Table.
 //! Dirty metadata keeps its write lock until release or another in-process
-//! tool needs the persisted table. Clean reads synchronize with the published
-//! casacore modification counter under a read lock.
+//! tool needs the persisted table. Clean reads keep CASA’s shared read lock;
+//! explicit clearlocks relinquishes it, and reacquisition checks the published
+//! casacore modification counter. In-process writers notify the shared epoch.
 use crate::convert::{ConvertError, ConvertResult};
 #[cfg(not(unix))]
 use casa_tables::TableOptions;
 use casa_tables::{Table, TableError};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 static TABLES: Mutex<Vec<Weak<Shared>>> = Mutex::new(Vec::new());
@@ -21,20 +22,24 @@ pub(crate) struct Shared {
 pub(super) struct Cache {
     pub(super) table: Table,
     pub(super) dirty: bool,
+    epoch: Arc<AtomicU64>,
+    seen_epoch: u64,
 }
 fn fail(error: TableError) -> ConvertError {
     ConvertError::runtime(error.to_string())
 }
 
 pub(crate) fn attach(path: &Path) -> ConvertResult<Arc<Shared>> {
-    let mut table = super::open(path)?;
-    #[cfg(unix)]
-    table.unlock_metadata_only().map_err(fail)?;
+    let epoch = crate::tools::table::component_keyword_epoch(path);
+    let seen_epoch = epoch.load(Ordering::Acquire);
+    let table = super::open(path)?;
     let shared = Arc::new(Shared {
         path: path.to_path_buf(),
         cache: Mutex::new(Cache {
             table,
             dirty: false,
+            epoch,
+            seen_epoch,
         }),
     });
     let mut tables = TABLES.lock().unwrap_or_else(PoisonError::into_inner);
@@ -70,6 +75,24 @@ pub(super) fn flush_except(own: Option<&Arc<Shared>>) -> ConvertResult<()> {
     }
     Ok(())
 }
+/// CASA clearlocks gives up automatic component-list locks as well.
+pub(crate) fn clear_locks() -> ConvertResult<()> {
+    let tables = TABLES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .filter_map(Weak::upgrade)
+        .collect::<Vec<_>>();
+    for table in tables {
+        table
+            .cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .flush(&table.path)?;
+    }
+    Ok(())
+}
+
 impl Cache {
     pub(super) fn read<T>(
         &mut self,
@@ -81,18 +104,24 @@ impl Cache {
         }
         #[cfg(unix)]
         {
-            // lock() reloads only when casacore's published counter changes.
-            // Filesystem timestamps are not a table generation identifier.
-            if !self
-                .table
-                .lock(casa_tables::LockType::Read, 0)
-                .map_err(fail)?
+            // CASA retains this read lock between keyword lookups. After
+            // explicit relinquishment, lock() uses the published generation.
+            if !self.table.has_lock(casa_tables::LockType::Read)
+                && !self
+                    .table
+                    .lock(casa_tables::LockType::Read, 0)
+                    .map_err(fail)?
             {
                 return Err(ConvertError::runtime("Cannot lock table to read keywords"));
             }
-            let result = work(&self.table);
-            let released = self.table.unlock_metadata_only().map_err(fail);
-            result.and_then(|value| released.map(|()| value))
+            let epoch = self.epoch.load(Ordering::Acquire);
+            if epoch != self.seen_epoch {
+                // A different handle in this process can publish under its
+                // write lock while this handle retains its shared read lock.
+                self.table.resync().map_err(fail)?;
+                self.seen_epoch = epoch;
+            }
+            work(&self.table)
         }
         #[cfg(not(unix))]
         {
@@ -102,6 +131,12 @@ impl Cache {
     }
     pub(super) fn begin_write(&mut self) -> ConvertResult<()> {
         if !self.dirty {
+            // Do not retain a clean read lock while waiting to upgrade: two
+            // independent writers would otherwise each wait on the other's
+            // read lock. lock(Write) reloads the published generation after
+            // acquisition, so the gap cannot overwrite a concurrent update.
+            #[cfg(unix)]
+            self.table.unlock_metadata_only().map_err(fail)?;
             #[cfg(unix)]
             if !self
                 .table
@@ -117,6 +152,8 @@ impl Cache {
     }
     pub(super) fn flush(&mut self, path: &Path) -> ConvertResult<()> {
         if !self.dirty {
+            #[cfg(unix)]
+            self.table.unlock_metadata_only().map_err(fail)?;
             return Ok(());
         }
         #[cfg(unix)]

@@ -229,6 +229,9 @@ def test_cached_reader_uses_publication_counter_not_file_timestamp(tmp_path):
     assert cl.done()
     assert cl.open(path, nomodify=True)
     assert cl.getkeyword("counter") == 42
+    # CASA retains a read lock. Explicit clearlocks permits the external
+    # writer; reacquisition must still use the publication counter, not mtime.
+    assert table().clearlocks()
     control = Path(path) / "table.dat"
     before = control.stat()
     code = """
@@ -242,3 +245,32 @@ assert t.putkeyword('counter',43); t.close()
     os.utime(control, ns=(before.st_atime_ns, before.st_mtime_ns))
     assert cl.getkeyword("counter") == 43
     assert cl.done()
+
+
+
+def test_clean_keyword_cache_retains_casa_read_lock_until_clearlocks(tmp_path):
+    path = fixture_path(tmp_path)
+    cl = componentlist()
+    assert cl.open(path, nomodify=True)
+    code = """
+import json, sys
+from casars.tools import table
+writer=table(); assert writer.open(sys.argv[1], nomodify=False, lockoptions={'option':'usernoread'})
+locked=writer.lock(write=True, nattempts=1)
+if locked: assert writer.putkeyword('external',43)
+writer.close(); print(json.dumps({'locked':locked}))
+"""
+    def probe():
+        result=subprocess.run([sys.executable, '-c', code, path], capture_output=True, text=True, check=True, timeout=20)
+        return json.loads(result.stdout)
+    try:
+        assert probe() == {"locked": False}
+        assert cl.haskeyword("external") is False
+        assert probe() == {"locked": False}
+        assert table().clearlocks()
+        assert probe() == {"locked": True}
+        assert cl.getkeyword("external") == 43
+        assert probe() == {"locked": False}
+    finally:
+        cl.done()
+    assert probe() == {"locked": True}

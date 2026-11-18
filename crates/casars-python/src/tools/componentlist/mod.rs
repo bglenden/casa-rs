@@ -23,7 +23,9 @@
 mod add;
 mod convertrefdir;
 mod keywords;
-pub(crate) use keywords::flush_pending as flush_pending_keywords;
+pub(crate) use keywords::{
+    clear_locks as clear_keyword_locks, flush_pending as flush_pending_keywords,
+};
 mod ops;
 mod placeholder;
 mod record_methods;

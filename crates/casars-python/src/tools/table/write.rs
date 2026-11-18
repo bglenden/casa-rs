@@ -356,6 +356,17 @@ pub(super) fn write_root(
     saved?;
     reloaded?;
     released?;
+    if matches!(
+        target,
+        Target::TableKeywords | Target::ColumnKeywords | Target::Info
+    ) {
+        // casacore shares the keyword object across its in-process handles.
+        // Native component caches reload only after a completed metadata write.
+        root.seen_keyword_epoch = root
+            .keyword_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::Release)
+            .wrapping_add(1);
+    }
     Ok(CasaValue::Bool(true))
 }
 

@@ -440,6 +440,10 @@ def test_a_dropped_tool_waits_for_the_write_lock_without_the_gil(tmp_path: Path)
     add_point(cl, 2.0)
     # Reading the table opens it with locking, which makes its `table.lock`.
     assert fluxes(path) == [1.0]
+    # CASA keeps the component table's read lock. Relinquish it so this
+    # fixture's external holder can take the write lock before the drop.
+    from casars.tools import table
+    assert table().clearlocks()
     holder = subprocess.Popen(
         [sys.executable, "-c", HOLD_THE_WRITE_LOCK, str(path / "table.lock"), "2"],
         stdout=subprocess.PIPE,
@@ -526,3 +530,33 @@ def test_casa_reads_what_casars_writes_when_casa_is_importable(tmp_path: Path) -
     for index, record in enumerate(records):
         assert_same(si(casa.getcomponent(index)), record, f"component {index}")
     casa.done()
+
+
+
+def test_logger_retention_keeps_levels_dynamic_and_allows_reentrant_handlers():
+    cl = componentlist()
+    logger = logging.getLogger(LOGGER)
+    previous = logger.level
+    messages = []
+
+    class Handler(logging.Handler):
+        def emit(self, record):
+            # Logging must run after tool and logger-cache locks are released.
+            assert cl.length() == 0
+            messages.append(record.getMessage())
+            if record.getMessage() == "getfreq not implemented yet":
+                assert cl.getfluxpol(0) == ""
+
+    handler = Handler()
+    logger.addHandler(handler)
+    try:
+        logger.setLevel(logging.ERROR)
+        assert cl.getfreq(0) == {}
+        assert messages == []
+        logger.setLevel(logging.WARNING)
+        assert cl.getfreq(0) == {}
+        assert messages == ["getfreq not implemented yet", "getfluxpol not implemented yet"]
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+        cl.done()

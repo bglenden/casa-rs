@@ -22,6 +22,9 @@ pub(crate) mod simutil;
 pub(crate) mod surface;
 pub(crate) mod table;
 
+use std::collections::BTreeMap;
+use std::sync::{Mutex, PoisonError};
+
 use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 
@@ -92,12 +95,39 @@ impl LogLine {
     }
 }
 
+// Python logging already owns one logger per name. Retain that object so
+// warning-heavy tool calls do not import logging and repeat getLogger on
+// every message. Levels, handlers and logging.disable stay dynamic.
+static LOGGERS: Mutex<BTreeMap<String, Py<PyAny>>> = Mutex::new(BTreeMap::new());
+
+fn logger(py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
+    if let Some(logger) = LOGGERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(name)
+    {
+        return Ok(logger.clone_ref(py));
+    }
+    // Never hold the cache lock while calling Python, including handlers
+    // which can re-enter a tool and log another message.
+    let logger = py
+        .import("logging")?
+        .call_method1("getLogger", (name,))?
+        .unbind();
+    LOGGERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(name.into(), logger.clone_ref(py));
+    Ok(logger)
+}
+
 /// Logs `lines` on the Python logger `logger`.
 pub(crate) fn emit(py: Python<'_>, logger: &str, lines: &[LogLine]) -> PyResult<()> {
     if lines.is_empty() {
         return Ok(());
     }
-    let logger = py.import("logging")?.call_method1("getLogger", (logger,))?;
+    let logger = self::logger(py, logger)?;
+    let logger = logger.bind(py);
     for line in lines {
         let method = match line.level {
             Level::Info => "info",

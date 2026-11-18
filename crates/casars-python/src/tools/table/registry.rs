@@ -24,7 +24,7 @@ use super::state::State;
 /// `State::id`.
 static TOOLS: Mutex<Vec<(u64, Weak<Mutex<State>>)>> = Mutex::new(Vec::new());
 
-/// Per-table notification of component-list keyword writes in this process.
+/// Per-table notification of metadata writes in this process.
 /// Weak references keep the registry from retaining closed tables.
 pub(super) fn keyword_epoch(path: &Path) -> Arc<AtomicU64> {
     static EPOCHS: OnceLock<Mutex<HashMap<PathBuf, Weak<AtomicU64>>>> = OnceLock::new();

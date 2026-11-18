@@ -2,8 +2,8 @@
 //! CASA component-list keyword reads from the attached casacore table.
 
 mod cache;
-pub(crate) use cache::flush_pending;
 pub(super) use cache::{Shared, attach};
+pub(crate) use cache::{clear_locks, flush_pending};
 
 use std::path::Path;
 use std::sync::{Arc, PoisonError};

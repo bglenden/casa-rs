@@ -1,0 +1,23 @@
+{
+  "casatools": "6.7.6-14",
+  "after_open": {
+    "locked": false
+  },
+  "has_added": false,
+  "after_has": {
+    "locked": false
+  },
+  "get": 42,
+  "after_get": {
+    "locked": false
+  },
+  "clearlocks": true,
+  "after_clearlocks": {
+    "locked": true
+  },
+  "get_after_publication": 43,
+  "has_after_publication": true,
+  "after_close": {
+    "locked": true
+  }
+}
