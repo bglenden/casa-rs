@@ -316,6 +316,8 @@ def main():
         ('delete-scratch-ignores-field', dict(field='MISSING', otf=False, scr=True), False),
         ('invalid-virtual-field-before-scratch-removal',
          dict(field='MISSING', otf=True, scr=True), True),
+        ('invalid-numeric-field-before-scratch-removal',
+         dict(field='999', otf=True, scr=True), True),
     ]:
         results[name] = compare(root, source, native, name, 'delmod', virtual, arguments, refused)
     for name, task, fixture, arguments in [
