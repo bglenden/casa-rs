@@ -883,19 +883,22 @@ map per table: <code>--spwmap '[[0, 0], []]'</code>. <code>--docallib --callib F
 CASA calibration library instead. <code>--applymode trial</code> reports the apply plan
 without changing the MeasurementSet. <code>calibrate --mode apply</code> keeps casa-rs's
 own <code>--gaintables</code> with <code>;</code>-separated per-table lists.</p>
-<p>CASA's empty <code>smodel</code> solves against the <code>MODEL_DATA</code> column where the
-MeasurementSet has one and a 1 Jy point source where it does not; <code>bandpass</code>
-does not solve against <code>MODEL_DATA</code> yet, so give it a point source. CASA
-reads a field's virtual model (<code>setjy</code> with <code>usescratch=False</code>) before
-<code>MODEL_DATA</code>; casa-rs does not yet, so an empty <code>smodel</code> on a
-MeasurementSet that holds one is refused. A CASA
-parameter casa-rs does not implement yet is taken only at its default, and a
-CASA value it does not implement yet (such as <code>gaintype='K'</code>) is refused;
-both refusals name <a href="https://github.com/bglenden/casa-rs/issues/979">#979</a>.
+<p>With an empty <code>smodel</code>, <code>gaincal</code> looks for the selected field's virtual
+model, then its <code>MODEL_DATA</code> column, and falls back to a 1 Jy point source.
+For <code>bandpass</code>, supply a point source when the selected data has a stored
+model. A CASA parameter casa-rs does not implement yet is taken only at its
+default, and a
+CASA value such as <code>gaintype='GSPLINE'</code> is refused until implemented. These
+errors name <a href="https://github.com/bglenden/casa-rs/issues/979">#979</a>.
 <code>docs/reference/casa-compatibility.md</code> lists them.</p>
 <p>Use <code>calibrate gaincal --template</code> to see every parameter with its default,
 and <code>--save-params FILE</code> to keep a run's resolved profile for reuse with
 <code>--params FILE</code>.</p>
+<p>Use <code>gaintype='K'</code> to solve antenna delays or <code>gaintype='KCROSS'</code> to solve
+the shared cross-hand delay. Supply a reference antenna and select at least
+two frequency channels. KCROSS needs four correlations. The output stores
+delays in nanoseconds as <code>FPARAM</code> and can be supplied to <code>applycal</code> or to a
+subsequent solve as a prior calibration table.</p>
 <h2 id="python">Python<a class="headerlink" href="#python" title="Permanent link">&para;</a></h2>
 <p>The same surfaces are generated functions under <code>casars.tasks</code> with CASA's
 signatures (<code>casars.tasks.gaincal(...)</code>, <code>casars.tasks.applycal(...)</code>, and so
