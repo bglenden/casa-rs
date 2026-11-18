@@ -625,9 +625,8 @@ def gaincal(
 
     CASA's ``gaincal``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #979:
-    ``intent``, ``uvrange``, ``preavg``, ``refantmode``, ``normtype``,
-    ``solmode``, ``rmsthresh``, ``corrdepflags``, ``splinetime``,
-    ``npointaver``, ``phasewrap``.
+    ``intent``, ``uvrange``, ``solmode``, ``rmsthresh``, ``corrdepflags``,
+    ``splinetime``, ``npointaver``, ``phasewrap``.
     """
     return _call_casa(gaincal, locals())
 
