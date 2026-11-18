@@ -28,20 +28,29 @@ pub fn solve_record(
     solved: &Path,
     stats: &SolveStats,
 ) -> CasaValue {
-    calibration_solve_record(applied, Some(selected), Some((solved, stats)))
+    calibration_solve_record(applied, Some(selected), Some(solved), Some(stats))
 }
 
 pub(crate) fn skipped_solve_record(
     applied: &[ApplyCalibrationTableSpec],
     selected: Option<&SelectedData>,
 ) -> CasaValue {
-    calibration_solve_record(applied, selected, None)
+    calibration_solve_record(applied, selected, None, None)
+}
+
+pub(crate) fn polynomial_solve_record(
+    applied: &[ApplyCalibrationTableSpec],
+    selected: &SelectedData,
+    solved: &Path,
+) -> CasaValue {
+    calibration_solve_record(applied, Some(selected), Some(solved), None)
 }
 
 fn calibration_solve_record(
     applied: &[ApplyCalibrationTableSpec],
     selected: Option<&SelectedData>,
-    solved: Option<(&Path, &SolveStats)>,
+    solved: Option<&Path>,
+    stats: Option<&SolveStats>,
 ) -> CasaValue {
     let mut apply_tables = applied
         .iter()
@@ -68,10 +77,10 @@ fn calibration_solve_record(
         ("selectvis", selection),
         (
             "solve_tables",
-            CasaValue::str_vector(solved.map(|(path, _)| path.display().to_string())),
+            CasaValue::str_vector(solved.map(|path| path.display().to_string())),
         ),
     ];
-    if let Some((_, stats)) = solved {
+    if let Some(stats) = stats {
         result.push(("solvestats", solvestats(stats)));
     }
     CasaValue::dict(result)

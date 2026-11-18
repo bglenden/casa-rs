@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Fit and persist legacy polynomial bandpass tables.
 
+mod fit;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -13,7 +15,7 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::{
     BPolySolutionRow, BandpassSolutionRow, BandpassSolveCuts, BandpassSolveError,
-    BandpassSolveReport, BandpassSolveRequest,
+    BandpassSolveReport, BandpassSolveRequest, empty_report,
 };
 use crate::constants::{
     COL_ANTENNA1, COL_ARRAY_ID, COL_CAL_DESC_ID, COL_FIELD_ID, COL_FLAG, COL_INTERVAL,
@@ -22,6 +24,9 @@ use crate::constants::{
     COL_TIME_EXTRA_PREC, COL_VALID_DOMAIN, COL_WEIGHT, LEGACY_CAL_DESC_KEYWORD,
 };
 use crate::selected_data::SelectedData;
+use crate::session::CalibrationSolveContext;
+use crate::solve::GainSolveMode;
+use crate::solve::grouping::{SolveAccumulator, selected_channels};
 use crate::solve_stats::SolveStats;
 use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, set_fixed_unit_keyword,
@@ -30,10 +35,75 @@ use crate::writer::{
 
 const LEGACY_CAL_HISTORY_KEYWORD: &str = "CAL_HISTORY";
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
+pub(super) fn solve_polynomial(
+    ms: &MeasurementSet,
+    request: &BandpassSolveRequest,
+    context: CalibrationSolveContext,
+    groups: impl Iterator<Item = SolveAccumulator>,
+    cuts: BandpassSolveCuts,
+    mode: crate::CalibrationOutputMode,
+) -> Result<BandpassSolveReport, BandpassSolveError> {
+    let window = ms
+        .spectral_window()
+        .map_err(|source| BandpassSolveError::OpenMeasurementSet {
+            path: ms
+                .path()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            source,
+        })?;
+    let selections = context
+        .rows
+        .iter()
+        .map(|row| (row.data_spw_id, row.channel_selection.as_ref()))
+        .collect::<BTreeMap<_, _>>();
+    let mut channel_count = 0;
+    let mut fitted = Vec::new();
+    for mut group in groups {
+        let frequencies = window.chan_freq(group.spw_id as usize).map_err(|source| {
+            BandpassSolveError::OpenMeasurementSet {
+                path: ms
+                    .path()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+                source,
+            }
+        })?;
+        let channels = selected_channels(selections[&group.spw_id], frequencies.len())?;
+        let frequencies = channels
+            .iter()
+            .map(|&channel| frequencies[channel])
+            .collect::<Vec<_>>();
+        group.finalize_for_solve(GainSolveMode::AmplitudePhase, false);
+        let rows = fit::fit_interval(
+            &group,
+            &frequencies,
+            &context.available_antennas,
+            context.refant_id,
+            request,
+            cuts,
+        )?;
+        if !rows.is_empty() {
+            channel_count = frequencies.len();
+            fitted.extend(rows);
+        }
+    }
+    if fitted.is_empty() {
+        return Ok(empty_report(
+            request,
+            context.refant_id,
+            context.selected_data,
+            SolveStats::default(),
+        ));
+    }
+    let report =
+        write_polynomial_rows(ms, request, context.refant_id, &fitted, channel_count, mode)?;
+    Ok(BandpassSolveReport {
+        selected_data: context.selected_data,
+        ..report
+    })
+}
+
 pub(super) fn write_bpoly_caltable(
     ms: &MeasurementSet,
     request: &BandpassSolveRequest,
@@ -49,7 +119,22 @@ pub(super) fn write_bpoly_caltable(
         request.cuts,
         &request.selection,
     )?;
+    let channel_count = rows.first().map(|row| row.channel_count).unwrap_or(0);
+    write_polynomial_rows(ms, request, refant_id, &fitted_rows, channel_count, mode)
+}
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
+fn write_polynomial_rows(
+    ms: &MeasurementSet,
+    request: &BandpassSolveRequest,
+    refant_id: i32,
+    fitted_rows: &[BPolySolutionRow],
+    channel_count: usize,
+    mode: crate::CalibrationOutputMode,
+) -> Result<BandpassSolveReport, BandpassSolveError> {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
         ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casa_types::PrimitiveType::Float64),
@@ -162,7 +247,7 @@ pub(super) fn write_bpoly_caltable(
         })
         .collect::<BTreeMap<_, _>>();
 
-    for row in &fitted_rows {
+    for row in fitted_rows {
         let reference_frequency_hz = (row.valid_domain_hz[0] + row.valid_domain_hz[1]) / 2.0;
         let flat_amp = row
             .amp_coefficients
@@ -371,7 +456,7 @@ pub(super) fn write_bpoly_caltable(
     write_bpoly_cal_desc_subtable(
         writer.output_path().join("CAL_DESC"),
         &cal_desc_ids,
-        &fitted_rows,
+        fitted_rows,
     )?;
     Table::with_schema(TableSchema::new(vec![]).expect("empty schema"))
         .save(TableOptions::new(writer.output_path().join("CAL_HISTORY")))
@@ -393,7 +478,6 @@ pub(super) fn write_bpoly_caltable(
         .iter()
         .map(|row| row.spw_id)
         .collect::<BTreeSet<_>>();
-    let channel_count = rows.first().map(|row| row.channel_count).unwrap_or(0);
     Ok(BandpassSolveReport {
         output_table: request.output_table.clone(),
         table_subtype: "BPOLY".to_string(),

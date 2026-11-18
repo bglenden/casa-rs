@@ -241,6 +241,15 @@ fn casa_value(
             &report.solve_stats,
         ),
         ("bandpass", CalibrationTaskResult::SolveBandpass(report))
+            if report.table_subtype == "BPOLY" && report.solution_row_count > 0 =>
+        {
+            crate::casa_return::polynomial_solve_record(
+                applied,
+                &report.selected_data,
+                &report.output_table,
+            )
+        }
+        ("bandpass", CalibrationTaskResult::SolveBandpass(report))
             if report.solve_stats.windows.is_empty() =>
         {
             crate::casa_return::skipped_solve_record(

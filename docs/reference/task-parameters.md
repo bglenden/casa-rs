@@ -718,7 +718,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
 | <code>solint</code> | <code>parameter.solint@r1</code> | <code>string</code> | <code>"inf"</code>; optional | Solve | Gain solution interval such as inf, int, or 30s |
 | <code>combine</code> | <code>setsolve.combine@r1</code> | <code>string</code> | <code>"scan"</code>; optional | Solve | Data axes a solution interval spans: 'scan', 'field', 'spw', 'obs', comma-separated; empty for none. |
-| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; required when bandtype="BPOLY" | Solve | Reference antenna name or id for solve workflows |
+| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; optional | Solve | Reference antenna name or id for solve workflows |
 | <code>minblperant</code> | <code>parameter.minblperant@r1</code> | <code>integer</code> | <code>4</code>; optional | Solve | Minimum unflagged baselines an antenna needs to be solved for |
 | <code>minsnr</code> | <code>setsolve.minsnr@r1</code> | <code>float</code> | <code>3.0</code>; optional | Solve | Solutions below this SNR are flagged. |
 | <code>solnorm</code> | <code>parameter.solnorm@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Normalize solved amplitudes to unity average amplitude |
