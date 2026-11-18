@@ -197,12 +197,16 @@ pub(super) fn centroid_weight(
     let scale = if power == 0.0 { 1.0 } else { power };
     channels
         .iter()
-        .filter_map(|&channel| {
+        .map(|&channel| {
             let flagged = shared_flags.map_or_else(
                 || samples.flags[[correlation, channel]],
                 |flags| flags[channel],
             );
-            (!flagged).then(|| f64::from(samples.weights[[correlation, channel]] * scale))
+            if flagged {
+                0.0
+            } else {
+                f64::from(samples.weights[[correlation, channel]] * scale)
+            }
         })
         .sum()
 }
