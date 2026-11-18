@@ -3,6 +3,7 @@
 
 mod samples;
 mod time;
+mod weights;
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -12,7 +13,7 @@ use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_types::{ArrayValue, Complex32};
-use ndarray::{ArrayD, ArrayView2, Axis, Ix2, IxDyn, ShapeBuilder};
+use ndarray::{ArrayD, ArrayView2, Ix2, IxDyn, ShapeBuilder};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
@@ -25,6 +26,7 @@ use crate::session::{resolve_calibration_selection, resolve_casa_calibration_sel
 use crate::solve::kernel::{RobustSample, SolveGraph};
 use samples::{SolveAccumulationKey, SolveEdgeAccumulation, SolveRowLayout, SolveRowLayouts};
 use time::{AveragedBaseline, FirstTBuffer, WeightedTime, bucketed_rows, first_t_buffers};
+use weights::{SpectralWeights, solve_weights};
 
 pub(crate) fn load_preapplied_rows(
     ms: &MeasurementSet,
@@ -77,6 +79,7 @@ pub(crate) fn build_solve_groups(
         } else {
             BTreeMap::new()
         };
+    let spectral_weights = SpectralWeights::new(ms, &ordered)?;
     let pipelined = overlap_inputs(ordered.len());
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
         eprintln!("calibration_workers {}", if pipelined { 2 } else { 1 });
@@ -92,6 +95,10 @@ pub(crate) fn build_solve_groups(
             &indices,
             preapplied_rows.is_none(),
             options.model_source,
+            batch
+                .iter()
+                .map(|(row, _, _)| spectral_weights.contains(row))
+                .collect(),
         )
     };
     let mut consume = |batch: &[BucketedRow<'_>], inputs: SolveInputBatch| {
@@ -171,6 +178,7 @@ fn overlap_inputs(rows: usize) -> bool {
 /// Array payloads live for one batch, without filling the table's row cache.
 pub(crate) struct SolveInputBatch {
     columns: Vec<(&'static str, Vec<Option<ArrayValue>>)>,
+    spectral_weights: Vec<bool>,
 }
 
 /// Read selected arrays together so headers and tiles are shared by a batch;
@@ -180,12 +188,16 @@ fn read_input_batch(
     rows: &[usize],
     read_visibilities: bool,
     model: GainSolveModelSource,
+    spectral_weights: Vec<bool>,
 ) -> Result<SolveInputBatch, GainSolveError> {
     let schema = ms.main_table().schema();
-    let spectra = ["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"]
-        .iter()
-        .all(|name| schema.is_some_and(|schema| schema.contains_column(name)));
-    let mut columns = vec![if spectra { "SIGMA_SPECTRUM" } else { "SIGMA" }];
+    let mut columns = Vec::new();
+    if spectral_weights.contains(&true) {
+        columns.push("SIGMA_SPECTRUM");
+    }
+    if spectral_weights.contains(&false) {
+        columns.push("SIGMA");
+    }
     if read_visibilities {
         columns.extend(["DATA", "FLAG"]);
     }
@@ -194,6 +206,7 @@ fn read_input_batch(
     }
     let mut inputs = SolveInputBatch {
         columns: Vec::with_capacity(columns.len()),
+        spectral_weights,
     };
     for column in columns {
         let values = ms
@@ -1166,44 +1179,6 @@ fn read_row_inputs<'a>(
         weights,
         model,
     })
-}
-
-fn solve_weights(
-    ms: &MeasurementSet,
-    row_index: usize,
-    shape: &[usize],
-    inputs: (&SolveInputBatch, usize),
-) -> Result<ArrayD<f32>, GainSolveError> {
-    let has_column = |name| {
-        ms.main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column(name))
-    };
-    let inverse_square = |sigma: f32| {
-        if sigma > 0.0 {
-            1.0 / (sigma * sigma)
-        } else {
-            0.0
-        }
-    };
-    if has_column("WEIGHT_SPECTRUM") && has_column("SIGMA_SPECTRUM") {
-        let sigma = input_cell(ms, row_index, inputs, "SIGMA_SPECTRUM")?;
-        return match sigma {
-            ArrayValue::Float32(sigma) if sigma.shape() == shape => Ok(sigma.mapv(inverse_square)),
-            other => Err(unsupported_shape("SIGMA_SPECTRUM", other)),
-        };
-    }
-    let sigma = input_cell(ms, row_index, inputs, "SIGMA")?;
-    let ArrayValue::Float32(sigma) = sigma else {
-        return Err(unsupported_shape("SIGMA", sigma));
-    };
-    if sigma.ndim() != 1 || sigma.shape()[0] != shape[0] {
-        return Err(GainSolveError::UnsupportedParameterShape {
-            path: "<measurement-set SIGMA>".to_string(),
-            shape: sigma.shape().to_vec(),
-        });
-    }
-    Ok(sigma.mapv(inverse_square).insert_axis(Axis(1)))
 }
 
 fn main_cell<'a>(
