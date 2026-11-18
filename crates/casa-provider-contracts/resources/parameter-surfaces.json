@@ -16627,6 +16627,112 @@
     },
     {
       "kind": "task",
+      "id": "uvsub",
+      "contract_version": 1,
+      "display_name": "Subtract Visibility Model",
+      "category": "Calibration",
+      "summary": "Subtract or restore the current visibility model in corrected data.",
+      "provider_family": "calibration",
+      "casa_task": "uvsub",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "uvsub"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "reverse",
+          "concept": {
+            "id": "parameter.reverse",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--reverse"
+              ]
+            },
+            "provider": {
+              "field": "reverse"
+            },
+            "python": {
+              "name": "reverse"
+            },
+            "presentation": {
+              "label": "Restore Model",
+              "group": "Scratch columns"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
       "id": "clearcal",
       "contract_version": 1,
       "display_name": "Clear Calibration",

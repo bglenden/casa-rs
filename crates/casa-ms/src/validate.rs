@@ -11,10 +11,49 @@ use std::collections::HashMap;
 use casa_tables::Table;
 use casa_types::{ArrayValue, ScalarValue, Value};
 
+use crate::MeasurementSet;
 use crate::column_def::ColumnDef;
-use crate::error::MsResult;
+use crate::error::{MsError, MsResult};
 use crate::metadata::{measure_type_name_for, quantum_units_for};
 use crate::schema::{self, SubtableId};
+
+/// CASA's `MSChecker::checkReferentialIntegrity` checks only these MAIN IDs.
+pub(crate) fn check_referential_integrity(ms: &MeasurementSet) -> MsResult<()> {
+    let main = ms.main_table();
+    for (column, subtable) in [
+        ("ANTENNA1", SubtableId::Antenna),
+        ("ANTENNA2", SubtableId::Antenna),
+        ("DATA_DESC_ID", SubtableId::DataDescription),
+        ("FIELD_ID", SubtableId::Field),
+        ("OBSERVATION_ID", SubtableId::Observation),
+    ] {
+        let name = subtable.name();
+        let limit = ms
+            .subtable(subtable)
+            .ok_or_else(|| MsError::MissingSubtable(name.to_owned()))?
+            .row_count();
+        let reader = main.column_accessor(column)?;
+        let mut largest = -1;
+        for start in (0..main.row_count()).step_by(65_536) {
+            let rows: Vec<_> =
+                (start..main.row_count().min(start.saturating_add(65_536))).collect();
+            for value in reader.scalar_cells_owned_for_rows(&rows)? {
+                let Some(ScalarValue::Int32(id)) = value else {
+                    return Err(MsError::InvalidInput(format!(
+                        "MAIN {column} is not a defined Int32"
+                    )));
+                };
+                largest = largest.max(id);
+            }
+        }
+        if usize::try_from(largest).is_ok_and(|id| id >= limit) {
+            return Err(MsError::InvalidInput(format!(
+                "Illegal {column} value {largest} found in MAIN. {name} only has {limit} rows (IDs)"
+            )));
+        }
+    }
+    Ok(())
+}
 
 /// Validation issue found during MS validation.
 #[derive(Debug, Clone)]

@@ -33,12 +33,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn close(&self) -> PyResult<Py<PyAny>> {
-        stub("close")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (msfile = None, freqtol = None, dirtol = None, weightscale = None, handling = None, destmsfile = None, respectname = None), text_signature = "($self, msfile='', freqtol=[], dirtol=[], weightscale=1.0, handling=0, destmsfile='', respectname=False)")]
     fn concatenate(
         &self,
@@ -152,12 +146,6 @@ impl PyMsTool {
         verbose: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("cvelfreqs")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn done(&self) -> PyResult<Py<PyAny>> {
-        stub("done")
     }
 
     /// Not yet implemented in casa-rs.
@@ -488,18 +476,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (thems = None, nomodify = None, lock = None, check = None), text_signature = "($self, thems='', nomodify=True, lock=False, check=False)")]
-    fn open(
-        &self,
-        thems: Option<&Bound<'_, PyAny>>,
-        nomodify: Option<&Bound<'_, PyAny>>,
-        lock: Option<&Bound<'_, PyAny>>,
-        check: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("open")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outputms = None, field = None, spw = None, baseline = None, timebin = None, time = None, scan = None, uvrange = None, taql = None, whichcol = None, tileshape = None, subarray = None, combine = None, intent = None, obs = None), text_signature = "($self, outputms='', field=[], spw=[], baseline=[], timebin=[], time='', scan=[], uvrange=[], taql='', whichcol='DATA', tileshape=[], subarray=[], combine='', intent='', obs='')")]
     fn partition(
         &self,
@@ -819,12 +795,6 @@ impl PyMsTool {
         overwrite: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("tofits")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (reverse = None), text_signature = "($self, reverse=False)")]
-    fn uvsub(&self, reverse: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("uvsub")
     }
 
     /// Not yet implemented in casa-rs.

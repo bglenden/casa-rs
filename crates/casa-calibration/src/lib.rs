@@ -49,7 +49,10 @@ mod stats;
 mod summary;
 mod task_contract;
 mod timing;
+mod uvsub;
 mod writer;
+
+pub use uvsub::{subtract_visibility_model, subtract_visibility_model_holding};
 
 pub use output::CalibrationOutputMode;
 

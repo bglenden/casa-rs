@@ -386,7 +386,7 @@ impl VisibilityModels {
             observations: true,
             ..GainSolveCombine::default()
         };
-        let ordered = bucketed_rows(&rows, GainSolveInterval::Infinite, combine, true);
+        let ordered = bucketed_rows(&rows, GainSolveInterval::Infinite, combine, true, true);
         models.bind_buffers(ms, &ordered, combine)?;
         models.phase_times = weights::chunk_phase_times(&ordered, combine, models.dynamic_fields());
         Ok(Self {

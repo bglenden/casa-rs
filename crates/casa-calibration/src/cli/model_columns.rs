@@ -12,6 +12,12 @@ use crate::model_columns::{delete_model, reset_scratch_columns};
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("vis")?;
+    if task.surface() == "uvsub" {
+        crate::subtract_visibility_model(&path, task.flag("reverse")?)
+            .map_err(|error| TaskFailure::execution(error.to_string()))?;
+        super::history::record_task(task, &path);
+        return TaskSuccess::new(CasaValue::None, &());
+    }
     if let Some(parts) = super::multi_ms::partition_paths(&path)? {
         let mut session = task.session().clone();
         for part in parts {

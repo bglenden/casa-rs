@@ -30,6 +30,7 @@
     "simobserve",
     "split",
     "tclean",
-    "tsdimaging"
+    "tsdimaging",
+    "uvsub"
   ]
 }
