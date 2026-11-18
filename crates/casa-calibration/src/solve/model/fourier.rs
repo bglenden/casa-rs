@@ -61,7 +61,7 @@ pub(super) struct FourierRow<'a> {
 
 impl FourierModel {
     pub(super) fn new(record: RecordValue) -> Self {
-        let first_term = match record.get("subftm_0") {
+        let first_term = match record.get("subftm_0").or_else(|| record.get("subftm")) {
             Some(Value::Record(term)) => term,
             _ => &record,
         };
@@ -115,6 +115,7 @@ struct PreparedFourierModel {
     refocus: Option<focus::Refocus>,
     mosaic: Option<MosaicLayout>,
     scale: Option<setjy::FluxScale>,
+    legacy_taylor: Option<(i32, f64)>,
     continuum_axis: Option<SpectralAxis>,
     convert_frequencies: bool,
     backend: CpuBackend,
@@ -216,6 +217,7 @@ impl PreparedFourierModel {
             )?,
             mosaic,
             scale,
+            legacy_taylor: legacy_taylor_term(record)?,
             continuum_axis: (channels == 1).then_some(axis),
             convert_frequencies: matches!(
                 record.get("freqframevalid"),
@@ -346,15 +348,24 @@ impl PreparedFourierModel {
                 &mut self.output,
             )
             .map_err(model_error)?;
-        if let Some(scale) = &self.scale {
+        if self.scale.is_some() || self.legacy_taylor.is_some() {
             for (samples, frequency) in self
                 .output
                 .chunks_exact_mut(row.correlations.len())
                 .zip(row.frequencies)
             {
-                let factor = scale.at(*frequency * lsrk_ratio);
+                let factor = self
+                    .scale
+                    .as_ref()
+                    .map_or(1.0, |scale| scale.at(*frequency * lsrk_ratio));
+                let taylor = self.legacy_taylor.map_or(1.0, |(term, reference)| {
+                    // MultiTermFT::modifyModelVis rounds the raw frequency
+                    // to Float before constructing the Taylor coordinate.
+                    let offset = ((f64::from(*frequency as f32) - reference) / reference) as f32;
+                    offset.powi(term)
+                });
                 for sample in samples {
-                    *sample *= factor;
+                    *sample *= factor * taylor;
                 }
             }
         }
@@ -474,6 +485,10 @@ fn grid_terms(record: &RecordValue) -> Result<(Vec<&RecordValue>, Basis), GainSo
         "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT" => {
             Ok((vec![record], Basis::Constant))
         }
+        "MultiTermFT" => match record.get("subftm") {
+            Some(Value::Record(term)) => Ok((vec![term], Basis::Constant)),
+            _ => Err(model_error("virtual MultiTermFT has no subftm record")),
+        },
         "MultiTermFTNew" => {
             let Some(Value::Scalar(ScalarValue::UInt32(terms))) = record.get("nterms") else {
                 return Err(model_error(
@@ -510,6 +525,26 @@ fn grid_terms(record: &RecordValue) -> Result<(Vec<&RecordValue>, Basis), GainSo
             "unsupported virtual Fourier machine {name}"
         ))),
     }
+}
+
+/// Legacy ft stores each Taylor grid in a separate model entry. Its machine
+/// contains one term and scales that term after degridding.
+fn legacy_taylor_term(record: &RecordValue) -> Result<Option<(i32, f64)>, GainSolveError> {
+    if record_text(record, "name")? != "MultiTermFT" {
+        return Ok(None);
+    }
+    let Some(Value::Scalar(ScalarValue::Int32(term))) = record.get("thisterm") else {
+        return Err(model_error("virtual MultiTermFT has no Taylor term index"));
+    };
+    let Some(reference) = record_number(record, "reffreq") else {
+        return Err(model_error(
+            "virtual MultiTermFT has no reference frequency",
+        ));
+    };
+    if *term < 0 || !reference.is_finite() || reference <= 0.0 {
+        return Err(model_error("invalid virtual MultiTermFT Taylor term"));
+    }
+    Ok((*term > 0).then_some((*term, reference)))
 }
 
 fn open_grid(
