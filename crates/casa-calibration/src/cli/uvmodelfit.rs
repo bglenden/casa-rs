@@ -10,7 +10,7 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use crate::model_columns::initialize_scratch_column;
 use crate::session::resolve_casa_calibration_selection;
-use crate::uvmodelfit::{ComponentType, FitRequest, fit_visibility_component};
+use crate::{VisibilityFitRequest, VisibilityFitShape, fit_visibility_component};
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("vis")?;
@@ -19,14 +19,14 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let lock = initialize_scratch_column(&mut ms, VisibilityDataColumn::CorrectedData, lock)
         .map_err(execution)?;
     let selected = resolve_casa_calibration_selection(&ms, &selection(task)?).map_err(execution)?;
-    let shape =
-        ComponentType::parse(&task.text("comptype")?.unwrap_or_default()).map_err(failed_fit)?;
+    let shape = VisibilityFitShape::parse(&task.text("comptype")?.unwrap_or_default())
+        .map_err(failed_fit)?;
     let parameters = task.numbers("sourcepar")?;
     let vary = task.flags("varypar")?;
     let fitted = fit_visibility_component(
         &ms,
         &selected,
-        FitRequest {
+        VisibilityFitRequest {
             shape,
             initial: &parameters,
             vary: &vary,

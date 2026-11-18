@@ -21,14 +21,18 @@ const ARCSECOND_RAD: f64 = PI / 648_000.0;
 const LIGHT_SPEED: f64 = 299_792_458.0;
 const PARAMETERS: usize = 6;
 
+/// Single-component shape supported by CASA visibility fitting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ComponentType {
+pub enum VisibilityFitShape {
+    /// Unresolved point source.
     Point,
+    /// Elliptical Gaussian.
     Gaussian,
+    /// Uniform elliptical disk.
     Disk,
 }
 
-impl ComponentType {
+impl VisibilityFitShape {
     pub(crate) fn parse(name: &str) -> MsResult<Self> {
         match name {
             "P" => Ok(Self::Point),
@@ -46,23 +50,40 @@ impl ComponentType {
     }
 }
 
-pub(crate) struct FitRequest<'a> {
-    pub(crate) shape: ComponentType,
-    pub(crate) initial: &'a [f64],
-    pub(crate) vary: &'a [bool],
-    pub(crate) iterations: i64,
+/// Inputs shared by `uvmodelfit` and `calibrater.modelfit`.
+pub struct VisibilityFitRequest<'a> {
+    /// Fitted component shape.
+    pub shape: VisibilityFitShape,
+    /// Stokes I in Jy, east and north offsets in arcseconds, then for resolved
+    /// shapes the major axis in arcseconds, minor-to-major ratio and PA in degrees.
+    pub initial: &'a [f64],
+    /// False entries hold parameters fixed. Omitted entries can vary.
+    pub vary: &'a [bool],
+    /// Maximum number of accepted fit iterations.
+    pub iterations: i64,
 }
 
 /// The parameters in the task's units, and the sky component for its table.
-pub(crate) struct VisibilityComponentFit {
-    pub(crate) parameters: Vec<f64>,
-    pub(crate) component: SkyComponent,
+pub struct VisibilityComponentFit {
+    /// Fitted values in the order and units of [`VisibilityFitRequest::initial`].
+    pub parameters: Vec<f64>,
+    /// The fitted component placed on the sky relative to the selected field.
+    pub component: SkyComponent,
 }
 
-pub(crate) fn fit_visibility_component(
+/// Fit one component to the selected visibilities of an open MeasurementSet.
+///
+/// The fit reads `CORRECTED_DATA` and leaves the selected data unchanged. A
+/// negative iteration limit returns the initial component without reading samples.
+///
+/// # Errors
+///
+/// Returns an error on unreadable data, multiple selected fields, invalid
+/// component parameters or a selection with no data of positive weight.
+pub fn fit_visibility_component(
     ms: &MeasurementSet,
     selection: &ResolvedMsSelection,
-    request: FitRequest<'_>,
+    request: VisibilityFitRequest<'_>,
 ) -> MsResult<VisibilityComponentFit> {
     let field = selection
         .selected_rows
@@ -95,12 +116,17 @@ pub(crate) fn fit_visibility_component(
     values[5] = values[5].to_radians();
     let vary =
         std::array::from_fn(|index| index < count && request.vary.get(index) != Some(&false));
-    let input = samples::FitSamples::new(ms, selection)?;
     let model = FitModel {
         shape: request.shape,
         values,
     };
-    let fitted = solve_model(&input, model, vary, request.iterations.max(0) as usize)?;
+    let fitted = if request.iterations < 0 {
+        // With a negative limit UVMod exports the initial component without reading samples.
+        model
+    } else {
+        let input = samples::FitSamples::new(ms, selection)?;
+        solve_model(&input, model, vary, request.iterations as usize)?
+    };
     let mut parameters = fitted.values[..count].to_vec();
     if count == PARAMETERS {
         parameters[5] = parameters[5].to_degrees();
@@ -139,7 +165,9 @@ fn solve_model(
         };
         let trial = model.update(delta);
         let attempted = input.equations(trial, &vary)?;
-        if attempted.chi_square - previous.chi_square < f64::EPSILON {
+        // UVMod accepts improvements and tolerates rounding at the same chi-square.
+        let increase = attempted.chi_square - previous.chi_square;
+        if increase < f64::EPSILON {
             model = trial;
             previous = attempted;
             damping *= 0.5;
@@ -153,22 +181,22 @@ fn solve_model(
 
 #[derive(Clone, Copy)]
 struct FitModel {
-    shape: ComponentType,
+    shape: VisibilityFitShape,
     values: [f64; PARAMETERS],
 }
 
 impl FitModel {
     fn shape_at(self, direction: MDirection) -> MsResult<ComponentShape> {
-        if self.shape == ComponentType::Point {
+        if self.shape == VisibilityFitShape::Point {
             return Ok(ComponentShape::point(direction));
         }
         let major = self.values[3] * ARCSECOND_RAD;
         let axes = Ellipse::new(major, major * self.values[4], self.values[5]).map_err(invalid)?;
         let errors = EllipseErrors::default();
         let kind = match self.shape {
-            ComponentType::Gaussian => ShapeKind::Gaussian { axes, errors },
-            ComponentType::Disk => ShapeKind::Disk { axes, errors },
-            ComponentType::Point => unreachable!("handled above"),
+            VisibilityFitShape::Gaussian => ShapeKind::Gaussian { axes, errors },
+            VisibilityFitShape::Disk => ShapeKind::Disk { axes, errors },
+            VisibilityFitShape::Point => unreachable!("handled above"),
         };
         ComponentShape::new(direction, kind).map_err(invalid)
     }
@@ -201,7 +229,7 @@ impl FitModel {
     }
 
     fn update(self, mut delta: [f64; PARAMETERS]) -> Self {
-        if self.shape != ComponentType::Point {
+        if self.shape != VisibilityFitShape::Point {
             for index in [3, 4] {
                 if delta[index] < -self.values[index] {
                     delta[index] = -0.9 * self.values[index];
@@ -209,7 +237,7 @@ impl FitModel {
             }
         }
         let mut values = std::array::from_fn(|index| self.values[index] + delta[index]);
-        if self.shape != ComponentType::Point {
+        if self.shape != VisibilityFitShape::Point {
             values[4] = values[4].min(1.0);
             if values[5] < -FRAC_PI_2 || values[5] > FRAC_PI_2 {
                 values[5] = (values[5] + FRAC_PI_2).rem_euclid(PI) - FRAC_PI_2;
@@ -233,7 +261,7 @@ impl FitModel {
         slopes[0] = unit_flux;
         slopes[1] = Complex64::new(0.0, dx) * predicted;
         slopes[2] = Complex64::new(0.0, dy) * predicted;
-        if self.shape != ComponentType::Point {
+        if self.shape != VisibilityFitShape::Point {
             self.shape_derivatives(dx / TAU, dy / TAU, predicted, &mut slopes);
         }
         (predicted, slopes)
@@ -256,10 +284,10 @@ impl FitModel {
             return;
         }
         let slope = match self.shape {
-            ComponentType::Gaussian => -radius / (2.0 * LN_2),
+            VisibilityFitShape::Gaussian => -radius / (2.0 * LN_2),
             // UVMod multiplies its disk derivative by the current model.
-            ComponentType::Disk => -2.0 * libm::jn(2, radius) / radius,
-            ComponentType::Point => unreachable!("point components have no axes"),
+            VisibilityFitShape::Disk => -2.0 * libm::jn(2, radius) / radius,
+            VisibilityFitShape::Point => unreachable!("point components have no axes"),
         };
         let square = (PI * self.values[3]).powi(2);
         let derivative = predicted * slope;

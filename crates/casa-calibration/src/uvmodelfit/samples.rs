@@ -11,8 +11,6 @@ use casa_types::{ArrayValue, Complex32, Complex64};
 use ndarray::{ArrayD, Axis};
 
 use super::{Equations, FitModel, PARAMETERS, invalid};
-use crate::model_columns::{has_column, observed_column};
-
 const CORRECTED: VisibilityDataColumn = VisibilityDataColumn::CorrectedData;
 const WORKSPACE_BYTES: usize = 32 * 1024 * 1024;
 
@@ -22,7 +20,6 @@ pub(super) struct FitSamples<'a> {
     frequencies: BTreeMap<i32, Vec<f64>>,
     channels: BTreeMap<i32, Vec<usize>>,
     parallel: BTreeMap<i32, Vec<usize>>,
-    input: &'static str,
     batch_rows: usize,
 }
 
@@ -58,11 +55,6 @@ impl<'a> FitSamples<'a> {
                 );
             }
         }
-        let input = if has_column(ms, CORRECTED) {
-            CORRECTED.name()
-        } else {
-            observed_column(ms)
-        };
         let cell_elements = maximum_visibility_cell_elements(ms).map_err(invalid)?;
         let bytes_per_row = cell_elements.saturating_mul(16).max(1);
         let batch_rows = (WORKSPACE_BYTES / bytes_per_row).clamp(1, 1024);
@@ -72,7 +64,6 @@ impl<'a> FitSamples<'a> {
             frequencies,
             channels,
             parallel,
-            input,
             batch_rows,
         })
     }
@@ -98,7 +89,7 @@ impl<'a> FitSamples<'a> {
                 self.accumulate(&mut equations, row, sample, &transform, model, vary)?;
             }
         }
-        if equations.sum_weight <= 0.0 {
+        if equations.sum_weight.is_nan() || equations.sum_weight <= 0.0 {
             return Err(invalid(
                 "found no unflagged weighted visibility data to fit",
             ));
@@ -114,7 +105,7 @@ impl<'a> FitSamples<'a> {
                 .array_cells_owned_uncached(&indices)
         };
         Ok(Batch {
-            data: read(self.input)?,
+            data: read(CORRECTED.name())?,
             flags: read("FLAG")?,
             weights: read("WEIGHT")?,
             uvw: read("UVW")?,
@@ -151,7 +142,8 @@ impl<'a> FitSamples<'a> {
             let shape = baseline.at_frequency(frequency).map_err(invalid)?;
             let (predicted, slopes) = model.derivatives(sample.uvw, frequency, shape);
             for &polarization in parallel {
-                let measured = sample.data.cell(polarization, channel);
+                let value = sample.data[[polarization, channel]];
+                let measured = Complex64::new(f64::from(value.re), f64::from(value.im));
                 equations.add(measured - predicted, &slopes, sample.weight, vary);
             }
         }
@@ -168,10 +160,8 @@ struct Batch {
 
 impl Batch {
     fn sample(&self, index: usize) -> MsResult<Sample<'_>> {
-        let data = match &self.data[index] {
-            Some(ArrayValue::Complex32(values)) => Data::Complex(values),
-            Some(ArrayValue::Float32(values)) => Data::Real(values),
-            _ => return Err(invalid("there are no observed visibility samples")),
+        let Some(ArrayValue::Complex32(data)) = &self.data[index] else {
+            return Err(invalid("there are no corrected visibility samples"));
         };
         let Some(ArrayValue::Bool(flags)) = &self.flags[index] else {
             return Err(invalid("FLAG is not a Bool array"));
@@ -186,7 +176,7 @@ impl Batch {
             || weights.ndim() != 1
             || uvw.ndim() != 1
             || uvw.len() != 3
-            || data.shape().len() != 2
+            || data.ndim() != 2
             || flags.ndim() != 2
         {
             return Err(invalid("a visibility fit row has an invalid cell shape"));
@@ -204,32 +194,8 @@ impl Batch {
 }
 
 struct Sample<'a> {
-    data: Data<'a>,
+    data: &'a ArrayD<Complex32>,
     flags: &'a ArrayD<bool>,
     weight: f64,
     uvw: [f64; 3],
-}
-
-enum Data<'a> {
-    Complex(&'a ArrayD<Complex32>),
-    Real(&'a ArrayD<f32>),
-}
-
-impl Data<'_> {
-    fn shape(&self) -> &[usize] {
-        match self {
-            Self::Complex(values) => values.shape(),
-            Self::Real(values) => values.shape(),
-        }
-    }
-
-    fn cell(&self, polarization: usize, channel: usize) -> Complex64 {
-        match self {
-            Self::Complex(values) => {
-                let value = values[[polarization, channel]];
-                Complex64::new(f64::from(value.re), f64::from(value.im))
-            }
-            Self::Real(values) => Complex64::new(f64::from(values[[polarization, channel]]), 0.0),
-        }
-    }
 }

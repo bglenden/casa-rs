@@ -77,6 +77,29 @@ def numeric_record(record):
     return np.asarray(fields)
 
 
+def flagged_fixture(root, source, *, all_rows=False):
+    path = root/('all-flagged.ms' if all_rows else 'flagged.ms')
+    copy_for_case(source, path)
+    tb = table()
+    assert tb.open(str(path), nomodify=False)
+    try:
+        rows = tb.getcol('FLAG_ROW')
+        step = 1 if all_rows else 4
+        rows[::step] = True
+        tb.putcol('FLAG_ROW', rows)
+        if not all_rows:
+            flags = tb.getcol('FLAG')
+            flags[1, 2, :] = True
+            tb.putcol('FLAG', flags)
+            outliers = tb.getcol('CORRECTED_DATA')
+            outliers[:, :, rows] = 64
+            outliers[:, 2, :] = 64
+            tb.putcol('CORRECTED_DATA', outliers)
+    finally:
+        tb.close()
+    return path
+
+
 def compare(root, source, native, name, options, *, output=True, error=None):
     outcomes = []
     for label, api in [('casa', casa), ('native', native)]:
@@ -104,6 +127,7 @@ def compare(root, source, native, name, options, *, output=True, error=None):
     np.testing.assert_equal(expected['spectrum'], actual['spectrum'])
     reference, fitted = numeric_record(expected), numeric_record(actual)
     np.testing.assert_allclose(fitted, reference, atol=1e-6, rtol=1e-3, err_msg=name)
+    np.testing.assert_allclose(fitted[4:6], reference[4:6], atol=1e-10, rtol=0, err_msg=name)
     return {'max_parameter_difference': float(np.max(np.abs(fitted-reference)))}
 
 
@@ -130,10 +154,16 @@ def main():
     nonuniform_root = root/'nonuniform'
     nonuniform_root.mkdir()
     nonuniform, _ = fixture(nonuniform_root, seed, 'Point', uneven=True)
+    flagged = flagged_fixture(root, point)
+    all_flagged = flagged_fixture(root, point, all_rows=True)
     rows = [
         ('point', point, dict(field='0', sourcepar=[1.5, .01, -.01], niter=10)),
         ('flux-only', point, dict(field='0', sourcepar=[1.2, .13, -.12],
                                   varypar=[True, False, False], niter=5)),
+        ('flagged-cells', flagged, dict(field='0', sourcepar=[1.2, .13, -.12],
+                                      varypar=[True, False, False], niter=5)),
+        ('all-flagged', all_flagged, dict(field='0', niter=0)),
+        ('negative-iterations', all_flagged, dict(field='0', sourcepar=[1.2, .13, -.12], niter=-1)),
         ('initial', point, dict(field='0', sourcepar=[1.2, .13, -.12], niter=0)),
         ('gaussian', gaussian, dict(field='0', comptype='G',
               sourcepar=[2.1, .1, -.1, 1.27, .72, 30.], niter=12)),
@@ -155,7 +185,8 @@ def main():
     for name, source, options in rows:
         if args.case and args.case not in name:
             continue
-        error = 'Error in Calibrater::modelfit.' if name in ('more-than-one-field', 'wrong-length') else None
+        failed_cases = ('all-flagged', 'more-than-one-field', 'wrong-length')
+        error = 'Error in Calibrater::modelfit.' if name in failed_cases else None
         results[name] = compare(root, source, tasks, name, options, output=name!='no-output', error=error)
         print(name, results[name], flush=True)
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

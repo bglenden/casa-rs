@@ -133,4 +133,7 @@ pub use task_contract::{
     StatsTaskRequest, SummaryTaskRequest, calibration_protocol_descriptor,
     calibration_task_schema_bundle,
 };
+pub use uvmodelfit::{
+    VisibilityComponentFit, VisibilityFitRequest, VisibilityFitShape, fit_visibility_component,
+};
 pub use writer::CalibrationTableWriteError;
