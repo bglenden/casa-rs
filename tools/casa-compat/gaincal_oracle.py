@@ -243,11 +243,37 @@ def spectral_window_reference(root, source, native):
     return errors
 
 
+def correlation_flags(root, source, native):
+    t = table()
+    t.open(str(source), nomodify=False)
+    try:
+        a, b = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+        flags = t.getcol('FLAG')
+        flags[0, :, (a==1) & (b==3)] = True
+        t.putcol('FLAG', flags)
+    finally:
+        t.close()
+    results, failures = {}, []
+    for gain in ['G', 'T']:
+        for mode in ['ap', 'p', 'a']:
+            for dependent in [False, True]:
+                label = f'{gain}-{mode}-independent{int(dependent)}'
+                case = root/label
+                case.mkdir()
+                try:
+                    results[label] = gain_and_apply(case, source, native, gain, 'inf', calmode=mode,
+                                                    minblperant=3, corrdepflags=dependent)
+                except AssertionError as error:
+                    failures.append((label, str(error)))
+    assert not failures, failures
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -299,6 +325,8 @@ def main():
         results = alternating_fields(root, source, native, 0, 'a', short_interval=True)
     elif args.case == 'spw-refant':
         results = spectral_window_reference(root, amplitude_data(root, source), native)
+    elif args.case == 'corrflags':
+        results = correlation_flags(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

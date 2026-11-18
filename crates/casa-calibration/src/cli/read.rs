@@ -131,6 +131,7 @@ fn solve_gain(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFai
         solve_mode: parsed(task, "solve_mode", parse_gain_solve_mode)?,
         solve_interval: parsed(task, "solint", parse_gain_solve_interval)?,
         preaverage_seconds: 0.0,
+        correlation_dependent_flags: false,
         combine: optional_parsed(task, "gain_combine", parse_gain_solve_combine)?,
         refant: parse_refant_selector(&task.required_text("refant")?),
         prior_calibration_tables: calibration_tables(task, Chain::Solve)?,

@@ -19,6 +19,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
         combine: GainSolveCombine::default(),
         channelized: true,
         preaverage_max_span: None,
+        correlation_dependent_flags: false,
     };
     let mut group = SolveAccumulator::new(0, 0, 0);
     for antenna1 in 0..4 {
