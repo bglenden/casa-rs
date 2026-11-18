@@ -480,524 +480,525 @@
 <a href=#480 id=480 data-nosnippet>480</a>        ms,
 <a href=#481 id=481 data-nosnippet>481</a>        <span class="kw-2">&amp;</span>context.rows,
 <a href=#482 id=482 data-nosnippet>482</a>        context.preapplied_rows.as_ref(),
-<a href=#483 id=483 data-nosnippet>483</a>        SolveGroupOptions {
-<a href=#484 id=484 data-nosnippet>484</a>            gain_type: request.gain_type,
-<a href=#485 id=485 data-nosnippet>485</a>            model_source: request.model_source,
-<a href=#486 id=486 data-nosnippet>486</a>            point_stokes,
-<a href=#487 id=487 data-nosnippet>487</a>            rotate_model,
-<a href=#488 id=488 data-nosnippet>488</a>            solve_interval: request.solve_interval,
-<a href=#489 id=489 data-nosnippet>489</a>            combine: request.combine,
-<a href=#490 id=490 data-nosnippet>490</a>            <span class="comment">// VbAvg applies this boundary to either source of the interval.
-<a href=#491 id=491 data-nosnippet>491</a>            </span>preaverage_max_span: averaging_interval.map(|seconds| f64::from(seconds) * <span class="number">0.999</span>),
-<a href=#492 id=492 data-nosnippet>492</a>            correlation_dependent_flags: request.correlation_dependent_flags,
-<a href=#493 id=493 data-nosnippet>493</a>            robust_seed: request.robustness.enabled(),
-<a href=#494 id=494 data-nosnippet>494</a>            channelized: <span class="bool-val">false</span>,
-<a href=#495 id=495 data-nosnippet>495</a>        },
-<a href=#496 id=496 data-nosnippet>496</a>    )<span class="question-mark">?</span>;
-<a href=#497 id=497 data-nosnippet>497</a>
-<a href=#498 id=498 data-nosnippet>498</a>    <span class="kw">if </span>groups.is_empty() {
-<a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::EmptySelection);
-<a href=#500 id=500 data-nosnippet>500</a>    }
-<a href=#501 id=501 data-nosnippet>501</a>
-<a href=#502 id=502 data-nosnippet>502</a>    drop(input_phase);
-<a href=#503 id=503 data-nosnippet>503</a>    <span class="kw">let </span>kernel_phase = <span class="kw">crate</span>::timing::Phase::start(<span class="string">"gain_solve"</span>);
-<a href=#504 id=504 data-nosnippet>504</a>    <span class="kw">let </span><span class="kw-2">mut </span>solution_rows = Vec::new();
-<a href=#505 id=505 data-nosnippet>505</a>    <span class="kw">let </span><span class="kw-2">mut </span>attempted_spw_ids = BTreeSet::new();
-<a href=#506 id=506 data-nosnippet>506</a>    <span class="kw">let </span><span class="kw-2">mut </span>solve_stats = SolveStatsBuilder::new(
-<a href=#507 id=507 data-nosnippet>507</a>        request.gain_type.polarizations(),
-<a href=#508 id=508 data-nosnippet>508</a>        spectral_window_ids(ms)<span class="question-mark">?</span>,
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw-2">&amp;</span>context.available_antennas,
-<a href=#510 id=510 data-nosnippet>510</a>    );
-<a href=#511 id=511 data-nosnippet>511</a>    <span class="kw">for </span>((base_key, bucket_key), <span class="kw-2">mut </span>group) <span class="kw">in </span>groups {
-<a href=#512 id=512 data-nosnippet>512</a>        <span class="kw">if </span>group.attempted {
-<a href=#513 id=513 data-nosnippet>513</a>            attempted_spw_ids.insert(group.spw_id);
-<a href=#514 id=514 data-nosnippet>514</a>        }
-<a href=#515 id=515 data-nosnippet>515</a>        group.finalize_for_solve(request.solve_mode, request.robustness.enabled());
-<a href=#516 id=516 data-nosnippet>516</a>        trace::trace_group(<span class="kw-2">&amp;</span>base_key, <span class="kw-2">&amp;</span>bucket_key, <span class="kw-2">&amp;</span>group, request);
-<a href=#517 id=517 data-nosnippet>517</a>        solve_stats.interval(<span class="kw-2">&amp;</span>IntervalStages::of(
-<a href=#518 id=518 data-nosnippet>518</a>            <span class="kw-2">&amp;</span>group,
-<a href=#519 id=519 data-nosnippet>519</a>            request.min_baselines_per_antenna,
-<a href=#520 id=520 data-nosnippet>520</a>        ));
-<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">let </span>spw_id = group.spw_id;
-<a href=#522 id=522 data-nosnippet>522</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(group_rows) = solve_closed_group(
-<a href=#523 id=523 data-nosnippet>523</a>            group,
-<a href=#524 id=524 data-nosnippet>524</a>            <span class="kw-2">&amp;</span>context.available_antennas,
-<a href=#525 id=525 data-nosnippet>525</a>            request,
-<a href=#526 id=526 data-nosnippet>526</a>            context.refant_id,
-<a href=#527 id=527 data-nosnippet>527</a>        ) <span class="kw">else </span>{
-<a href=#528 id=528 data-nosnippet>528</a>            <span class="kw">continue</span>;
-<a href=#529 id=529 data-nosnippet>529</a>        };
-<a href=#530 id=530 data-nosnippet>530</a>        solve_stats.solutions(
-<a href=#531 id=531 data-nosnippet>531</a>            spw_id,
-<a href=#532 id=532 data-nosnippet>532</a>            group_rows.iter().map(|row| AntennaSolution {
-<a href=#533 id=533 data-nosnippet>533</a>                antenna_id: row.antenna_id,
-<a href=#534 id=534 data-nosnippet>534</a>                passed: row.flags.iter().map(|flagged| !flagged).collect(),
-<a href=#535 id=535 data-nosnippet>535</a>            }),
-<a href=#536 id=536 data-nosnippet>536</a>        );
-<a href=#537 id=537 data-nosnippet>537</a>        trace::trace_solution_rows(
-<a href=#538 id=538 data-nosnippet>538</a>            <span class="kw-2">&amp;</span>base_key,
-<a href=#539 id=539 data-nosnippet>539</a>            <span class="kw-2">&amp;</span>bucket_key,
-<a href=#540 id=540 data-nosnippet>540</a>            <span class="kw-2">&amp;</span>group_rows,
-<a href=#541 id=541 data-nosnippet>541</a>            request,
-<a href=#542 id=542 data-nosnippet>542</a>            context.refant_id,
-<a href=#543 id=543 data-nosnippet>543</a>        );
-<a href=#544 id=544 data-nosnippet>544</a>        solution_rows.extend(group_rows);
-<a href=#545 id=545 data-nosnippet>545</a>    }
-<a href=#546 id=546 data-nosnippet>546</a>    <span class="kw">if </span>context.refant_id &gt;= <span class="number">0 </span>{
-<a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">let </span>strict = <span class="macro">matches!</span>(
-<a href=#548 id=548 data-nosnippet>548</a>            request.refant,
-<a href=#549 id=549 data-nosnippet>549</a>            RefAntSelector::Expression { strict: <span class="bool-val">true</span>, .. }
-<a href=#550 id=550 data-nosnippet>550</a>        );
-<a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">let </span><span class="kw-2">mut </span>alternates = context.refant_alternates.clone();
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">if </span>!strict {
-<a href=#553 id=553 data-nosnippet>553</a>            <span class="kw">let </span>last_preferred = alternates.last().copied().unwrap_or(context.refant_id);
-<a href=#554 id=554 data-nosnippet>554</a>            <span class="kw">let </span><span class="kw-2">mut </span>nearby = refant_distance_order(ms, last_preferred)<span class="question-mark">?</span>;
-<a href=#555 id=555 data-nosnippet>555</a>            nearby.retain(|id| <span class="kw-2">*</span>id != context.refant_id &amp;&amp; !alternates.contains(id));
-<a href=#556 id=556 data-nosnippet>556</a>            alternates.extend(nearby);
-<a href=#557 id=557 data-nosnippet>557</a>        }
-<a href=#558 id=558 data-nosnippet>558</a>        apply_reference_antenna(<span class="kw-2">&amp;mut </span>solution_rows, context.refant_id, <span class="kw-2">&amp;</span>alternates, strict);
-<a href=#559 id=559 data-nosnippet>559</a>    }
-<a href=#560 id=560 data-nosnippet>560</a>    <span class="comment">// CASA enforces amplitudes on the final gains after referencing and
-<a href=#561 id=561 data-nosnippet>561</a>    // before normalizing across all intervals (`globalPostSolveTinker`).
-<a href=#562 id=562 data-nosnippet>562</a>    </span><span class="kw">if </span>request.solve_mode != GainSolveMode::AmplitudePhase {
-<a href=#563 id=563 data-nosnippet>563</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="kw-2">&amp;mut </span>solution_rows {
-<a href=#564 id=564 data-nosnippet>564</a>            <span class="kw">for </span>(gain, flagged) <span class="kw">in </span>row.gains.iter_mut().zip(<span class="kw-2">&amp;</span>row.flags) {
-<a href=#565 id=565 data-nosnippet>565</a>                <span class="kw">if </span><span class="kw-2">*</span>flagged {
-<a href=#566 id=566 data-nosnippet>566</a>                    <span class="kw-2">*</span>gain = Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>);
-<a href=#567 id=567 data-nosnippet>567</a>                } <span class="kw">else if </span>request.solve_mode == GainSolveMode::Amplitude {
-<a href=#568 id=568 data-nosnippet>568</a>                    <span class="kw">let </span>amplitude = gain.norm();
-<a href=#569 id=569 data-nosnippet>569</a>                    <span class="kw-2">*</span>gain = Complex32::new(<span class="kw">if </span>amplitude == <span class="number">0.0 </span>{ <span class="number">1.0 </span>} <span class="kw">else </span>{ amplitude }, <span class="number">0.0</span>);
-<a href=#570 id=570 data-nosnippet>570</a>                }
-<a href=#571 id=571 data-nosnippet>571</a>            }
-<a href=#572 id=572 data-nosnippet>572</a>        }
-<a href=#573 id=573 data-nosnippet>573</a>    }
-<a href=#574 id=574 data-nosnippet>574</a>    <span class="kw">if </span>request.solve_mode != GainSolveMode::Phase &amp;&amp; request.normalize_average_amplitude {
-<a href=#575 id=575 data-nosnippet>575</a>        normalize_gain_solution_amplitudes(<span class="kw-2">&amp;mut </span>solution_rows, request.normalization_type);
-<a href=#576 id=576 data-nosnippet>576</a>    }
-<a href=#577 id=577 data-nosnippet>577</a>    <span class="kw">let </span><span class="kw-2">mut </span>referenced = BTreeSet::new();
-<a href=#578 id=578 data-nosnippet>578</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="kw-2">&amp;</span>solution_rows {
-<a href=#579 id=579 data-nosnippet>579</a>        <span class="kw">if </span>row.antenna_id == row.refant_id
-<a href=#580 id=580 data-nosnippet>580</a>            &amp;&amp; row.flags.iter().any(|flagged| !flagged)
-<a href=#581 id=581 data-nosnippet>581</a>            &amp;&amp; referenced.insert((row.spw_id, row.time_seconds.to_bits()))
-<a href=#582 id=582 data-nosnippet>582</a>        {
-<a href=#583 id=583 data-nosnippet>583</a>            solve_stats.used_as_refant(row.spw_id, row.antenna_id);
-<a href=#584 id=584 data-nosnippet>584</a>        }
-<a href=#585 id=585 data-nosnippet>585</a>    }
-<a href=#586 id=586 data-nosnippet>586</a>    drop(kernel_phase);
-<a href=#587 id=587 data-nosnippet>587</a>    <span class="kw">let </span><span class="kw-2">mut </span>channel_selections = BTreeMap::new();
-<a href=#588 id=588 data-nosnippet>588</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="kw-2">&amp;</span>context.rows {
-<a href=#589 id=589 data-nosnippet>589</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(channels) = <span class="kw-2">&amp;</span>row.channel_selection {
-<a href=#590 id=590 data-nosnippet>590</a>            channel_selections
-<a href=#591 id=591 data-nosnippet>591</a>                .entry(row.data_spw_id)
-<a href=#592 id=592 data-nosnippet>592</a>                .or_insert_with(|| channels.clone());
-<a href=#593 id=593 data-nosnippet>593</a>        }
-<a href=#594 id=594 data-nosnippet>594</a>    }
-<a href=#595 id=595 data-nosnippet>595</a>    <span class="prelude-val">Ok</span>(SolvedGains {
-<a href=#596 id=596 data-nosnippet>596</a>        rows: solution_rows,
-<a href=#597 id=597 data-nosnippet>597</a>        refant_id: context.refant_id,
-<a href=#598 id=598 data-nosnippet>598</a>        attempted_spw_ids,
-<a href=#599 id=599 data-nosnippet>599</a>        channel_selections,
-<a href=#600 id=600 data-nosnippet>600</a>        selected_data: context.selected_data,
-<a href=#601 id=601 data-nosnippet>601</a>        solve_stats: solve_stats.finish(),
-<a href=#602 id=602 data-nosnippet>602</a>    })
-<a href=#603 id=603 data-nosnippet>603</a>}
-<a href=#604 id=604 data-nosnippet>604</a>
-<a href=#605 id=605 data-nosnippet>605</a><span class="doccomment">/// Every spectral window of `ms`, by id.
-<a href=#606 id=606 data-nosnippet>606</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>spectral_window_ids(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;i32&gt;, GainSolveError&gt; {
-<a href=#607 id=607 data-nosnippet>607</a>    <span class="kw">let </span>windows = ms
-<a href=#608 id=608 data-nosnippet>608</a>        .spectral_window()
-<a href=#609 id=609 data-nosnippet>609</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
-<a href=#610 id=610 data-nosnippet>610</a>            path: ms
-<a href=#611 id=611 data-nosnippet>611</a>                .path()
-<a href=#612 id=612 data-nosnippet>612</a>                .map(|path| path.display().to_string())
-<a href=#613 id=613 data-nosnippet>613</a>                .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
-<a href=#614 id=614 data-nosnippet>614</a>            source,
-<a href=#615 id=615 data-nosnippet>615</a>        })<span class="question-mark">?</span>;
-<a href=#616 id=616 data-nosnippet>616</a>    <span class="prelude-val">Ok</span>((<span class="number">0</span>..windows.row_count())
-<a href=#617 id=617 data-nosnippet>617</a>        .map(|row| i32::try_from(row).expect(<span class="string">"window count fits in i32"</span>))
-<a href=#618 id=618 data-nosnippet>618</a>        .collect())
-<a href=#619 id=619 data-nosnippet>619</a>}
-<a href=#620 id=620 data-nosnippet>620</a>
-<a href=#621 id=621 data-nosnippet>621</a><span class="doccomment">/// Solve one complete group whose accumulation is finalized
-<a href=#622 id=622 data-nosnippet>622</a>/// ([`grouping::SolveAccumulator::finalize_for_solve`]). An interval CASA
-<a href=#623 id=623 data-nosnippet>623</a>/// cannot solve gets no rows (`Calibrater::genericGatherAndSolve` keeps a
-<a href=#624 id=624 data-nosnippet>624</a>/// solution only after one succeeds).
-<a href=#625 id=625 data-nosnippet>625</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>solve_closed_group(
-<a href=#626 id=626 data-nosnippet>626</a>    group: grouping::SolveAccumulator,
-<a href=#627 id=627 data-nosnippet>627</a>    available_antennas: <span class="kw-2">&amp;</span>BTreeSet&lt;i32&gt;,
-<a href=#628 id=628 data-nosnippet>628</a>    request: <span class="kw-2">&amp;</span>GainSolveRequest,
-<a href=#629 id=629 data-nosnippet>629</a>    refant_id: i32,
-<a href=#630 id=630 data-nosnippet>630</a>) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;kernel::SolutionRow&gt;&gt; {
-<a href=#631 id=631 data-nosnippet>631</a>    solve_group(
-<a href=#632 id=632 data-nosnippet>632</a>        group,
-<a href=#633 id=633 data-nosnippet>633</a>        available_antennas,
-<a href=#634 id=634 data-nosnippet>634</a>        request.gain_type,
-<a href=#635 id=635 data-nosnippet>635</a>        request.solve_mode,
-<a href=#636 id=636 data-nosnippet>636</a>        request.min_snr,
-<a href=#637 id=637 data-nosnippet>637</a>        kernel::SolveGraphOptions {
-<a href=#638 id=638 data-nosnippet>638</a>            refant_id,
-<a href=#639 id=639 data-nosnippet>639</a>            min_baselines_per_antenna: request.min_baselines_per_antenna,
-<a href=#640 id=640 data-nosnippet>640</a>            group_seed: <span class="prelude-val">None</span>,
-<a href=#641 id=641 data-nosnippet>641</a>            correlation_dependent_flags: request.correlation_dependent_flags,
-<a href=#642 id=642 data-nosnippet>642</a>            defer_reference: <span class="bool-val">true</span>,
-<a href=#643 id=643 data-nosnippet>643</a>            robustness: request.robustness.enabled().then_some(<span class="kw-2">&amp;</span>request.robustness),
-<a href=#644 id=644 data-nosnippet>644</a>        },
-<a href=#645 id=645 data-nosnippet>645</a>    )
-<a href=#646 id=646 data-nosnippet>646</a>}
-<a href=#647 id=647 data-nosnippet>647</a>
-<a href=#648 id=648 data-nosnippet>648</a><span class="doccomment">/// The antennas other than `refant_id`, nearest it first: the alternates
-<a href=#649 id=649 data-nosnippet>649</a>/// `SolvableVisJones::applyRefAnt` tries when the reference antenna is flagged.
-<a href=#650 id=650 data-nosnippet>650</a></span><span class="kw">fn </span>refant_distance_order(ms: <span class="kw-2">&amp;</span>MeasurementSet, refant_id: i32) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;i32&gt;, GainSolveError&gt; {
-<a href=#651 id=651 data-nosnippet>651</a>    <span class="kw">let </span>antenna = ms
-<a href=#652 id=652 data-nosnippet>652</a>        .antenna()
-<a href=#653 id=653 data-nosnippet>653</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
-<a href=#654 id=654 data-nosnippet>654</a>            path: ms
-<a href=#655 id=655 data-nosnippet>655</a>                .path()
-<a href=#656 id=656 data-nosnippet>656</a>                .map(|path| path.display().to_string())
-<a href=#657 id=657 data-nosnippet>657</a>                .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
-<a href=#658 id=658 data-nosnippet>658</a>            source,
-<a href=#659 id=659 data-nosnippet>659</a>        })<span class="question-mark">?</span>;
-<a href=#660 id=660 data-nosnippet>660</a>    <span class="kw">let </span>positions = (<span class="number">0</span>..antenna.row_count())
-<a href=#661 id=661 data-nosnippet>661</a>        .map(|row| antenna.position(row))
-<a href=#662 id=662 data-nosnippet>662</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#663 id=663 data-nosnippet>663</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
-<a href=#664 id=664 data-nosnippet>664</a>            path: <span class="string">"ANTENNA POSITION"</span>.to_string(),
-<a href=#665 id=665 data-nosnippet>665</a>            source,
-<a href=#666 id=666 data-nosnippet>666</a>        })<span class="question-mark">?</span>;
-<a href=#667 id=667 data-nosnippet>667</a>    <span class="prelude-val">Ok</span>(nearest_first(<span class="kw-2">&amp;</span>positions, refant_id))
-<a href=#668 id=668 data-nosnippet>668</a>}
-<a href=#669 id=669 data-nosnippet>669</a>
-<a href=#670 id=670 data-nosnippet>670</a><span class="doccomment">/// The antennas other than `refant_id`, nearest it first, of antennas at
-<a href=#671 id=671 data-nosnippet>671</a>/// `positions` (ITRF metres, indexed by antenna ID).
-<a href=#672 id=672 data-nosnippet>672</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>nearest_first(positions: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]], refant_id: i32) -&gt; Vec&lt;i32&gt; {
-<a href=#673 id=673 data-nosnippet>673</a>    <span class="kw">let </span>origin = usize::try_from(refant_id)
-<a href=#674 id=674 data-nosnippet>674</a>        .ok()
-<a href=#675 id=675 data-nosnippet>675</a>        .and_then(|row| positions.get(row))
-<a href=#676 id=676 data-nosnippet>676</a>        .copied()
-<a href=#677 id=677 data-nosnippet>677</a>        .unwrap_or_default();
-<a href=#678 id=678 data-nosnippet>678</a>    <span class="kw">let </span><span class="kw-2">mut </span>order = (<span class="number">0</span>..positions.len())
-<a href=#679 id=679 data-nosnippet>679</a>        .filter(|row| i32::try_from(<span class="kw-2">*</span>row).ok() != <span class="prelude-val">Some</span>(refant_id))
-<a href=#680 id=680 data-nosnippet>680</a>        .map(|row| {
-<a href=#681 id=681 data-nosnippet>681</a>            <span class="kw">let </span>distance = positions[row]
-<a href=#682 id=682 data-nosnippet>682</a>                .iter()
-<a href=#683 id=683 data-nosnippet>683</a>                .zip(origin)
-<a href=#684 id=684 data-nosnippet>684</a>                .map(|(value, origin)| (value - origin).powi(<span class="number">2</span>))
-<a href=#685 id=685 data-nosnippet>685</a>                .sum::&lt;f64&gt;();
-<a href=#686 id=686 data-nosnippet>686</a>            (distance, row)
-<a href=#687 id=687 data-nosnippet>687</a>        })
-<a href=#688 id=688 data-nosnippet>688</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#689 id=689 data-nosnippet>689</a>    order.sort_by(|left, right| left.<span class="number">0</span>.total_cmp(<span class="kw-2">&amp;</span>right.<span class="number">0</span>).then(left.<span class="number">1</span>.cmp(<span class="kw-2">&amp;</span>right.<span class="number">1</span>)));
-<a href=#690 id=690 data-nosnippet>690</a>    order
-<a href=#691 id=691 data-nosnippet>691</a>        .into_iter()
-<a href=#692 id=692 data-nosnippet>692</a>        .map(|(<span class="kw">_</span>, row)| i32::try_from(row).expect(<span class="string">"antenna row count fits in i32"</span>))
-<a href=#693 id=693 data-nosnippet>693</a>        .collect()
-<a href=#694 id=694 data-nosnippet>694</a>}
-<a href=#695 id=695 data-nosnippet>695</a>
-<a href=#696 id=696 data-nosnippet>696</a><span class="doccomment">/// Refer each solution interval's phases to a reference antenna, as
-<a href=#697 id=697 data-nosnippet>697</a>/// `SolvableVisJones::applyRefAnt` does with `refantmode='flex'`. Intervals
-<a href=#698 id=698 data-nosnippet>698</a>/// go in time order within each spectral window. The reference is the first
-<a href=#699 id=699 data-nosnippet>699</a>/// of: the preferred antenna, the one used last, then the others nearest the
-<a href=#700 id=700 data-nosnippet>700</a>/// preferred first, that has every receptor unflagged both here and in the
-<a href=#701 id=701 data-nosnippet>701</a>/// last referred interval (only the first receptor when the window's second
-<a href=#702 id=702 data-nosnippet>702</a>/// is never solved). Its phase change since that interval is removed from
-<a href=#703 id=703 data-nosnippet>703</a>/// every antenna, so an alternate is held at constant phase. An interval
-<a href=#704 id=704 data-nosnippet>704</a>/// with no such antenna is flagged entirely and leaves the last referred
-<a href=#705 id=705 data-nosnippet>705</a>/// interval in place for the next.
-<a href=#706 id=706 data-nosnippet>706</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>apply_reference_antenna(
-<a href=#707 id=707 data-nosnippet>707</a>    rows: <span class="kw-2">&amp;mut </span>[kernel::SolutionRow],
-<a href=#708 id=708 data-nosnippet>708</a>    preferred_refant_id: i32,
-<a href=#709 id=709 data-nosnippet>709</a>    alternates: <span class="kw-2">&amp;</span>[i32],
-<a href=#710 id=710 data-nosnippet>710</a>    strict: bool,
-<a href=#711 id=711 data-nosnippet>711</a>) {
-<a href=#712 id=712 data-nosnippet>712</a>    <span class="comment">// CASA `applyRefAnt` iterates by window and exact caltable time, even
-<a href=#713 id=713 data-nosnippet>713</a>    // where separate solve intervals contributed rows at the same time.
-<a href=#714 id=714 data-nosnippet>714</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>group_indices = BTreeMap::&lt;<span class="kw">_</span>, Vec&lt;<span class="kw">_</span>&gt;&gt;::new();
-<a href=#715 id=715 data-nosnippet>715</a>    <span class="kw">for </span>(index, row) <span class="kw">in </span>rows.iter().enumerate() {
-<a href=#716 id=716 data-nosnippet>716</a>        group_indices
-<a href=#717 id=717 data-nosnippet>717</a>            .entry((row.spw_id, row.time_seconds.to_bits()))
-<a href=#718 id=718 data-nosnippet>718</a>            .or_default()
-<a href=#719 id=719 data-nosnippet>719</a>            .push(index);
-<a href=#720 id=720 data-nosnippet>720</a>    }
-<a href=#721 id=721 data-nosnippet>721</a>    <span class="kw">let </span><span class="kw-2">mut </span>receptor_counts = BTreeMap::&lt;i32, usize&gt;::new();
-<a href=#722 id=722 data-nosnippet>722</a>    <span class="kw">for </span>row <span class="kw">in </span>rows.iter() {
-<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">let </span>count = receptor_counts.entry(row.spw_id).or_insert(<span class="number">1</span>);
-<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">if </span>row.flags.get(<span class="number">1</span>).is_some_and(|flag| !<span class="kw-2">*</span>flag) {
-<a href=#725 id=725 data-nosnippet>725</a>            <span class="kw-2">*</span>count = <span class="number">2</span>;
-<a href=#726 id=726 data-nosnippet>726</a>        }
-<a href=#727 id=727 data-nosnippet>727</a>    }
-<a href=#728 id=728 data-nosnippet>728</a>
-<a href=#729 id=729 data-nosnippet>729</a>    <span class="kw">let </span><span class="kw-2">mut </span>choices = Vec::with_capacity(alternates.len() + <span class="number">2</span>);
-<a href=#730 id=730 data-nosnippet>730</a>    choices.extend([preferred_refant_id, preferred_refant_id]);
-<a href=#731 id=731 data-nosnippet>731</a>    choices.extend_from_slice(alternates);
-<a href=#732 id=732 data-nosnippet>732</a>
-<a href=#733 id=733 data-nosnippet>733</a>    <span class="kw">let </span><span class="kw-2">mut </span>previous = <span class="prelude-val">None</span>::&lt;Vec&lt;usize&gt;&gt;;
-<a href=#734 id=734 data-nosnippet>734</a>    <span class="kw">let </span><span class="kw-2">mut </span>last_spw = <span class="prelude-val">None</span>::&lt;i32&gt;;
-<a href=#735 id=735 data-nosnippet>735</a>    <span class="kw">for </span>((spw_id, <span class="kw">_</span>), current) <span class="kw">in </span>group_indices {
-<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">if </span>last_spw != <span class="prelude-val">Some</span>(spw_id) {
-<a href=#737 id=737 data-nosnippet>737</a>            previous = <span class="prelude-val">None</span>;
-<a href=#738 id=738 data-nosnippet>738</a>            last_spw = <span class="prelude-val">Some</span>(spw_id);
-<a href=#739 id=739 data-nosnippet>739</a>        }
-<a href=#740 id=740 data-nosnippet>740</a>        <span class="kw">let </span>receptors = receptor_counts[<span class="kw-2">&amp;</span>spw_id];
-<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw">let </span>previous_indices = previous.as_ref().unwrap_or(<span class="kw-2">&amp;</span>current);
-<a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">let </span>candidates = <span class="kw">if </span>strict { <span class="kw-2">&amp;</span>choices[..<span class="number">1</span>] } <span class="kw">else </span>{ <span class="kw-2">&amp;</span>choices[..] };
-<a href=#743 id=743 data-nosnippet>743</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((current_ref_index, previous_ref_index)) =
-<a href=#744 id=744 data-nosnippet>744</a>            find_flex_refant(rows, candidates, <span class="kw-2">&amp;</span>current, previous_indices, receptors)
-<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">else </span>{
-<a href=#746 id=746 data-nosnippet>746</a>            <span class="kw">for </span>index <span class="kw">in </span><span class="kw-2">&amp;</span>current {
-<a href=#747 id=747 data-nosnippet>747</a>                rows[<span class="kw-2">*</span>index].flags.iter_mut().for_each(|flag| <span class="kw-2">*</span>flag = <span class="bool-val">true</span>);
-<a href=#748 id=748 data-nosnippet>748</a>                rows[<span class="kw-2">*</span>index].refant_id = -<span class="number">1</span>;
-<a href=#749 id=749 data-nosnippet>749</a>            }
-<a href=#750 id=750 data-nosnippet>750</a>            <span class="kw">continue</span>;
-<a href=#751 id=751 data-nosnippet>751</a>        };
-<a href=#752 id=752 data-nosnippet>752</a>
-<a href=#753 id=753 data-nosnippet>753</a>        <span class="kw">let </span>first = previous.is_none();
-<a href=#754 id=754 data-nosnippet>754</a>        <span class="kw">let </span>ref_phasor = rows[current_ref_index]
-<a href=#755 id=755 data-nosnippet>755</a>            .gains
-<a href=#756 id=756 data-nosnippet>756</a>            .iter()
-<a href=#757 id=757 data-nosnippet>757</a>            .zip(rows[previous_ref_index].gains.iter())
-<a href=#758 id=758 data-nosnippet>758</a>            .map(|(current_gain, previous_gain)| {
-<a href=#759 id=759 data-nosnippet>759</a>                <span class="kw">let </span>current_phase = phase_only(<span class="kw-2">*</span>current_gain);
-<a href=#760 id=760 data-nosnippet>760</a>                <span class="kw">if </span>first {
-<a href=#761 id=761 data-nosnippet>761</a>                    current_phase
-<a href=#762 id=762 data-nosnippet>762</a>                } <span class="kw">else </span>{
-<a href=#763 id=763 data-nosnippet>763</a>                    current_phase / phase_only(<span class="kw-2">*</span>previous_gain)
-<a href=#764 id=764 data-nosnippet>764</a>                }
-<a href=#765 id=765 data-nosnippet>765</a>            })
-<a href=#766 id=766 data-nosnippet>766</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#767 id=767 data-nosnippet>767</a>
-<a href=#768 id=768 data-nosnippet>768</a>        <span class="kw">let </span>current_refant = rows[current_ref_index].antenna_id;
-<a href=#769 id=769 data-nosnippet>769</a>        choices[<span class="number">1</span>] = current_refant;
-<a href=#770 id=770 data-nosnippet>770</a>        <span class="kw">for </span>index <span class="kw">in </span><span class="kw-2">&amp;</span>current {
-<a href=#771 id=771 data-nosnippet>771</a>            <span class="kw">for </span>(gain, phasor) <span class="kw">in </span>rows[<span class="kw-2">*</span>index].gains.iter_mut().zip(ref_phasor.iter()) {
-<a href=#772 id=772 data-nosnippet>772</a>                <span class="kw">if </span>phasor.norm() &gt; f32::EPSILON {
-<a href=#773 id=773 data-nosnippet>773</a>                    <span class="kw-2">*</span>gain /= <span class="kw-2">*</span>phasor;
-<a href=#774 id=774 data-nosnippet>774</a>                }
-<a href=#775 id=775 data-nosnippet>775</a>            }
-<a href=#776 id=776 data-nosnippet>776</a>            rows[<span class="kw-2">*</span>index].refant_id = current_refant;
-<a href=#777 id=777 data-nosnippet>777</a>        }
-<a href=#778 id=778 data-nosnippet>778</a>        previous = <span class="prelude-val">Some</span>(current);
-<a href=#779 id=779 data-nosnippet>779</a>    }
-<a href=#780 id=780 data-nosnippet>780</a>}
-<a href=#781 id=781 data-nosnippet>781</a>
-<a href=#782 id=782 data-nosnippet>782</a><span class="kw">fn </span>find_flex_refant(
-<a href=#783 id=783 data-nosnippet>783</a>    rows: <span class="kw-2">&amp;</span>[kernel::SolutionRow],
-<a href=#784 id=784 data-nosnippet>784</a>    choices: <span class="kw-2">&amp;</span>[i32],
-<a href=#785 id=785 data-nosnippet>785</a>    current: <span class="kw-2">&amp;</span>[usize],
-<a href=#786 id=786 data-nosnippet>786</a>    previous: <span class="kw-2">&amp;</span>[usize],
-<a href=#787 id=787 data-nosnippet>787</a>    receptors: usize,
-<a href=#788 id=788 data-nosnippet>788</a>) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, usize)&gt; {
-<a href=#789 id=789 data-nosnippet>789</a>    <span class="kw">let </span>usable = |indices: <span class="kw-2">&amp;</span>[usize], antenna_id: i32| {
-<a href=#790 id=790 data-nosnippet>790</a>        indices
-<a href=#791 id=791 data-nosnippet>791</a>            .iter()
-<a href=#792 id=792 data-nosnippet>792</a>            .copied()
-<a href=#793 id=793 data-nosnippet>793</a>            .find(|<span class="kw-2">&amp;</span>index| rows[index].antenna_id == antenna_id)
-<a href=#794 id=794 data-nosnippet>794</a>            .filter(|<span class="kw-2">&amp;</span>index| rows[index].flags.iter().take(receptors).all(|flag| !<span class="kw-2">*</span>flag))
-<a href=#795 id=795 data-nosnippet>795</a>    };
-<a href=#796 id=796 data-nosnippet>796</a>    choices
-<a href=#797 id=797 data-nosnippet>797</a>        .iter()
-<a href=#798 id=798 data-nosnippet>798</a>        .find_map(|<span class="kw-2">&amp;</span>antenna_id| <span class="prelude-val">Some</span>((usable(current, antenna_id)<span class="question-mark">?</span>, usable(previous, antenna_id)<span class="question-mark">?</span>)))
-<a href=#799 id=799 data-nosnippet>799</a>}
-<a href=#800 id=800 data-nosnippet>800</a>
-<a href=#801 id=801 data-nosnippet>801</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>phase_only(gain: Complex32) -&gt; Complex32 {
-<a href=#802 id=802 data-nosnippet>802</a>    <span class="kw">let </span>norm = gain.norm();
-<a href=#803 id=803 data-nosnippet>803</a>    <span class="kw">if </span>norm &gt; f32::EPSILON {
-<a href=#804 id=804 data-nosnippet>804</a>        gain / Complex32::new(norm, <span class="number">0.0</span>)
-<a href=#805 id=805 data-nosnippet>805</a>    } <span class="kw">else </span>{
-<a href=#806 id=806 data-nosnippet>806</a>        Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>)
-<a href=#807 id=807 data-nosnippet>807</a>    }
-<a href=#808 id=808 data-nosnippet>808</a>}
-<a href=#809 id=809 data-nosnippet>809</a>
-<a href=#810 id=810 data-nosnippet>810</a><span class="doccomment">/// Divide every gain of each window by the root mean or median power of the window's
-<a href=#811 id=811 data-nosnippet>811</a>/// unflagged solutions, taken over all its intervals, antennas and
-<a href=#812 id=812 data-nosnippet>812</a>/// receptors together, as CASA's `solnorm` does
-<a href=#813 id=813 data-nosnippet>813</a>/// (`SolvableVisJones::normalize`, `SolvableVisCal::calcPowerNorm`). A
-<a href=#814 id=814 data-nosnippet>814</a>/// window with one unflagged solution or none stays, as `normSolnArray`
-<a href=#815 id=815 data-nosnippet>815</a>/// normalizes only more than one.
-<a href=#816 id=816 data-nosnippet>816</a></span><span class="kw">fn </span>normalize_gain_solution_amplitudes(rows: <span class="kw-2">&amp;mut </span>[kernel::SolutionRow], method: GainNormalization) {
-<a href=#817 id=817 data-nosnippet>817</a>    <span class="kw">let </span><span class="kw-2">mut </span>power = BTreeMap::&lt;i32, (f64, usize, Vec&lt;f32&gt;)&gt;::new();
-<a href=#818 id=818 data-nosnippet>818</a>    <span class="kw">for </span>row <span class="kw">in </span>rows.iter() {
-<a href=#819 id=819 data-nosnippet>819</a>        <span class="kw">let </span>(sum, count, samples) = power.entry(row.spw_id).or_default();
-<a href=#820 id=820 data-nosnippet>820</a>        <span class="kw">for </span>(gain, flagged) <span class="kw">in </span>row.gains.iter().zip(<span class="kw-2">&amp;</span>row.flags) {
-<a href=#821 id=821 data-nosnippet>821</a>            <span class="kw">if </span>!flagged {
-<a href=#822 id=822 data-nosnippet>822</a>                <span class="kw">let </span>power = gain.norm_sqr();
-<a href=#823 id=823 data-nosnippet>823</a>                <span class="kw">match </span>method {
-<a href=#824 id=824 data-nosnippet>824</a>                    GainNormalization::Mean =&gt; <span class="kw-2">*</span>sum += f64::from(power),
-<a href=#825 id=825 data-nosnippet>825</a>                    GainNormalization::Median =&gt; samples.push(power),
-<a href=#826 id=826 data-nosnippet>826</a>                }
-<a href=#827 id=827 data-nosnippet>827</a>                <span class="kw-2">*</span>count += <span class="number">1</span>;
-<a href=#828 id=828 data-nosnippet>828</a>            }
-<a href=#829 id=829 data-nosnippet>829</a>        }
-<a href=#830 id=830 data-nosnippet>830</a>    }
-<a href=#831 id=831 data-nosnippet>831</a>    <span class="kw">let </span>factors: BTreeMap&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt; = power
-<a href=#832 id=832 data-nosnippet>832</a>        .into_iter()
-<a href=#833 id=833 data-nosnippet>833</a>        .filter_map(|(spw, (sum, count, <span class="kw-2">mut </span>samples))| {
-<a href=#834 id=834 data-nosnippet>834</a>            <span class="kw">if </span>count &lt;= <span class="number">1 </span>{
-<a href=#835 id=835 data-nosnippet>835</a>                <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#836 id=836 data-nosnippet>836</a>            }
-<a href=#837 id=837 data-nosnippet>837</a>            <span class="kw">let </span>factor = <span class="kw">match </span>method {
-<a href=#838 id=838 data-nosnippet>838</a>                GainNormalization::Mean =&gt; (sum / count <span class="kw">as </span>f64).sqrt() <span class="kw">as </span>f32,
-<a href=#839 id=839 data-nosnippet>839</a>                GainNormalization::Median =&gt; grouping::median_with_even_mean(<span class="kw-2">&amp;mut </span>samples).sqrt(),
-<a href=#840 id=840 data-nosnippet>840</a>            };
-<a href=#841 id=841 data-nosnippet>841</a>            (factor.is_finite() &amp;&amp; factor &gt; <span class="number">0.0</span>).then_some((spw, factor))
-<a href=#842 id=842 data-nosnippet>842</a>        })
-<a href=#843 id=843 data-nosnippet>843</a>        .collect();
-<a href=#844 id=844 data-nosnippet>844</a>    <span class="kw">for </span>row <span class="kw">in </span>rows.iter_mut() {
-<a href=#845 id=845 data-nosnippet>845</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>factor) = factors.get(<span class="kw-2">&amp;</span>row.spw_id) <span class="kw">else </span>{
-<a href=#846 id=846 data-nosnippet>846</a>            <span class="kw">continue</span>;
-<a href=#847 id=847 data-nosnippet>847</a>        };
-<a href=#848 id=848 data-nosnippet>848</a>        <span class="kw">for </span>gain <span class="kw">in </span><span class="kw-2">&amp;mut </span>row.gains {
-<a href=#849 id=849 data-nosnippet>849</a>            <span class="kw-2">*</span>gain /= Complex32::new(factor, <span class="number">0.0</span>);
-<a href=#850 id=850 data-nosnippet>850</a>        }
-<a href=#851 id=851 data-nosnippet>851</a>    }
-<a href=#852 id=852 data-nosnippet>852</a>}
-<a href=#853 id=853 data-nosnippet>853</a>
-<a href=#854 id=854 data-nosnippet>854</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_i32(table: <span class="kw-2">&amp;</span>Table, row: usize, column: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;i32, GainSolveError&gt; {
-<a href=#855 id=855 data-nosnippet>855</a>    <span class="kw">match </span>table
-<a href=#856 id=856 data-nosnippet>856</a>        .cell_accessor(row, column)
-<a href=#857 id=857 data-nosnippet>857</a>        .and_then(|cell| cell.scalar())
-<a href=#858 id=858 data-nosnippet>858</a>        .map_err(MsError::from)
-<a href=#859 id=859 data-nosnippet>859</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
-<a href=#860 id=860 data-nosnippet>860</a>            path: column.to_string(),
-<a href=#861 id=861 data-nosnippet>861</a>            source,
-<a href=#862 id=862 data-nosnippet>862</a>        })<span class="question-mark">? </span>{
-<a href=#863 id=863 data-nosnippet>863</a>        ScalarValue::Int32(value) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
-<a href=#864 id=864 data-nosnippet>864</a>        ScalarValue::Int64(value) =&gt; {
-<a href=#865 id=865 data-nosnippet>865</a>            i32::try_from(<span class="kw-2">*</span>value).map_err(|<span class="kw">_</span>| GainSolveError::UnsupportedParameterShape {
-<a href=#866 id=866 data-nosnippet>866</a>                path: <span class="macro">format!</span>(<span class="string">"{column} scalar"</span>),
-<a href=#867 id=867 data-nosnippet>867</a>                shape: <span class="macro">vec!</span>[row],
-<a href=#868 id=868 data-nosnippet>868</a>            })
-<a href=#869 id=869 data-nosnippet>869</a>        }
-<a href=#870 id=870 data-nosnippet>870</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#871 id=871 data-nosnippet>871</a>            path: <span class="macro">format!</span>(<span class="string">"{column} scalar"</span>),
-<a href=#872 id=872 data-nosnippet>872</a>            shape: <span class="macro">vec!</span>[row],
-<a href=#873 id=873 data-nosnippet>873</a>        }),
-<a href=#874 id=874 data-nosnippet>874</a>    }
-<a href=#875 id=875 data-nosnippet>875</a>}
-<a href=#876 id=876 data-nosnippet>876</a>
-<a href=#877 id=877 data-nosnippet>877</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_f64(table: <span class="kw-2">&amp;</span>Table, row: usize, column: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;f64, GainSolveError&gt; {
-<a href=#878 id=878 data-nosnippet>878</a>    <span class="kw">match </span>table
-<a href=#879 id=879 data-nosnippet>879</a>        .cell_accessor(row, column)
-<a href=#880 id=880 data-nosnippet>880</a>        .and_then(|cell| cell.scalar())
-<a href=#881 id=881 data-nosnippet>881</a>        .map_err(MsError::from)
-<a href=#882 id=882 data-nosnippet>882</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
-<a href=#883 id=883 data-nosnippet>883</a>            path: column.to_string(),
-<a href=#884 id=884 data-nosnippet>884</a>            source,
-<a href=#885 id=885 data-nosnippet>885</a>        })<span class="question-mark">? </span>{
-<a href=#886 id=886 data-nosnippet>886</a>        ScalarValue::Float64(value) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
-<a href=#887 id=887 data-nosnippet>887</a>        ScalarValue::Float32(value) =&gt; <span class="prelude-val">Ok</span>(f64::from(<span class="kw-2">*</span>value)),
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
-<a href=#889 id=889 data-nosnippet>889</a>            path: <span class="macro">format!</span>(<span class="string">"{column} scalar"</span>),
-<a href=#890 id=890 data-nosnippet>890</a>            shape: <span class="macro">vec!</span>[row],
-<a href=#891 id=891 data-nosnippet>891</a>        }),
-<a href=#892 id=892 data-nosnippet>892</a>    }
-<a href=#893 id=893 data-nosnippet>893</a>}
-<a href=#894 id=894 data-nosnippet>894</a>
-<a href=#895 id=895 data-nosnippet>895</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>validate_solve_interval(
-<a href=#896 id=896 data-nosnippet>896</a>    solve_interval: GainSolveInterval,
-<a href=#897 id=897 data-nosnippet>897</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), GainSolveError&gt; {
-<a href=#898 id=898 data-nosnippet>898</a>    <span class="kw">match </span>solve_interval {
-<a href=#899 id=899 data-nosnippet>899</a>        GainSolveInterval::Infinite | GainSolveInterval::Integration =&gt; <span class="prelude-val">Ok</span>(()),
-<a href=#900 id=900 data-nosnippet>900</a>        GainSolveInterval::Seconds(seconds) <span class="kw">if </span>seconds &gt; <span class="number">0.0 </span>=&gt; <span class="prelude-val">Ok</span>(()),
-<a href=#901 id=901 data-nosnippet>901</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(GainSolveError::UnsupportedSolveInterval { solve_interval }),
-<a href=#902 id=902 data-nosnippet>902</a>    }
-<a href=#903 id=903 data-nosnippet>903</a>}
-<a href=#904 id=904 data-nosnippet>904</a>
-<a href=#905 id=905 data-nosnippet>905</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>validate_smodel(smodel: [f32; <span class="number">4</span>], polarized: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), GainSolveError&gt; {
-<a href=#906 id=906 data-nosnippet>906</a>    <span class="kw">if </span>smodel[<span class="number">0</span>] &lt;= <span class="number">0.0
-<a href=#907 id=907 data-nosnippet>907</a>        </span>|| smodel.iter().any(|value| !value.is_finite())
-<a href=#908 id=908 data-nosnippet>908</a>        || (!polarized &amp;&amp; smodel[<span class="number">1</span>..].iter().any(|value| <span class="kw-2">*</span>value != <span class="number">0.0</span>))
-<a href=#909 id=909 data-nosnippet>909</a>    {
-<a href=#910 id=910 data-nosnippet>910</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedSkyModel { smodel });
-<a href=#911 id=911 data-nosnippet>911</a>    }
-<a href=#912 id=912 data-nosnippet>912</a>    <span class="prelude-val">Ok</span>(())
-<a href=#913 id=913 data-nosnippet>913</a>}
-<a href=#914 id=914 data-nosnippet>914</a>
-<a href=#915 id=915 data-nosnippet>915</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>correlation_receptors(code: i32) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, usize)&gt; {
-<a href=#916 id=916 data-nosnippet>916</a>    <span class="kw">match </span>code {
-<a href=#917 id=917 data-nosnippet>917</a>        <span class="number">5 </span>| <span class="number">9 </span>=&gt; <span class="prelude-val">Some</span>((<span class="number">0</span>, <span class="number">0</span>)),
-<a href=#918 id=918 data-nosnippet>918</a>        <span class="number">6 </span>| <span class="number">10 </span>=&gt; <span class="prelude-val">Some</span>((<span class="number">0</span>, <span class="number">1</span>)),
-<a href=#919 id=919 data-nosnippet>919</a>        <span class="number">7 </span>| <span class="number">11 </span>=&gt; <span class="prelude-val">Some</span>((<span class="number">1</span>, <span class="number">0</span>)),
-<a href=#920 id=920 data-nosnippet>920</a>        <span class="number">8 </span>| <span class="number">12 </span>=&gt; <span class="prelude-val">Some</span>((<span class="number">1</span>, <span class="number">1</span>)),
-<a href=#921 id=921 data-nosnippet>921</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#922 id=922 data-nosnippet>922</a>    }
-<a href=#923 id=923 data-nosnippet>923</a>}
-<a href=#924 id=924 data-nosnippet>924</a>
-<a href=#925 id=925 data-nosnippet>925</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>stokes_name(code: i32) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
-<a href=#926 id=926 data-nosnippet>926</a>    <span class="kw">match </span>code {
-<a href=#927 id=927 data-nosnippet>927</a>        <span class="number">5 </span>=&gt; <span class="string">"RR"</span>,
-<a href=#928 id=928 data-nosnippet>928</a>        <span class="number">6 </span>=&gt; <span class="string">"RL"</span>,
-<a href=#929 id=929 data-nosnippet>929</a>        <span class="number">7 </span>=&gt; <span class="string">"LR"</span>,
-<a href=#930 id=930 data-nosnippet>930</a>        <span class="number">8 </span>=&gt; <span class="string">"LL"</span>,
-<a href=#931 id=931 data-nosnippet>931</a>        <span class="number">9 </span>=&gt; <span class="string">"XX"</span>,
-<a href=#932 id=932 data-nosnippet>932</a>        <span class="number">10 </span>=&gt; <span class="string">"XY"</span>,
-<a href=#933 id=933 data-nosnippet>933</a>        <span class="number">11 </span>=&gt; <span class="string">"YX"</span>,
-<a href=#934 id=934 data-nosnippet>934</a>        <span class="number">12 </span>=&gt; <span class="string">"YY"</span>,
-<a href=#935 id=935 data-nosnippet>935</a>        <span class="kw">_ </span>=&gt; <span class="string">"UNKNOWN"</span>,
-<a href=#936 id=936 data-nosnippet>936</a>    }
-<a href=#937 id=937 data-nosnippet>937</a>}
-<a href=#938 id=938 data-nosnippet>938</a>
-<a href=#939 id=939 data-nosnippet>939</a><span class="attr">#[cfg(test)]
-<a href=#940 id=940 data-nosnippet>940</a></span><span class="kw">mod </span>solnorm_tests {
-<a href=#941 id=941 data-nosnippet>941</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#942 id=942 data-nosnippet>942</a>
-<a href=#943 id=943 data-nosnippet>943</a>    <span class="kw">fn </span>row(
-<a href=#944 id=944 data-nosnippet>944</a>        spw_id: i32,
-<a href=#945 id=945 data-nosnippet>945</a>        time_seconds: f64,
-<a href=#946 id=946 data-nosnippet>946</a>        gains: [f32; <span class="number">2</span>],
-<a href=#947 id=947 data-nosnippet>947</a>        flags: [bool; <span class="number">2</span>],
-<a href=#948 id=948 data-nosnippet>948</a>    ) -&gt; kernel::SolutionRow {
-<a href=#949 id=949 data-nosnippet>949</a>        kernel::SolutionRow {
-<a href=#950 id=950 data-nosnippet>950</a>            time_seconds,
-<a href=#951 id=951 data-nosnippet>951</a>            field_id: <span class="number">0</span>,
-<a href=#952 id=952 data-nosnippet>952</a>            spw_id,
-<a href=#953 id=953 data-nosnippet>953</a>            antenna_id: <span class="number">0</span>,
-<a href=#954 id=954 data-nosnippet>954</a>            scan_number: <span class="number">1</span>,
-<a href=#955 id=955 data-nosnippet>955</a>            observation_id: <span class="number">0</span>,
-<a href=#956 id=956 data-nosnippet>956</a>            refant_id: <span class="number">0</span>,
-<a href=#957 id=957 data-nosnippet>957</a>            gains: gains
-<a href=#958 id=958 data-nosnippet>958</a>                .iter()
-<a href=#959 id=959 data-nosnippet>959</a>                .map(|<span class="kw-2">&amp;</span>gain| Complex32::new(gain, <span class="number">0.0</span>))
-<a href=#960 id=960 data-nosnippet>960</a>                .collect(),
-<a href=#961 id=961 data-nosnippet>961</a>            flags: flags.to_vec(),
-<a href=#962 id=962 data-nosnippet>962</a>            param_errors: <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">2</span>],
-<a href=#963 id=963 data-nosnippet>963</a>            snrs: <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">2</span>],
-<a href=#964 id=964 data-nosnippet>964</a>            weights: <span class="macro">vec!</span>[<span class="number">1.0</span>; <span class="number">2</span>],
-<a href=#965 id=965 data-nosnippet>965</a>        }
-<a href=#966 id=966 data-nosnippet>966</a>    }
-<a href=#967 id=967 data-nosnippet>967</a>
-<a href=#968 id=968 data-nosnippet>968</a>    <span class="doccomment">/// CASA 6.7.6.14 normalizes a window's gains by one factor, the root
-<a href=#969 id=969 data-nosnippet>969</a>    /// mean power of its unflagged solutions over every interval and both
-<a href=#970 id=970 data-nosnippet>970</a>    /// receptors (probed: XX and YY solutions of mean power 0.43 and 1.51,
-<a href=#971 id=971 data-nosnippet>971</a>    /// together 1.00), not each interval or receptor by its own.
-<a href=#972 id=972 data-nosnippet>972</a>    </span><span class="attr">#[test]
-<a href=#973 id=973 data-nosnippet>973</a>    </span><span class="kw">fn </span>solnorm_divides_each_window_by_one_factor_over_its_intervals_and_receptors() {
-<a href=#974 id=974 data-nosnippet>974</a>        <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="macro">vec!</span>[
-<a href=#975 id=975 data-nosnippet>975</a>            row(<span class="number">0</span>, <span class="number">0.0</span>, [<span class="number">1.0</span>, <span class="number">3.0</span>], [<span class="bool-val">false</span>, <span class="bool-val">false</span>]),
-<a href=#976 id=976 data-nosnippet>976</a>            row(<span class="number">0</span>, <span class="number">10.0</span>, [<span class="number">2.0</span>, <span class="number">3.0</span>], [<span class="bool-val">false</span>, <span class="bool-val">false</span>]),
-<a href=#977 id=977 data-nosnippet>977</a>            <span class="comment">// A flagged solution is divided but does not count.
-<a href=#978 id=978 data-nosnippet>978</a>            </span>row(<span class="number">0</span>, <span class="number">20.0</span>, [<span class="number">100.0</span>, <span class="number">3.0</span>], [<span class="bool-val">true</span>, <span class="bool-val">false</span>]),
-<a href=#979 id=979 data-nosnippet>979</a>            row(<span class="number">1</span>, <span class="number">0.0</span>, [<span class="number">4.0</span>, <span class="number">4.0</span>], [<span class="bool-val">false</span>, <span class="bool-val">false</span>]),
-<a href=#980 id=980 data-nosnippet>980</a>            <span class="comment">// One unflagged solution is not normalized (normSolnArray).
-<a href=#981 id=981 data-nosnippet>981</a>            </span>row(<span class="number">2</span>, <span class="number">0.0</span>, [<span class="number">4.0</span>, <span class="number">5.0</span>], [<span class="bool-val">false</span>, <span class="bool-val">true</span>]),
-<a href=#982 id=982 data-nosnippet>982</a>        ];
-<a href=#983 id=983 data-nosnippet>983</a>        normalize_gain_solution_amplitudes(<span class="kw-2">&amp;mut </span>rows, GainNormalization::Mean);
-<a href=#984 id=984 data-nosnippet>984</a>        <span class="kw">let </span>factor = ((<span class="number">1.0_f32 </span>+ <span class="number">9.0 </span>+ <span class="number">4.0 </span>+ <span class="number">9.0 </span>+ <span class="number">9.0</span>) / <span class="number">5.0</span>).sqrt();
-<a href=#985 id=985 data-nosnippet>985</a>        <span class="kw">let </span>amplitudes = |row: <span class="kw-2">&amp;</span>kernel::SolutionRow| -&gt; Vec&lt;f32&gt; {
-<a href=#986 id=986 data-nosnippet>986</a>            row.gains.iter().map(|gain| gain.norm()).collect()
-<a href=#987 id=987 data-nosnippet>987</a>        };
-<a href=#988 id=988 data-nosnippet>988</a>        <span class="kw">let </span>close = |left: <span class="kw-2">&amp;</span>[f32], right: <span class="kw-2">&amp;</span>[f32]| {
-<a href=#989 id=989 data-nosnippet>989</a>            left.iter()
-<a href=#990 id=990 data-nosnippet>990</a>                .zip(right)
-<a href=#991 id=991 data-nosnippet>991</a>                .all(|(left, right)| (left - right).abs() &lt; <span class="number">1e-5</span>)
-<a href=#992 id=992 data-nosnippet>992</a>        };
-<a href=#993 id=993 data-nosnippet>993</a>        <span class="macro">assert!</span>(close(<span class="kw-2">&amp;</span>amplitudes(<span class="kw-2">&amp;</span>rows[<span class="number">0</span>]), <span class="kw-2">&amp;</span>[<span class="number">1.0 </span>/ factor, <span class="number">3.0 </span>/ factor]));
-<a href=#994 id=994 data-nosnippet>994</a>        <span class="macro">assert!</span>(close(<span class="kw-2">&amp;</span>amplitudes(<span class="kw-2">&amp;</span>rows[<span class="number">1</span>]), <span class="kw-2">&amp;</span>[<span class="number">2.0 </span>/ factor, <span class="number">3.0 </span>/ factor]));
-<a href=#995 id=995 data-nosnippet>995</a>        <span class="macro">assert!</span>(close(
-<a href=#996 id=996 data-nosnippet>996</a>            <span class="kw-2">&amp;</span>amplitudes(<span class="kw-2">&amp;</span>rows[<span class="number">2</span>]),
-<a href=#997 id=997 data-nosnippet>997</a>            <span class="kw-2">&amp;</span>[<span class="number">100.0 </span>/ factor, <span class="number">3.0 </span>/ factor]
-<a href=#998 id=998 data-nosnippet>998</a>        ));
-<a href=#999 id=999 data-nosnippet>999</a>        <span class="macro">assert!</span>(close(<span class="kw-2">&amp;</span>amplitudes(<span class="kw-2">&amp;</span>rows[<span class="number">3</span>]), <span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">1.0</span>]));
-<a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="macro">assert!</span>(close(<span class="kw-2">&amp;</span>amplitudes(<span class="kw-2">&amp;</span>rows[<span class="number">4</span>]), <span class="kw-2">&amp;</span>[<span class="number">4.0</span>, <span class="number">5.0</span>]));
-<a href=#1001 id=1001 data-nosnippet>1001</a>    }
-<a href=#1002 id=1002 data-nosnippet>1002</a>}
+<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw-2">&amp;</span>BTreeMap::new(),
+<a href=#484 id=484 data-nosnippet>484</a>        SolveGroupOptions {
+<a href=#485 id=485 data-nosnippet>485</a>            gain_type: request.gain_type,
+<a href=#486 id=486 data-nosnippet>486</a>            model_source: request.model_source,
+<a href=#487 id=487 data-nosnippet>487</a>            point_stokes,
+<a href=#488 id=488 data-nosnippet>488</a>            rotate_model,
+<a href=#489 id=489 data-nosnippet>489</a>            solve_interval: request.solve_interval,
+<a href=#490 id=490 data-nosnippet>490</a>            combine: request.combine,
+<a href=#491 id=491 data-nosnippet>491</a>            <span class="comment">// VbAvg applies this boundary to either source of the interval.
+<a href=#492 id=492 data-nosnippet>492</a>            </span>preaverage_max_span: averaging_interval.map(|seconds| f64::from(seconds) * <span class="number">0.999</span>),
+<a href=#493 id=493 data-nosnippet>493</a>            correlation_dependent_flags: request.correlation_dependent_flags,
+<a href=#494 id=494 data-nosnippet>494</a>            robust_seed: request.robustness.enabled(),
+<a href=#495 id=495 data-nosnippet>495</a>            channelized: <span class="bool-val">false</span>,
+<a href=#496 id=496 data-nosnippet>496</a>        },
+<a href=#497 id=497 data-nosnippet>497</a>    )<span class="question-mark">?</span>;
+<a href=#498 id=498 data-nosnippet>498</a>
+<a href=#499 id=499 data-nosnippet>499</a>    <span class="kw">if </span>groups.is_empty() {
+<a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::EmptySelection);
+<a href=#501 id=501 data-nosnippet>501</a>    }
+<a href=#502 id=502 data-nosnippet>502</a>
+<a href=#503 id=503 data-nosnippet>503</a>    drop(input_phase);
+<a href=#504 id=504 data-nosnippet>504</a>    <span class="kw">let </span>kernel_phase = <span class="kw">crate</span>::timing::Phase::start(<span class="string">"gain_solve"</span>);
+<a href=#505 id=505 data-nosnippet>505</a>    <span class="kw">let </span><span class="kw-2">mut </span>solution_rows = Vec::new();
+<a href=#506 id=506 data-nosnippet>506</a>    <span class="kw">let </span><span class="kw-2">mut </span>attempted_spw_ids = BTreeSet::new();
+<a href=#507 id=507 data-nosnippet>507</a>    <span class="kw">let </span><span class="kw-2">mut </span>solve_stats = SolveStatsBuilder::new(
+<a href=#508 id=508 data-nosnippet>508</a>        request.gain_type.polarizations(),
+<a href=#509 id=509 data-nosnippet>509</a>        spectral_window_ids(ms)<span class="question-mark">?</span>,
+<a href=#510 id=510 data-nosnippet>510</a>        <span class="kw-2">&amp;</span>context.available_antennas,
+<a href=#511 id=511 data-nosnippet>511</a>    );
+<a href=#512 id=512 data-nosnippet>512</a>    <span class="kw">for </span>((base_key, bucket_key), <span class="kw-2">mut </span>group) <span class="kw">in </span>groups {
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw">if </span>group.attempted {
+<a href=#514 id=514 data-nosnippet>514</a>            attempted_spw_ids.insert(group.spw_id);
+<a href=#515 id=515 data-nosnippet>515</a>        }
+<a href=#516 id=516 data-nosnippet>516</a>        group.finalize_for_solve(request.solve_mode, request.robustness.enabled());
+<a href=#517 id=517 data-nosnippet>517</a>        trace::trace_group(<span class="kw-2">&amp;</span>base_key, <span class="kw-2">&amp;</span>bucket_key, <span class="kw-2">&amp;</span>group, request);
+<a href=#518 id=518 data-nosnippet>518</a>        solve_stats.interval(<span class="kw-2">&amp;</span>IntervalStages::of(
+<a href=#519 id=519 data-nosnippet>519</a>            <span class="kw-2">&amp;</span>group,
+<a href=#520 id=520 data-nosnippet>520</a>            request.min_baselines_per_antenna,
+<a href=#521 id=521 data-nosnippet>521</a>        ));
+<a href=#522 id=522 data-nosnippet>522</a>        <span class="kw">let </span>spw_id = group.spw_id;
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(group_rows) = solve_closed_group(
+<a href=#524 id=524 data-nosnippet>524</a>            group,
+<a href=#525 id=525 data-nosnippet>525</a>            <span class="kw-2">&amp;</span>context.available_antennas,
+<a href=#526 id=526 data-nosnippet>526</a>            request,
+<a href=#527 id=527 data-nosnippet>527</a>            context.refant_id,
+<a href=#528 id=528 data-nosnippet>528</a>        ) <span class="kw">else </span>{
+<a href=#529 id=529 data-nosnippet>529</a>            <span class="kw">continue</span>;
+<a href=#530 id=530 data-nosnippet>530</a>        };
+<a href=#531 id=531 data-nosnippet>531</a>        solve_stats.solutions(
+<a href=#532 id=532 data-nosnippet>532</a>            spw_id,
+<a href=#533 id=533 data-nosnippet>533</a>            group_rows.iter().map(|row| AntennaSolution {
+<a href=#534 id=534 data-nosnippet>534</a>                antenna_id: row.antenna_id,
+<a href=#535 id=535 data-nosnippet>535</a>                passed: row.flags.iter().map(|flagged| !flagged).collect(),
+<a href=#536 id=536 data-nosnippet>536</a>            }),
+<a href=#537 id=537 data-nosnippet>537</a>        );
+<a href=#538 id=538 data-nosnippet>538</a>        trace::trace_solution_rows(
+<a href=#539 id=539 data-nosnippet>539</a>            <span class="kw-2">&amp;</span>base_key,
+<a href=#540 id=540 data-nosnippet>540</a>            <span class="kw-2">&amp;</span>bucket_key,
+<a href=#541 id=541 data-nosnippet>541</a>            <span class="kw-2">&amp;</span>group_rows,
+<a href=#542 id=542 data-nosnippet>542</a>            request,
+<a href=#543 id=543 data-nosnippet>543</a>            context.refant_id,
+<a href=#544 id=544 data-nosnippet>544</a>        );
+<a href=#545 id=545 data-nosnippet>545</a>        solution_rows.extend(group_rows);
+<a href=#546 id=546 data-nosnippet>546</a>    }
+<a href=#547 id=547 data-nosnippet>547</a>    <span class="kw">if </span>context.refant_id &gt;= <span class="number">0 </span>{
+<a href=#548 id=548 data-nosnippet>548</a>        <span class="kw">let </span>strict = <span class="macro">matches!</span>(
+<a href=#549 id=549 data-nosnippet>549</a>            request.refant,
+<a href=#550 id=550 data-nosnippet>550</a>            RefAntSelector::Expression { strict: <span class="bool-val">true</span>, .. }
+<a href=#551 id=551 data-nosnippet>551</a>        );
+<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">let </span><span class="kw-2">mut </span>alternates = context.refant_alternates.clone();
+<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">if </span>!strict {
+<a href=#554 id=554 data-nosnippet>554</a>            <span class="kw">let </span>last_preferred = alternates.last().copied().unwrap_or(context.refant_id);
+<a href=#555 id=555 data-nosnippet>555</a>            <span class="kw">let </span><span class="kw-2">mut </span>nearby = refant_distance_order(ms, last_preferred)<span class="question-mark">?</span>;
+<a href=#556 id=556 data-nosnippet>556</a>            nearby.retain(|id| <span class="kw-2">*</span>id != context.refant_id &amp;&amp; !alternates.contains(id));
+<a href=#557 id=557 data-nosnippet>557</a>            alternates.extend(nearby);
+<a href=#558 id=558 data-nosnippet>558</a>        }
+<a href=#559 id=559 data-nosnippet>559</a>        apply_reference_antenna(<span class="kw-2">&amp;mut </span>solution_rows, context.refant_id, <span class="kw-2">&amp;</span>alternates, strict);
+<a href=#560 id=560 data-nosnippet>560</a>    }
+<a href=#561 id=561 data-nosnippet>561</a>    <span class="comment">// CASA enforces amplitudes on the final gains after referencing and
+<a href=#562 id=562 data-nosnippet>562</a>    // before normalizing across all intervals (`globalPostSolveTinker`).
+<a href=#563 id=563 data-nosnippet>563</a>    </span><span class="kw">if </span>request.solve_mode != GainSolveMode::AmplitudePhase {
+<a href=#564 id=564 data-nosnippet>564</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="kw-2">&amp;mut </span>solution_rows {
+<a href=#565 id=565 data-nosnippet>565</a>            <span class="kw">for </span>(gain, flagged) <span class="kw">in </span>row.gains.iter_mut().zip(<span class="kw-2">&amp;</span>row.flags) {
+<a href=#566 id=566 data-nosnippet>566</a>                <span class="kw">if </span><span class="kw-2">*</span>flagged {
+<a href=#567 id=567 data-nosnippet>567</a>                    <span class="kw-2">*</span>gain = Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>);
+<a href=#568 id=568 data-nosnippet>568</a>                } <span class="kw">else if </span>request.solve_mode == GainSolveMode::Amplitude {
+<a href=#569 id=569 data-nosnippet>569</a>                    <span class="kw">let </span>amplitude = gain.norm();
+<a href=#570 id=570 data-nosnippet>570</a>                    <span class="kw-2">*</span>gain = Complex32::new(<span class="kw">if </span>amplitude == <span class="number">0.0 </span>{ <span class="number">1.0 </span>} <span class="kw">else </span>{ amplitude }, <span class="number">0.0</span>);
+<a href=#571 id=571 data-nosnippet>571</a>                }
+<a href=#572 id=572 data-nosnippet>572</a>            }
+<a href=#573 id=573 data-nosnippet>573</a>        }
+<a href=#574 id=574 data-nosnippet>574</a>    }
+<a href=#575 id=575 data-nosnippet>575</a>    <span class="kw">if </span>request.solve_mode != GainSolveMode::Phase &amp;&amp; request.normalize_average_amplitude {
+<a href=#576 id=576 data-nosnippet>576</a>        normalize_gain_solution_amplitudes(<span class="kw-2">&amp;mut </span>solution_rows, request.normalization_type);
+<a href=#577 id=577 data-nosnippet>577</a>    }
+<a href=#578 id=578 data-nosnippet>578</a>    <span class="kw">let </span><span class="kw-2">mut </span>referenced = BTreeSet::new();
+<a href=#579 id=579 data-nosnippet>579</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="kw-2">&amp;</span>solution_rows {
+<a href=#580 id=580 data-nosnippet>580</a>        <span class="kw">if </span>row.antenna_id == row.refant_id
+<a href=#581 id=581 data-nosnippet>581</a>            &amp;&amp; row.flags.iter().any(|flagged| !flagged)
+<a href=#582 id=582 data-nosnippet>582</a>            &amp;&amp; referenced.insert((row.spw_id, row.time_seconds.to_bits()))
+<a href=#583 id=583 data-nosnippet>583</a>        {
+<a href=#584 id=584 data-nosnippet>584</a>            solve_stats.used_as_refant(row.spw_id, row.antenna_id);
+<a href=#585 id=585 data-nosnippet>585</a>        }
+<a href=#586 id=586 data-nosnippet>586</a>    }
+<a href=#587 id=587 data-nosnippet>587</a>    drop(kernel_phase);
+<a href=#588 id=588 data-nosnippet>588</a>    <span class="kw">let </span><span class="kw-2">mut </span>channel_selections = BTreeMap::new();
+<a href=#589 id=589 data-nosnippet>589</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="kw-2">&amp;</span>context.rows {
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(channels) = <span class="kw-2">&amp;</span>row.channel_selection {
+<a href=#591 id=591 data-nosnippet>591</a>            channel_selections
+<a href=#592 id=592 data-nosnippet>592</a>                .entry(row.data_spw_id)
+<a href=#593 id=593 data-nosnippet>593</a>                .or_insert_with(|| channels.clone());
+<a href=#594 id=594 data-nosnippet>594</a>        }
+<a href=#595 id=595 data-nosnippet>595</a>    }
+<a href=#596 id=596 data-nosnippet>596</a>    <span class="prelude-val">Ok</span>(SolvedGains {
+<a href=#597 id=597 data-nosnippet>597</a>        rows: solution_rows,
+<a href=#598 id=598 data-nosnippet>598</a>        refant_id: context.refant_id,
+<a href=#599 id=599 data-nosnippet>599</a>        attempted_spw_ids,
+<a href=#600 id=600 data-nosnippet>600</a>        channel_selections,
+<a href=#601 id=601 data-nosnippet>601</a>        selected_data: context.selected_data,
+<a href=#602 id=602 data-nosnippet>602</a>        solve_stats: solve_stats.finish(),
+<a href=#603 id=603 data-nosnippet>603</a>    })
+<a href=#604 id=604 data-nosnippet>604</a>}
+<a href=#605 id=605 data-nosnippet>605</a>
+<a href=#606 id=606 data-nosnippet>606</a><span class="doccomment">/// Every spectral window of `ms`, by id.
+<a href=#607 id=607 data-nosnippet>607</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>spectral_window_ids(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;i32&gt;, GainSolveError&gt; {
+<a href=#608 id=608 data-nosnippet>608</a>    <span class="kw">let </span>windows = ms
+<a href=#609 id=609 data-nosnippet>609</a>        .spectral_window()
+<a href=#610 id=610 data-nosnippet>610</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
+<a href=#611 id=611 data-nosnippet>611</a>            path: ms
+<a href=#612 id=612 data-nosnippet>612</a>                .path()
+<a href=#613 id=613 data-nosnippet>613</a>                .map(|path| path.display().to_string())
+<a href=#614 id=614 data-nosnippet>614</a>                .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
+<a href=#615 id=615 data-nosnippet>615</a>            source,
+<a href=#616 id=616 data-nosnippet>616</a>        })<span class="question-mark">?</span>;
+<a href=#617 id=617 data-nosnippet>617</a>    <span class="prelude-val">Ok</span>((<span class="number">0</span>..windows.row_count())
+<a href=#618 id=618 data-nosnippet>618</a>        .map(|row| i32::try_from(row).expect(<span class="string">"window count fits in i32"</span>))
+<a href=#619 id=619 data-nosnippet>619</a>        .collect())
+<a href=#620 id=620 data-nosnippet>620</a>}
+<a href=#621 id=621 data-nosnippet>621</a>
+<a href=#622 id=622 data-nosnippet>622</a><span class="doccomment">/// Solve one complete group whose accumulation is finalized
+<a href=#623 id=623 data-nosnippet>623</a>/// ([`grouping::SolveAccumulator::finalize_for_solve`]). An interval CASA
+<a href=#624 id=624 data-nosnippet>624</a>/// cannot solve gets no rows (`Calibrater::genericGatherAndSolve` keeps a
+<a href=#625 id=625 data-nosnippet>625</a>/// solution only after one succeeds).
+<a href=#626 id=626 data-nosnippet>626</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>solve_closed_group(
+<a href=#627 id=627 data-nosnippet>627</a>    group: grouping::SolveAccumulator,
+<a href=#628 id=628 data-nosnippet>628</a>    available_antennas: <span class="kw-2">&amp;</span>BTreeSet&lt;i32&gt;,
+<a href=#629 id=629 data-nosnippet>629</a>    request: <span class="kw-2">&amp;</span>GainSolveRequest,
+<a href=#630 id=630 data-nosnippet>630</a>    refant_id: i32,
+<a href=#631 id=631 data-nosnippet>631</a>) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;kernel::SolutionRow&gt;&gt; {
+<a href=#632 id=632 data-nosnippet>632</a>    solve_group(
+<a href=#633 id=633 data-nosnippet>633</a>        group,
+<a href=#634 id=634 data-nosnippet>634</a>        available_antennas,
+<a href=#635 id=635 data-nosnippet>635</a>        request.gain_type,
+<a href=#636 id=636 data-nosnippet>636</a>        request.solve_mode,
+<a href=#637 id=637 data-nosnippet>637</a>        request.min_snr,
+<a href=#638 id=638 data-nosnippet>638</a>        kernel::SolveGraphOptions {
+<a href=#639 id=639 data-nosnippet>639</a>            refant_id,
+<a href=#640 id=640 data-nosnippet>640</a>            min_baselines_per_antenna: request.min_baselines_per_antenna,
+<a href=#641 id=641 data-nosnippet>641</a>            group_seed: <span class="prelude-val">None</span>,
+<a href=#642 id=642 data-nosnippet>642</a>            correlation_dependent_flags: request.correlation_dependent_flags,
+<a href=#643 id=643 data-nosnippet>643</a>            defer_reference: <span class="bool-val">true</span>,
+<a href=#644 id=644 data-nosnippet>644</a>            robustness: request.robustness.enabled().then_some(<span class="kw-2">&amp;</span>request.robustness),
+<a href=#645 id=645 data-nosnippet>645</a>        },
+<a href=#646 id=646 data-nosnippet>646</a>    )
+<a href=#647 id=647 data-nosnippet>647</a>}
+<a href=#648 id=648 data-nosnippet>648</a>
+<a href=#649 id=649 data-nosnippet>649</a><span class="doccomment">/// The antennas other than `refant_id`, nearest it first: the alternates
+<a href=#650 id=650 data-nosnippet>650</a>/// `SolvableVisJones::applyRefAnt` tries when the reference antenna is flagged.
+<a href=#651 id=651 data-nosnippet>651</a></span><span class="kw">fn </span>refant_distance_order(ms: <span class="kw-2">&amp;</span>MeasurementSet, refant_id: i32) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;i32&gt;, GainSolveError&gt; {
+<a href=#652 id=652 data-nosnippet>652</a>    <span class="kw">let </span>antenna = ms
+<a href=#653 id=653 data-nosnippet>653</a>        .antenna()
+<a href=#654 id=654 data-nosnippet>654</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
+<a href=#655 id=655 data-nosnippet>655</a>            path: ms
+<a href=#656 id=656 data-nosnippet>656</a>                .path()
+<a href=#657 id=657 data-nosnippet>657</a>                .map(|path| path.display().to_string())
+<a href=#658 id=658 data-nosnippet>658</a>                .unwrap_or_else(|| <span class="string">"&lt;in-memory&gt;"</span>.to_string()),
+<a href=#659 id=659 data-nosnippet>659</a>            source,
+<a href=#660 id=660 data-nosnippet>660</a>        })<span class="question-mark">?</span>;
+<a href=#661 id=661 data-nosnippet>661</a>    <span class="kw">let </span>positions = (<span class="number">0</span>..antenna.row_count())
+<a href=#662 id=662 data-nosnippet>662</a>        .map(|row| antenna.position(row))
+<a href=#663 id=663 data-nosnippet>663</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+<a href=#664 id=664 data-nosnippet>664</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
+<a href=#665 id=665 data-nosnippet>665</a>            path: <span class="string">"ANTENNA POSITION"</span>.to_string(),
+<a href=#666 id=666 data-nosnippet>666</a>            source,
+<a href=#667 id=667 data-nosnippet>667</a>        })<span class="question-mark">?</span>;
+<a href=#668 id=668 data-nosnippet>668</a>    <span class="prelude-val">Ok</span>(nearest_first(<span class="kw-2">&amp;</span>positions, refant_id))
+<a href=#669 id=669 data-nosnippet>669</a>}
+<a href=#670 id=670 data-nosnippet>670</a>
+<a href=#671 id=671 data-nosnippet>671</a><span class="doccomment">/// The antennas other than `refant_id`, nearest it first, of antennas at
+<a href=#672 id=672 data-nosnippet>672</a>/// `positions` (ITRF metres, indexed by antenna ID).
+<a href=#673 id=673 data-nosnippet>673</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>nearest_first(positions: <span class="kw-2">&amp;</span>[[f64; <span class="number">3</span>]], refant_id: i32) -&gt; Vec&lt;i32&gt; {
+<a href=#674 id=674 data-nosnippet>674</a>    <span class="kw">let </span>origin = usize::try_from(refant_id)
+<a href=#675 id=675 data-nosnippet>675</a>        .ok()
+<a href=#676 id=676 data-nosnippet>676</a>        .and_then(|row| positions.get(row))
+<a href=#677 id=677 data-nosnippet>677</a>        .copied()
+<a href=#678 id=678 data-nosnippet>678</a>        .unwrap_or_default();
+<a href=#679 id=679 data-nosnippet>679</a>    <span class="kw">let </span><span class="kw-2">mut </span>order = (<span class="number">0</span>..positions.len())
+<a href=#680 id=680 data-nosnippet>680</a>        .filter(|row| i32::try_from(<span class="kw-2">*</span>row).ok() != <span class="prelude-val">Some</span>(refant_id))
+<a href=#681 id=681 data-nosnippet>681</a>        .map(|row| {
+<a href=#682 id=682 data-nosnippet>682</a>            <span class="kw">let </span>distance = positions[row]
+<a href=#683 id=683 data-nosnippet>683</a>                .iter()
+<a href=#684 id=684 data-nosnippet>684</a>                .zip(origin)
+<a href=#685 id=685 data-nosnippet>685</a>                .map(|(value, origin)| (value - origin).powi(<span class="number">2</span>))
+<a href=#686 id=686 data-nosnippet>686</a>                .sum::&lt;f64&gt;();
+<a href=#687 id=687 data-nosnippet>687</a>            (distance, row)
+<a href=#688 id=688 data-nosnippet>688</a>        })
+<a href=#689 id=689 data-nosnippet>689</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#690 id=690 data-nosnippet>690</a>    order.sort_by(|left, right| left.<span class="number">0</span>.total_cmp(<span class="kw-2">&amp;</span>right.<span class="number">0</span>).then(left.<span class="number">1</span>.cmp(<span class="kw-2">&amp;</span>right.<span class="number">1</span>)));
+<a href=#691 id=691 data-nosnippet>691</a>    order
+<a href=#692 id=692 data-nosnippet>692</a>        .into_iter()
+<a href=#693 id=693 data-nosnippet>693</a>        .map(|(<span class="kw">_</span>, row)| i32::try_from(row).expect(<span class="string">"antenna row count fits in i32"</span>))
+<a href=#694 id=694 data-nosnippet>694</a>        .collect()
+<a href=#695 id=695 data-nosnippet>695</a>}
+<a href=#696 id=696 data-nosnippet>696</a>
+<a href=#697 id=697 data-nosnippet>697</a><span class="doccomment">/// Refer each solution interval's phases to a reference antenna, as
+<a href=#698 id=698 data-nosnippet>698</a>/// `SolvableVisJones::applyRefAnt` does with `refantmode='flex'`. Intervals
+<a href=#699 id=699 data-nosnippet>699</a>/// go in time order within each spectral window. The reference is the first
+<a href=#700 id=700 data-nosnippet>700</a>/// of: the preferred antenna, the one used last, then the others nearest the
+<a href=#701 id=701 data-nosnippet>701</a>/// preferred first, that has every receptor unflagged both here and in the
+<a href=#702 id=702 data-nosnippet>702</a>/// last referred interval (only the first receptor when the window's second
+<a href=#703 id=703 data-nosnippet>703</a>/// is never solved). Its phase change since that interval is removed from
+<a href=#704 id=704 data-nosnippet>704</a>/// every antenna, so an alternate is held at constant phase. An interval
+<a href=#705 id=705 data-nosnippet>705</a>/// with no such antenna is flagged entirely and leaves the last referred
+<a href=#706 id=706 data-nosnippet>706</a>/// interval in place for the next.
+<a href=#707 id=707 data-nosnippet>707</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>apply_reference_antenna(
+<a href=#708 id=708 data-nosnippet>708</a>    rows: <span class="kw-2">&amp;mut </span>[kernel::SolutionRow],
+<a href=#709 id=709 data-nosnippet>709</a>    preferred_refant_id: i32,
+<a href=#710 id=710 data-nosnippet>710</a>    alternates: <span class="kw-2">&amp;</span>[i32],
+<a href=#711 id=711 data-nosnippet>711</a>    strict: bool,
+<a href=#712 id=712 data-nosnippet>712</a>) {
+<a href=#713 id=713 data-nosnippet>713</a>    <span class="comment">// CASA `applyRefAnt` iterates by window and exact caltable time, even
+<a href=#714 id=714 data-nosnippet>714</a>    // where separate solve intervals contributed rows at the same time.
+<a href=#715 id=715 data-nosnippet>715</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>group_indices = BTreeMap::&lt;<span class="kw">_</span>, Vec&lt;<span class="kw">_</span>&gt;&gt;::new();
+<a href=#716 id=716 data-nosnippet>716</a>    <span class="kw">for </span>(index, row) <span class="kw">in </span>rows.iter().enumerate() {
+<a href=#717 id=717 data-nosnippet>717</a>        group_indices
+<a href=#718 id=718 data-nosnippet>718</a>            .entry((row.spw_id, row.time_seconds.to_bits()))
+<a href=#719 id=719 data-nosnippet>719</a>            .or_default()
+<a href=#720 id=720 data-nosnippet>720</a>            .push(index);
+<a href=#721 id=721 data-nosnippet>721</a>    }
+<a href=#722 id=722 data-nosnippet>722</a>    <span class="kw">let </span><span class="kw-2">mut </span>receptor_counts = BTreeMap::&lt;i32, usize&gt;::new();
+<a href=#723 id=723 data-nosnippet>723</a>    <span class="kw">for </span>row <span class="kw">in </span>rows.iter() {
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">let </span>count = receptor_counts.entry(row.spw_id).or_insert(<span class="number">1</span>);
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">if </span>row.flags.get(<span class="number">1</span>).is_some_and(|flag| !<span class="kw-2">*</span>flag) {
+<a href=#726 id=726 data-nosnippet>726</a>            <span class="kw-2">*</span>count = <span class="number">2</span>;
+<a href=#727 id=727 data-nosnippet>727</a>        }
+<a href=#728 id=728 data-nosnippet>728</a>    }
+<a href=#729 id=729 data-nosnippet>729</a>
+<a href=#730 id=730 data-nosnippet>730</a>    <span class="kw">let </span><span class="kw-2">mut </span>choices = Vec::with_capacity(alternates.len() + <span class="number">2</span>);
+<a href=#731 id=731 data-nosnippet>731</a>    choices.extend([preferred_refant_id, preferred_refant_id]);
+<a href=#732 id=732 data-nosnippet>732</a>    choices.extend_from_slice(alternates);
+<a href=#733 id=733 data-nosnippet>733</a>
+<a href=#734 id=734 data-nosnippet>734</a>    <span class="kw">let </span><span class="kw-2">mut </span>previous = <span class="prelude-val">None</span>::&lt;Vec&lt;usize&gt;&gt;;
+<a href=#735 id=735 data-nosnippet>735</a>    <span class="kw">let </span><span class="kw-2">mut </span>last_spw = <span class="prelude-val">None</span>::&lt;i32&gt;;
+<a href=#736 id=736 data-nosnippet>736</a>    <span class="kw">for </span>((spw_id, <span class="kw">_</span>), current) <span class="kw">in </span>group_indices {
+<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">if </span>last_spw != <span class="prelude-val">Some</span>(spw_id) {
+<a href=#738 id=738 data-nosnippet>738</a>            previous = <span class="prelude-val">None</span>;
+<a href=#739 id=739 data-nosnippet>739</a>            last_spw = <span class="prelude-val">Some</span>(spw_id);
+<a href=#740 id=740 data-nosnippet>740</a>        }
+<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw">let </span>receptors = receptor_counts[<span class="kw-2">&amp;</span>spw_id];
+<a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">let </span>previous_indices = previous.as_ref().unwrap_or(<span class="kw-2">&amp;</span>current);
+<a href=#743 id=743 data-nosnippet>743</a>        <span class="kw">let </span>candidates = <span class="kw">if </span>strict { <span class="kw-2">&amp;</span>choices[..<span class="number">1</span>] } <span class="kw">else </span>{ <span class="kw-2">&amp;</span>choices[..] };
+<a href=#744 id=744 data-nosnippet>744</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((current_ref_index, previous_ref_index)) =
+<a href=#745 id=745 data-nosnippet>745</a>            find_flex_refant(rows, candidates, <span class="kw-2">&amp;</span>current, previous_indices, receptors)
+<a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">else </span>{
+<a href=#747 id=747 data-nosnippet>747</a>            <span class="kw">for </span>index <span class="kw">in </span><span class="kw-2">&amp;</span>current {
+<a href=#748 id=748 data-nosnippet>748</a>                rows[<span class="kw-2">*</span>index].flags.iter_mut().for_each(|flag| <span class="kw-2">*</span>flag = <span class="bool-val">true</span>);
+<a href=#749 id=749 data-nosnippet>749</a>                rows[<span class="kw-2">*</span>index].refant_id = -<span class="number">1</span>;
+<a href=#750 id=750 data-nosnippet>750</a>            }
+<a href=#751 id=751 data-nosnippet>751</a>            <span class="kw">continue</span>;
+<a href=#752 id=752 data-nosnippet>752</a>        };
+<a href=#753 id=753 data-nosnippet>753</a>
+<a href=#754 id=754 data-nosnippet>754</a>        <span class="kw">let </span>first = previous.is_none();
+<a href=#755 id=755 data-nosnippet>755</a>        <span class="kw">let </span>ref_phasor = rows[current_ref_index]
+<a href=#756 id=756 data-nosnippet>756</a>            .gains
+<a href=#757 id=757 data-nosnippet>757</a>            .iter()
+<a href=#758 id=758 data-nosnippet>758</a>            .zip(rows[previous_ref_index].gains.iter())
+<a href=#759 id=759 data-nosnippet>759</a>            .map(|(current_gain, previous_gain)| {
+<a href=#760 id=760 data-nosnippet>760</a>                <span class="kw">let </span>current_phase = phase_only(<span class="kw-2">*</span>current_gain);
+<a href=#761 id=761 data-nosnippet>761</a>                <span class="kw">if </span>first {
+<a href=#762 id=762 data-nosnippet>762</a>                    current_phase
+<a href=#763 id=763 data-nosnippet>763</a>                } <span class="kw">else </span>{
+<a href=#764 id=764 data-nosnippet>764</a>                    current_phase / phase_only(<span class="kw-2">*</span>previous_gain)
+<a href=#765 id=765 data-nosnippet>765</a>                }
+<a href=#766 id=766 data-nosnippet>766</a>            })
+<a href=#767 id=767 data-nosnippet>767</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#768 id=768 data-nosnippet>768</a>
+<a href=#769 id=769 data-nosnippet>769</a>        <span class="kw">let </span>current_refant = rows[current_ref_index].antenna_id;
+<a href=#770 id=770 data-nosnippet>770</a>        choices[<span class="number">1</span>] = current_refant;
+<a href=#771 id=771 data-nosnippet>771</a>        <span class="kw">for </span>index <span class="kw">in </span><span class="kw-2">&amp;</span>current {
+<a href=#772 id=772 data-nosnippet>772</a>            <span class="kw">for </span>(gain, phasor) <span class="kw">in </span>rows[<span class="kw-2">*</span>index].gains.iter_mut().zip(ref_phasor.iter()) {
+<a href=#773 id=773 data-nosnippet>773</a>                <span class="kw">if </span>phasor.norm() &gt; f32::EPSILON {
+<a href=#774 id=774 data-nosnippet>774</a>                    <span class="kw-2">*</span>gain /= <span class="kw-2">*</span>phasor;
+<a href=#775 id=775 data-nosnippet>775</a>                }
+<a href=#776 id=776 data-nosnippet>776</a>            }
+<a href=#777 id=777 data-nosnippet>777</a>            rows[<span class="kw-2">*</span>index].refant_id = current_refant;
+<a href=#778 id=778 data-nosnippet>778</a>        }
+<a href=#779 id=779 data-nosnippet>779</a>        previous = <span class="prelude-val">Some</span>(current);
+<a href=#780 id=780 data-nosnippet>780</a>    }
+<a href=#781 id=781 data-nosnippet>781</a>}
+<a href=#782 id=782 data-nosnippet>782</a>
+<a href=#783 id=783 data-nosnippet>783</a><span class="kw">fn </span>find_flex_refant(
+<a href=#784 id=784 data-nosnippet>784</a>    rows: <span class="kw-2">&amp;</span>[kernel::SolutionRow],
+<a href=#785 id=785 data-nosnippet>785</a>    choices: <span class="kw-2">&amp;</span>[i32],
+<a href=#786 id=786 data-nosnippet>786</a>    current: <span class="kw-2">&amp;</span>[usize],
+<a href=#787 id=787 data-nosnippet>787</a>    previous: <span class="kw-2">&amp;</span>[usize],
+<a href=#788 id=788 data-nosnippet>788</a>    receptors: usize,
+<a href=#789 id=789 data-nosnippet>789</a>) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, usize)&gt; {
+<a href=#790 id=790 data-nosnippet>790</a>    <span class="kw">let </span>usable = |indices: <span class="kw-2">&amp;</span>[usize], antenna_id: i32| {
+<a href=#791 id=791 data-nosnippet>791</a>        indices
+<a href=#792 id=792 data-nosnippet>792</a>            .iter()
+<a href=#793 id=793 data-nosnippet>793</a>            .copied()
+<a href=#794 id=794 data-nosnippet>794</a>            .find(|<span class="kw-2">&amp;</span>index| rows[index].antenna_id == antenna_id)
+<a href=#795 id=795 data-nosnippet>795</a>            .filter(|<span class="kw-2">&amp;</span>index| rows[index].flags.iter().take(receptors).all(|flag| !<span class="kw-2">*</span>flag))
+<a href=#796 id=796 data-nosnippet>796</a>    };
+<a href=#797 id=797 data-nosnippet>797</a>    choices
+<a href=#798 id=798 data-nosnippet>798</a>        .iter()
+<a href=#799 id=799 data-nosnippet>799</a>        .find_map(|<span class="kw-2">&amp;</span>antenna_id| <span class="prelude-val">Some</span>((usable(current, antenna_id)<span class="question-mark">?</span>, usable(previous, antenna_id)<span class="question-mark">?</span>)))
+<a href=#800 id=800 data-nosnippet>800</a>}
+<a href=#801 id=801 data-nosnippet>801</a>
+<a href=#802 id=802 data-nosnippet>802</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>phase_only(gain: Complex32) -&gt; Complex32 {
+<a href=#803 id=803 data-nosnippet>803</a>    <span class="kw">let </span>norm = gain.norm();
+<a href=#804 id=804 data-nosnippet>804</a>    <span class="kw">if </span>norm &gt; f32::EPSILON {
+<a href=#805 id=805 data-nosnippet>805</a>        gain / Complex32::new(norm, <span class="number">0.0</span>)
+<a href=#806 id=806 data-nosnippet>806</a>    } <span class="kw">else </span>{
+<a href=#807 id=807 data-nosnippet>807</a>        Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>)
+<a href=#808 id=808 data-nosnippet>808</a>    }
+<a href=#809 id=809 data-nosnippet>809</a>}
+<a href=#810 id=810 data-nosnippet>810</a>
+<a href=#811 id=811 data-nosnippet>811</a><span class="doccomment">/// Divide every gain of each window by the root mean or median power of the window's
+<a href=#812 id=812 data-nosnippet>812</a>/// unflagged solutions, taken over all its intervals, antennas and
+<a href=#813 id=813 data-nosnippet>813</a>/// receptors together, as CASA's `solnorm` does
+<a href=#814 id=814 data-nosnippet>814</a>/// (`SolvableVisJones::normalize`, `SolvableVisCal::calcPowerNorm`). A
+<a href=#815 id=815 data-nosnippet>815</a>/// window with one unflagged solution or none stays, as `normSolnArray`
+<a href=#816 id=816 data-nosnippet>816</a>/// normalizes only more than one.
+<a href=#817 id=817 data-nosnippet>817</a></span><span class="kw">fn </span>normalize_gain_solution_amplitudes(rows: <span class="kw-2">&amp;mut </span>[kernel::SolutionRow], method: GainNormalization) {
+<a href=#818 id=818 data-nosnippet>818</a>    <span class="kw">let </span><span class="kw-2">mut </span>power = BTreeMap::&lt;i32, (f64, usize, Vec&lt;f32&gt;)&gt;::new();
+<a href=#819 id=819 data-nosnippet>819</a>    <span class="kw">for </span>row <span class="kw">in </span>rows.iter() {
+<a href=#820 id=820 data-nosnippet>820</a>        <span class="kw">let </span>(sum, count, samples) = power.entry(row.spw_id).or_default();
+<a href=#821 id=821 data-nosnippet>821</a>        <span class="kw">for </span>(gain, flagged) <span class="kw">in </span>row.gains.iter().zip(<span class="kw-2">&amp;</span>row.flags) {
+<a href=#822 id=822 data-nosnippet>822</a>            <span class="kw">if </span>!flagged {
+<a href=#823 id=823 data-nosnippet>823</a>                <span class="kw">let </span>power = gain.norm_sqr();
+<a href=#824 id=824 data-nosnippet>824</a>                <span class="kw">match </span>method {
+<a href=#825 id=825 data-nosnippet>825</a>                    GainNormalization::Mean =&gt; <span class="kw-2">*</span>sum += f64::from(power),
+<a href=#826 id=826 data-nosnippet>826</a>                    GainNormalization::Median =&gt; samples.push(power),
+<a href=#827 id=827 data-nosnippet>827</a>                }
+<a href=#828 id=828 data-nosnippet>828</a>                <span class="kw-2">*</span>count += <span class="number">1</span>;
+<a href=#829 id=829 data-nosnippet>829</a>            }
+<a href=#830 id=830 data-nosnippet>830</a>        }
+<a href=#831 id=831 data-nosnippet>831</a>    }
+<a href=#832 id=832 data-nosnippet>832</a>    <span class="kw">let </span>factors: BTreeMap&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt; = power
+<a href=#833 id=833 data-nosnippet>833</a>        .into_iter()
+<a href=#834 id=834 data-nosnippet>834</a>        .filter_map(|(spw, (sum, count, <span class="kw-2">mut </span>samples))| {
+<a href=#835 id=835 data-nosnippet>835</a>            <span class="kw">if </span>count &lt;= <span class="number">1 </span>{
+<a href=#836 id=836 data-nosnippet>836</a>                <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#837 id=837 data-nosnippet>837</a>            }
+<a href=#838 id=838 data-nosnippet>838</a>            <span class="kw">let </span>factor = <span class="kw">match </span>method {
+<a href=#839 id=839 data-nosnippet>839</a>                GainNormalization::Mean =&gt; (sum / count <span class="kw">as </span>f64).sqrt() <span class="kw">as </span>f32,
+<a href=#840 id=840 data-nosnippet>840</a>                GainNormalization::Median =&gt; grouping::median_with_even_mean(<span class="kw-2">&amp;mut </span>samples).sqrt(),
+<a href=#841 id=841 data-nosnippet>841</a>            };
+<a href=#842 id=842 data-nosnippet>842</a>            (factor.is_finite() &amp;&amp; factor &gt; <span class="number">0.0</span>).then_some((spw, factor))
+<a href=#843 id=843 data-nosnippet>843</a>        })
+<a href=#844 id=844 data-nosnippet>844</a>        .collect();
+<a href=#845 id=845 data-nosnippet>845</a>    <span class="kw">for </span>row <span class="kw">in </span>rows.iter_mut() {
+<a href=#846 id=846 data-nosnippet>846</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>factor) = factors.get(<span class="kw-2">&amp;</span>row.spw_id) <span class="kw">else </span>{
+<a href=#847 id=847 data-nosnippet>847</a>            <span class="kw">continue</span>;
+<a href=#848 id=848 data-nosnippet>848</a>        };
+<a href=#849 id=849 data-nosnippet>849</a>        <span class="kw">for </span>gain <span class="kw">in </span><span class="kw-2">&amp;mut </span>row.gains {
+<a href=#850 id=850 data-nosnippet>850</a>            <span class="kw-2">*</span>gain /= Complex32::new(factor, <span class="number">0.0</span>);
+<a href=#851 id=851 data-nosnippet>851</a>        }
+<a href=#852 id=852 data-nosnippet>852</a>    }
+<a href=#853 id=853 data-nosnippet>853</a>}
+<a href=#854 id=854 data-nosnippet>854</a>
+<a href=#855 id=855 data-nosnippet>855</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_i32(table: <span class="kw-2">&amp;</span>Table, row: usize, column: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;i32, GainSolveError&gt; {
+<a href=#856 id=856 data-nosnippet>856</a>    <span class="kw">match </span>table
+<a href=#857 id=857 data-nosnippet>857</a>        .cell_accessor(row, column)
+<a href=#858 id=858 data-nosnippet>858</a>        .and_then(|cell| cell.scalar())
+<a href=#859 id=859 data-nosnippet>859</a>        .map_err(MsError::from)
+<a href=#860 id=860 data-nosnippet>860</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
+<a href=#861 id=861 data-nosnippet>861</a>            path: column.to_string(),
+<a href=#862 id=862 data-nosnippet>862</a>            source,
+<a href=#863 id=863 data-nosnippet>863</a>        })<span class="question-mark">? </span>{
+<a href=#864 id=864 data-nosnippet>864</a>        ScalarValue::Int32(value) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
+<a href=#865 id=865 data-nosnippet>865</a>        ScalarValue::Int64(value) =&gt; {
+<a href=#866 id=866 data-nosnippet>866</a>            i32::try_from(<span class="kw-2">*</span>value).map_err(|<span class="kw">_</span>| GainSolveError::UnsupportedParameterShape {
+<a href=#867 id=867 data-nosnippet>867</a>                path: <span class="macro">format!</span>(<span class="string">"{column} scalar"</span>),
+<a href=#868 id=868 data-nosnippet>868</a>                shape: <span class="macro">vec!</span>[row],
+<a href=#869 id=869 data-nosnippet>869</a>            })
+<a href=#870 id=870 data-nosnippet>870</a>        }
+<a href=#871 id=871 data-nosnippet>871</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#872 id=872 data-nosnippet>872</a>            path: <span class="macro">format!</span>(<span class="string">"{column} scalar"</span>),
+<a href=#873 id=873 data-nosnippet>873</a>            shape: <span class="macro">vec!</span>[row],
+<a href=#874 id=874 data-nosnippet>874</a>        }),
+<a href=#875 id=875 data-nosnippet>875</a>    }
+<a href=#876 id=876 data-nosnippet>876</a>}
+<a href=#877 id=877 data-nosnippet>877</a>
+<a href=#878 id=878 data-nosnippet>878</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_f64(table: <span class="kw-2">&amp;</span>Table, row: usize, column: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;f64, GainSolveError&gt; {
+<a href=#879 id=879 data-nosnippet>879</a>    <span class="kw">match </span>table
+<a href=#880 id=880 data-nosnippet>880</a>        .cell_accessor(row, column)
+<a href=#881 id=881 data-nosnippet>881</a>        .and_then(|cell| cell.scalar())
+<a href=#882 id=882 data-nosnippet>882</a>        .map_err(MsError::from)
+<a href=#883 id=883 data-nosnippet>883</a>        .map_err(|source| GainSolveError::OpenMeasurementSet {
+<a href=#884 id=884 data-nosnippet>884</a>            path: column.to_string(),
+<a href=#885 id=885 data-nosnippet>885</a>            source,
+<a href=#886 id=886 data-nosnippet>886</a>        })<span class="question-mark">? </span>{
+<a href=#887 id=887 data-nosnippet>887</a>        ScalarValue::Float64(value) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
+<a href=#888 id=888 data-nosnippet>888</a>        ScalarValue::Float32(value) =&gt; <span class="prelude-val">Ok</span>(f64::from(<span class="kw-2">*</span>value)),
+<a href=#889 id=889 data-nosnippet>889</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(GainSolveError::UnsupportedParameterShape {
+<a href=#890 id=890 data-nosnippet>890</a>            path: <span class="macro">format!</span>(<span class="string">"{column} scalar"</span>),
+<a href=#891 id=891 data-nosnippet>891</a>            shape: <span class="macro">vec!</span>[row],
+<a href=#892 id=892 data-nosnippet>892</a>        }),
+<a href=#893 id=893 data-nosnippet>893</a>    }
+<a href=#894 id=894 data-nosnippet>894</a>}
+<a href=#895 id=895 data-nosnippet>895</a>
+<a href=#896 id=896 data-nosnippet>896</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>validate_solve_interval(
+<a href=#897 id=897 data-nosnippet>897</a>    solve_interval: GainSolveInterval,
+<a href=#898 id=898 data-nosnippet>898</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), GainSolveError&gt; {
+<a href=#899 id=899 data-nosnippet>899</a>    <span class="kw">match </span>solve_interval {
+<a href=#900 id=900 data-nosnippet>900</a>        GainSolveInterval::Infinite | GainSolveInterval::Integration =&gt; <span class="prelude-val">Ok</span>(()),
+<a href=#901 id=901 data-nosnippet>901</a>        GainSolveInterval::Seconds(seconds) <span class="kw">if </span>seconds &gt; <span class="number">0.0 </span>=&gt; <span class="prelude-val">Ok</span>(()),
+<a href=#902 id=902 data-nosnippet>902</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(GainSolveError::UnsupportedSolveInterval { solve_interval }),
+<a href=#903 id=903 data-nosnippet>903</a>    }
+<a href=#904 id=904 data-nosnippet>904</a>}
+<a href=#905 id=905 data-nosnippet>905</a>
+<a href=#906 id=906 data-nosnippet>906</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>validate_smodel(smodel: [f32; <span class="number">4</span>], polarized: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), GainSolveError&gt; {
+<a href=#907 id=907 data-nosnippet>907</a>    <span class="kw">if </span>smodel[<span class="number">0</span>] &lt;= <span class="number">0.0
+<a href=#908 id=908 data-nosnippet>908</a>        </span>|| smodel.iter().any(|value| !value.is_finite())
+<a href=#909 id=909 data-nosnippet>909</a>        || (!polarized &amp;&amp; smodel[<span class="number">1</span>..].iter().any(|value| <span class="kw-2">*</span>value != <span class="number">0.0</span>))
+<a href=#910 id=910 data-nosnippet>910</a>    {
+<a href=#911 id=911 data-nosnippet>911</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(GainSolveError::UnsupportedSkyModel { smodel });
+<a href=#912 id=912 data-nosnippet>912</a>    }
+<a href=#913 id=913 data-nosnippet>913</a>    <span class="prelude-val">Ok</span>(())
+<a href=#914 id=914 data-nosnippet>914</a>}
+<a href=#915 id=915 data-nosnippet>915</a>
+<a href=#916 id=916 data-nosnippet>916</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>correlation_receptors(code: i32) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, usize)&gt; {
+<a href=#917 id=917 data-nosnippet>917</a>    <span class="kw">match </span>code {
+<a href=#918 id=918 data-nosnippet>918</a>        <span class="number">5 </span>| <span class="number">9 </span>=&gt; <span class="prelude-val">Some</span>((<span class="number">0</span>, <span class="number">0</span>)),
+<a href=#919 id=919 data-nosnippet>919</a>        <span class="number">6 </span>| <span class="number">10 </span>=&gt; <span class="prelude-val">Some</span>((<span class="number">0</span>, <span class="number">1</span>)),
+<a href=#920 id=920 data-nosnippet>920</a>        <span class="number">7 </span>| <span class="number">11 </span>=&gt; <span class="prelude-val">Some</span>((<span class="number">1</span>, <span class="number">0</span>)),
+<a href=#921 id=921 data-nosnippet>921</a>        <span class="number">8 </span>| <span class="number">12 </span>=&gt; <span class="prelude-val">Some</span>((<span class="number">1</span>, <span class="number">1</span>)),
+<a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#923 id=923 data-nosnippet>923</a>    }
+<a href=#924 id=924 data-nosnippet>924</a>}
+<a href=#925 id=925 data-nosnippet>925</a>
+<a href=#926 id=926 data-nosnippet>926</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>stokes_name(code: i32) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
+<a href=#927 id=927 data-nosnippet>927</a>    <span class="kw">match </span>code {
+<a href=#928 id=928 data-nosnippet>928</a>        <span class="number">5 </span>=&gt; <span class="string">"RR"</span>,
+<a href=#929 id=929 data-nosnippet>929</a>        <span class="number">6 </span>=&gt; <span class="string">"RL"</span>,
+<a href=#930 id=930 data-nosnippet>930</a>        <span class="number">7 </span>=&gt; <span class="string">"LR"</span>,
+<a href=#931 id=931 data-nosnippet>931</a>        <span class="number">8 </span>=&gt; <span class="string">"LL"</span>,
+<a href=#932 id=932 data-nosnippet>932</a>        <span class="number">9 </span>=&gt; <span class="string">"XX"</span>,
+<a href=#933 id=933 data-nosnippet>933</a>        <span class="number">10 </span>=&gt; <span class="string">"XY"</span>,
+<a href=#934 id=934 data-nosnippet>934</a>        <span class="number">11 </span>=&gt; <span class="string">"YX"</span>,
+<a href=#935 id=935 data-nosnippet>935</a>        <span class="number">12 </span>=&gt; <span class="string">"YY"</span>,
+<a href=#936 id=936 data-nosnippet>936</a>        <span class="kw">_ </span>=&gt; <span class="string">"UNKNOWN"</span>,
+<a href=#937 id=937 data-nosnippet>937</a>    }
+<a href=#938 id=938 data-nosnippet>938</a>}
+<a href=#939 id=939 data-nosnippet>939</a>
+<a href=#940 id=940 data-nosnippet>940</a><span class="attr">#[cfg(test)]
+<a href=#941 id=941 data-nosnippet>941</a></span><span class="kw">mod </span>solnorm_tests {
+<a href=#942 id=942 data-nosnippet>942</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#943 id=943 data-nosnippet>943</a>
+<a href=#944 id=944 data-nosnippet>944</a>    <span class="kw">fn </span>row(
+<a href=#945 id=945 data-nosnippet>945</a>        spw_id: i32,
+<a href=#946 id=946 data-nosnippet>946</a>        time_seconds: f64,
+<a href=#947 id=947 data-nosnippet>947</a>        gains: [f32; <span class="number">2</span>],
+<a href=#948 id=948 data-nosnippet>948</a>        flags: [bool; <span class="number">2</span>],
+<a href=#949 id=949 data-nosnippet>949</a>    ) -&gt; kernel::SolutionRow {
+<a href=#950 id=950 data-nosnippet>950</a>        kernel::SolutionRow {
+<a href=#951 id=951 data-nosnippet>951</a>            time_seconds,
+<a href=#952 id=952 data-nosnippet>952</a>            field_id: <span class="number">0</span>,
+<a href=#953 id=953 data-nosnippet>953</a>            spw_id,
+<a href=#954 id=954 data-nosnippet>954</a>            antenna_id: <span class="number">0</span>,
+<a href=#955 id=955 data-nosnippet>955</a>            scan_number: <span class="number">1</span>,
+<a href=#956 id=956 data-nosnippet>956</a>            observation_id: <span class="number">0</span>,
+<a href=#957 id=957 data-nosnippet>957</a>            refant_id: <span class="number">0</span>,
+<a href=#958 id=958 data-nosnippet>958</a>            gains: gains
+<a href=#959 id=959 data-nosnippet>959</a>                .iter()
+<a href=#960 id=960 data-nosnippet>960</a>                .map(|<span class="kw-2">&amp;</span>gain| Complex32::new(gain, <span class="number">0.0</span>))
+<a href=#961 id=961 data-nosnippet>961</a>                .collect(),
+<a href=#962 id=962 data-nosnippet>962</a>            flags: flags.to_vec(),
+<a href=#963 id=963 data-nosnippet>963</a>            param_errors: <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">2</span>],
+<a href=#964 id=964 data-nosnippet>964</a>            snrs: <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">2</span>],
+<a href=#965 id=965 data-nosnippet>965</a>            weights: <span class="macro">vec!</span>[<span class="number">1.0</span>; <span class="number">2</span>],
+<a href=#966 id=966 data-nosnippet>966</a>        }
+<a href=#967 id=967 data-nosnippet>967</a>    }
+<a href=#968 id=968 data-nosnippet>968</a>
+<a href=#969 id=969 data-nosnippet>969</a>    <span class="doccomment">/// CASA 6.7.6.14 normalizes a window's gains by one factor, the root
+<a href=#970 id=970 data-nosnippet>970</a>    /// mean power of its unflagged solutions over every interval and both
+<a href=#971 id=971 data-nosnippet>971</a>    /// receptors (probed: XX and YY solutions of mean power 0.43 and 1.51,
+<a href=#972 id=972 data-nosnippet>972</a>    /// together 1.00), not each interval or receptor by its own.
+<a href=#973 id=973 data-nosnippet>973</a>    </span><span class="attr">#[test]
+<a href=#974 id=974 data-nosnippet>974</a>    </span><span class="kw">fn </span>solnorm_divides_each_window_by_one_factor_over_its_intervals_and_receptors() {
+<a href=#975 id=975 data-nosnippet>975</a>        <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="macro">vec!</span>[
+<a href=#976 id=976 data-nosnippet>976</a>            row(<span class="number">0</span>, <span class="number">0.0</span>, [<span class="number">1.0</span>, <span class="number">3.0</span>], [<span class="bool-val">false</span>, <span class="bool-val">false</span>]),
+<a href=#977 id=977 data-nosnippet>977</a>            row(<span class="number">0</span>, <span class="number">10.0</span>, [<span class="number">2.0</span>, <span class="number">3.0</span>], [<span class="bool-val">false</span>, <span class="bool-val">false</span>]),
+<a href=#978 id=978 data-nosnippet>978</a>            <span class="comment">// A flagged solution is divided but does not count.
+<a href=#979 id=979 data-nosnippet>979</a>            </span>row(<span class="number">0</span>, <span class="number">20.0</span>, [<span class="number">100.0</span>, <span class="number">3.0</span>], [<span class="bool-val">true</span>, <span class="bool-val">false</span>]),
+<a href=#980 id=980 data-nosnippet>980</a>            row(<span class="number">1</span>, <span class="number">0.0</span>, [<span class="number">4.0</span>, <span class="number">4.0</span>], [<span class="bool-val">false</span>, <span class="bool-val">false</span>]),
+<a href=#981 id=981 data-nosnippet>981</a>            <span class="comment">// One unflagged solution is not normalized (normSolnArray).
+<a href=#982 id=982 data-nosnippet>982</a>            </span>row(<span class="number">2</span>, <span class="number">0.0</span>, [<span class="number">4.0</span>, <span class="number">5.0</span>], [<span class="bool-val">false</span>, <span class="bool-val">true</span>]),
+<a href=#983 id=983 data-nosnippet>983</a>        ];
+<a href=#984 id=984 data-nosnippet>984</a>        normalize_gain_solution_amplitudes(<span class="kw-2">&amp;mut </span>rows, GainNormalization::Mean);
+<a href=#985 id=985 data-nosnippet>985</a>        <span class="kw">let </span>factor = ((<span class="number">1.0_f32 </span>+ <span class="number">9.0 </span>+ <span class="number">4.0 </span>+ <span class="number">9.0 </span>+ <span class="number">9.0</span>) / <span class="number">5.0</span>).sqrt();
+<a href=#986 id=986 data-nosnippet>986</a>        <span class="kw">let </span>amplitudes = |row: <span class="kw-2">&amp;</span>kernel::SolutionRow| -&gt; Vec&lt;f32&gt; {
+<a href=#987 id=987 data-nosnippet>987</a>            row.gains.iter().map(|gain| gain.norm()).collect()
+<a href=#988 id=988 data-nosnippet>988</a>        };
+<a href=#989 id=989 data-nosnippet>989</a>        <span class="kw">let </span>close = |left: <span class="kw-2">&amp;</span>[f32], right: <span class="kw-2">&amp;</span>[f32]| {
+<a href=#990 id=990 data-nosnippet>990</a>            left.iter()
+<a href=#991 id=991 data-nosnippet>991</a>                .zip(right)
+<a href=#992 id=992 data-nosnippet>992</a>                .all(|(left, right)| (left - right).abs() &lt; <span class="number">1e-5</span>)
+<a href=#993 id=993 data-nosnippet>993</a>        };
+<a href=#994 id=994 data-nosnippet>994</a>        <span class="macro">assert!</span>(close(<span class="kw-2">&amp;</span>amplitudes(<span class="kw-2">&amp;</span>rows[<span class="number">0</span>]), <span class="kw-2">&amp;</span>[<span class="number">1.0 </span>/ factor, <span class="number">3.0 </span>/ factor]));
+<a href=#995 id=995 data-nosnippet>995</a>        <span class="macro">assert!</span>(close(<span class="kw-2">&amp;</span>amplitudes(<span class="kw-2">&amp;</span>rows[<span class="number">1</span>]), <span class="kw-2">&amp;</span>[<span class="number">2.0 </span>/ factor, <span class="number">3.0 </span>/ factor]));
+<a href=#996 id=996 data-nosnippet>996</a>        <span class="macro">assert!</span>(close(
+<a href=#997 id=997 data-nosnippet>997</a>            <span class="kw-2">&amp;</span>amplitudes(<span class="kw-2">&amp;</span>rows[<span class="number">2</span>]),
+<a href=#998 id=998 data-nosnippet>998</a>            <span class="kw-2">&amp;</span>[<span class="number">100.0 </span>/ factor, <span class="number">3.0 </span>/ factor]
+<a href=#999 id=999 data-nosnippet>999</a>        ));
+<a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="macro">assert!</span>(close(<span class="kw-2">&amp;</span>amplitudes(<span class="kw-2">&amp;</span>rows[<span class="number">3</span>]), <span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">1.0</span>]));
+<a href=#1001 id=1001 data-nosnippet>1001</a>        <span class="macro">assert!</span>(close(<span class="kw-2">&amp;</span>amplitudes(<span class="kw-2">&amp;</span>rows[<span class="number">4</span>]), <span class="kw-2">&amp;</span>[<span class="number">4.0</span>, <span class="number">5.0</span>]));
+<a href=#1002 id=1002 data-nosnippet>1002</a>    }
+<a href=#1003 id=1003 data-nosnippet>1003</a>}
 </code></pre></div></section></main></body></html>

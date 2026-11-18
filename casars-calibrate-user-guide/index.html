@@ -891,6 +891,9 @@ not implement yet is taken only at its default, and a
 CASA value such as <code>gaintype='GSPLINE'</code> is refused until implemented. These
 errors name <a href="https://github.com/bglenden/casa-rs/issues/979">#979</a>.
 <code>docs/reference/casa-compatibility.md</code> lists them.</p>
+<p>Channelized bandpass can average selected channels before solving. Use
+<code>solint='inf,4ch'</code> for four channels per solution or <code>solint='25s,3MHz'</code>
+to set a 25-second time interval and a 3 MHz frequency interval.</p>
 <p>Use <code>calibrate gaincal --template</code> to see every parameter with its default,
 and <code>--save-params FILE</code> to keep a run's resolved profile for reuse with
 <code>--params FILE</code>.</p>
