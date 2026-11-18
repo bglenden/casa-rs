@@ -8,8 +8,17 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 
 use super::{
-    GainSolveMode, SolveAccumulator, SolveEdgeAccumulation, SolveSamples, median_with_even_mean,
+    AveragedBaseline, GainSolveMode, SolveAccumulator, SolveEdgeAccumulation, SolveSamples,
+    median_with_even_mean,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct SolveAccumulationKey {
+    pub(super) baseline: AveragedBaseline,
+    pub(super) correlation_index: usize,
+    pub(super) parallel_hand: bool,
+    pub(super) zero_model: bool,
+}
 
 impl SolveAccumulator {
     /// Scalar gains start from the parallel-hand phasors in the first
@@ -25,7 +34,10 @@ impl SolveAccumulator {
         let first = samples.iter().filter_map(|(key, channels)| {
             let baseline = key.baseline;
             let data = channels.first()?;
-            (buffer.contains(baseline) && data.weight > f32::EPSILON)
+            (key.parallel_hand
+                && !key.zero_model
+                && buffer.contains(baseline)
+                && data.weight > f32::EPSILON)
                 .then(|| (baseline.antennas, data.weighted_sum / data.weight))
         });
         let guess_antenna = first
@@ -86,17 +98,32 @@ impl SolveAccumulator {
     }
 }
 
-/// The parallel-hand point model from `VisBufferImpl2::setVisCubeModel`.
+/// The selected point model from `VisBufferImpl2::setVisCubeModel`.
 /// CASA indexes its basis vector relative to the first selected correlation.
-pub(super) fn point_visibility(stokes: [f32; 4], code: i32, first_code: i32) -> Complex32 {
-    let [i, q, _, v] = stokes;
-    let polarization = if code < 9 { v } else { q };
-    let intensity = if code == first_code {
-        i + polarization
-    } else {
-        i - polarization
-    };
-    Complex32::new(intensity, 0.0)
+pub(super) fn point_visibility([i, q, u, v]: [f32; 4], code: i32, first_code: i32) -> Complex32 {
+    let (parallel, cross) = if code < 9 { (v, (q, u)) } else { (q, (u, v)) };
+    match code - first_code {
+        0 => Complex32::new(i + parallel, 0.0),
+        1 => Complex32::new(cross.0, cross.1),
+        2 => Complex32::new(cross.0, -cross.1),
+        _ => Complex32::new(i - parallel, 0.0),
+    }
+}
+
+/// Zero expected visibilities still contribute residuals to a scalar solve.
+pub(super) fn zero_model(
+    samples: &SolveSamples<'_>,
+    correlation: usize,
+    channels: &[usize],
+    point: Complex32,
+) -> bool {
+    samples
+        .model
+        .map_or(point == Complex32::default(), |model| {
+            channels
+                .iter()
+                .all(|&channel| model[[correlation, channel]] == Complex32::default())
+        })
 }
 
 /// CASA's correlation-independent flags are shared by every receptor.

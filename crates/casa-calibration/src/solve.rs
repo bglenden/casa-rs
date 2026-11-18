@@ -36,7 +36,7 @@ use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
 use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder};
 use crate::{ApplyExecutionError, ApplyPlanError};
-use grouping::{SolveGroupOptions, build_solve_groups, validate_solve_interval};
+use grouping::{SolveGroupOptions, build_solve_groups};
 use kernel::solve_group;
 use writer::write_gain_caltable;
 
@@ -849,6 +849,14 @@ pub(crate) fn get_f64(table: &Table, row: usize, column: &str) -> Result<f64, Ga
             path: format!("{column} scalar"),
             shape: vec![row],
         }),
+    }
+}
+
+fn validate_solve_interval(solve_interval: GainSolveInterval) -> Result<(), GainSolveError> {
+    match solve_interval {
+        GainSolveInterval::Infinite | GainSolveInterval::Integration => Ok(()),
+        GainSolveInterval::Seconds(seconds) if seconds > 0.0 => Ok(()),
+        _ => Err(GainSolveError::UnsupportedSolveInterval { solve_interval }),
     }
 }
 

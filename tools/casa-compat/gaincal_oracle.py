@@ -634,6 +634,8 @@ def point_models(root, source, native):
         ('linear', 'XX YY', [1.5, .3, .2, .1]),
         ('circular', 'RR LL', [1.5, .3, .2, -.2]),
         ('linear-full', 'XX XY YX YY', [1.5, .3]),
+        ('linear-full-cross', 'XX XY YX YY', [1.5, .3, .2, .1]),
+        ('circular-full-cross', 'RR RL LR LL', [1.5, .3, .2, -.2]),
     ]:
         fixture = root/basis
         fixture.mkdir()
@@ -646,11 +648,15 @@ def point_models(root, source, native):
                 case.mkdir()
                 results[name] = gain_and_apply(case, vis, native, gain, 'inf', calmode=mode,
                                                smodel=model, minblperant=2)
-    for name, write_model in [('stored-column', True), ('point-fallback', False)]:
+    for name, fixture_source, write_model in [
+        ('stored-column', source, True),
+        ('stored-column-full', root/'linear-full'/'amplitude.ms', True),
+        ('point-fallback', source, False),
+    ]:
         fixture = root/name
         fixture.mkdir()
         vis = fixture/'source.ms'
-        copy_ms(source, vis)
+        copy_ms(fixture_source, vis)
         if write_model:
             casa.setjy(vis=str(vis), field='0', standard='manual',
                        fluxdensity=[1.7, 0., 0., 0.], usescratch=True)

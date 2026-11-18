@@ -21,7 +21,7 @@ pub(super) fn first_graphs(graphs: &[SolveGraph]) -> Vec<SolveGraph> {
             for sample in graph
                 .robust_samples
                 .iter()
-                .filter(|sample| sample.in_first_buffer)
+                .filter(|sample| sample.in_first_buffer && !sample.zero_model)
             {
                 sample.accumulate(&mut first, sample.weight);
             }
@@ -152,15 +152,19 @@ fn reject_outliers(
 impl RobustSample {
     fn residual_power(self, gains: &HashMap<i32, Complex64>) -> Option<f32> {
         let model = gains.get(&self.baseline.0)? * gains.get(&self.baseline.1)?.conj();
+        if self.zero_model {
+            return Some(self.visibility.norm_sqr());
+        }
         let observed = Complex64::new(f64::from(self.visibility.re), f64::from(self.visibility.im));
         Some((model - observed).norm_sqr() as f32)
     }
 
     fn accumulate(self, graph: &mut SolveGraph, weight: f32) {
+        let fit_weight = if self.zero_model { 0.0 } else { weight };
         graph.accumulate(
             self.baseline,
-            weight,
-            weight * self.visibility,
+            fit_weight,
+            fit_weight * self.visibility,
             SolveEdgeStats {
                 weighted_sample_power: f64::from(weight) * f64::from(self.visibility.norm_sqr()),
                 raw_weighted_sample_power: f64::from(self.weight)
