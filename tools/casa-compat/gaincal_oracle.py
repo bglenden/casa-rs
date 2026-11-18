@@ -365,7 +365,6 @@ def robust_gains(root, source, native):
         t.putcol('DATA', data)
     finally:
         t.close()
-    casa_solutions, results = {}, {}
     cases = {
         'ordinary': {},
         'rms-inactive': dict(rmsthresh=[.1]),
@@ -376,18 +375,24 @@ def robust_gains(root, source, native):
         'L1-inactive-rms': dict(solmode='L1', rmsthresh=[.1]),
         'L1R': dict(solmode='L1R', rmsthresh=[3., 2.5]),
     }
-    for mode, extra in cases.items():
-        case = root/mode
-        case.mkdir()
-        results[mode] = gain_and_apply(case, source, native, 'G', 'inf', calmode='ap',
-                                       preavg=10., minblperant=3, **extra)
-        casa_solutions[mode] = contents(case/'ap-G-inf-mean-norm0-preavg10-casa.cal')['CPARAM']
-    baseline = casa_solutions['ordinary']
-    for mode in ['R-default', 'R-custom', 'L1', 'L1R']:
-        assert relative_rms(casa_solutions[mode], baseline) > .004
-    for first, second in [('ordinary', 'rms-inactive'), ('L1', 'L1-inactive-rms'),
-                          ('R-default', 'R-explicit-default')]:
-        np.testing.assert_array_equal(casa_solutions[first], casa_solutions[second])
+    results = {}
+    for gain in ['G', 'T']:
+        for calmode in ['ap', 'p', 'a']:
+            casa_solutions = {}
+            for mode, extra in cases.items():
+                label = f'{gain}-{calmode}-{mode}'
+                case = root/label
+                case.mkdir()
+                results[label] = gain_and_apply(case, source, native, gain, 'inf', calmode=calmode,
+                                                preavg=10., minblperant=3, **extra)
+                table_path = case/f'{calmode}-{gain}-inf-mean-norm0-preavg10-casa.cal'
+                casa_solutions[mode] = contents(table_path)['CPARAM']
+            for mode in ['R-default', 'R-custom', 'L1', 'L1R']:
+                error = relative_rms(casa_solutions[mode], casa_solutions['ordinary'])
+                assert error > (.004 if calmode == 'ap' else .0001), (gain, calmode, mode, error)
+            for first, second in [('ordinary', 'rms-inactive'), ('L1', 'L1-inactive-rms'),
+                                  ('R-default', 'R-explicit-default')]:
+                np.testing.assert_array_equal(casa_solutions[first], casa_solutions[second])
     return results
 
 

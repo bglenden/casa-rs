@@ -711,7 +711,6 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
         values
     };
     for (surface, name, value) in [
-        ("gaincal", "solmode", json!("L1")),
         ("gaincal", "uvrange", json!(">1klambda")),
         ("gaincal", "intent", json!("*PHASE*")),
         ("bandpass", "solint", json!("int")),
@@ -745,7 +744,7 @@ fn a_sub_parameter_casa_ignores_takes_any_value() {
         (
             "gaincal",
             json!({"vis": ms, "caltable": "g.gcal", "refant": "0", "minblperant": 2,
-                   "splinetime": 1800.0, "phasewrap": 90.0, "normtype": "median"}),
+                   "splinetime": 1800.0, "phasewrap": 90.0, "normtype": "median", "rmsthresh": [0.1]}),
         ),
         (
             "bandpass",
