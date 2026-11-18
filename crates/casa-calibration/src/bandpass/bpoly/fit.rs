@@ -213,35 +213,31 @@ fn collect_spectra(
             participation[j][bin] += 1;
         }
     }
-    let spectra = sums
-        .into_iter()
-        .zip(means)
-        .map(|(sum, means)| {
-            sum.into_iter()
-                .filter_map(|((a, b, channel), (visibility, weight))| {
-                    let visibility = if let Some(&(sum, norm_weight)) = means.get(&(a, b)) {
-                        if sum.norm_sqr() == 0.0 {
-                            return None;
-                        }
-                        visibility / (sum / norm_weight)
-                    } else {
-                        visibility
-                    };
-                    (participation[a][channel] > 1
-                        && participation[b][channel] > 1
-                        && visibility.norm_sqr() > 0.0)
-                        .then_some(VisibilitySample {
-                            antennas: [a, b],
-                            channel,
-                            visibility: visibility / weight,
-                            weight,
-                        })
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>()
-        .try_into()
-        .expect("two parallel-hand spectra");
+    let [first, second] = sums;
+    let [first_means, second_means] = means;
+    let spectra = [(first, first_means), (second, second_means)].map(|(sum, means)| {
+        sum.into_iter()
+            .filter_map(|((a, b, channel), (visibility, weight))| {
+                let visibility = if let Some(&(sum, norm_weight)) = means.get(&(a, b)) {
+                    if sum.norm_sqr() == 0.0 {
+                        return None;
+                    }
+                    visibility / (sum / norm_weight)
+                } else {
+                    visibility
+                };
+                (participation[a][channel] > 1
+                    && participation[b][channel] > 1
+                    && visibility.norm_sqr() > 0.0)
+                    .then_some(VisibilitySample {
+                        antennas: [a, b],
+                        channel,
+                        visibility: visibility / weight,
+                        weight,
+                    })
+            })
+            .collect::<Vec<_>>()
+    });
     (spectra, participation)
 }
 

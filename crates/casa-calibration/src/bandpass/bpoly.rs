@@ -25,7 +25,6 @@ use crate::constants::{
 };
 use crate::selected_data::SelectedData;
 use crate::session::CalibrationSolveContext;
-use crate::solve::GainSolveMode;
 use crate::solve::grouping::{SolveAccumulator, selected_channels};
 use crate::solve_stats::SolveStats;
 use crate::writer::{
