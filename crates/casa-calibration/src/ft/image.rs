@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
-    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, StokesCoordinate,
-    StokesType,
+    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, SpectralCoordinate,
+    StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
@@ -272,16 +272,7 @@ impl ImageTransform {
         let CoordinateModel::Spectral(axis) = self.coordinates.coordinate(axis) else {
             unreachable!();
         };
-        let channel_map = channels
-            .iter()
-            .map(|&frequency| {
-                axis.pixel_at_frequency_hz(frequency)
-                    .ok()
-                    .map(f64::round)
-                    .filter(|&index| (0.0..self.frequencies.len() as f64).contains(&index))
-                    .map_or(-1, |index| index as i32)
-            })
-            .collect();
+        let channel_map = match_channels(axis, self.frequencies.len(), &channels);
         let buffer = FirstBuffer {
             field: row.field_id,
             frequencies_lsrk_hz: channels,
@@ -313,8 +304,69 @@ impl ImageTransform {
             "spwchanselflag",
             Value::Array(ArrayValue::Int32(selection_mask(ms, selected)?)),
         );
+        record_selection(&mut record, ms, selected, axis, self.frequencies.len())?;
         Ok(record)
     }
+}
+
+fn match_channels(axis: &SpectralCoordinate, channels: usize, frequencies: &[f64]) -> Vec<i32> {
+    frequencies
+        .iter()
+        .map(|&frequency| {
+            axis.pixel_at_frequency_hz(frequency)
+                .ok()
+                .map(f64::round)
+                .filter(|&index| (0.0..channels as f64).contains(&index))
+                .map_or(-1, |index| index as i32)
+        })
+        .collect()
+}
+
+fn record_selection(
+    record: &mut RecordValue,
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    axis: &SpectralCoordinate,
+    channels: usize,
+) -> MsResult<()> {
+    let windows = ms.spectral_window()?;
+    let selected_windows: BTreeSet<_> = selected
+        .selected_rows
+        .iter()
+        .map(|row| row.spectral_window_id)
+        .collect();
+    let count = selected_windows.last().map_or(0, |&last| last as usize + 1);
+    let mut maps = RecordValue::default();
+    let mut counts = Vec::new();
+    for window in 0..count {
+        let map = if selected_windows.contains(&(window as i32)) {
+            let frequencies = windows.chan_freq(window)?;
+            counts.push(frequencies.len() as i32);
+            match_channels(axis, channels, &frequencies)
+        } else {
+            Vec::new()
+        };
+        maps.upsert(
+            format!("*{}", window + 1),
+            Value::Array(ArrayValue::from_i32_vec(map)),
+        );
+    }
+    record.upsert(
+        "selectedspw",
+        Value::Array(ArrayValue::from_i32_vec(
+            selected_windows.into_iter().collect(),
+        )),
+    );
+    record.upsert(
+        "nvischanmulti",
+        Value::Array(ArrayValue::from_i32_vec(counts)),
+    );
+    record.upsert("multichanmaprec", Value::Record(maps));
+    record.upsert(
+        "doconversion",
+        Value::Array(ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[count]), false))),
+    );
+    Ok(())
 }
 
 fn selection_mask(ms: &MeasurementSet, selected: &ResolvedMsSelection) -> MsResult<ArrayD<i32>> {
