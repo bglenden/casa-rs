@@ -359,6 +359,9 @@ pub struct SolveBandpassTaskRequest {
     /// Optional frequency interval used to group selected channels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frequency_interval: Option<BandpassFrequencyInterval>,
+    /// Keep independent flags on each correlation during the solve.
+    #[serde(default)]
+    pub correlation_dependent_flags: bool,
     /// Point-source Stokes model.
     #[serde(default = "default_smodel")]
     pub smodel: [f32; 4],
@@ -499,6 +502,7 @@ impl CalibrationTaskRequest {
                     model_source: request.model_source,
                     solve_interval: request.solve_interval,
                     frequency_interval: request.frequency_interval,
+                    correlation_dependent_flags: request.correlation_dependent_flags,
                     smodel: request.smodel,
                     cuts: request.cuts,
                 }),

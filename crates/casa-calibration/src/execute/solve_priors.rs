@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Place diagonal prior calibration on the correct side of a delay solve.
+//! Place diagonal prior calibration on the correct side of a solve.
 
 use super::{
     ApplyExecutionError, ApplyPlan, ArrayValue, EvaluatedApplyRow, HashMap, MeasurementSet,
     evaluate_apply_rows, for_each_apply_row,
 };
 
-pub(crate) fn evaluate_delay_priors(
+pub(crate) enum PriorSolveBoundary {
+    Bandpass,
+    Delay,
+}
+
+pub(crate) fn evaluate_solve_priors(
     ms: &MeasurementSet,
     mut plan: ApplyPlan,
+    boundary: PriorSolveBoundary,
     share_input_flags: bool,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
     // VisEquation::collapse2 corrects DATA with earlier terms and corrupts
@@ -17,11 +23,10 @@ pub(crate) fn evaluate_delay_priors(
     let (data_tables, mut model_tables): (Vec<_>, Vec<_>) =
         std::mem::take(&mut plan.calibration_tables)
             .into_iter()
-            .partition(|table| {
-                matches!(
-                    table.summary.table_subtype.as_str(),
-                    "B Jones" | "BPOLY" | "KAntPos Jones"
-                )
+            .partition(|table| match table.summary.table_subtype.as_str() {
+                "KAntPos Jones" => true,
+                "B Jones" | "BPOLY" => matches!(boundary, PriorSolveBoundary::Delay),
+                _ => false,
             });
     plan.calibration_tables = data_tables;
     let mut rows = evaluate_apply_rows(ms, &plan, share_input_flags)?;

@@ -20,7 +20,9 @@ use super::{
     GainType, RefAntSelector, correlation_receptors, get_f64, get_i32, stokes_name,
 };
 use crate::ApplyCalibrationTableSpec;
-use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows, evaluate_delay_priors};
+use crate::execute::{
+    EvaluatedApplyRow, PriorSolveBoundary, evaluate_apply_rows, evaluate_solve_priors,
+};
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
 use crate::solve::kernel::{RobustSample, SolveGraph};
@@ -34,6 +36,7 @@ use weights::{SpectralWeights, solve_weights};
 
 pub(crate) enum PriorCalibrationMode {
     Data,
+    Bandpass { share_input_flags: bool },
     Delay { share_input_flags: bool },
 }
 
@@ -61,8 +64,11 @@ pub(crate) fn load_preapplied_rows(
     })?;
     let preapplied = match mode {
         PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false),
+        PriorCalibrationMode::Bandpass { share_input_flags } => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Bandpass, share_input_flags)
+        }
         PriorCalibrationMode::Delay { share_input_flags } => {
-            evaluate_delay_priors(ms, plan, share_input_flags)
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags)
         }
     };
     preapplied
@@ -663,6 +669,8 @@ pub(crate) struct SolveAccumulator {
     /// Data channels per solution: 1 when the selected channels solve
     /// together, else the row's channel count.
     pub(crate) solution_channels: usize,
+    /// A single parallel hand in channelized G solves occupies parameter zero.
+    pub(crate) scalar_bandpass: bool,
     /// `[solution channel][receptor]`, filled by [`Self::finalize_for_solve`].
     pub(crate) channel_graphs: Vec<Vec<SolveGraph>>,
     /// The solution's TIME, set by [`Self::finalize_for_solve`].
@@ -759,6 +767,7 @@ impl SolveAccumulator {
             antenna_ids: BTreeSet::new(),
             unique_time_bits: BTreeSet::new(),
             solution_channels: 1,
+            scalar_bandpass: false,
             channel_graphs: Vec::new(),
             solution_time: 0.0,
             attempted: false,
@@ -927,6 +936,9 @@ impl SolveAccumulator {
             self.solution_channels = self.solution_channels.max(channel_count);
         }
 
+        let scalar_bandpass =
+            options.channelized && options.gain_type == GainType::G && correlation_types.len() == 1;
+        self.scalar_bandpass = scalar_bandpass && (self.sample_rows == 0 || self.scalar_bandpass);
         let graph_count = match options.gain_type {
             GainType::G | GainType::K => 2,
             GainType::T | GainType::KCross => {
@@ -991,6 +1003,7 @@ impl SolveAccumulator {
             }
             let graph_index = match options.gain_type {
                 GainType::K if correlation_types.len() == 1 => 0,
+                GainType::G if scalar_bandpass => 0,
                 GainType::G | GainType::K => receptors.0,
                 GainType::T | GainType::KCross => 0,
             };
@@ -1092,6 +1105,19 @@ impl SolveAccumulator {
     /// averaged over its rows by row weight as time averaging does, weighted
     /// by the baseline's solve weight after that phase-only scaling.
     pub(crate) fn finalize_for_solve(&mut self, solve_mode: GainSolveMode, preserve_samples: bool) {
+        self.finalize(solve_mode, preserve_samples, false);
+    }
+
+    pub(crate) fn finalize_bandpass(&mut self) {
+        self.finalize(GainSolveMode::AmplitudePhase, false, true);
+    }
+
+    fn finalize(
+        &mut self,
+        solve_mode: GainSolveMode,
+        preserve_samples: bool,
+        direct_centroid: bool,
+    ) {
         self.channel_graphs = vec![
             vec![SolveGraph::default(); self.receptor_accumulations.len()];
             self.solution_channels
@@ -1163,6 +1189,10 @@ impl SolveAccumulator {
             }
         }
 
+        if direct_centroid {
+            self.solution_time = self.bandpass_centroid(baseline_weights);
+            return;
+        }
         let mut solution_time = WeightedTime::default();
         for (baseline, weight) in baseline_weights {
             let Some(centroid) = self.baseline_centroids.get(&baseline) else {
@@ -1175,6 +1205,47 @@ impl SolveAccumulator {
             .unwrap_or_else(|| self.aggregate_time());
     }
 
+    fn bandpass_centroid(&self, weights: HashMap<AveragedBaseline, f64>) -> f64 {
+        let mut baselines = weights.into_iter().collect::<Vec<_>>();
+        baselines.sort_unstable_by_key(|(baseline, _)| {
+            (
+                baseline.field_id,
+                baseline.data_desc_id,
+                baseline.start_bits,
+                baseline.antennas,
+            )
+        });
+        // SDBList::aggregateTimeCentroid uses absolute epochs. Rounding at
+        // an integration boundary decides which two solutions CASA blends.
+        let mut sum = 0.0;
+        let mut total = 0.0;
+        for buffer in baselines.chunk_by(|(left, _), (right, _)| {
+            (left.field_id, left.data_desc_id, left.start_bits)
+                == (right.field_id, right.data_desc_id, right.start_bits)
+        }) {
+            let mut buffer_sum = 0.0;
+            let mut buffer_total = 0.0;
+            for (baseline, weight) in buffer {
+                let Some(time) = self
+                    .baseline_centroids
+                    .get(baseline)
+                    .and_then(|time| time.mean())
+                else {
+                    continue;
+                };
+                let weight = f64::from(*weight as f32);
+                buffer_sum += weight * time;
+                buffer_total += weight;
+            }
+            sum += buffer_sum;
+            total += buffer_total;
+        }
+        if total > 0.0 {
+            sum / total
+        } else {
+            self.aggregate_time()
+        }
+    }
     /// Add `other`'s accumulation, of the same group, to this one before
     /// [`Self::finalize_for_solve`], as if its samples had been observed
     /// here: the fragment work units of the MSv2/MSv4 trial accumulate apart

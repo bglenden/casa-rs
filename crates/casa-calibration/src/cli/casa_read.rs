@@ -155,12 +155,14 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         append: task.flag("append")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("caltable")?),
-        refant: refant(&task.required_text("refant")?)?,
+        refant: bandpass_refant(&task.required_text("refant")?, band_type)?,
         prior_calibration_tables: chain(task, Chain::Solve)?,
         parang: task.flag("parang")?,
         combine: BandpassSolveCombine {
             scans: combine.scans,
             fields: combine.fields,
+            observations: combine.observations,
+            spectral_windows: combine.spectral_windows,
         },
         band_type,
         normalize_average_amplitude: task.flag("solnorm")?,
@@ -169,6 +171,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         model_source,
         solve_interval: parse_time_solint(time_interval)?,
         frequency_interval: parse_frequency_solint(frequency_interval)?,
+        correlation_dependent_flags: task.flag("corrdepflags")?,
         smodel,
         cuts: Some(BandpassSolveCuts {
             min_baselines_per_antenna: count(task, "minblperant")?,
@@ -298,7 +301,7 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
 /// CASA's selection: `field`, `spw` and `intent` always; the others are inactive,
 /// and so unset, while `selectdata` is not.
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
-    let full = task.surface() != "bandpass";
+    let full = task.surface() != "bandpass" || task.required_text("bandtype")? == "B";
     let text = |name: &str| {
         task.text(name).map(|value| {
             if full {
@@ -314,39 +317,34 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         spw: text("spw")?,
         antenna: text("antenna")?,
         scan: text("scan")?,
-        observation: if full {
-            selector_text(task.value("observation"))
-        } else {
-            text("observation")?
-        },
+        observation: selector_text(task.value("observation")),
         array: text("array")?,
         timerange: text("timerange")?,
         msselect: text("msselect")?,
         ..MsSelection::default()
     };
-    if !full {
-        return Ok(selection);
-    }
-    selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
-    selection.uvrange = uv_selector_text(task.value("uvrange"));
-    // calibrater.selectvis converts these variants with toCasaString, which
-    // removes one outer bracket pair even when the input was a string.
-    for selector in [
-        &mut selection.field,
-        &mut selection.spw,
-        &mut selection.intent,
-        &mut selection.timerange,
-        &mut selection.uvrange,
-        &mut selection.antenna,
-        &mut selection.scan,
-        &mut selection.observation,
-    ] {
-        if let Some(text) = selector
-            && let Some(inner) = text
-                .strip_prefix('[')
-                .and_then(|text| text.strip_suffix(']'))
-        {
-            *selector = (!inner.is_empty()).then(|| inner.to_string());
+    if full {
+        selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
+        selection.uvrange = uv_selector_text(task.value("uvrange"));
+        // calibrater.selectvis converts these variants with toCasaString, which
+        // removes one outer bracket pair even when the input was a string.
+        for selector in [
+            &mut selection.field,
+            &mut selection.spw,
+            &mut selection.intent,
+            &mut selection.timerange,
+            &mut selection.uvrange,
+            &mut selection.antenna,
+            &mut selection.scan,
+            &mut selection.observation,
+        ] {
+            if let Some(text) = selector
+                && let Some(inner) = text
+                    .strip_prefix('[')
+                    .and_then(|text| text.strip_suffix(']'))
+            {
+                *selector = (!inner.is_empty()).then(|| inner.to_string());
+            }
         }
     }
     // CASA accepts these parameters even when disabled, retaining their input
@@ -359,7 +357,7 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         selection.observation = None;
         selection.msselect = None;
     }
-    if task.surface() == "gaincal" {
+    if full && matches!(task.surface(), "gaincal" | "bandpass") {
         // The public task always adds this predicate, including when the
         // optional selectors are disabled.
         selection.msselect = Some(match selection.msselect {
@@ -758,7 +756,10 @@ fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
     let upper = text.to_ascii_uppercase();
     let spectral_windows = upper.contains("SPW");
     let observations = upper.contains("OBS");
-    if task.surface() == "bandpass" && (spectral_windows || observations) {
+    if (spectral_windows || observations)
+        && task.surface() == "bandpass"
+        && task.required_text("bandtype")? == "BPOLY"
+    {
         return Err(not_yet("combine", &text));
     }
     Ok(GainSolveCombine {
@@ -769,10 +770,17 @@ fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
     })
 }
 
-/// CASA's `refant`: one antenna, by name or id. CASA's ranked lists, and
-/// its default `''`, a solve with no reference antenna, are not
-/// implemented yet.
-fn refant(text: &str) -> Result<RefAntSelector, TaskFailure> {
+fn bandpass_refant(text: &str, band_type: BandpassType) -> Result<RefAntSelector, TaskFailure> {
+    if band_type == BandpassType::B {
+        return Ok(if text.trim().is_empty() {
+            RefAntSelector::Unspecified
+        } else {
+            RefAntSelector::Expression {
+                selection: text.trim().to_string(),
+                strict: false,
+            }
+        });
+    }
     if text.trim().is_empty() {
         return Err(not_yet("refant", text));
     }

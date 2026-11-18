@@ -347,7 +347,7 @@ fn combined_fields_keep_casas_interval_boundaries() {
 /// Gaincal accepts either correlation layout on descriptions of the same
 /// window. Bandpass support is tracked on its own calibration ticket.
 #[test]
-fn gaincal_accepts_data_descriptions_sharing_a_window() {
+fn gaincal_and_bandpass_accept_data_descriptions_sharing_a_window() {
     for cross_hands in [false, true] {
         let dir = TempDir::new().unwrap();
         let ms =
@@ -359,17 +359,8 @@ fn gaincal_accepts_data_descriptions_sharing_a_window() {
         };
         let value = returned(dir.path(), "gaincal", parameters("g.gcal"));
         assert_eq!(ints(entry(entry(&value, "selectvis"), "spw")), [0]);
-        let (output, reply) = json_run(dir.path(), "bandpass", parameters("b.bcal"));
-        match reply {
-            Some(TaskReply::Failed { message, .. }) => assert!(
-                message.contains("share spectral window 0") && message.contains("#979"),
-                "{message}"
-            ),
-            other => panic!(
-                "bandpass {cross_hands}: {other:?}\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        }
+        let value = returned(dir.path(), "bandpass", parameters("b.bcal"));
+        assert_eq!(ints(entry(entry(&value, "selectvis"), "spw")), [0]);
     }
 }
 

@@ -15344,18 +15344,18 @@
         },
         {
           "name": "intent",
-          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 3},
           "order": 4,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
-            "provider": {"field": "intent"},
+            "provider": {"field": "intent", "adapter": "identity"},
             "python": {"name": "intent"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
         },
         {
           "name": "selectdata",
@@ -15378,7 +15378,7 @@
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "START:END"},
             "provider": {"field": "timerange", "adapter": "omit_none"},
@@ -15388,18 +15388,18 @@
         },
         {
           "name": "uvrange",
-          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 4},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
-            "provider": {"field": "uvrange"},
-            "python": {"name": "uvrange"},
+            "provider": {"field": "uvrange", "adapter": "identity"},
+            "python": {"name": "uvrange", "type_hint": "str | int | float | list[str]"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}, {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}]}}
         },
         {
           "name": "antenna",
@@ -15407,7 +15407,7 @@
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--antenna"], "metavar": "IDS"},
             "provider": {"field": "antenna", "adapter": "omit_none"},
@@ -15421,7 +15421,7 @@
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--scan"], "metavar": "IDS"},
             "provider": {"field": "scan", "adapter": "omit_none"},
@@ -15431,18 +15431,17 @@
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 4},
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--observation"], "metavar": "IDS"},
-            "provider": {"field": "observation", "adapter": "omit_none"},
-            "python": {"name": "observation"},
+            "provider": {"field": "observation", "adapter": "identity"},
+            "python": {"name": "observation", "type_hint": "str | int"},
             "presentation": {"label": "Observation IDs", "group": "Selection"}
-          },
-          "unimplemented_forms": {"issue": 979, "forms": "an observation id as a number (give it as text: observation='0')"}
+          }
         },
         {
           "name": "msselect",
@@ -15450,7 +15449,7 @@
           "order": 11,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--msselect"], "metavar": "EXPR"},
             "provider": {"field": "msselect", "adapter": "omit_none"},
@@ -15492,7 +15491,7 @@
           "concept": {"id": "parameter.refant", "semantic_revision": 1},
           "order": 14,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "always"},
+          "required_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--refant"], "metavar": "ANTENNA"},
@@ -15585,7 +15584,7 @@
             "python": {"name": "corrdepflags"},
             "presentation": {"label": "Correlation-dependent Flags", "group": "Solve", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
         },
         {
           "name": "append",

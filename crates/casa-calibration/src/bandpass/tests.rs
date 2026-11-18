@@ -3,6 +3,7 @@
 
 use ndarray::Array2;
 
+use super::bpoly::fit_bpoly_row;
 use super::*;
 use crate::solve::grouping::{SolveSampleRow, SolveSamples};
 
@@ -67,9 +68,9 @@ fn solved_antennas(group: &SolveAccumulator, cuts: BandpassSolveCuts) -> BTreeSe
         &BTreeSet::from([0, 1, 2, 3]),
         0,
         BandpassSolveCombine::default(),
-        false,
         Some(cuts),
         BandpassType::B,
+        (false, false),
     );
     rows.iter()
         .filter(|row| !row.flags[0])
@@ -154,6 +155,7 @@ fn solution(wild: &[usize], flagged: &[usize]) -> (BandpassSolutionRow, Vec<f64>
         field_id: 0,
         spw_id: 0,
         antenna_id: 1,
+        refant_id: 0,
         scan_number: 1,
         observation_id: 0,
         channel_count: CHANNELS,

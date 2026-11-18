@@ -13,6 +13,7 @@ import numpy as np
 
 from applycal_oracle import copy_ms
 from calibration_lifecycle_oracle import contents
+from gaincal_delay_oracle import duplicate_rows, make_priors
 from gaincal_oracle import relative_rms
 from record_casa_returns import make_cal_ms
 
@@ -56,14 +57,15 @@ def gapped_data(source, target):
 
 
 def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,),
-            solint='inf', interval_count=None, parang=False, minsnr=0., spw='', bins=None):
+            solint='inf', interval_count=None, parang=False, minsnr=0., spw='', bins=None,
+            apply_spwmap=None, refant='A0', priors=(), **solve_options):
     products, corrected, returns, windows = [], [], [], []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
         copy_ms(source, ms)
-        result = engine.bandpass(str(ms), str(output), field='0', spw=spw, refant='A0',
+        result = engine.bandpass(str(ms), str(output), field='0', spw=spw, refant=refant,
                                  smodel=list(s_model), minsnr=minsnr, solnorm=normalize,
-                                 fillgaps=fillgaps, solint=solint, parang=parang)
+                                 fillgaps=fillgaps, solint=solint, parang=parang, **solve_options)
         if interval_count is not None:
             np.testing.assert_array_equal(result['solvestats']['expected'], [interval_count]*2)
         np.testing.assert_array_equal(result.pop('solve_tables'), [str(output)])
@@ -71,12 +73,13 @@ def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s
         products.append(contents(output))
         if bins is not None:
             windows.append(contents(output/'SPECTRAL_WINDOW'))
-        engine.applycal(str(ms), field='0', gaintable=[str(output)], flagbackup=False, spw=spw,
-                        parang=parang)
+        engine.applycal(str(ms), field='0', gaintable=[*priors, str(output)], flagbackup=False, spw=spw,
+                        parang=parang, **({'spwmap': [apply_spwmap]} if apply_spwmap else {}))
         corrected.append(contents(ms))
     np.testing.assert_equal(returns[1], returns[0])
     expected, actual = products
-    for column in ('FLAG', 'ANTENNA1', 'ANTENNA2', 'FIELD_ID', 'SPECTRAL_WINDOW_ID'):
+    for column in ('FLAG', 'ANTENNA1', 'ANTENNA2', 'FIELD_ID', 'SPECTRAL_WINDOW_ID',
+                   'OBSERVATION_ID', 'SCAN_NUMBER', 'INTERVAL'):
         np.testing.assert_array_equal(actual[column], expected[column], err_msg=column)
     np.testing.assert_allclose(actual['TIME'], expected['TIME'], rtol=0., atol=1e-4)
     if interval_count is not None:
@@ -179,6 +182,76 @@ def frequency_cases(root, source, native):
     return results
 
 
+def selection_cases(root, source, native):
+    shared = root/'shared-window.ms'
+    copy_ms(source, shared)
+    tool = table()
+    assert duplicate_rows(tool, shared/'DATA_DESCRIPTION') == 1
+    count = duplicate_rows(tool, shared)
+    tool.open(str(shared), nomodify=False)
+    try:
+        tool.putcol('DATA_DESC_ID', np.ones(count, dtype=np.int32), count, count)
+        tool.putcol('DATA', 2*tool.getcol('DATA', count, count), count, count)
+        for column in ('TIME', 'TIME_CENTROID'):
+            tool.putcol(column, tool.getcol(column, count, count) + 5., count, count)
+    finally:
+        tool.close()
+    selected = root/'observing-selection.ms'
+    copy_ms(source, selected)
+    tool.open(str(selected/'SPECTRAL_WINDOW'), nomodify=False)
+    try:
+        tool.putcell('NAME', 0, 'CALWINDOW')
+    finally:
+        tool.close()
+    tool.open(str(selected/'STATE'), nomodify=False)
+    try:
+        first = tool.nrows()
+        tool.addrows(2)
+        tool.putcell('OBS_MODE', first, 'CALIBRATE_BANDPASS#ON_SOURCE')
+        tool.putcell('OBS_MODE', first+1, 'CALIBRATE_PHASE#ON_SOURCE')
+    finally:
+        tool.close()
+    tool.open(str(selected), nomodify=False)
+    try:
+        time = tool.getcol('TIME')
+        bandpass = time < np.median(time)
+        tool.putcol('STATE_ID', np.where(bandpass, first, first+1).astype(np.int32))
+        uvw = tool.getcol('UVW')
+        uvw[0] = np.where(time < np.quantile(time, .25), 10., 100.)
+        uvw[1:] = 0.
+        tool.putcol('UVW', uvw)
+    finally:
+        tool.close()
+    correlation_flags = root/'correlation-flags.ms'
+    copy_ms(source, correlation_flags)
+    tool.open(str(correlation_flags), nomodify=False)
+    try:
+        flags = tool.getcol('FLAG')
+        flags[0, 2] = True
+        flags[1, 8] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    cases = [
+        ('shared-window', shared, dict(interval_count=2)),
+        ('selection', selected, dict(intent='*BANDPASS*', uvrange='<50m', observation=0,
+                                     spw='CALWINDOW:2~7', bins=[[channel] for channel in range(2, 8)])),
+        ('selectdata-disabled', selected, dict(intent='*BANDPASS*', selectdata=False,
+                                               uvrange='>10000km', antenna='MISSING')),
+        ('coupled-flags', correlation_flags, dict(remaining_flags=[2, 8])),
+        ('independent-flags', correlation_flags, dict(corrdepflags=True)),
+    ]
+    results = {}
+    for label, dataset, options in cases:
+        folder = root/label
+        folder.mkdir()
+        results[label] = compare(folder, dataset, native, False, **options)
+    flagged = contents(root/'independent-flags'/'casa.B')['FLAG']
+    assert np.all(flagged[0, 2]) and not np.any(flagged[1, 2])
+    assert np.all(flagged[1, 8]) and not np.any(flagged[0, 8])
+    return results
+
+
 def model_cases(root, source, native):
     scratch = root/'scratch-model.ms'
     copy_ms(source, scratch)
@@ -233,6 +306,267 @@ def model_cases(root, source, native):
     return results
 
 
+def combination_cases(root, source, native):
+    observations = root/'two-observations.ms'
+    copy_ms(source, observations)
+    tool = table()
+    observation = duplicate_rows(tool, observations/'OBSERVATION')
+    count = duplicate_rows(tool, observations)
+    tool.open(str(observations), nomodify=False)
+    try:
+        tool.putcol('OBSERVATION_ID', np.full(count, observation, dtype=np.int32), count, count)
+        tool.putcol('DATA', 1.4*tool.getcol('DATA', count, count), count, count)
+        for column in ('TIME', 'TIME_CENTROID'):
+            tool.putcol(column, tool.getcol(column, count, count) + 5., count, count)
+    finally:
+        tool.close()
+    windows = root/'two-windows.ms'
+    copy_ms(observations, windows)
+    assert duplicate_rows(tool, windows/'SPECTRAL_WINDOW') == 1
+    assert duplicate_rows(tool, windows/'DATA_DESCRIPTION') == 1
+    tool.open(str(windows/'DATA_DESCRIPTION'), nomodify=False)
+    try:
+        tool.putcell('SPECTRAL_WINDOW_ID', 1, 1)
+    finally:
+        tool.close()
+    tool.open(str(windows/'SPECTRAL_WINDOW'), nomodify=False)
+    try:
+        tool.putcell('CHAN_FREQ', 1, tool.getcell('CHAN_FREQ', 0)+30.e6)
+        tool.putcell('REF_FREQUENCY', 1, tool.getcell('REF_FREQUENCY', 0)+30.e6)
+        for column in ('CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION'):
+            tool.putcell(column, 1, 2*tool.getcell(column, 0))
+    finally:
+        tool.close()
+    tool.open(str(windows), nomodify=False)
+    try:
+        tool.putcol('DATA_DESC_ID', np.ones(count, dtype=np.int32), count, count)
+    finally:
+        tool.close()
+    cases = [
+        ('combine-obs', observations, '', 'obs', 1, None),
+        ('combine-spw-keep-obs', windows, '0,1', 'spw', 2, None),
+        ('combine-obs-and-spw', windows, '1,0', 'spw,obs', 1, [0, 0]),
+    ]
+    results = {}
+    for label, dataset, spw, combine, intervals, mapping in cases:
+        folder = root/label
+        folder.mkdir()
+        results[label] = compare(folder, dataset, native, False, combine=combine, spw=spw,
+                                 apply_spwmap=mapping, interval_count=intervals)
+        if spw:
+            expected, actual = (contents(folder/f'{engine}.B'/'SPECTRAL_WINDOW')
+                                for engine in ('casa', 'native'))
+            for key in ('CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'FLAG_ROW', 'TOTAL_BANDWIDTH'):
+                np.testing.assert_array_equal(actual[key], expected[key], err_msg=key)
+            np.testing.assert_array_equal(actual['CHAN_FREQ'][:2, 0], [100.020e9, 100.021e9])
+            np.testing.assert_allclose(actual['CHAN_WIDTH'][:, 0], 5e6/3., rtol=1e-15)
+
+    flagged = root/'flagged-reference-window.ms'
+    copy_ms(windows, flagged)
+    tool.open(str(flagged), nomodify=False)
+    try:
+        flags = tool.getcol('FLAG')
+        flags[..., tool.getcol('DATA_DESC_ID') == 0] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    label = 'combine-spw-with-flagged-anchor'
+    folder = root/label
+    folder.mkdir()
+    results[label] = compare(folder, flagged, native, False, combine='spw', spw='0,1')
+    expected, actual = (contents(folder/f'{engine}.B'/'SPECTRAL_WINDOW')
+                        for engine in ('casa', 'native'))
+    for key in ('CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'FLAG_ROW', 'TOTAL_BANDWIDTH'):
+        np.testing.assert_array_equal(actual[key], expected[key], err_msg=key)
+    np.testing.assert_array_equal(actual['FLAG_ROW'], [True, False])
+    np.testing.assert_array_equal(actual['CHAN_FREQ'][:2, 0], [100.020e9, 100.021e9])
+
+    simultaneous = root/'simultaneous-windows.ms'
+    copy_ms(windows, simultaneous)
+    tool.open(str(simultaneous), nomodify=False)
+    try:
+        time = tool.getcol('TIME')
+        time = 5084545960.3 + (time - time.min())
+        time[count:] = time[:count]
+        tool.putcol('TIME', time)
+        tool.putcol('TIME_CENTROID', time)
+        tool.putcol('OBSERVATION_ID', np.zeros(len(time), dtype=np.int32))
+        sigma = np.ones_like(tool.getcol('SIGMA'))
+        sigma[:, count:] = .5
+        tool.putcol('SIGMA', sigma)
+        tool.putcol('WEIGHT', 1./sigma**2)
+        flags = tool.getcol('FLAG')
+        antenna = tool.getcol('ANTENNA1')
+        flags[:, 1, (time == np.unique(time)[1]) & (antenna == 0)] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    label = 'combine-spw-buffer-time'
+    folder = root/label
+    folder.mkdir()
+    results[label] = compare(folder, simultaneous, native, False, combine='spw',
+                             spw='0,1', solint='int', interval_count=6, apply_spwmap=[0, 0])
+    expected, actual = (contents(folder/f'{engine}.B') for engine in ('casa', 'native'))
+    np.testing.assert_array_equal(actual['TIME'], expected['TIME'])
+    return results
+
+
+def reference_cases(root, source, native):
+    intermittently_flagged = root/'intermittent-reference.ms'
+    copy_ms(source, intermittently_flagged)
+    tool = table()
+    tool.open(str(intermittently_flagged), nomodify=False)
+    try:
+        time = tool.getcol('TIME')
+        second = np.unique(time)[1]
+        first, last = (tool.getcol(key) for key in ('ANTENNA1', 'ANTENNA2'))
+        flags = tool.getcol('FLAG')
+        flags[..., (time == second) & ((first == 0) | (last == 0))] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    cases = [
+        ('no-reference', '', [-1]*6),
+        ('nearest-reference', 'A0', [0, 2, 2, 0, 0, 0]),
+        ('ranked-reference', 'A0,A3', [0, 3, 3, 0, 0, 0]),
+        ('reference-range', '0~2', [0, 1, 1, 0, 0, 0]),
+    ]
+    results = {}
+    for label, selector, references in cases:
+        folder = root/label
+        folder.mkdir()
+        results[label] = compare(folder, intermittently_flagged, native, False, refant=selector,
+                                 solint='int', interval_count=6, minblperant=3)
+        actual = contents(folder/'native.B')
+        np.testing.assert_array_equal(actual['ANTENNA2'][::5], references)
+    for label, field, selector, minbl, attempted in [
+        ('missing-reference', '0', 'MISSING,A3', 4, False),
+        ('no-matching-field', 'MISSING', 'A0', 4, False),
+        ('invalid-field-and-reference', 'MISSING', 'MISSING', 4, False),
+        ('too-few-baselines', '0', 'A0', 8, True),
+    ]:
+        folder = root/label
+        folder.mkdir()
+        returns = []
+        for name, engine in [('casa', casa), ('native', native)]:
+            ms, output = folder/f'{name}.ms', folder/f'{name}.B'
+            copy_ms(source, ms)
+            result = engine.bandpass(str(ms), str(output), field=field, refant=selector,
+                                     minblperant=minbl)
+            assert not output.exists(), (label, name)
+            assert ('solvestats' in result) == attempted
+            np.testing.assert_array_equal(result.pop('solve_tables'), [str(output)] if attempted else [])
+            returns.append(result)
+        np.testing.assert_equal(returns[1], returns[0])
+        results[label] = {}
+    return results
+
+
+def scalar_cases(root, native):
+    results = {}
+    for hand in ['XX', 'YY']:
+        folder = root/f'scalar-{hand.lower()}'
+        folder.mkdir()
+        source = folder/'source.ms'
+        source_data(source, stokes=hand)
+        errors = compare(folder, source, native, False, refant='')
+        expected = contents(folder/'casa.B')
+        np.testing.assert_array_equal(expected['CPARAM'][1], 0.)
+        np.testing.assert_array_equal(expected['FLAG'][0], False)
+        np.testing.assert_array_equal(expected['FLAG'][1], True)
+        for reader, engine in [('casa', casa), ('native', native)]:
+            writer = 'native' if reader == 'casa' else 'casa'
+            ms = folder/f'{reader}-interop.ms'
+            copy_ms(source, ms)
+            engine.applycal(str(ms), field='0', gaintable=[str(folder/f'{writer}.B')],
+                            flagbackup=False)
+            corrected = contents(ms)
+            np.testing.assert_array_equal(corrected['FLAG'], False)
+            errors[f'{reader}_interop'] = relative_rms(
+                corrected['CORRECTED_DATA'], contents(folder/f'{reader}.ms')['CORRECTED_DATA'])
+        results[folder.name] = errors
+    return results
+
+
+def prior_cases(root, source, native):
+    folder = root/'prior-fixtures'
+    folder.mkdir()
+    gains, _ = make_priors(folder, source)
+    delay = str(folder/'delay.K')
+    casa.gaincal(str(source), delay, field='0', gaintype='K', refant='A0', minsnr=0., smodel=[1.])
+    chain = [delay, *gains]
+    library = folder/'chain.callib'
+    library.write_text(''.join(f"caltable='{path}' tinterp='nearest' calwt=True spwmap=[0]\n"
+                               for path in chain))
+
+    flagged = folder/'flagged.G'
+    copy_ms(Path(gains[0]), flagged)
+    tool = table()
+    tool.open(str(flagged), nomodify=False)
+    try:
+        flags = tool.getcol('FLAG')
+        flags[0, :, tool.getcol('ANTENNA1') == 0] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    cases = [
+        ('prior-chain', chain, dict(gaintable=chain)),
+        ('prior-callib', chain, dict(docallib=True, callib=str(library))),
+        ('prior-flagged-receptor', [str(flagged)], dict(gaintable=[str(flagged)])),
+    ]
+    results = {}
+    for label, previous, options in cases:
+        case = root/label
+        case.mkdir()
+        results[label] = compare(case, source, native, False, priors=previous, minblperant=3,
+                                 **options)
+    flags = contents(root/'prior-flagged-receptor'/'casa.B')['FLAG']
+    assert np.all(flags[0, :, 0]) and not np.any(flags[1, :, 0])
+    for label, field, expected_priors in [
+        ('invalid-selection-with-prior', 'MISSING', []),
+        ('invalid-reference-with-prior', '0', gains[:1]),
+    ]:
+        returns = []
+        for name, engine in [('casa', casa), ('native', native)]:
+            output = root/f'{label}-{name}.B'
+            record = engine.bandpass(str(source), str(output), field=field, refant='MISSING',
+                                     gaintable=gains[:1])
+            assert not output.exists()
+            np.testing.assert_array_equal(record['apply_tables'], expected_priors)
+            np.testing.assert_array_equal(record['solve_tables'], [])
+            returns.append(record)
+        np.testing.assert_equal(returns[1], returns[0])
+        results[label] = {}
+    return results
+
+
+def fluxscale_workflow(root, source, native):
+    input_ms = root/'flux-transfer.ms'
+    copy_ms(source, input_ms)
+    tool = table()
+    tool.open(str(input_ms), nomodify=False)
+    try:
+        data = tool.getcol('DATA')
+        data[..., tool.getcol('FIELD_ID') == 1] *= 2.5
+        tool.putcol('DATA', data)
+    finally:
+        tool.close()
+    products = []
+    for name, engine in [('casa', casa), ('native', native)]:
+        vis = root/f'{name}-flux.ms'
+        copy_ms(input_ms, vis)
+        bandpass, gain, flux = (str(root/f'{name}.{family}') for family in ('B', 'G', 'flux'))
+        engine.bandpass(str(vis), bandpass, field='0', refant='A0', minsnr=0., smodel=[1.])
+        engine.gaincal(str(vis), gain, refant='A0', minsnr=0., smodel=[1.],
+                       gaintable=[bandpass], gainfield=['0'])
+        result = engine.fluxscale(str(vis), gain, flux, reference=['0'], transfer=['1'])
+        products.append((result['1']['0']['fluxd'][0], contents(Path(flux))['CPARAM']))
+    (casa_flux, casa_gains), (native_flux, native_gains) = products
+    np.testing.assert_allclose(casa_flux, 2.5, rtol=.015)
+    return {'flux': abs(native_flux/casa_flux - 1.),
+            'CPARAM': relative_rms(native_gains, casa_gains)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -268,9 +602,15 @@ def main():
         results[folder.name] = compare(folder, source, native, False, solint=interval,
                                        interval_count=count)
     results.update(frequency_cases(root, source, native))
+    results.update(selection_cases(root, source, native))
+    results.update(combination_cases(root, source, native))
+    results.update(reference_cases(root, source, native))
+    results.update(scalar_cases(root, native))
+    results.update(prior_cases(root, source, native))
+    results['bandpass-gains-fluxscale'] = fluxscale_workflow(root, source, native)
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, report in results.items():
-        assert max(report.values()) < 1e-3, (name, report)
+        assert max(report.values(), default=0.) < 1e-3, (name, report)
 
 
 if __name__ == '__main__':

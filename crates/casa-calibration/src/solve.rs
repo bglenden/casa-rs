@@ -648,7 +648,10 @@ pub(crate) fn solve_closed_group(
 
 /// The antennas other than `refant_id`, nearest it first: the alternates
 /// `SolvableVisJones::applyRefAnt` tries when the reference antenna is flagged.
-fn refant_distance_order(ms: &MeasurementSet, refant_id: i32) -> Result<Vec<i32>, GainSolveError> {
+pub(crate) fn refant_distance_order(
+    ms: &MeasurementSet,
+    refant_id: i32,
+) -> Result<Vec<i32>, GainSolveError> {
     let antenna = ms
         .antenna()
         .map_err(|source| GainSolveError::OpenMeasurementSet {

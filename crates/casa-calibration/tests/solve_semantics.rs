@@ -94,6 +94,7 @@ fn bandpass_request(
         model_source: Default::default(),
         solve_interval: Default::default(),
         frequency_interval: None,
+        correlation_dependent_flags: false,
         selection: MsSelection::new().field(&[0]).spw(&[0]),
         output_table,
         refant: RefAntSelector::AntennaId(0),

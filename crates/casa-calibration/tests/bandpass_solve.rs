@@ -114,6 +114,7 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
         model_source: Default::default(),
         solve_interval: Default::default(),
         frequency_interval: None,
+        correlation_dependent_flags: false,
         selection: MsSelection::new().field(&[0]).spw(&[0]),
         output_table: bandpass_table.clone(),
         refant: RefAntSelector::AntennaId(0),
@@ -136,9 +137,11 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
     ] {
         let invalid = BandpassSolveRequest {
             refant,
+            band_type: BandpassType::BPoly,
             ..request.clone()
         };
-        let error = run_bandpass_solve(&ms_path, &invalid).expect_err("gain-only reference");
+        let error =
+            run_bandpass_solve(&ms_path, &invalid).expect_err("legacy reference restriction");
         assert!(error.to_string().contains("requires one reference antenna"));
         assert!(!bandpass_table.exists());
     }
@@ -225,6 +228,7 @@ fn solve_bandpass_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
             model_source: Default::default(),
             solve_interval: Default::default(),
             frequency_interval: None,
+            correlation_dependent_flags: false,
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),
@@ -332,6 +336,7 @@ fn solve_bandpass_with_prior_gain_corrects_dense_synthetic_ms_downstream() {
             model_source: Default::default(),
             solve_interval: Default::default(),
             frequency_interval: None,
+            correlation_dependent_flags: false,
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),
@@ -498,6 +503,7 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
             model_source: Default::default(),
             solve_interval: Default::default(),
             frequency_interval: None,
+            correlation_dependent_flags: false,
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),
@@ -506,6 +512,7 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
             combine: BandpassSolveCombine {
                 scans: true,
                 fields: false,
+                ..BandpassSolveCombine::default()
             },
             band_type: BandpassType::B,
             normalize_average_amplitude: false,
@@ -643,6 +650,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
             model_source: Default::default(),
             solve_interval: Default::default(),
             frequency_interval: None,
+            correlation_dependent_flags: false,
             selection: MsSelection::new().field(&[0, 1]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),
@@ -651,6 +659,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
             combine: BandpassSolveCombine {
                 scans: false,
                 fields: true,
+                ..BandpassSolveCombine::default()
             },
             band_type: BandpassType::B,
             normalize_average_amplitude: false,
@@ -755,6 +764,7 @@ fn solve_bandpass_with_solnorm_normalizes_per_receptor_average_amplitude() {
             model_source: Default::default(),
             solve_interval: Default::default(),
             frequency_interval: None,
+            correlation_dependent_flags: false,
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),
@@ -881,6 +891,7 @@ fn solve_bpoly_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
             model_source: Default::default(),
             solve_interval: Default::default(),
             frequency_interval: None,
+            correlation_dependent_flags: false,
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),

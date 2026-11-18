@@ -1,47 +1,119 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Reference phase, normalization and gap interpolation for B solution rows.
 
+use std::collections::BTreeMap;
+
 use casa_types::Complex32;
 
-use super::{BandpassSolutionRow, BandpassSolveCuts, BandpassType};
-use crate::solve::kernel::SolvedGraphs;
+use super::BandpassSolutionRow;
+use crate::solve::phase_only;
+use crate::solve_stats::SolveStatsBuilder;
 
-pub(super) fn bandpass_reference_phases(
-    solved_channels: &[Option<SolvedGraphs>],
-    refant_id: i32,
-    cuts: Option<BandpassSolveCuts>,
-    band_type: BandpassType,
-) -> Vec<[Complex32; 2]> {
-    solved_channels
-        .iter()
-        .map(|solved| {
-            std::array::from_fn(|receptor| {
-                let unity = Complex32::new(1.0, 0.0);
-                if band_type == BandpassType::BPoly {
-                    return unity;
+/// Apply CASA's flex reference phase to the [receptor, channel] grid. A
+/// reference must have a valid channel in every solved receptor in both
+/// intervals, but its phase is removed only where it has a valid channel.
+pub(super) fn reference_bandpass_rows(
+    rows: &mut [BandpassSolutionRow],
+    preferred: i32,
+    alternates: &[i32],
+    strict: bool,
+    stats: &mut SolveStatsBuilder,
+) {
+    let mut intervals = BTreeMap::<_, Vec<usize>>::new();
+    let mut receptor_counts = BTreeMap::<i32, usize>::new();
+    for (index, row) in rows.iter().enumerate() {
+        intervals
+            .entry((row.spw_id, row.time_seconds.to_bits()))
+            .or_default()
+            .push(index);
+        let count = receptor_counts.entry(row.spw_id).or_insert(1);
+        if row.flags.iter().skip(1).step_by(2).any(|flag| !flag) {
+            *count = 2;
+        }
+    }
+    let mut choices = vec![preferred, preferred];
+    choices.extend_from_slice(alternates);
+    let mut previous = None::<Vec<usize>>;
+    let mut previous_spw = None;
+    for ((spw, _), current) in intervals {
+        if previous_spw != Some(spw) {
+            previous = None;
+            previous_spw = Some(spw);
+        }
+        let prior = previous.as_deref().unwrap_or(&current);
+        let receptor_count = receptor_counts[&spw];
+        let candidates = if strict { &choices[..1] } else { &choices };
+        let reference = candidates.iter().find_map(|&id| {
+            let current_row = usable_reference(rows, &current, id, receptor_count)?;
+            let previous_row = usable_reference(rows, prior, id, receptor_count)?;
+            Some((id, current_row, previous_row))
+        });
+        let Some((refant, current_ref, previous_ref)) = reference else {
+            for index in current {
+                rows[index].flags.fill(true);
+            }
+            continue;
+        };
+        let phases = (0..rows[current_ref].gains.len())
+            .map(|index| {
+                let now = channel_phase(&rows[current_ref], index);
+                if previous.is_none() {
+                    now
+                } else {
+                    now / channel_phase(&rows[previous_ref], index)
                 }
-                solved
-                    .as_ref()
-                    .and_then(|solved| solved.receptors.get(receptor))
-                    .filter(|fit| fit.solved.contains(&refant_id))
-                    .filter(|fit| cuts.is_none_or(|cuts| fit.snr[&refant_id] > cuts.min_snr))
-                    .map_or(unity, |fit| crate::solve::phase_only(fit.gains[&refant_id]))
+            })
+            .collect::<Vec<_>>();
+        choices[1] = refant;
+        stats.used_as_refant(spw, refant);
+        for &index in &current {
+            let row = &mut rows[index];
+            for (gain, phase) in row.gains.iter_mut().zip(&phases) {
+                *gain /= *phase;
+            }
+            row.refant_id = refant;
+        }
+        previous = Some(current);
+    }
+}
+
+fn usable_reference(
+    rows: &[BandpassSolutionRow],
+    indices: &[usize],
+    antenna: i32,
+    receptors: usize,
+) -> Option<usize> {
+    indices
+        .iter()
+        .copied()
+        .find(|&index| rows[index].antenna_id == antenna)
+        .filter(|&index| {
+            (0..receptors).all(|receptor| {
+                rows[index]
+                    .flags
+                    .iter()
+                    .skip(receptor)
+                    .step_by(2)
+                    .any(|flag| !flag)
             })
         })
-        .collect()
 }
 
-pub(super) fn normalize_bandpass_rows(
-    mut rows: Vec<BandpassSolutionRow>,
-    channel_count: usize,
-) -> Vec<BandpassSolutionRow> {
-    for row in &mut rows {
+fn channel_phase(row: &BandpassSolutionRow, index: usize) -> Complex32 {
+    if row.flags.get(index).copied().unwrap_or(true) {
+        Complex32::new(1.0, 0.0)
+    } else {
+        phase_only(row.gains[index])
+    }
+}
+
+pub(super) fn normalize_bandpass_rows(rows: &mut [BandpassSolutionRow], channel_count: usize) {
+    for row in rows {
         normalize_bandpass_row(row, channel_count);
     }
-    rows
 }
 
-fn normalize_bandpass_row(row: &mut BandpassSolutionRow, channel_count: usize) {
+pub(super) fn normalize_bandpass_row(row: &mut BandpassSolutionRow, channel_count: usize) {
     if channel_count == 0 {
         return;
     }
