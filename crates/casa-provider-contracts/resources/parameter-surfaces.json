@@ -14854,15 +14854,14 @@
             "provider": {"field": "preavg"},
             "python": {"name": "preavg"},
             "presentation": {"label": "Pre-average", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979}
+          }
         },
         {
           "name": "refant",
           "concept": {"id": "parameter.refant", "semantic_revision": 1},
           "order": 15,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "always"},
+          "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--refant"], "metavar": "ANTENNA"},
@@ -14883,8 +14882,7 @@
             "provider": {"field": "refantmode"},
             "python": {"name": "refantmode"},
             "presentation": {"label": "Reference Antenna Mode", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979}
+          }
         },
         {
           "name": "minblperant",
@@ -14941,8 +14939,7 @@
             "python": {"name": "normtype"},
             "presentation": {"label": "Normalization Type", "group": "Solve", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "A gain solve's normtype chooses how solnorm averages the solutions, distinct from the imager's normalization."},
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "solnorm", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "A gain solve's normtype chooses how solnorm averages the solutions, distinct from the imager's normalization."}
         },
         {
           "name": "gaintype",

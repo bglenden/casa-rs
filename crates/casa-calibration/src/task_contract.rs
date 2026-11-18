@@ -18,9 +18,9 @@ use crate::{
     ApplyCalibrationTableSpec, ApplyExecutionOptions, ApplyMode, ApplyPlanRequest,
     BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest, BandpassType,
     CalibrationDataset, CalibrationSolveRequest, CalibrationSolveResult, CalibrationStatsAxis,
-    CalibrationStatsRequest, FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode,
-    GainSolveModelSource, GainSolveRequest, GainType, GencalRequest, RefAntSelector,
-    calibration_stats, plan_apply_from_path, summarize_tables,
+    CalibrationStatsRequest, FluxScaleRequest, GainNormalization, GainSolveCombine,
+    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest, GainType,
+    GencalRequest, RefAntSelector, calibration_stats, plan_apply_from_path, summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -274,6 +274,9 @@ pub struct SolveGainTaskRequest {
     pub solve_mode: GainSolveMode,
     /// Solution interval.
     pub solve_interval: GainSolveInterval,
+    /// Positive averaging interval in seconds before the gain solve.
+    #[serde(default)]
+    pub preaverage_seconds: f64,
     /// Group-combine controls.
     #[serde(default)]
     pub combine: GainSolveCombine,
@@ -291,6 +294,9 @@ pub struct SolveGainTaskRequest {
     /// Whether to normalize average solution amplitudes to unity.
     #[serde(default)]
     pub normalize_average_amplitude: bool,
+    /// Statistic used when normalization is enabled.
+    #[serde(default)]
+    pub normalization_type: GainNormalization,
     /// Minimum solution SNR required to keep a solved parameter unflagged.
     #[serde(default = "default_min_snr")]
     pub min_snr: f32,
@@ -439,12 +445,14 @@ impl CalibrationTaskRequest {
                     gain_type: request.gain_type,
                     solve_mode: request.solve_mode,
                     solve_interval: request.solve_interval,
+                    preaverage_seconds: request.preaverage_seconds,
                     combine: request.combine,
                     refant: request.refant.clone(),
                     prior_calibration_tables: request.prior_calibration_tables.clone(),
                     parang: request.parang,
                     model_source: request.model_source,
                     normalize_average_amplitude: request.normalize_average_amplitude,
+                    normalization_type: request.normalization_type,
                     min_snr: request.min_snr,
                     min_baselines_per_antenna: request.min_baselines_per_antenna,
                     smodel: request.smodel,

@@ -22,7 +22,7 @@ use ndarray::{ArrayView2, s};
 
 use crate::solve::grouping::{SolveAccumulator, SolveGroupOptions, SolveSampleRow, SolveSamples};
 use crate::solve::{
-    GainSolveRequest, SolvedGains, apply_flex_refant, nearest_first, solve_closed_group,
+    GainSolveRequest, SolvedGains, apply_reference_antenna, nearest_first, solve_closed_group,
 };
 
 /// A fresh accumulator for group `key`.
@@ -75,6 +75,7 @@ fn observe(
         solve_interval: request.solve_interval,
         combine: request.combine,
         channelized: false,
+        preaverage_max_span: None,
     };
     for sample in samples {
         let coordinate = batch.sample(sample);
@@ -229,7 +230,12 @@ pub(super) fn solve_sequential(
     }
     trace.buffer_bytes = buffers.capacity_bytes();
     assert!(live.is_empty(), "every group closed");
-    apply_flex_refant(&mut solved.rows, refant, &alternates(catalogue, refant));
+    apply_reference_antenna(
+        &mut solved.rows,
+        refant,
+        &alternates(catalogue, refant),
+        false,
+    );
     (solved, trace)
 }
 
@@ -359,6 +365,11 @@ pub(super) fn solve_concurrent(
             .partial_cmp(&(b.time_seconds, b.antenna_id))
             .expect("finite")
     });
-    apply_flex_refant(&mut solved.rows, refant, &alternates(catalogue, refant));
+    apply_reference_antenna(
+        &mut solved.rows,
+        refant,
+        &alternates(catalogue, refant),
+        false,
+    );
     (solved, trace)
 }

@@ -110,24 +110,36 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
     );
 
     let bandpass_table = dir.path().join("bandpass.bcal");
-    let report = run_bandpass_solve(
-        &ms_path,
-        &BandpassSolveRequest {
-            selection: MsSelection::new().field(&[0]).spw(&[0]),
-            output_table: bandpass_table.clone(),
-            refant: RefAntSelector::AntennaId(0),
-            prior_calibration_tables: vec![ApplyCalibrationTableSpec::new(&prior_table)],
-            parang: false,
-            combine: BandpassSolveCombine::default(),
-            band_type: BandpassType::B,
-            normalize_average_amplitude: false,
-            amplitude_degree: 3,
-            phase_degree: 3,
-            smodel: [1.0, 0.0, 0.0, 0.0],
-            cuts: None,
+    let request = BandpassSolveRequest {
+        selection: MsSelection::new().field(&[0]).spw(&[0]),
+        output_table: bandpass_table.clone(),
+        refant: RefAntSelector::AntennaId(0),
+        prior_calibration_tables: vec![ApplyCalibrationTableSpec::new(&prior_table)],
+        parang: false,
+        combine: BandpassSolveCombine::default(),
+        band_type: BandpassType::B,
+        normalize_average_amplitude: false,
+        amplitude_degree: 3,
+        phase_degree: 3,
+        smodel: [1.0, 0.0, 0.0, 0.0],
+        cuts: None,
+    };
+    for refant in [
+        RefAntSelector::Unspecified,
+        RefAntSelector::Expression {
+            selection: "0,1".into(),
+            strict: true,
         },
-    )
-    .expect("solve bandpass");
+    ] {
+        let invalid = BandpassSolveRequest {
+            refant,
+            ..request.clone()
+        };
+        let error = run_bandpass_solve(&ms_path, &invalid).expect_err("gain-only reference");
+        assert!(error.to_string().contains("requires one reference antenna"));
+        assert!(!bandpass_table.exists());
+    }
+    let report = run_bandpass_solve(&ms_path, &request).expect("solve bandpass");
 
     assert_eq!(report.solution_row_count, 3);
     assert_eq!(report.channel_count, 2);

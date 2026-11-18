@@ -209,7 +209,9 @@ pub(crate) fn solve_group(
 
     let mut antenna_ids = available_antennas.clone();
     antenna_ids.extend(group.antenna_ids.iter().copied());
-    antenna_ids.insert(refant_id);
+    if refant_id >= 0 {
+        antenna_ids.insert(refant_id);
+    }
     let receptors = match gain_type {
         GainType::G => &solved.receptors[..],
         GainType::T => &solved.receptors[..1],
@@ -225,7 +227,7 @@ pub(crate) fn solve_group(
                     antenna_id,
                     scan_number,
                     observation_id: group.observation_id,
-                    refant_id: solved.refant_id,
+                    refant_id: if refant_id < 0 { -1 } else { solved.refant_id },
                     gains: Vec::with_capacity(receptors.len()),
                     flags: Vec::with_capacity(receptors.len()),
                     param_errors: Vec::with_capacity(receptors.len()),
@@ -316,7 +318,13 @@ pub(crate) fn solve_graphs(
         .zip(solved_antennas)
         .zip(gains)
         .map(|((graph, solved), gains)| {
-            finish_receptor(graph, solved, gains, solve_mode, refant_id)
+            finish_receptor(
+                graph,
+                solved,
+                gains,
+                solve_mode,
+                if options.refant_id < 0 { -1 } else { refant_id },
+            )
         })
         .collect::<Vec<_>>();
     apply_group_reduced_chi_square(&mut receptors);

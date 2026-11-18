@@ -664,7 +664,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>solint</code> | <code>parameter.solint@r1</code> | <code>string</code> | <code>"inf"</code>; optional | Solve Gain | Gain solution interval such as inf, int, or 30s |
 | <code>combine</code> | <code>setsolve.combine@r1</code> | <code>string</code> | <code>""</code>; optional | Solve | Data axes a solution interval spans: 'scan', 'field', 'spw', 'obs', comma-separated; empty for none. |
 | <code>preavg</code> | <code>setsolve.preavg@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Solve | Pre-averaging interval in seconds within a solution interval; -1 for none. |
-| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; required | Solve | Reference antenna name or id for solve workflows |
+| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; optional | Solve | Reference antenna name or id for solve workflows |
 | <code>refantmode</code> | <code>setsolve.refantmode@r1</code> | <code>choice (2 values)</code> | <code>"flex"</code>; optional | Solve | Whether another reference antenna is used where refant has no solution. |
 | <code>minblperant</code> | <code>parameter.minblperant@r1</code> | <code>integer</code> | <code>4</code>; optional | Solve Gain | Minimum unflagged baselines an antenna needs to be solved for |
 | <code>minsnr</code> | <code>setsolve.minsnr@r1</code> | <code>float</code> | <code>3.0</code>; optional | Solve | Solutions below this SNR are flagged. |

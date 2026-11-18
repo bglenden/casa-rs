@@ -29,9 +29,9 @@ use super::read::{count, parse_gainfield_value, parse_interp_value, parse_refant
 use crate::{
     ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassSolveCombine,
     BandpassSolveCuts, BandpassType, CalibrationTaskRequest, ExecuteApplyTaskRequest,
-    FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainType, GencalTaskRequest, GencalType, RefAntSelector, SolveBandpassTaskRequest,
-    SolveGainTaskRequest, load_apply_specs_from_callib,
+    FluxScaleRequest, GainNormalization, GainSolveCombine, GainSolveInterval, GainSolveMode,
+    GainSolveModelSource, GainType, GencalTaskRequest, GencalType, RefAntSelector,
+    SolveBandpassTaskRequest, SolveGainTaskRequest, load_apply_specs_from_callib,
 };
 
 /// The request a CASA-named surface makes.
@@ -112,6 +112,12 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
     let measurement_set = task.path("vis")?;
     let min_snr = min_snr(task)?;
     let (model_source, smodel) = model(task, &measurement_set)?;
+    let reference = task.required_text("refant")?;
+    let strict = match task.required_text("refantmode")?.as_str() {
+        "flex" => false,
+        "strict" => true,
+        other => return Err(unknown("refantmode", other, "'flex' or 'strict'")),
+    };
     Ok(SolveGainTaskRequest {
         append: task.flag("append")?,
         selection: selection(task)?,
@@ -119,12 +125,25 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
         gain_type: gaintype(task)?,
         solve_mode: calmode(task)?,
         solve_interval: solint(task)?,
+        preaverage_seconds: task.number("preavg")?,
         combine: combine(task)?,
-        refant: refant(task)?,
+        refant: if reference.is_empty() {
+            RefAntSelector::Unspecified
+        } else {
+            RefAntSelector::Expression {
+                selection: reference,
+                strict,
+            }
+        },
         prior_calibration_tables: chain(task, Chain::Solve)?,
         parang: task.flag("parang")?,
         model_source,
         normalize_average_amplitude: task.flag("solnorm")?,
+        normalization_type: match task.required_text("normtype")?.as_str() {
+            "mean" => GainNormalization::Mean,
+            "median" => GainNormalization::Median,
+            other => return Err(unknown("normtype", other, "'mean' or 'median'")),
+        },
         min_snr,
         min_baselines_per_antenna: count(task, "minblperant")?,
         smodel,
@@ -162,7 +181,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         append: task.flag("append")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("caltable")?),
-        refant: refant(task)?,
+        refant: refant(&task.required_text("refant")?)?,
         prior_calibration_tables: chain(task, Chain::Solve)?,
         parang: task.flag("parang")?,
         combine: BandpassSolveCombine {
@@ -584,6 +603,7 @@ fn gaintype(task: &TaskInvocation<'_>) -> Result<GainType, TaskFailure> {
 fn calmode(task: &TaskInvocation<'_>) -> Result<GainSolveMode, TaskFailure> {
     match task.required_text("calmode")?.as_str() {
         "p" => Ok(GainSolveMode::Phase),
+        "a" => Ok(GainSolveMode::Amplitude),
         "ap" => Ok(GainSolveMode::AmplitudePhase),
         other => Err(not_yet("calmode", other)),
     }
@@ -646,13 +666,12 @@ fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
 /// CASA's `refant`: one antenna, by name or id. CASA's ranked lists, and
 /// its default `''`, a solve with no reference antenna, are not
 /// implemented yet.
-fn refant(task: &TaskInvocation<'_>) -> Result<RefAntSelector, TaskFailure> {
-    let text = task.required_text("refant")?;
+fn refant(text: &str) -> Result<RefAntSelector, TaskFailure> {
     if text.trim().is_empty() {
-        return Err(not_yet("refant", &text));
+        return Err(not_yet("refant", text));
     }
     if text.contains(',') {
-        return Err(not_yet("refant", &text));
+        return Err(not_yet("refant", text));
     }
     Ok(parse_refant_selector(text.trim()))
 }

@@ -4,7 +4,7 @@
 //! This module intentionally implements only a narrow, testable slice:
 //!
 //! - `gaintype=G|T`
-//! - `calmode='p|ap'`
+//! - `calmode='p|a|ap'`
 //! - `solint='inf'|'int'|<seconds>`
 //! - explicit reference antenna
 //! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`) or `MODEL_DATA`
@@ -67,13 +67,25 @@ impl GainType {
     }
 }
 
-/// Supported first-wave solve modes.
+/// Visibility and output-gain constraints for `gaincal`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveMode {
     /// Phase-only solve.
     Phase,
+    /// Amplitude-only solve.
+    Amplitude,
     /// Amplitude-and-phase solve.
     AmplitudePhase,
+}
+
+/// Statistic used by `gaincal` to normalize a window's solution power.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum GainNormalization {
+    /// Arithmetic mean of the unflagged squared amplitudes.
+    #[default]
+    Mean,
+    /// Median of the unflagged squared amplitudes.
+    Median,
 }
 
 /// Visibility model source used by the gain solver.
@@ -109,10 +121,19 @@ pub struct GainSolveCombine {
 /// Reference antenna selector for solve requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum RefAntSelector {
+    /// Solve without rereferencing solution phases across intervals.
+    Unspecified,
     /// Exact antenna id.
     AntennaId(i32),
     /// Exact ANTENNA.NAME match.
     AntennaName(String),
+    /// CASA selection in preference order with an optional strict reference.
+    Expression {
+        /// CASA's antenna selector and priority list.
+        selection: String,
+        /// Flag an interval if the first preferred antenna cannot reference it.
+        strict: bool,
+    },
 }
 
 /// Request for a limited `gaincal` solve.
@@ -128,6 +149,9 @@ pub struct GainSolveRequest {
     pub solve_mode: GainSolveMode,
     /// Solution interval.
     pub solve_interval: GainSolveInterval,
+    /// Positive averaging interval in seconds before the gain solve.
+    /// Nonpositive values average over the whole solution interval.
+    pub preaverage_seconds: f64,
     /// Axes to combine while forming solve groups.
     pub combine: GainSolveCombine,
     /// Reference antenna.
@@ -138,8 +162,10 @@ pub struct GainSolveRequest {
     pub parang: bool,
     /// Visibility model source.
     pub model_source: GainSolveModelSource,
-    /// Whether to normalize average solution amplitudes to unity.
+    /// Whether to normalize the solution power to unity.
     pub normalize_average_amplitude: bool,
+    /// Statistic used when normalization is enabled.
+    pub normalization_type: GainNormalization,
     /// Minimum solution SNR required to keep a solved parameter unflagged.
     pub min_snr: f32,
     /// Minimum unflagged baselines per antenna required before solving.
@@ -363,6 +389,17 @@ pub(crate) fn solve_gain_rows(
         &request.prior_calibration_tables,
         request.parang,
     )?;
+    let requested_preaverage = request.preaverage_seconds as f32;
+    let preaverage = (requested_preaverage > f32::EPSILON && requested_preaverage.is_finite())
+        .then_some(requested_preaverage);
+    let averaging_interval = match request.solve_interval {
+        GainSolveInterval::Infinite => preaverage,
+        GainSolveInterval::Integration => None,
+        GainSolveInterval::Seconds(seconds) => {
+            let solint = seconds as f32;
+            Some(preaverage.map_or(solint, |preavg| preavg.min(solint)))
+        }
+    };
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -373,6 +410,8 @@ pub(crate) fn solve_gain_rows(
             stokes_i: request.smodel[0],
             solve_interval: request.solve_interval,
             combine: request.combine,
+            // VbAvg applies this boundary to either source of the interval.
+            preaverage_max_span: averaging_interval.map(|seconds| f64::from(seconds) * 0.999),
             channelized: false,
         },
     )?;
@@ -429,17 +468,36 @@ pub(crate) fn solve_gain_rows(
         solution_rows.extend(group_rows);
         intervals.push((spw_id, start..solution_rows.len()));
     }
-    apply_flex_refant(
-        &mut solution_rows,
-        context.refant_id,
-        &refant_distance_order(ms, context.refant_id)?,
-    );
-    // CASA's solnorm follows the reference antenna, over every interval
-    // (`SolvableVisJones::globalPostSolveTinker`).
-    if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
-        && request.normalize_average_amplitude
-    {
-        normalize_gain_solution_amplitudes(&mut solution_rows);
+    if context.refant_id >= 0 {
+        let strict = matches!(
+            request.refant,
+            RefAntSelector::Expression { strict: true, .. }
+        );
+        let mut alternates = context.refant_alternates.clone();
+        if !strict {
+            let last_preferred = alternates.last().copied().unwrap_or(context.refant_id);
+            let mut nearby = refant_distance_order(ms, last_preferred)?;
+            nearby.retain(|id| *id != context.refant_id && !alternates.contains(id));
+            alternates.extend(nearby);
+        }
+        apply_reference_antenna(&mut solution_rows, context.refant_id, &alternates, strict);
+    }
+    // CASA enforces amplitudes on the final gains after referencing and
+    // before normalizing across all intervals (`globalPostSolveTinker`).
+    if request.solve_mode != GainSolveMode::AmplitudePhase {
+        for row in &mut solution_rows {
+            for (gain, flagged) in row.gains.iter_mut().zip(&row.flags) {
+                if *flagged {
+                    *gain = Complex32::new(1.0, 0.0);
+                } else if request.solve_mode == GainSolveMode::Amplitude {
+                    let amplitude = gain.norm();
+                    *gain = Complex32::new(if amplitude == 0.0 { 1.0 } else { amplitude }, 0.0);
+                }
+            }
+        }
+    }
+    if request.solve_mode != GainSolveMode::Phase && request.normalize_average_amplitude {
+        normalize_gain_solution_amplitudes(&mut solution_rows, request.normalization_type);
     }
     // The reference antenna each interval ended with, where it kept its
     // solution: flex flags an interval it found none for.
@@ -557,10 +615,11 @@ pub(crate) fn nearest_first(positions: &[[f64; 3]], refant_id: i32) -> Vec<i32> 
 /// every antenna, so an alternate is held at constant phase. An interval
 /// with no such antenna is flagged entirely and leaves the last referred
 /// interval in place for the next.
-pub(crate) fn apply_flex_refant(
+pub(crate) fn apply_reference_antenna(
     rows: &mut [kernel::SolutionRow],
     preferred_refant_id: i32,
     alternates: &[i32],
+    strict: bool,
 ) {
     let mut group_indices = BTreeMap::<(i32, u64, i32), Vec<usize>>::new();
     for (index, row) in rows.iter().enumerate() {
@@ -586,20 +645,17 @@ pub(crate) fn apply_flex_refant(
     for ((spw_id, _, _), current) in group_indices {
         if last_spw != Some(spw_id) {
             previous = None;
-            choices[1] = preferred_refant_id;
             last_spw = Some(spw_id);
         }
         let receptors = receptor_counts[&spw_id];
         let previous_indices = previous.as_ref().unwrap_or(&current);
+        let candidates = if strict { &choices[..1] } else { &choices[..] };
         let Some((current_ref_index, previous_ref_index)) =
-            find_flex_refant(rows, &choices, &current, previous_indices, receptors)
+            find_flex_refant(rows, candidates, &current, previous_indices, receptors)
         else {
             for index in &current {
                 rows[*index].flags.iter_mut().for_each(|flag| *flag = true);
-                rows[*index]
-                    .gains
-                    .iter_mut()
-                    .for_each(|gain| *gain = Complex32::new(1.0, 0.0));
+                rows[*index].refant_id = -1;
             }
             continue;
         };
@@ -625,11 +681,6 @@ pub(crate) fn apply_flex_refant(
             for (gain, phasor) in rows[*index].gains.iter_mut().zip(ref_phasor.iter()) {
                 if phasor.norm() > f32::EPSILON {
                     *gain /= *phasor;
-                }
-            }
-            for (gain, flag) in rows[*index].gains.iter_mut().zip(rows[*index].flags.iter()) {
-                if *flag {
-                    *gain = Complex32::new(1.0, 0.0);
                 }
             }
             rows[*index].refant_id = current_refant;
@@ -671,31 +722,44 @@ fn phase_only(gain: Complex32) -> Complex32 {
     }
 }
 
-/// Divide every gain of each window by the root mean power of the window's
+/// Divide every gain of each window by the root mean or median power of the window's
 /// unflagged solutions, taken over all its intervals, antennas and
 /// receptors together, as CASA's `solnorm` does
 /// (`SolvableVisJones::normalize`, `SolvableVisCal::calcPowerNorm`). A
 /// window with one unflagged solution or none stays, as `normSolnArray`
 /// normalizes only more than one.
-fn normalize_gain_solution_amplitudes(rows: &mut [kernel::SolutionRow]) {
-    let mut power = BTreeMap::<i32, (f64, usize)>::new();
+fn normalize_gain_solution_amplitudes(rows: &mut [kernel::SolutionRow], method: GainNormalization) {
+    let mut power = BTreeMap::<i32, (f64, usize, Vec<f32>)>::new();
     for row in rows.iter() {
-        let (sum, count) = power.entry(row.spw_id).or_default();
+        let (sum, count, samples) = power.entry(row.spw_id).or_default();
         for (gain, flagged) in row.gains.iter().zip(&row.flags) {
             if !flagged {
-                *sum += f64::from(gain.norm_sqr());
+                let power = gain.norm_sqr();
+                match method {
+                    GainNormalization::Mean => *sum += f64::from(power),
+                    GainNormalization::Median => samples.push(power),
+                }
                 *count += 1;
             }
         }
     }
+    let factors: BTreeMap<_, _> = power
+        .into_iter()
+        .filter_map(|(spw, (sum, count, mut samples))| {
+            if count <= 1 {
+                return None;
+            }
+            let factor = match method {
+                GainNormalization::Mean => (sum / count as f64).sqrt() as f32,
+                GainNormalization::Median => grouping::median_with_even_mean(&mut samples).sqrt(),
+            };
+            (factor.is_finite() && factor > 0.0).then_some((spw, factor))
+        })
+        .collect();
     for row in rows.iter_mut() {
-        let Some(&(sum, count)) = power.get(&row.spw_id) else {
+        let Some(&factor) = factors.get(&row.spw_id) else {
             continue;
         };
-        let factor = (sum / count.max(1) as f64).sqrt() as f32;
-        if count <= 1 || !(factor.is_finite() && factor > 0.0) {
-            continue;
-        }
         for gain in &mut row.gains {
             *gain /= Complex32::new(factor, 0.0);
         }
@@ -811,7 +875,7 @@ mod solnorm_tests {
             // One unflagged solution is not normalized (normSolnArray).
             row(2, 0.0, [4.0, 5.0], [false, true]),
         ];
-        normalize_gain_solution_amplitudes(&mut rows);
+        normalize_gain_solution_amplitudes(&mut rows, GainNormalization::Mean);
         let factor = ((1.0_f32 + 9.0 + 4.0 + 9.0 + 9.0) / 5.0).sqrt();
         let amplitudes = |row: &kernel::SolutionRow| -> Vec<f32> {
             row.gains.iter().map(|gain| gain.norm()).collect()

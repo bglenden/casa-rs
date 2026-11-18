@@ -130,12 +130,14 @@ fn solve_gain(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFai
         gain_type: parsed(task, "gain_type", parse_gain_type)?,
         solve_mode: parsed(task, "solve_mode", parse_gain_solve_mode)?,
         solve_interval: parsed(task, "solint", parse_gain_solve_interval)?,
+        preaverage_seconds: 0.0,
         combine: optional_parsed(task, "gain_combine", parse_gain_solve_combine)?,
         refant: parse_refant_selector(&task.required_text("refant")?),
         prior_calibration_tables: calibration_tables(task, Chain::Solve)?,
         parang: task.flag("parang")?,
         model_source: parsed(task, "gain_model_source", parse_gain_solve_model_source)?,
         normalize_average_amplitude: task.flag("solnorm")?,
+        normalization_type: Default::default(),
         min_snr,
         min_baselines_per_antenna: count(task, "minblperant")?,
         smodel: parsed(task, "smodel", parse_stokes_smodel)?,
@@ -331,9 +333,10 @@ fn parse_gain_type(value: &str) -> Result<GainType, String> {
 fn parse_gain_solve_mode(value: &str) -> Result<GainSolveMode, String> {
     match value {
         "p" => Ok(GainSolveMode::Phase),
+        "a" => Ok(GainSolveMode::Amplitude),
         "ap" => Ok(GainSolveMode::AmplitudePhase),
         other => Err(format!(
-            "unsupported solve_mode {other:?}; expected p or ap"
+            "unsupported solve_mode {other:?}; expected p, a or ap"
         )),
     }
 }

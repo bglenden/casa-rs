@@ -60,6 +60,8 @@ fn gain_request(output_table: PathBuf) -> GainSolveRequest {
         parang: false,
         model_source: GainSolveModelSource::PointSource,
         normalize_average_amplitude: false,
+        preaverage_seconds: 0.0,
+        normalization_type: Default::default(),
         min_snr: 3.0,
         min_baselines_per_antenna: 4,
         smodel: [1.0, 0.0, 0.0, 0.0],
@@ -410,6 +412,88 @@ fn sigma_weighted_batch_solves_equal_the_production_gaincal() {
     assert!(
         stored.weight_relative > 1e-2,
         "the stored weights are not production's: {stored:?}"
+    );
+}
+
+/// A row flagged only by FLAG_ROW is also excluded by the batch reader.
+#[test]
+fn row_flagged_outlier_is_excluded_from_production_and_batch_gaincal() {
+    use casa_types::{ArrayValue, ScalarValue, Value};
+
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    let request = gain_request(root.path().join("unused.G"));
+    let mut ms = MeasurementSet::open(&path).expect("ms");
+    let clean = solve_gain_rows(&ms, &request).expect("clean solve").rows;
+    let row = (0..ms.main_table().row_count())
+        .find(|&row| {
+            let antenna = |column| {
+                ms.main_table()
+                    .cell_accessor(row, column)
+                    .unwrap()
+                    .scalar()
+                    .unwrap()
+            };
+            antenna("ANTENNA1") != antenna("ANTENNA2")
+        })
+        .expect("cross-correlation row");
+    let flags = ms
+        .main_table()
+        .cell_accessor(row, "FLAG")
+        .unwrap()
+        .array()
+        .unwrap();
+    let ArrayValue::Bool(flags) = flags else {
+        panic!("boolean sample flags")
+    };
+    assert!(flags.iter().all(|flag| !flag));
+    let data = ms
+        .main_table()
+        .cell_accessor(row, "DATA")
+        .unwrap()
+        .array()
+        .unwrap();
+    let ArrayValue::Complex32(data) = data else {
+        panic!("complex visibilities")
+    };
+    let outlier = Value::Array(ArrayValue::Complex32(data.mapv(|value| value * 40.0)));
+    ms.main_table_mut()
+        .cell_accessor_mut(row, "DATA")
+        .unwrap()
+        .set(outlier)
+        .unwrap();
+    let contaminated = solve_gain_rows(&ms, &request)
+        .expect("contaminated solve")
+        .rows;
+    assert!(agreement(&clean, &contaminated).gain > 0.05);
+
+    ms.main_table_mut()
+        .cell_accessor_mut(row, "FLAG_ROW")
+        .unwrap()
+        .set(Value::Scalar(ScalarValue::Bool(true)))
+        .unwrap();
+    ms.save().expect("save outlier and row flag");
+    drop(ms);
+    let expected = production(&MeasurementSet::open(&path).expect("ms"), root.path());
+    let observation = casa_ms::observation_io::open(&path, &OpenOptions::default()).expect("open");
+    let binding = observation
+        .catalogue()
+        .bind_to(observation.catalogue(), &BindingTolerance::EXACT)
+        .expect("binds");
+    let (solved, _) = solve_sequential(
+        &*observation,
+        &request,
+        &access(&*observation, 3),
+        refant(&binding),
+    );
+    let compared = agreement(&expected, &renumbered(solved.rows, &binding));
+    println!("FLAG_ROW production against batch: {compared:?}");
+    assert!(
+        compared.flags_equal
+            && compared.gain < 1e-5
+            && compared.snr_relative < 1e-4
+            && compared.weight_relative < 1e-4,
+        "{compared:?}"
     );
 }
 

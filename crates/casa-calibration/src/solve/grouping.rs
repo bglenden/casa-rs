@@ -97,11 +97,14 @@ pub(crate) fn build_solve_groups(
     let mut consume = |batch: &[BucketedRow<'_>], inputs: SolveInputBatch| {
         let _accumulate_phase = crate::timing::Phase::start("solve_accumulate");
         for (index, &(row, base_key, bucket_key)) in batch.iter().enumerate() {
-            // A group takes its field from its earliest row, as CASA's
-            // `SDBList::aggregateFld` takes the first buffer's.
             let group = groups.entry((base_key, bucket_key)).or_insert_with(|| {
                 SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id)
             });
+            if options.combine.fields {
+                // CalSolVi2Organizer orders the buffers of a grouped time
+                // interval by FIELD_ID. SDBList::aggregateFld uses the first.
+                group.field_id = group.field_id.min(row.field_id);
+            }
             let preapplied = preapplied_rows.and_then(|rows| rows.get(&row.row_index));
             group.observe(
                 ms,
@@ -360,8 +363,14 @@ fn bucketed_rows(
                     interval_bits: row.interval_seconds.to_bits(),
                 },
                 GainSolveInterval::Seconds(seconds) => {
-                    let start = *bucket_starts.entry(base_key).or_insert(row.time_seconds);
-                    let index = ((row.time_seconds - start) / seconds).floor().max(0.0);
+                    // MSIter2 starts its time grid 10 ms before the first
+                    // timestamp and receives solint as a Float.
+                    let start = *bucket_starts
+                        .entry(base_key)
+                        .or_insert(row.time_seconds - 0.01);
+                    let index = ((row.time_seconds - start) / f64::from(seconds as f32))
+                        .floor()
+                        .max(0.0);
                     SolveBucketKey::Seconds(index as u64)
                 }
             };
@@ -407,12 +416,20 @@ pub(crate) fn all_antenna_ids(ms: &MeasurementSet) -> Result<BTreeSet<i32>, Gain
         .collect())
 }
 
-pub(crate) fn resolve_refant(
+pub(crate) fn resolve_refants(
     ms: &MeasurementSet,
     selector: &RefAntSelector,
-) -> Result<i32, GainSolveError> {
+) -> Result<Vec<i32>, GainSolveError> {
     match selector {
-        RefAntSelector::AntennaId(id) => Ok(*id),
+        RefAntSelector::Unspecified => Ok(Vec::new()),
+        RefAntSelector::AntennaId(id) => Ok(vec![*id]),
+        RefAntSelector::Expression { selection, .. } => ms
+            .resolve_reference_antennas(selection)
+            .map(|ids| ids.into_iter().map(|id| id as i32).collect())
+            .map_err(|error| GainSolveError::ResolveRefAnt {
+                selector: selection.clone(),
+                reason: error.to_string(),
+            }),
         RefAntSelector::AntennaName(name) => {
             let antenna = ms
                 .antenna()
@@ -429,7 +446,7 @@ pub(crate) fn resolve_refant(
                     })?
                     == *name
                 {
-                    return Ok(row as i32);
+                    return Ok(vec![row as i32]);
                 }
             }
             Err(GainSolveError::ResolveRefAnt {
@@ -537,6 +554,8 @@ pub(crate) struct SolveGroupOptions {
     pub(crate) stokes_i: f32,
     pub(crate) solve_interval: GainSolveInterval,
     pub(crate) combine: GainSolveCombine,
+    /// Maximum time from the first sample in an average of one baseline.
+    pub(crate) preaverage_max_span: Option<f64>,
     /// Solve each data channel apart (`bandpass`) rather than the selected
     /// channels together (`gaincal`).
     pub(crate) channelized: bool,
@@ -644,7 +663,8 @@ pub(crate) struct SolveAccumulator {
     /// model division), and sets its window's gain-table channel then,
     /// whether or not the solve succeeds.
     pub(crate) attempted: bool,
-    baseline_centroids: HashMap<(i32, i32), WeightedTime>,
+    baseline_centroids: HashMap<AveragedBaseline, WeightedTime>,
+    preaverage_starts: HashMap<AveragedBaseline, f64>,
     receptor_accumulations: Vec<HashMap<SolveAccumulationKey, Vec<SolveEdgeAccumulation>>>,
 }
 
@@ -675,8 +695,15 @@ struct SolveEdgeAccumulation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct SolveAccumulationKey {
-    baseline: (i32, i32),
+    baseline: AveragedBaseline,
     correlation_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct AveragedBaseline {
+    antennas: (i32, i32),
+    field_id: i32,
+    start_bits: u64,
 }
 
 /// A weighted mean of times.
@@ -750,6 +777,7 @@ impl SolveAccumulator {
             solution_time: 0.0,
             attempted: false,
             baseline_centroids: HashMap::new(),
+            preaverage_starts: HashMap::new(),
             receptor_accumulations: Vec::new(),
         }
     }
@@ -849,6 +877,24 @@ impl SolveAccumulator {
         let flags = samples::channel_flags(samples);
         let no_weighted_data =
             flags.iter().all(|flag| *flag) || samples.weights.iter().all(|weight| *weight <= 0.0);
+        // CASA gathers a separate field buffer into the solution. Keep
+        // the complex averages separate until enforcing the solve mode.
+        let mut baseline = AveragedBaseline {
+            antennas: (row.antenna1, row.antenna2),
+            field_id: if options.channelized { 0 } else { row.field_id },
+            start_bits: 0,
+        };
+        let start_bits = options.preaverage_max_span.map_or(0, |max_span| {
+            let start = self
+                .preaverage_starts
+                .entry(baseline)
+                .or_insert(row.time_seconds);
+            if row.time_seconds - *start > max_span {
+                *start = row.time_seconds;
+            }
+            start.to_bits()
+        });
+        baseline.start_bits = start_bits;
         let solution_channels = self.solution_channels;
         let mut row_weight = 0.0_f64;
         for (corr_index, &correlation_type) in correlation_types.iter().enumerate() {
@@ -872,7 +918,7 @@ impl SolveAccumulator {
             // dense indices, not independent hash keys for every sample.
             let accumulations = self.receptor_accumulations[graph_index]
                 .entry(SolveAccumulationKey {
-                    baseline: (row.antenna1, row.antenna2),
+                    baseline,
                     correlation_index: corr_index,
                 })
                 .or_insert_with(|| vec![SolveEdgeAccumulation::default(); solution_channels]);
@@ -891,10 +937,7 @@ impl SolveAccumulator {
             );
         }
         if row_weight > 0.0 {
-            let centroid = self
-                .baseline_centroids
-                .entry((row.antenna1, row.antenna2))
-                .or_default();
+            let centroid = self.baseline_centroids.entry(baseline).or_default();
             centroid.weighted_sum += row_weight * row.time_centroid_seconds;
             centroid.weight += row_weight;
         }
@@ -920,7 +963,8 @@ impl SolveAccumulator {
     /// into the solve graphs, and set the solution TIME.
     ///
     /// A phase-only solve sees each collapsed sample at unit amplitude with
-    /// its weight times its squared amplitude
+    /// its weight times its squared amplitude. An amplitude-only solve
+    /// keeps the collapsed magnitude and the original weight
     /// (`SolveDataBuffer::enforceAPonData`). TIME is
     /// `SDBList::aggregateTimeCentroid`: each baseline's TIME_CENTROID,
     /// averaged over its rows by row weight as time averaging does, weighted
@@ -930,7 +974,7 @@ impl SolveAccumulator {
             vec![SolveGraph::default(); self.receptor_accumulations.len()];
             self.solution_channels
         ];
-        let mut baseline_weights = HashMap::<(i32, i32), f64>::new();
+        let mut baseline_weights = HashMap::<AveragedBaseline, f64>::new();
         for (receptor, accumulations) in self.receptor_accumulations.iter().enumerate() {
             for (key, channels) in accumulations {
                 for (channel_index, accumulation) in channels.iter().enumerate() {
@@ -950,10 +994,13 @@ impl SolveAccumulator {
                                 accumulation.weight * amplitude * amplitude,
                             )
                         }
+                        GainSolveMode::Amplitude => {
+                            (Complex32::new(averaged.norm(), 0.0), accumulation.weight)
+                        }
                         GainSolveMode::AmplitudePhase => (averaged, accumulation.weight),
                     };
                     self.channel_graphs[channel_index][receptor].accumulate(
-                        key.baseline,
+                        key.baseline.antennas,
                         weight,
                         sample * Complex32::new(weight, 0.0),
                         SolveEdgeStats {
@@ -1187,7 +1234,7 @@ fn unsupported_shape(column: &str, value: &ArrayValue) -> GainSolveError {
 /// The median, the mean of the middle two for an even count, as casacore's
 /// `partialMedians(..., takeEvenMean=True)` that CASA uses for a row's
 /// channel-independent weight.
-fn median_with_even_mean(values: &mut [f32]) -> f32 {
+pub(super) fn median_with_even_mean(values: &mut [f32]) -> f32 {
     if values.is_empty() {
         return 0.0;
     }
@@ -1265,7 +1312,7 @@ mod tests {
     fn add(group: &mut SolveAccumulator, correlation_index: usize, sample: Complex32) {
         let accumulation = group.receptor_accumulations[0]
             .entry(SolveAccumulationKey {
-                baseline: (0, 1),
+                baseline: unaveraged_baseline((0, 1)),
                 correlation_index,
             })
             .or_insert_with(|| vec![SolveEdgeAccumulation::default()]);
@@ -1274,6 +1321,14 @@ mod tests {
         accumulation.weight += 1.0;
         accumulation.weighted_sample_power += f64::from(sample.norm_sqr());
         accumulation.sample_count += 1;
+    }
+
+    fn unaveraged_baseline(antennas: (i32, i32)) -> AveragedBaseline {
+        AveragedBaseline {
+            antennas,
+            field_id: 0,
+            start_bits: 0,
+        }
     }
 
     #[test]
@@ -1317,7 +1372,7 @@ mod tests {
         for (baseline, weight) in [((0, 1), 3.0_f32), ((0, 2), 1.0)] {
             group.receptor_accumulations[0].insert(
                 SolveAccumulationKey {
-                    baseline,
+                    baseline: unaveraged_baseline(baseline),
                     correlation_index: 0,
                 },
                 vec![SolveEdgeAccumulation {
@@ -1329,14 +1384,14 @@ mod tests {
             );
         }
         group.baseline_centroids.insert(
-            (0, 1),
+            unaveraged_baseline((0, 1)),
             WeightedTime {
                 weighted_sum: 10.0 + 12.0,
                 weight: 2.0,
             },
         );
         group.baseline_centroids.insert(
-            (0, 2),
+            unaveraged_baseline((0, 2)),
             WeightedTime {
                 weighted_sum: 20.0,
                 weight: 1.0,
