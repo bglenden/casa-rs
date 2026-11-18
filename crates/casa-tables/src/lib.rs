@@ -273,6 +273,8 @@ pub use schema::{
     TableSchema,
 };
 pub use sorting::{TableGroup, TableIterator};
+#[doc(hidden)]
+pub use storage::virtual_compress::{ComplexCompression, ComplexScale};
 pub use storage::{
     DEFAULT_TILE_IO_BYTES, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerInfo,
     STREAMING_TILED_COLUMN_BUFFER_BYTES, StorageError, StreamedTiledPrimitiveColumn,

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA scratch-column initialization and model removal.
 
+mod compression;
+
 use std::collections::BTreeMap;
 use std::ops::Range;
 
@@ -10,9 +12,7 @@ use casa_ms::schema::main_table::{
 use casa_ms::scratch_columns;
 use casa_ms::selection::{ResolvedMsSelection, ResolvedMsSelectionRow};
 use casa_ms::write_session::{
-    MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
-    MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
-    MeasurementSetWriteColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    MeasurementSetMutationBatch, MeasurementSetWritePlan, MeasurementSetWriteResources,
     MeasurementSetWriteSession, maximum_visibility_cell_elements,
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection};
@@ -21,6 +21,7 @@ use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::session::resolve_casa_calibration_selection;
+pub(crate) use compression::ScratchDestination;
 
 const DATA: VisibilityDataColumn = VisibilityDataColumn::Data;
 const CORRECTED: VisibilityDataColumn = VisibilityDataColumn::CorrectedData;
@@ -106,7 +107,7 @@ fn reset(
     create: bool,
     mut lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
-    let plan = scratch_write_plan(
+    let (plan, destinations) = scratch_write_plan(
         ms,
         selected.row_indices().collect(),
         columns,
@@ -140,7 +141,7 @@ fn reset(
         MeasurementSetWriteSession::start_selected_row_mutation_holding(ms, plan, lock)
             .map_err(invalid)?;
     for rows in selected.selected_rows.chunks(batch_rows) {
-        let batch = reset_batch(ms, rows, columns, &ranges, &polarizations)?;
+        let batch = reset_batch(ms, rows, &destinations, &ranges, &polarizations)?;
         session.write_mutation_batch(ms, batch).map_err(invalid)?;
     }
     let (_, lock) = session.finish_mutation_holding().map_err(invalid)?;
@@ -153,7 +154,11 @@ pub(crate) fn scratch_write_plan(
     columns: &[VisibilityDataColumn],
     create: bool,
     lock: &mut TableWriteLock,
-) -> MsResult<MeasurementSetWritePlan> {
+) -> MsResult<(MeasurementSetWritePlan, Vec<ScratchDestination>)> {
+    let destinations = columns
+        .iter()
+        .map(|&column| ScratchDestination::new(ms, column))
+        .collect::<MsResult<Vec<_>>>()?;
     for &column in columns {
         scratch_columns::prepare_write_holding(ms, column, create, lock)?;
     }
@@ -178,28 +183,15 @@ pub(crate) fn scratch_write_plan(
         }
     }
     let sizes = maximum_visibility_cell_elements(ms).map_err(invalid)?;
-    let write_columns = columns
+    let write_columns = destinations
         .iter()
-        .map(|column| MeasurementSetWriteColumnPlan {
-            name: column.name().to_string(),
-            bytes_per_row: sizes.saturating_mul(std::mem::size_of::<Complex32>()),
-            mode: if create {
-                MeasurementSetColumnWriteMode::Create
-            } else {
-                MeasurementSetColumnWriteMode::Replace
-            },
-            storage_manager: if create {
-                MeasurementSetColumnStorage::TiledShape
-            } else {
-                MeasurementSetColumnStorage::Persisted
-            },
-            tile_shape: None,
-            create_source_column: None,
-        })
+        .flat_map(|column| column.plans(sizes, create))
         .collect();
     let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(invalid)?;
-    MeasurementSetWritePlan::selected_row_mutation(row_indices, write_columns, resources)
-        .map_err(invalid)
+    let plan =
+        MeasurementSetWritePlan::selected_row_mutation(row_indices, write_columns, resources)
+            .map_err(invalid)?;
+    Ok((plan, destinations))
 }
 
 fn model_polarizations(ms: &MeasurementSet) -> MsResult<BTreeMap<i32, Vec<Complex32>>> {
@@ -219,7 +211,7 @@ fn model_polarizations(ms: &MeasurementSet) -> MsResult<BTreeMap<i32, Vec<Comple
 fn reset_batch(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
-    columns: &[VisibilityDataColumn],
+    columns: &[ScratchDestination],
     ranges: &BTreeMap<i32, Range<usize>>,
     polarizations: &BTreeMap<i32, Vec<Complex32>>,
 ) -> MsResult<MeasurementSetMutationBatch> {
@@ -228,14 +220,16 @@ fn reset_batch(
     let data = main.column_accessor(observed_column(ms))?;
     let shapes = data.array_shapes_uncached(&row_indices)?;
     let mut data = columns
-        .contains(&CORRECTED)
+        .iter()
+        .any(|column| column.visibility == CORRECTED)
         .then(|| data.array_cells_owned_uncached(&row_indices))
         .transpose()?;
     let needs_preserved_channels = rows
         .iter()
         .any(|row| ranges.contains_key(&row.spectral_window_id));
     let mut batch = Vec::with_capacity(columns.len());
-    for &column in columns {
+    for destination in columns {
+        let column = destination.visibility;
         let mut previous = needs_preserved_channels
             .then(|| {
                 main.column_accessor(column.name())?
@@ -286,10 +280,7 @@ fn reset_batch(
                 values.push(replacement);
             }
         }
-        batch.push(MeasurementSetMutationColumnBatch {
-            name: column.name().to_string(),
-            values: MeasurementSetMutationColumnValues::Arrays(values),
-        });
+        batch.extend(destination.batch(ms, &row_indices, rows, ranges, values)?);
     }
     Ok(MeasurementSetMutationBatch {
         row_indices,

@@ -6,15 +6,14 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::schema::main_table::{VisibilityDataColumn, initial_model_visibility};
 use casa_ms::write_session::{
-    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
-    MeasurementSetMutationColumnValues, MeasurementSetWriteError, MeasurementSetWriteSession,
+    MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession,
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelectionRow};
 use casa_tables::{Table, TableInfo, TableWriteLock};
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, Axis, IxDyn};
 
-use crate::model_columns::{has_column, observed_column, scratch_write_plan};
+use crate::model_columns::{ScratchDestination, has_column, observed_column, scratch_write_plan};
 use crate::session::resolve_casa_calibration_selection;
 use crate::solve::grouping::VisibilityModels;
 
@@ -81,7 +80,7 @@ pub fn subtract_visibility_model_holding(
     let correlations = (0..polarizations.row_count())
         .map(|id| Ok((id as i32, polarizations.corr_type(id)?)))
         .collect::<MsResult<_>>()?;
-    let plan = scratch_write_plan(
+    let (plan, destinations) = scratch_write_plan(
         &mut ms,
         selected.row_indices().collect(),
         &[CORRECTED],
@@ -95,8 +94,16 @@ pub fn subtract_visibility_model_holding(
         lock,
         |session, ms| {
             for rows in selected.selected_rows.chunks(batch_rows) {
-                let batch = subtract_batch(ms, rows, input, &models, &correlations, reverse)
-                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                let batch = subtract_batch(
+                    ms,
+                    rows,
+                    input,
+                    &models,
+                    &correlations,
+                    &destinations[0],
+                    reverse,
+                )
+                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 session.write_mutation_batch(ms, batch)?;
             }
             Ok(())
@@ -112,6 +119,7 @@ fn subtract_batch(
     input: &str,
     models: &VisibilityModels,
     correlations: &BTreeMap<i32, Vec<i32>>,
+    destination: &ScratchDestination,
     reverse: bool,
 ) -> MsResult<MeasurementSetMutationBatch> {
     let row_indices: Vec<_> = rows.iter().map(|row| row.row_index).collect();
@@ -160,12 +168,10 @@ fn subtract_batch(
         add_or_subtract(&mut data, model, codes, reverse)?;
         values.push(ArrayValue::Complex32(data));
     }
+    let columns = destination.batch(ms, &row_indices, rows, &BTreeMap::new(), values)?;
     Ok(MeasurementSetMutationBatch {
         row_indices,
-        columns: vec![MeasurementSetMutationColumnBatch {
-            name: CORRECTED.name().to_owned(),
-            values: MeasurementSetMutationColumnValues::Arrays(values),
-        }],
+        columns,
     })
 }
 
