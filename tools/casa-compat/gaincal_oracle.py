@@ -17,12 +17,13 @@ from calibration_lifecycle_oracle import contents
 from record_casa_returns import make_cal_ms
 
 
-def solve(module, root, label, source, refant='A0', minsnr=0., **options):
+def solve(module, root, label, source, refant='A0', minsnr=0.,
+          smodel=(1., 0., 0., 0.), **options):
     caltable = root/f'{label}.cal'
     preload = os.environ.pop('LD_PRELOAD', None) if module is not casa else None
     try:
         module.gaincal(vis=str(source), caltable=str(caltable), refant=refant,
-                       smodel=[1., 0., 0., 0.], minsnr=minsnr, **options)
+                       smodel=list(smodel), minsnr=minsnr, **options)
     finally:
         if preload is not None:
             os.environ['LD_PRELOAD'] = preload
@@ -118,7 +119,9 @@ def amplitude_data(root, source):
     return path
 
 
-def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normtype='mean', calmode='a', compare_flagged_gains=True, **extra):
+def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normtype='mean',
+                   calmode='a', compare_flagged_gains=True, apply_options=None, sort_solutions=False,
+                   **extra):
     label = f'{calmode}-{gaintype}-{solint}-{normtype}-norm{int(solnorm)}'
     if 'preavg' in extra:
         label += f'-preavg{extra["preavg"]:g}'
@@ -129,17 +132,27 @@ def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normty
         case = f'{label}-{engine}'
         vis = root/f'{case}.ms'
         copy_ms(source, vis)
-        solutions.append(solve(module, root, case, vis, **options))
+        solution = solve(module, root, case, vis, **options)
+        if sort_solutions:
+            # Different observing blocks can have the same solution time.
+            # Compare their rows by observing identities as well as by time.
+            keys = ['ANTENNA1', 'TIME', 'SCAN_NUMBER', 'FIELD_ID', 'SPECTRAL_WINDOW_ID',
+                    'OBSERVATION_ID']
+            order = np.lexsort([solution[key] for key in keys])
+            solution = {name: values[..., order] for name, values in solution.items()}
+        solutions.append(solution)
         preload = os.environ.pop('LD_PRELOAD', None) if module is native else None
         try:
-            module.applycal(vis=str(vis), gaintable=[str(root/f'{case}.cal')], flagbackup=False)
+            module.applycal(vis=str(vis), gaintable=[str(root/f'{case}.cal')], flagbackup=False,
+                            **(apply_options or {}))
         finally:
             if preload is not None:
                 os.environ['LD_PRELOAD'] = preload
         corrected.append(contents(vis))
 
     expected, actual = solutions
-    for name in ['FIELD_ID', 'ANTENNA1', 'ANTENNA2', 'SCAN_NUMBER', 'SPECTRAL_WINDOW_ID', 'FLAG']:
+    for name in ['FIELD_ID', 'OBSERVATION_ID', 'ANTENNA1', 'ANTENNA2', 'SCAN_NUMBER',
+                 'SPECTRAL_WINDOW_ID', 'FLAG']:
         np.testing.assert_array_equal(actual[name], expected[name], err_msg=f'{label} {name}')
     np.testing.assert_allclose(actual['TIME'], expected['TIME'], rtol=0., atol=1e-4)
     assert np.any(expected['PARAMERR'] > 0.)
@@ -441,11 +454,340 @@ def robust_edge_cases(root, source, native):
     return results
 
 
+def solve_selections(root, source, native):
+    t = table()
+    t.open(str(source/'SPECTRAL_WINDOW'), nomodify=False)
+    try:
+        t.putcell('NAME', 0, 'SPW0')
+    finally:
+        t.close()
+    t.open(str(source/'STATE'), nomodify=False)
+    try:
+        state_ids = [t.nrows(), t.nrows()+1]
+        t.addrows(2)
+        for row, name in zip(state_ids, ['CALIBRATE_FLUX', 'CALIBRATE_PHASE']):
+            t.putcell('OBS_MODE', row, name+'#ON_SOURCE')
+    finally:
+        t.close()
+    t.open(str(source/'OBSERVATION'), nomodify=False)
+    try:
+        observation = t.nrows()
+        t.addrows(1)
+        for col in t.colnames():
+            if t.iscelldefined(col, 0):
+                t.putcell(col, observation, t.getcell(col, 0))
+    finally:
+        t.close()
+    t.open(str(source), nomodify=False)
+    try:
+        field = t.getcol('FIELD_ID')
+        t.putcol('STATE_ID', np.asarray(state_ids, dtype=np.int32)[field])
+        t.putcol('OBSERVATION_ID', np.where(field==0, 0, observation).astype(np.int32))
+        baseline_lengths = np.linalg.norm(t.getcol('UVW')[:2], axis=0)
+        assert np.any(baseline_lengths < 50.) and np.any(baseline_lengths >= 50.)
+    finally:
+        t.close()
+    t.open(str(source/'FIELD'))
+    try:
+        field_name = t.getcell('NAME', 1)
+    finally:
+        t.close()
+
+    results = {}
+    for name, interval, expected_field, options in [
+        ('intent', 'inf', [1], dict(intent='*PHASE*')),
+        ('uvrange', 'inf', [0, 1], dict(uvrange='<50m')),
+        ('named-field', 'inf', [1], dict(field=field_name)),
+        ('observation-number', 'inf', [1], dict(observation=int(observation))),
+        ('solint-number', 25.0, [0, 1], {}),
+        ('taql', 'inf', [1], dict(msselect='FIELD_ID == 1')),
+        ('named-spw-channels', 'inf', [0, 1], dict(spw='SPW0:0~1')),
+        ('disabled', 'inf', [1], dict(selectdata=False, intent='*PHASE*', scan='4000',
+                                     observation=9000, antenna='MISSING', uvrange='>10000km')),
+    ]:
+        case = root/name
+        case.mkdir()
+        results[name] = gain_and_apply(case, source, native, 'G', interval,
+                                       calmode='ap', minblperant=2, **options)
+        expected = contents(case/f'ap-G-{interval}-mean-norm0-casa.cal')
+        np.testing.assert_array_equal(np.unique(expected['FIELD_ID']), expected_field)
+        if name == 'named-spw-channels':
+            spectral_metadata(case, f'ap-G-{interval}-mean-norm0')
+    return results
+
+
+def spectral_metadata(case, label):
+    casa_window, native_window = [
+        contents(case/f'{label}-{engine}.cal'/'SPECTRAL_WINDOW') for engine in ['casa', 'native']
+    ]
+    for col in ['CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION', 'NUM_CHAN',
+                'TOTAL_BANDWIDTH', 'FLAG_ROW']:
+        np.testing.assert_allclose(native_window[col], casa_window[col], rtol=1e-9, atol=0.,
+                                   err_msg=col)
+
+
+def solve_grouping(root, source, native):
+    t = table()
+    for subtable, overrides in [
+        ('SPECTRAL_WINDOW', {'NAME': 'SPW1'}),
+        ('DATA_DESCRIPTION', {'SPECTRAL_WINDOW_ID': 1}),
+        ('OBSERVATION', {}),
+    ]:
+        t.open(str(source/subtable), nomodify=False)
+        try:
+            assert t.nrows() == 1
+            t.addrows(1)
+            for col in t.colnames():
+                if t.iscelldefined(col, 0):
+                    value = overrides.get(col, t.getcell(col, 0))
+                    if subtable == 'SPECTRAL_WINDOW' and col in ['CHAN_FREQ', 'REF_FREQUENCY']:
+                        value += 4e8
+                    t.putcell(col, 1, value)
+        finally:
+            t.close()
+    t.open(str(source), nomodify=False)
+    try:
+        _, integration = np.unique(t.getcol('TIME'), return_inverse=True)
+        t.putcol('DATA_DESC_ID', (integration % 2).astype(np.int32))
+        t.putcol('OBSERVATION_ID', ((integration // 2) % 2).astype(np.int32))
+        t.putcol('SCAN_NUMBER', np.ones(len(integration), dtype=np.int32))
+    finally:
+        t.close()
+    results = {}
+    for gain in ['G', 'T']:
+        for mode in ['p', 'ap', 'a']:
+            for axes, intervals in [('', 4), ('obs', 2), ('spw', 2), ('obs,spw', 1)]:
+                name = f'{gain}-{mode}-{axes.replace(",", "-") or "none"}'
+                case = root/name
+                case.mkdir()
+                results[name] = gain_and_apply(
+                    case, source, native, gain, 'inf', calmode=mode, combine=axes,
+                    field='0', minblperant=3, sort_solutions=True,
+                    apply_options={'spwmap': [0, 0]} if 'spw' in axes else None)
+                label = f'{mode}-{gain}-inf-mean-norm0'
+                expected = contents(case/f'{label}-casa.cal')
+                assert len(expected['TIME']) == 5*intervals, (name, expected['TIME'])
+                spectral_metadata(case, label)
+    results.update(grouping_edge_cases(root, source, native))
+    return results
+
+
+def grouping_edge_cases(root, source, native):
+    results = {}
+    for name in ['unequal-widths', 'later-first-spw', 'sparse-windows', 'simultaneous-windows']:
+        case = root/name
+        case.mkdir()
+        vis = case/'source.ms'
+        copy_ms(source, vis)
+        combine, interval, extra = 'spw', 'inf', {}
+        if name == 'unequal-widths':
+            extra['spw'] = '0:0~1,1:0~3'
+        else:
+            t = table()
+            t.open(str(vis), nomodify=False)
+            try:
+                times = t.getcol('TIME')
+                _, integration = np.unique(times, return_inverse=True)
+                if name == 'later-first-spw':
+                    spw = (1 - integration % 2).astype(np.int32)
+                    t.putcol('OBSERVATION_ID', spw)
+                    combine = 'obs,spw'
+                    extra['preavg'] = 20.
+                elif name == 'sparse-windows':
+                    spw = (times > np.median(times)).astype(np.int32)
+                    t.putcol('FIELD_ID', np.zeros_like(spw))
+                    t.putcol('OBSERVATION_ID', np.zeros_like(spw))
+                    t.putcol('SCAN_NUMBER', spw+1)
+                else:
+                    spw = (integration % 2).astype(np.int32)
+                    simultaneous = times.min() + 20 * (integration // 2)
+                    t.putcol('TIME', simultaneous)
+                    t.putcol('TIME_CENTROID', simultaneous)
+                    t.putcol('FIELD_ID', np.zeros_like(spw))
+                    t.putcol('OBSERVATION_ID', np.zeros_like(spw))
+                    t.putcol('INTERVAL', np.where(spw == 0, 10., 20.))
+                    t.putcol('EXPOSURE', np.where(spw == 0, 10., 20.))
+                    interval = 'int'
+                t.putcol('DATA_DESC_ID', spw)
+            finally:
+                t.close()
+        gain = 'T' if name == 'later-first-spw' else 'G'
+        results[name] = gain_and_apply(
+            case, vis, native, gain, interval, calmode='ap', field='0', combine=combine,
+            minblperant=3, sort_solutions=True,
+            apply_options=None if name == 'sparse-windows' else {'spwmap': [0, 0]}, **extra)
+        label = f'ap-{gain}-{interval}-mean-norm0' + ('-preavg20' if 'preavg' in extra else '')
+        expected = contents(case/f'{label}-casa.cal')
+        if name == 'sparse-windows':
+            np.testing.assert_array_equal(np.unique(expected['SPECTRAL_WINDOW_ID']), [0, 1])
+        if name == 'later-first-spw':
+            np.testing.assert_array_equal(expected['OBSERVATION_ID'], 0)
+        if name == 'simultaneous-windows':
+            assert len(expected['TIME']) == 5*len(np.unique(simultaneous))
+        spectral_metadata(case, label)
+    return results
+
+
+def point_models(root, source, native):
+    results = {}
+    for basis, stokes, model in [
+        ('linear', 'XX YY', [1.5, .3, .2, .1]),
+        ('circular', 'RR LL', [1.5, .3, .2, -.2]),
+        ('linear-full', 'XX XY YX YY', [1.5, .3]),
+        ('linear-full-cross', 'XX XY YX YY', [1.5, .3, .2, .1]),
+        ('circular-full-cross', 'RR RL LR LL', [1.5, .3, .2, -.2]),
+    ]:
+        fixture = root/basis
+        fixture.mkdir()
+        make_cal_ms(str(fixture/'source.ms'), stokes=stokes)
+        vis = amplitude_data(fixture, fixture/'source.ms')
+        for gain in ['G', 'T']:
+            for mode in ['p', 'a', 'ap']:
+                name = f'{basis}-{gain}-{mode}'
+                case = root/name
+                case.mkdir()
+                results[name] = gain_and_apply(case, vis, native, gain, 'inf', calmode=mode,
+                                               smodel=model, minblperant=2)
+                if gain == 'G' and basis.endswith('-full-cross'):
+                    parang_case = root/f'{name}-parang'
+                    parang_case.mkdir()
+                    results[parang_case.name] = gain_and_apply(
+                        parang_case, vis, native, gain, 'inf', calmode=mode, smodel=model,
+                        parang=True, minblperant=2, apply_options={'parang': True})
+    for name, fixture_source, write_model in [
+        ('stored-column', source, True),
+        ('stored-column-full', root/'linear-full'/'amplitude.ms', True),
+        ('point-fallback', source, False),
+    ]:
+        fixture = root/name
+        fixture.mkdir()
+        vis = fixture/'source.ms'
+        copy_ms(fixture_source, vis)
+        if write_model:
+            casa.setjy(vis=str(vis), field='0', standard='manual',
+                       fluxdensity=[1.7, 0., 0., 0.], usescratch=True)
+        else:
+            t = table()
+            t.open(str(vis), nomodify=False)
+            try:
+                t.removecols('MODEL_DATA')
+            finally:
+                t.close()
+        for gain in ['G', 'T']:
+            results[f'{name}-{gain}'] = gain_and_apply(fixture, vis, native, gain, 'inf',
+                calmode='ap', field='0', smodel=[], minblperant=2)
+    results.update(point_model_edges(root, root/'linear-full'/'amplitude.ms', native))
+    return results
+
+
+def point_model_edges(root, source, native):
+    results = {}
+    for name in ['mixed-model-column', 'mixed-model-robust', 'weak-cross-hands', 'nominal-baseline']:
+        case = root/name
+        case.mkdir()
+        vis = case/'source.ms'
+        copy_ms(source, vis)
+        options = dict(calmode='ap', corrdepflags=True, minblperant=2)
+        t = table()
+        t.open(str(vis), nomodify=False)
+        try:
+            if name.startswith('mixed-model'):
+                model = t.getcol('MODEL_DATA')
+                model[0], model[3], model[1:3] = 1.2, .8, 0.
+                model[1, ::2, 1::2] = .2 + .1j
+                model[2, ::2, 1::2] = .2 - .1j
+                t.putcol('MODEL_DATA', model)
+                flags = t.getcol('FLAG')
+                flags[1:3, ::2, 1::4] = True
+                t.putcol('FLAG', flags)
+                options['smodel'] = []
+                if name == 'mixed-model-robust':
+                    options.update(solmode='R', rmsthresh=[5., 4.])
+            elif name == 'weak-cross-hands':
+                options.update(smodel=[1., 0., .0001, 0.], minsnr=4., compare_flagged_gains=False)
+            else:
+                first, second = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+                baseline = (first == 0) & (second == 1)
+                flags = t.getcol('FLAG')
+                flags[0, :, baseline] = True
+                flags[3, :, baseline] = True
+                t.putcol('FLAG', flags)
+                options['minblperant'] = 4
+        finally:
+            t.close()
+        results[name] = gain_and_apply(case, vis, native, 'T', 'inf', **options)
+        expected = contents(case/'ap-T-inf-mean-norm0-casa.cal')
+        if name == 'weak-cross-hands':
+            assert np.any(expected['FLAG']) and np.any(~expected['FLAG'])
+        if name == 'nominal-baseline':
+            assert not np.any(expected['FLAG'])
+    return results
+
+
+def spectral_weights(root, source, native):
+    results = {}
+    failure_cases = {'sigma-later-undefined', 'sigma-second-scan', 'sigma-combined-scans'}
+    for name in ['absent', 'defined', 'sigma-undefined', 'weight-undefined',
+                 'sigma-first-undefined', 'weight-first-undefined', *sorted(failure_cases)]:
+        case = root/name
+        case.mkdir()
+        vis = case/'source.ms'
+        copy_ms(source, vis)
+        t = table()
+        t.open(str(vis), nomodify=False)
+        try:
+            shape = t.getcell('DATA', 0).shape
+            missing_sigma = {'sigma-first-undefined': 0, 'sigma-later-undefined': 3,
+                             'sigma-combined-scans': 1}.get(name)
+            if name == 'sigma-second-scan':
+                scans = t.getcol('SCAN_NUMBER')
+                missing_sigma = int(np.flatnonzero(scans != scans[0])[0])
+            if name == 'sigma-combined-scans':
+                t.putcell('SCAN_NUMBER', 1, 3)
+            for column in ['SIGMA_SPECTRUM', 'WEIGHT_SPECTRUM']:
+                if column in t.colnames():
+                    t.removecols(column)
+                if name != 'absent':
+                    description = t.getcoldesc('DATA')
+                    description.update(valueType='float', dataManagerType='StandardStMan',
+                                       dataManagerGroup='StandardStMan', option=0)
+                    description.pop('shape', None)
+                    t.addcols({column: description})
+            if name != 'absent':
+                for row in range(t.nrows()):
+                    if name != 'weight-undefined' and not (name == 'weight-first-undefined' and row == 0):
+                        t.putcell('WEIGHT_SPECTRUM', row, np.ones(shape, dtype=np.float32))
+                    if name != 'sigma-undefined' and row != missing_sigma:
+                        sigma = .4 + (np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+                                      + .9*(row % 6))/12
+                        t.putcell('SIGMA_SPECTRUM', row, sigma)
+        finally:
+            t.close()
+        if name in failure_cases:
+            combine = 'scan' if name == 'sigma-combined-scans' else ''
+            for engine, module, diagnostic in [
+                ('casa', casa, 'Error in Calibrater::solve'),
+                ('native', native, 'SIGMA_SPECTRUM'),
+            ]:
+                try:
+                    solve(module, case, engine, vis, gaintype='G', calmode='ap', minblperant=2,
+                          combine=combine)
+                except RuntimeError as error:
+                    assert diagnostic in str(error), (engine, error)
+                else:
+                    raise AssertionError(f'{engine} accepted an undefined sigma inside a buffer')
+                assert not (case/f'{engine}.cal').exists()
+            continue
+        results[name] = gain_and_apply(case, vis, native, 'G', 'inf', calmode='ap',
+                                       minblperant=2, apply_options={'calwt': [False]})
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -503,6 +845,14 @@ def main():
         results = robust_gains(root, amplitude_data(root, source), native)
     elif args.case == 'robust-edges':
         results = robust_edge_cases(root, amplitude_data(root, source), native)
+    elif args.case == 'selection':
+        results = solve_selections(root, amplitude_data(root, source), native)
+    elif args.case == 'grouping':
+        results = solve_grouping(root, amplitude_data(root, source), native)
+    elif args.case == 'point-models':
+        results = point_models(root, amplitude_data(root, source), native)
+    elif args.case == 'spectral-weights':
+        results = spectral_weights(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

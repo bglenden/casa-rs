@@ -6322,6 +6322,22 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.solint",
+      "semantic_revision": 2,
+      "casa_name": "solint",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Gain solution interval specified as inf, int, a time such as 30s, or seconds as a number.",
+        "details": null,
+        "examples": ["inf", "30s", "30"]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.solnorm",
       "semantic_revision": 1,
       "casa_name": "solnorm",
@@ -12279,7 +12295,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
-      "documentation": {"summary": "Applycal accepts a CASA variant and converts it to selector text during MS selection.", "details": null, "examples": ["", "0"]},
+      "documentation": {"summary": "Accepts a CASA variant and converts it to selector text during MeasurementSet selection.", "details": null, "examples": ["", "0"]},
       "persistence_class": "profile"
     },
     {
@@ -12291,7 +12307,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
-      "documentation": {"summary": "Applycal accepts selector text or an observation ID. Preserve the input type for HISTORY.", "details": null, "examples": ["", "0"]},
+      "documentation": {"summary": "Accepts selector text or an observation ID. Preserve the input type for HISTORY.", "details": null, "examples": ["", "0"]},
       "persistence_class": "profile"
     },
     {

@@ -507,6 +507,11 @@ pub(super) fn write_gain_table(
             .iter()
             .map(|&id| window(id))
             .collect(),
+        channel_selections: solved
+            .channel_selections
+            .iter()
+            .map(|(&id, channels)| (window(id), channels.clone()))
+            .collect(),
         selected_data: crate::SelectedData::default(),
         solve_stats: crate::SolveStats::default(),
     };

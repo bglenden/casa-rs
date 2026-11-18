@@ -411,6 +411,7 @@ fn gain_solve() -> SolveGainTaskRequest {
         combine: GainSolveCombine {
             scans: true,
             fields: true,
+            ..GainSolveCombine::default()
         },
         refant: RefAntSelector::AntennaName("VA15".into()),
         prior_calibration_tables: vec![prior],

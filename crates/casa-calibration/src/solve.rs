@@ -7,7 +7,7 @@
 //! - `calmode='p|a|ap'`
 //! - `solint='inf'|'int'|<seconds>`
 //! - explicit reference antenna
-//! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`) or `MODEL_DATA`
+//! - point-source Stokes sky model (`smodel=[I,Q,U,V]`) or `MODEL_DATA`
 //!
 //! The acceptance contract is downstream behavior: the resulting caltable
 //! should be CASA-compatible on disk and should yield corrected visibilities
@@ -23,9 +23,9 @@ pub(crate) mod writer;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
+use casa_ms::{ChannelSelection, MsError};
 use casa_tables::{Table, TableError};
 use casa_types::{Complex32, ScalarValue};
 use schemars::JsonSchema;
@@ -36,7 +36,7 @@ use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
 use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder};
 use crate::{ApplyExecutionError, ApplyPlanError};
-use grouping::{SolveGroupOptions, build_solve_groups, validate_smodel, validate_solve_interval};
+use grouping::{SolveGroupOptions, build_solve_groups};
 use kernel::solve_group;
 use writer::write_gain_caltable;
 
@@ -106,7 +106,7 @@ impl GainSolveRobustness {
 /// Visibility model source used by the gain solver.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveModelSource {
-    /// Use the point-source Stokes-I model from `smodel`.
+    /// Use the point-source Stokes model from `smodel`.
     #[default]
     PointSource,
     /// Use per-sample visibilities from the MS `MODEL_DATA` column.
@@ -124,13 +124,19 @@ pub enum GainSolveInterval {
     Seconds(f64),
 }
 
-/// Supported first-wave `gaincal` combine axes.
+/// Data axes omitted as boundaries when forming `gaincal` solution intervals.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GainSolveCombine {
     /// Extend solves across scan boundaries.
     pub scans: bool,
     /// Extend solves across field boundaries.
     pub fields: bool,
+    /// Extend solves across observation boundaries.
+    #[serde(default)]
+    pub observations: bool,
+    /// Solve jointly across selected spectral windows.
+    #[serde(default)]
+    pub spectral_windows: bool,
 }
 
 /// Reference antenna selector for solve requests.
@@ -250,8 +256,8 @@ pub enum GainSolveError {
         data_desc_ids: Vec<i32>,
     },
 
-    /// The solve requires a point-source Stokes-I model.
-    #[error("unsupported smodel {smodel:?}; only [I,0,0,0] is supported in this wave")]
+    /// The point-source Stokes vector is invalid for the solve.
+    #[error("unsupported smodel {smodel:?}")]
     UnsupportedSkyModel {
         /// Model vector passed by the caller.
         smodel: [f32; 4],
@@ -378,6 +384,8 @@ pub(crate) struct SolvedGains {
     /// The spectral windows an interval reached a solve in, whether or not
     /// it succeeded ([`grouping::SolveAccumulator::attempted`]).
     pub(crate) attempted_spw_ids: BTreeSet<i32>,
+    /// The resolved channels used in each selected spectral window.
+    pub(crate) channel_selections: BTreeMap<i32, ChannelSelection>,
     /// The data the solve selected.
     pub(crate) selected_data: SelectedData,
     /// How far its intervals got.
@@ -391,7 +399,7 @@ pub(crate) fn solve_gain_rows(
     request: &GainSolveRequest,
 ) -> Result<SolvedGains, GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
-        validate_smodel(request.smodel)?;
+        validate_smodel(request.smodel, true)?;
     } else if !ms
         .main_table()
         .schema()
@@ -400,13 +408,20 @@ pub(crate) fn solve_gain_rows(
         return Err(GainSolveError::MissingModelColumn);
     }
     validate_solve_interval(request.solve_interval)?;
+    // P Jones is later in CASA's Jones chain than G, so the rotation
+    // corrupts a polarized point model before a diagonal gain is fitted.
+    let rotate_point_model = request.parang
+        && request.gain_type == GainType::G
+        && request.model_source == GainSolveModelSource::PointSource
+        && request.smodel[1..].iter().any(|value| *value != 0.0);
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
-        request.parang,
+        request.parang && !rotate_point_model,
+        true,
     )?;
     let requested_preaverage = request.preaverage_seconds as f32;
     let preaverage = (requested_preaverage > f32::EPSILON && requested_preaverage.is_finite())
@@ -426,7 +441,8 @@ pub(crate) fn solve_gain_rows(
         SolveGroupOptions {
             gain_type: request.gain_type,
             model_source: request.model_source,
-            stokes_i: request.smodel[0],
+            point_stokes: request.smodel,
+            rotate_point_model,
             solve_interval: request.solve_interval,
             combine: request.combine,
             // VbAvg applies this boundary to either source of the interval.
@@ -532,10 +548,19 @@ pub(crate) fn solve_gain_rows(
         }
     }
     drop(kernel_phase);
+    let mut channel_selections = BTreeMap::new();
+    for row in &context.rows {
+        if let Some(channels) = &row.channel_selection {
+            channel_selections
+                .entry(row.data_spw_id)
+                .or_insert_with(|| channels.clone());
+        }
+    }
     Ok(SolvedGains {
         rows: solution_rows,
         refant_id: context.refant_id,
         attempted_spw_ids,
+        channel_selections,
         selected_data: context.selected_data,
         solve_stats: solve_stats.finish(),
     })
@@ -832,6 +857,24 @@ pub(crate) fn get_f64(table: &Table, row: usize, column: &str) -> Result<f64, Ga
             shape: vec![row],
         }),
     }
+}
+
+fn validate_solve_interval(solve_interval: GainSolveInterval) -> Result<(), GainSolveError> {
+    match solve_interval {
+        GainSolveInterval::Infinite | GainSolveInterval::Integration => Ok(()),
+        GainSolveInterval::Seconds(seconds) if seconds > 0.0 => Ok(()),
+        _ => Err(GainSolveError::UnsupportedSolveInterval { solve_interval }),
+    }
+}
+
+pub(crate) fn validate_smodel(smodel: [f32; 4], polarized: bool) -> Result<(), GainSolveError> {
+    if smodel[0] <= 0.0
+        || smodel.iter().any(|value| !value.is_finite())
+        || (!polarized && smodel[1..].iter().any(|value| *value != 0.0))
+    {
+        return Err(GainSolveError::UnsupportedSkyModel { smodel });
+    }
+    Ok(())
 }
 
 pub(crate) fn correlation_receptors(code: i32) -> Option<(usize, usize)> {

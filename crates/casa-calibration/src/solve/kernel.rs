@@ -63,6 +63,8 @@ pub(crate) struct RobustSample {
     pub(crate) correlation: usize,
     pub(crate) visibility: Complex32,
     pub(crate) weight: f32,
+    /// Fraction of the averaged sample represented by a nonzero model.
+    pub(crate) model: f32,
     pub(crate) in_first_buffer: bool,
 }
 
@@ -93,12 +95,10 @@ impl SolveGraph {
         self.weights.get(&baseline).copied().unwrap_or_default()
     }
 
-    /// The baselines with positive weight between antennas of `antennas`.
+    /// The baselines between antennas that meet the solve constraints.
     fn restricted_to(&self, antennas: &BTreeSet<i32>) -> Self {
         let keep = |&(antenna1, antenna2): &(i32, i32)| {
-            antennas.contains(&antenna1)
-                && antennas.contains(&antenna2)
-                && self.weight((antenna1, antenna2)) > f32::EPSILON
+            antennas.contains(&antenna1) && antennas.contains(&antenna2)
         };
         Self {
             edges: self
@@ -408,8 +408,8 @@ pub(crate) fn baseline_constrained_antennas(
 ) -> BTreeSet<i32> {
     let baselines = graphs
         .iter()
-        .flat_map(|graph| graph.weights.iter())
-        .filter(|((antenna1, antenna2), weight)| antenna1 < antenna2 && **weight > f32::EPSILON)
+        .flat_map(|graph| graph.stats.iter())
+        .filter(|((antenna1, antenna2), stats)| antenna1 < antenna2 && stats.collapsed_count > 0)
         .map(|(baseline, _)| *baseline)
         .collect::<BTreeSet<_>>();
     let mut active = baselines
@@ -828,9 +828,6 @@ fn chi_square_complex64(graph: &SolveGraph, gains: &HashMap<i32, Complex64>) -> 
             continue;
         }
         let weight = f64::from(graph.weight((antenna1, antenna2)));
-        if weight <= f64::EPSILON {
-            continue;
-        }
         let gain1 = gains
             .get(&antenna1)
             .copied()

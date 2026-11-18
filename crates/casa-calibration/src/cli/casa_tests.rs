@@ -244,7 +244,10 @@ fn gaincal_reads_casas_values() {
         "vis": "dataset.ms",
         "caltable": "phase.gcal",
         "field": "0",
-        "solint": "30s",
+        "solint": 30,
+        "observation": 0,
+        "uvrange": ">20m",
+        "intent": "*PHASE*",
         "preavg": 12.5,
         "combine": "scan,field",
         "refant": "VA15",
@@ -269,6 +272,10 @@ fn gaincal_reads_casas_values() {
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection {
                 field: Some("0".into()),
+                observation: Some("0".into()),
+                uvrange: Some(">20m".into()),
+                intent: Some("*PHASE*".into()),
+                msselect: Some("ANTENNA1!=ANTENNA2".into()),
                 ..MsSelection::new()
             },
             output_table: PathBuf::from("phase.gcal"),
@@ -278,6 +285,7 @@ fn gaincal_reads_casas_values() {
             combine: GainSolveCombine {
                 scans: true,
                 fields: true,
+                ..GainSolveCombine::default()
             },
             refant: RefAntSelector::Expression {
                 selection: "VA15".into(),
@@ -309,11 +317,7 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
     for (name, value) in [
         ("gaintype", json!("K")),
         ("gaintype", json!("GSPLINE")),
-        ("combine", json!("spw")),
-        ("combine", json!("scan,obs")),
-        ("combine", json!("Scan,SPW")),
         ("solint", json!("inf,2ch")),
-        ("smodel", json!([1, 0.1, 0, 0])),
     ] {
         let mut values = base.clone();
         values[name] = value.clone();
@@ -326,30 +330,11 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
     }
     // CASA 6.7.6.14's gaincal aborts on more than four Stokes values.
     assert!(refused(with("smodel", json!([1, 0, 0, 0, 0])), "smodel").contains("[I, Q, U, V]"));
-    // A shorter model's missing Stokes are zero; a polarized one is not
-    // implemented yet.
-    let message = refused(with("smodel", json!([1, 0.1])), "smodel");
-    assert!(message.contains("#979"), "{message}");
-    // CASA's numeric solint and observation are refused as the wrong type,
-    // naming the issue.
-    for (name, value) in [("solint", json!(30)), ("observation", json!(0))] {
-        let bundle = builtin_surface_bundle("gaincal").expect("gaincal");
-        let mut request = OpenSessionRequest::defaults(bundle, ".");
-        request.override_patch = ResolutionPatch {
-            values: [(
-                name.to_string(),
-                ParameterValue::from_plain_json(&value).expect("a value"),
-            )]
-            .into(),
-            ..ResolutionPatch::default()
-        };
-        request.managed_save = false;
-        let message = ParameterRuntime::default()
-            .open_session(request)
-            .expect_err("the wrong type")
-            .to_string();
-        assert!(message.contains("#979"), "{name}: {message}");
-    }
+    // Short models zero-fill omitted Stokes values.
+    assert_eq!(
+        gain(json!({"vis": "d.ms", "caltable": "g.gcal", "smodel": [1, 0.1]})).smodel,
+        [1.0, 0.1, 0.0, 0.0]
+    );
 }
 
 #[test]
@@ -386,7 +371,11 @@ fn gaincal_reads_solint_and_combine_as_casa_does() {
     ] {
         assert_eq!(
             read("combine", combine).combine,
-            GainSolveCombine { scans, fields },
+            GainSolveCombine {
+                scans,
+                fields,
+                ..GainSolveCombine::default()
+            },
             "{combine}"
         );
     }

@@ -1,15 +1,65 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Ordered sample arithmetic, separated from per-row array addressing.
 
+use casa_ms::{ChannelSelection, MeasurementSet};
 use casa_types::Complex32;
-use ndarray::Axis;
+use ndarray::{ArrayD, Axis, IxDyn};
 use num_complex::Complex64;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
+
+use crate::execute::ParallacticAngleState;
 
 use super::{
-    GainSolveMode, SolveAccumulator, SolveEdgeAccumulation, SolveSamples, median_with_even_mean,
+    AveragedBaseline, GainSolveError, GainSolveMode, SelectedSolveRow, SolveAccumulator,
+    SolveSamples, get_i32, median_with_even_mean,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct SolveAccumulationKey {
+    pub(super) baseline: AveragedBaseline,
+    pub(super) correlation_index: usize,
+    pub(super) parallel_hand: bool,
+}
+
+pub(super) struct SolveRowLayouts {
+    pub(super) by_ddid: HashMap<i32, SolveRowLayout>,
+    pub(super) rotation: Option<ParallacticAngleState>,
+}
+
+impl SolveRowLayouts {
+    pub(super) fn new(
+        ms: &MeasurementSet,
+        rotate_point_model: bool,
+    ) -> Result<Self, GainSolveError> {
+        let rotation = rotate_point_model
+            .then(|| crate::execute::load_parallactic_angle_state(ms))
+            .transpose()
+            .map_err(|source| GainSolveError::OpenMeasurementSet {
+                path: ms
+                    .path()
+                    .unwrap_or(Path::new("<memory>"))
+                    .display()
+                    .to_string(),
+                source,
+            })?;
+        Ok(Self {
+            by_ddid: HashMap::new(),
+            rotation,
+        })
+    }
+}
+
+/// A data description's row-invariant layout; shape/selection changes refresh
+/// the plan, so variable-shaped cells keep the same validation.
+pub(super) struct SolveRowLayout {
+    pub(super) correlations: Vec<i32>,
+    pub(super) channel_count: usize,
+    pub(super) selection: Option<ChannelSelection>,
+    pub(super) channels: Vec<usize>,
+    pub(super) all_channels: bool,
+}
 
 impl SolveAccumulator {
     /// Scalar gains start from the parallel-hand phasors in the first
@@ -25,10 +75,7 @@ impl SolveAccumulator {
         let first = samples.iter().filter_map(|(key, channels)| {
             let baseline = key.baseline;
             let data = channels.first()?;
-            let within_buffer = buffer
-                .max_span
-                .is_none_or(|span| f64::from_bits(baseline.start_bits) - buffer.time <= span);
-            (baseline.field_id == buffer.field && within_buffer && data.weight > f32::EPSILON)
+            (key.parallel_hand && buffer.contains(baseline) && data.weight > f32::EPSILON)
                 .then(|| (baseline.antennas, data.weighted_sum / data.weight))
         });
         let guess_antenna = first
@@ -89,6 +136,81 @@ impl SolveAccumulator {
     }
 }
 
+/// The selected point model from `VisBufferImpl2::setVisCubeModel`.
+/// CASA indexes its basis vector relative to the first selected correlation.
+pub(super) fn point_visibility([i, q, u, v]: [f32; 4], code: i32, first_code: i32) -> Complex32 {
+    let (parallel, cross) = if code < 9 { (v, (q, u)) } else { (q, (u, v)) };
+    match code - first_code {
+        0 => Complex32::new(i + parallel, 0.0),
+        1 => Complex32::new(cross.0, cross.1),
+        2 => Complex32::new(cross.0, -cross.1),
+        _ => Complex32::new(i - parallel, 0.0),
+    }
+}
+
+pub(super) fn rotate_point_model(
+    ms: &MeasurementSet,
+    row: &SelectedSolveRow,
+    state: &crate::execute::ParallacticAngleState,
+    correlations: &[i32],
+    stokes: [f32; 4],
+) -> Result<Vec<Complex32>, GainSolveError> {
+    let apply_error = |source| GainSolveError::PriorCalibrationApply {
+        source: Box::new(source),
+    };
+    let angle = |antenna, feed_column| {
+        let feed = get_i32(ms.main_table(), row.row_index, feed_column)?;
+        state
+            .feed_parallactic_angle(
+                row.time_seconds,
+                row.field_id,
+                antenna,
+                feed,
+                row.data_spw_id,
+            )
+            .map_err(apply_error)
+    };
+    let mut model = ArrayD::from_shape_fn(IxDyn(&[correlations.len(), 1]), |index| {
+        point_visibility(stokes, correlations[index[0]], correlations[0])
+    });
+    // The apply kernel inverts P. Negating its angles applies P to the sky model.
+    crate::execute::parang::apply(
+        row.data_desc_id,
+        correlations,
+        -angle(row.antenna1, "FEED1")?,
+        -angle(row.antenna2, "FEED2")?,
+        &mut model,
+    )
+    .map_err(apply_error)?;
+    Ok(model.into_raw_vec_and_offset().0)
+}
+
+/// The time averager sees all correlations before G restricts the fit.
+pub(super) fn centroid_weight(
+    samples: &SolveSamples<'_>,
+    correlation: usize,
+    channels: &[usize],
+    shared_flags: Option<&[bool]>,
+    point: Complex32,
+) -> f64 {
+    let power = point.norm_sqr();
+    let scale = if power == 0.0 { 1.0 } else { power };
+    channels
+        .iter()
+        .map(|&channel| {
+            let flagged = shared_flags.map_or_else(
+                || samples.flags[[correlation, channel]],
+                |flags| flags[channel],
+            );
+            if flagged {
+                0.0
+            } else {
+                f64::from(samples.weights[[correlation, channel]] * scale)
+            }
+        })
+        .sum()
+}
+
 /// CASA's correlation-independent flags are shared by every receptor.
 pub(super) fn channel_flags(samples: &SolveSamples<'_>) -> Vec<bool> {
     let correlations = samples.flags.shape()[0];
@@ -113,6 +235,7 @@ pub(super) struct SampleAccumulation<'a> {
     pub(super) values: &'a mut [SolveEdgeAccumulation],
     pub(super) attempted: &'a mut bool,
     pub(super) channelized: bool,
+    pub(super) retain_zero_model: bool,
 }
 
 struct Sample {
@@ -129,7 +252,7 @@ impl SampleAccumulation<'_> {
         correlation: usize,
         shared_flags: Option<&[bool]>,
         channels: &[usize],
-        stokes_i: f32,
+        point: Complex32,
         all_channels: bool,
     ) -> f64 {
         let data = samples.data.index_axis(Axis(0), correlation);
@@ -141,7 +264,6 @@ impl SampleAccumulation<'_> {
         let model = samples
             .model
             .map(|model| model.index_axis_move(Axis(0), correlation));
-        let point = Complex32::new(stokes_i, 0.0);
         let correlations = samples.data.nrows();
         if all_channels
             && model.is_none()
@@ -215,7 +337,11 @@ impl SampleAccumulation<'_> {
         let mut count = 0;
         let mut rejected = 0;
         for (channel, sample) in samples.enumerate() {
-            let actual_weight = self.values[channel].add_sample::<true>(self.attempted, sample);
+            let actual_weight = self.values[channel].add_sample::<true>(
+                self.attempted,
+                sample,
+                self.retain_zero_model,
+            );
             rejected += usize::from(actual_weight == 0.0);
             count = channel + 1;
         }
@@ -234,6 +360,9 @@ impl SampleAccumulation<'_> {
         &mut self,
         samples: impl Iterator<Item = Sample>,
     ) -> f64 {
+        if !CHANNELIZED && self.retain_zero_model {
+            return self.add_scalar_row::<POINT>(samples);
+        }
         let mut weights = Vec::new();
         if CHANNELIZED {
             weights.reserve(self.values.len());
@@ -241,7 +370,11 @@ impl SampleAccumulation<'_> {
         let mut summed_weight = 0.0_f64;
         for (channel, sample) in samples.enumerate() {
             let output = if CHANNELIZED { channel } else { 0 };
-            let weight = self.values[output].add_sample::<POINT>(self.attempted, sample);
+            let weight = self.values[output].add_sample::<POINT>(
+                self.attempted,
+                sample,
+                self.retain_zero_model,
+            );
             if CHANNELIZED {
                 weights.push(weight);
             } else {
@@ -254,38 +387,93 @@ impl SampleAccumulation<'_> {
             summed_weight
         }
     }
+
+    fn add_scalar_row<const POINT: bool>(&mut self, samples: impl Iterator<Item = Sample>) -> f64 {
+        let mut average = SolveEdgeAccumulation::default();
+        let mut channel_count = 0;
+        let mut model_channels = 0;
+        for sample in samples {
+            if !sample.flagged {
+                channel_count += 1;
+                model_channels += usize::from(sample.model.norm_sqr() > 0.0);
+            }
+            average.add_sample::<POINT>(self.attempted, sample, true);
+        }
+        if channel_count > 0 {
+            // ChannelAverageTVI averages the normalized model with flags
+            // alone. VbAvg then time-averages that model with data weights.
+            average.model_weight = average.weight * model_channels as f32 / channel_count as f32;
+            self.values[0].merge(average);
+        }
+        f64::from(average.weight)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct SolveEdgeAccumulation {
+    pub(super) weighted_sum: Complex32,
+    pub(super) weight: f32,
+    pub(super) model_weight: f32,
+    pub(super) weighted_sample_power: f64,
+    pub(super) sample_count: usize,
 }
 
 impl SolveEdgeAccumulation {
+    pub(super) fn merge(&mut self, other: Self) {
+        self.weighted_sum += other.weighted_sum;
+        self.weight += other.weight;
+        self.model_weight += other.model_weight;
+        self.weighted_sample_power += other.weighted_sample_power;
+        self.sample_count += other.sample_count;
+    }
+
     /// Accumulate w |M|² (D/M) = w D conj(M), with power w |D|².
     /// Cancelling the model division avoids two scalar divides per sample.
-    fn add_sample<const POINT: bool>(&mut self, attempted: &mut bool, sample: Sample) -> f32 {
+    fn add_sample<const POINT: bool>(
+        &mut self,
+        attempted: &mut bool,
+        sample: Sample,
+        retain_zero_model: bool,
+    ) -> f32 {
         if sample.weight <= 0.0 || sample.flagged {
             return 0.0;
         }
         let model_norm_sqr = sample.model.norm_sqr();
-        if model_norm_sqr <= f32::EPSILON {
+        let zero_model = model_norm_sqr == 0.0;
+        if zero_model && !retain_zero_model {
             return 0.0;
         }
         *attempted = true;
         let power = sample.data.norm_sqr();
-        if power <= f32::EPSILON * f32::EPSILON * model_norm_sqr {
+        if !zero_model && power <= f32::EPSILON * f32::EPSILON * model_norm_sqr {
             return 0.0;
         }
-        let weight = sample.weight * model_norm_sqr;
-        self.weighted_sum += if POINT
+        // CASA keeps data and nominal weight for zero model cells. After
+        // averaging, their model contribution is zero instead of unity.
+        let weight = if zero_model {
+            sample.weight
+        } else {
+            sample.weight * model_norm_sqr
+        };
+        self.weighted_sum += if zero_model {
+            sample.data * sample.weight
+        } else if POINT
+            && sample.model.im == 0.0
             && power.is_finite()
             && model_norm_sqr.is_finite()
             && sample.weight.is_finite()
         {
-            // A point Stokes-I model is real. Keep the general expression for
-            // non-finite values so its existing propagation is preserved.
+            // Real point models need only a scalar multiply. Complex and
+            // non-finite values use the full expression.
             let scale = sample.weight * sample.model.re;
             Complex32::new(sample.data.re * scale, sample.data.im * scale)
         } else {
             (sample.data * sample.model.conj()) * Complex32::new(sample.weight, 0.0)
         };
         self.weight += weight;
+        if !zero_model {
+            self.model_weight += weight;
+        }
         self.weighted_sample_power += f64::from(sample.weight) * f64::from(power);
         self.sample_count += 1;
         weight
@@ -313,6 +501,7 @@ mod tests {
                 values: &mut values,
                 attempted: &mut attempted,
                 channelized: true,
+                retain_zero_model: false,
             }
             .add_uniform(
                 (0..channels).map(|channel| Sample {
