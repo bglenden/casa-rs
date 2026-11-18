@@ -23,7 +23,7 @@ use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
 use crate::solve::kernel::{RobustSample, SolveGraph};
-use time::{FirstTBuffer, bucketed_rows, first_t_buffers};
+use time::{AveragedBaseline, FirstTBuffer, bucketed_rows, first_t_buffers};
 
 pub(crate) fn validate_solve_interval(
     solve_interval: GainSolveInterval,
@@ -679,13 +679,6 @@ struct SolveAccumulationKey {
     correlation_index: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct AveragedBaseline {
-    antennas: (i32, i32),
-    field_id: i32,
-    start_bits: u64,
-}
-
 /// A weighted mean of times.
 #[derive(Debug, Clone, Copy, Default)]
 struct WeightedTime {
@@ -869,11 +862,12 @@ impl SolveAccumulator {
             .as_ref()
             .is_some_and(|flags| flags.iter().all(|flag| *flag))
             || samples.weights.iter().all(|weight| *weight <= 0.0);
-        // CASA gathers a separate field buffer into the solution. Keep
-        // the complex averages separate until enforcing the solve mode.
+        // CASA gathers each field and data description in a separate buffer.
+        // Keep their averages separate until enforcing the solve mode.
         let mut baseline = AveragedBaseline {
             antennas: (row.antenna1, row.antenna2),
             field_id: if options.channelized { 0 } else { row.field_id },
+            data_desc_id: row.data_desc_id,
             start_bits: 0,
         };
         let start_bits = options.preaverage_max_span.map_or(0, |max_span| {
@@ -1332,6 +1326,7 @@ mod tests {
         AveragedBaseline {
             antennas,
             field_id: 0,
+            data_desc_id: 0,
             start_bits: 0,
         }
     }

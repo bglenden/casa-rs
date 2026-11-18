@@ -118,7 +118,9 @@ def amplitude_data(root, source):
     return path
 
 
-def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normtype='mean', calmode='a', compare_flagged_gains=True, **extra):
+def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normtype='mean',
+                   calmode='a', compare_flagged_gains=True, apply_options=None, sort_solutions=False,
+                   **extra):
     label = f'{calmode}-{gaintype}-{solint}-{normtype}-norm{int(solnorm)}'
     if 'preavg' in extra:
         label += f'-preavg{extra["preavg"]:g}'
@@ -129,17 +131,27 @@ def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normty
         case = f'{label}-{engine}'
         vis = root/f'{case}.ms'
         copy_ms(source, vis)
-        solutions.append(solve(module, root, case, vis, **options))
+        solution = solve(module, root, case, vis, **options)
+        if sort_solutions:
+            # Different observing blocks can have the same solution time.
+            # Compare their rows by observing identities as well as by time.
+            keys = ['ANTENNA1', 'TIME', 'SCAN_NUMBER', 'FIELD_ID', 'SPECTRAL_WINDOW_ID',
+                    'OBSERVATION_ID']
+            order = np.lexsort([solution[key] for key in keys])
+            solution = {name: values[..., order] for name, values in solution.items()}
+        solutions.append(solution)
         preload = os.environ.pop('LD_PRELOAD', None) if module is native else None
         try:
-            module.applycal(vis=str(vis), gaintable=[str(root/f'{case}.cal')], flagbackup=False)
+            module.applycal(vis=str(vis), gaintable=[str(root/f'{case}.cal')], flagbackup=False,
+                            **(apply_options or {}))
         finally:
             if preload is not None:
                 os.environ['LD_PRELOAD'] = preload
         corrected.append(contents(vis))
 
     expected, actual = solutions
-    for name in ['FIELD_ID', 'ANTENNA1', 'ANTENNA2', 'SCAN_NUMBER', 'SPECTRAL_WINDOW_ID', 'FLAG']:
+    for name in ['FIELD_ID', 'OBSERVATION_ID', 'ANTENNA1', 'ANTENNA2', 'SCAN_NUMBER',
+                 'SPECTRAL_WINDOW_ID', 'FLAG']:
         np.testing.assert_array_equal(actual[name], expected[name], err_msg=f'{label} {name}')
     np.testing.assert_allclose(actual['TIME'], expected['TIME'], rtol=0., atol=1e-4)
     assert np.any(expected['PARAMERR'] > 0.)
@@ -499,17 +511,62 @@ def solve_selections(root, source, native):
         expected = contents(case/f'ap-G-{interval}-mean-norm0-casa.cal')
         np.testing.assert_array_equal(np.unique(expected['FIELD_ID']), expected_field)
         if name == 'named-spw-channels':
-            windows = []
-            for engine in ['casa', 'native']:
-                t.open(str(case/f'ap-G-{interval}-mean-norm0-{engine}.cal'/'SPECTRAL_WINDOW'))
-                try:
-                    windows.append({col: t.getcell(col, 0) for col in [
-                        'CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION', 'NUM_CHAN',
-                        'TOTAL_BANDWIDTH', 'FLAG_ROW']})
-                finally:
-                    t.close()
-            for col, expected in windows[0].items():
-                np.testing.assert_allclose(windows[1][col], expected, rtol=1e-9, atol=0., err_msg=col)
+            spectral_metadata(case, f'ap-G-{interval}-mean-norm0')
+    return results
+
+
+def spectral_metadata(case, label):
+    casa_window, native_window = [
+        contents(case/f'{label}-{engine}.cal'/'SPECTRAL_WINDOW') for engine in ['casa', 'native']
+    ]
+    for col in ['CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION', 'NUM_CHAN',
+                'TOTAL_BANDWIDTH', 'FLAG_ROW']:
+        np.testing.assert_allclose(native_window[col], casa_window[col], rtol=1e-9, atol=0.,
+                                   err_msg=col)
+
+
+def solve_grouping(root, source, native):
+    t = table()
+    for subtable, overrides in [
+        ('SPECTRAL_WINDOW', {'NAME': 'SPW1'}),
+        ('DATA_DESCRIPTION', {'SPECTRAL_WINDOW_ID': 1}),
+        ('OBSERVATION', {}),
+    ]:
+        t.open(str(source/subtable), nomodify=False)
+        try:
+            assert t.nrows() == 1
+            t.addrows(1)
+            for col in t.colnames():
+                if t.iscelldefined(col, 0):
+                    value = overrides.get(col, t.getcell(col, 0))
+                    if subtable == 'SPECTRAL_WINDOW' and col in ['CHAN_FREQ', 'REF_FREQUENCY']:
+                        value += 4e8
+                    t.putcell(col, 1, value)
+        finally:
+            t.close()
+    t.open(str(source), nomodify=False)
+    try:
+        _, integration = np.unique(t.getcol('TIME'), return_inverse=True)
+        t.putcol('DATA_DESC_ID', (integration % 2).astype(np.int32))
+        t.putcol('OBSERVATION_ID', ((integration // 2) % 2).astype(np.int32))
+        t.putcol('SCAN_NUMBER', np.ones(len(integration), dtype=np.int32))
+    finally:
+        t.close()
+    results = {}
+    for gain in ['G', 'T']:
+        for mode in ['p', 'ap', 'a']:
+            for axes, intervals in [('', 4), ('obs', 2), ('spw', 2), ('obs,spw', 1)]:
+                name = f'{gain}-{mode}-{axes.replace(",", "-") or "none"}'
+                case = root/name
+                case.mkdir()
+                results[name] = gain_and_apply(
+                    case, source, native, gain, 'inf', calmode=mode, combine=axes,
+                    field='0', minblperant=3, sort_solutions=True,
+                    apply_options={'spwmap': [0, 0]} if 'spw' in axes else None)
+                label = f'{mode}-{gain}-inf-mean-norm0'
+                expected = contents(case/f'{label}-casa.cal')
+                assert len(expected['TIME']) == 5*intervals, (name, expected['TIME'])
+                spectral_metadata(case, label)
     return results
 
 
@@ -517,7 +574,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -577,6 +634,8 @@ def main():
         results = robust_edge_cases(root, amplitude_data(root, source), native)
     elif args.case == 'selection':
         results = solve_selections(root, amplitude_data(root, source), native)
+    elif args.case == 'grouping':
+        results = solve_grouping(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

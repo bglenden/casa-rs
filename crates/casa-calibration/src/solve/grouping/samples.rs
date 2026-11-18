@@ -25,10 +25,7 @@ impl SolveAccumulator {
         let first = samples.iter().filter_map(|(key, channels)| {
             let baseline = key.baseline;
             let data = channels.first()?;
-            let within_buffer = buffer
-                .max_span
-                .is_none_or(|span| f64::from_bits(baseline.start_bits) - buffer.time <= span);
-            (baseline.field_id == buffer.field && within_buffer && data.weight > f32::EPSILON)
+            (buffer.contains(baseline) && data.weight > f32::EPSILON)
                 .then(|| (baseline.antennas, data.weighted_sum / data.weight))
         });
         let guess_antenna = first
