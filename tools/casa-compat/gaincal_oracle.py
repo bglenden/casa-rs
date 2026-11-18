@@ -724,11 +724,61 @@ def point_model_edges(root, source, native):
     return results
 
 
+def spectral_weights(root, source, native):
+    results = {}
+    for name in ['absent', 'defined', 'sigma-undefined', 'weight-undefined',
+                 'sigma-first-undefined', 'weight-first-undefined', 'sigma-later-undefined']:
+        case = root/name
+        case.mkdir()
+        vis = case/'source.ms'
+        copy_ms(source, vis)
+        t = table()
+        t.open(str(vis), nomodify=False)
+        try:
+            shape = t.getcell('DATA', 0).shape
+            for column in ['SIGMA_SPECTRUM', 'WEIGHT_SPECTRUM']:
+                if column in t.colnames():
+                    t.removecols(column)
+                if name != 'absent':
+                    description = t.getcoldesc('DATA')
+                    description.update(valueType='float', dataManagerType='StandardStMan',
+                                       dataManagerGroup='StandardStMan', option=0)
+                    description.pop('shape', None)
+                    t.addcols({column: description})
+            if name != 'absent':
+                for row in range(t.nrows()):
+                    if name != 'weight-undefined' and not (name == 'weight-first-undefined' and row == 0):
+                        t.putcell('WEIGHT_SPECTRUM', row, np.ones(shape, dtype=np.float32))
+                    if (name != 'sigma-undefined' and not (name == 'sigma-first-undefined' and row == 0)
+                            and not (name == 'sigma-later-undefined' and row == 3)):
+                        sigma = .4 + (np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+                                      + .9*(row % 6))/12
+                        t.putcell('SIGMA_SPECTRUM', row, sigma)
+        finally:
+            t.close()
+        if name == 'sigma-later-undefined':
+            for engine, module, diagnostic in [
+                ('casa', casa, 'Error in Calibrater::solve'),
+                ('native', native, 'SIGMA_SPECTRUM'),
+            ]:
+                try:
+                    solve(module, case, engine, vis, gaintype='G', calmode='ap', minblperant=2)
+                except RuntimeError as error:
+                    assert diagnostic in str(error), (engine, error)
+                else:
+                    raise AssertionError(f'{engine} accepted an undefined sigma inside a buffer')
+                assert not (case/f'{engine}.cal').exists()
+            continue
+        results[name] = gain_and_apply(case, vis, native, 'G', 'inf', calmode='ap',
+                                       minblperant=2, apply_options={'calwt': [False]})
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -792,6 +842,8 @@ def main():
         results = solve_grouping(root, amplitude_data(root, source), native)
     elif args.case == 'point-models':
         results = point_models(root, amplitude_data(root, source), native)
+    elif args.case == 'spectral-weights':
+        results = spectral_weights(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
