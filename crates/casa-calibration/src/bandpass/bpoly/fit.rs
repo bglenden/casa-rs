@@ -118,6 +118,19 @@ pub(super) fn fit_interval(
         if samples.is_empty() {
             continue;
         }
+        if samples
+            .iter()
+            .map(|sample| sample.channel)
+            .collect::<BTreeSet<_>>()
+            .len()
+            < count
+        {
+            tracing::warn!(
+                "{}",
+                error("too few unflagged frequencies for a polynomial fit")
+            );
+            return Ok(Vec::new());
+        }
         let active = samples
             .iter()
             .flat_map(|sample| sample.antennas)

@@ -15,7 +15,7 @@ use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_types::{ArrayValue, Complex32};
-use ndarray::{ArrayD, ArrayView2, IxDyn, ShapeBuilder};
+use ndarray::{ArrayD, ArrayView2};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,

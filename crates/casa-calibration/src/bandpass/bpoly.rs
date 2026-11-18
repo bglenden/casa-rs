@@ -25,7 +25,7 @@ use crate::constants::{
 };
 use crate::selected_data::SelectedData;
 use crate::session::CalibrationSolveContext;
-use crate::solve::grouping::{SolveAccumulator, selected_channels};
+use crate::solve::grouping::SolveAccumulator;
 use crate::solve_stats::SolveStats;
 use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, set_fixed_unit_keyword,

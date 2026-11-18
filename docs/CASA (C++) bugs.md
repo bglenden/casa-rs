@@ -5522,9 +5522,24 @@ the same polynomial table and default gainfield.
 In a 12-channel window, `maskcenter=12` excludes the entire spectrum. CASA
 attempts the singular fit and reports the resulting table in `solve_tables`
 with nonfinite coefficients. The native task returns an empty `solve_tables`
-entry when no interval can be fitted. Output creation and replacement still
-use the shared calibration table lifecycle. The pinned BPOLY oracle checks
-the observed CASA product and the native return.
+entry when no interval can be fitted. A singular interval is omitted when
+later intervals still produce valid solutions. Output creation and
+replacement use the shared calibration table lifecycle. The pinned BPOLY
+oracle checks the CASA product, the native return, and retained intervals.
+
+## BPOLY reads a second channel from a singleton selection
+
+- Date noted: 2026-11-18
+- Status: corrected in the native polynomial grid (#31)
+- Affected code: CASA 6.7.6.14 `BJonesPoly::selfSolveOne`.
+
+The grid spacing calculation indexes the second selected frequency even
+when a window contains only one selected channel. With one selected channel
+in each of two windows and `combine='spw'`, the tested CASA binary collapses
+the fit domain to the first frequency. The native grid uses the underlying
+window spacing, keeps both physical frequencies, and stores occupied grid
+points only. A degree-zero regression checks the fit against the normal
+equations for the two selected channels.
 
 ## Simulator short cubic time axes can alter DATA before failing
 

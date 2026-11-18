@@ -151,6 +151,72 @@ def model_data(source, target):
         tool.close()
 
 
+def frequency_weight_data(source, target, *, alternate_weight=1., flagged_hands=0):
+    copy_ms(source, target)
+    tool = table()
+    tool.open(str(target), nomodify=False)
+    try:
+        flags = tool.getcol('FLAG')
+        flags[:flagged_hands, ::2] = True
+        tool.putcol('FLAG', flags)
+        if 'WEIGHT_SPECTRUM' not in tool.colnames():
+            tool.addcols({'WEIGHT_SPECTRUM': {'valueType': 'float', 'ndim': 2}})
+        weights = np.ones(flags.shape, dtype=np.float32)
+        weights[:, ::2] = alternate_weight
+        tool.putcol('WEIGHT_SPECTRUM', weights)
+    finally:
+        tool.close()
+
+
+def singular_interval(root, source, native):
+    flagged = root/'singular-interval.ms'
+    copy_ms(source, flagged)
+    tool = table()
+    tool.open(str(flagged), nomodify=False)
+    try:
+        flags = tool.getcol('FLAG')
+        time = tool.getcol('TIME')
+        first = time == time.min()
+        flags[..., first] = True
+        flags[:, 1, first] = False
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    products = []
+    for name, engine in [('casa', casa), ('native', native)]:
+        output = root/f'singular-interval-{name}.bpoly'
+        engine.bandpass(str(flagged), str(output), field='0', bandtype='BPOLY', solint='int')
+        products.append(contents(output))
+    expected, actual = products
+    finite = np.isfinite(expected['POLY_COEFF_AMP']).all(axis=(0, 1, 2, 3))
+    assert finite.sum() == 25 and not np.any(finite[:5])
+    np.testing.assert_allclose(actual['TIME'], expected['TIME'][finite], atol=1e-4, rtol=0.)
+    return {key: relative_rms(actual[key], expected[key][..., finite])
+            for key in ('POLY_COEFF_AMP', 'POLY_COEFF_PHASE')}
+
+
+def singleton_windows(root, source, native):
+    output = root/'singleton-windows.bpoly'
+    native.bandpass(str(source), str(output), field='0', bandtype='BPOLY',
+                    spw='0:5,1:5', combine='spw,scan', maskedge=0, degamp=0, degphase=0)
+    state = contents(source)
+    antennas = np.unique(state['ANTENNA1'].tolist() + state['ANTENNA2'].tolist())
+    design, samples = [], []
+    for description in (0, 1):
+        for left in antennas:
+            for right in antennas[antennas > left]:
+                rows = ((state['FIELD_ID'] == 0) & (state['DATA_DESC_ID'] == description)
+                        & (state['ANTENNA1'] == left) & (state['ANTENNA2'] == right))
+                design.append(.5 * ((antennas == left) | (antennas == right)))
+                samples.append(np.log(np.abs(state['DATA'][:, 5, rows].mean(axis=1))))
+    expected = np.linalg.lstsq(design, samples, rcond=None)[0]
+    actual = contents(output)
+    frequencies = contents(source/'SPECTRAL_WINDOW')['CHAN_FREQ'][5, :]
+    assert actual['VALID_DOMAIN'][0, 0] <= frequencies.min()
+    assert actual['VALID_DOMAIN'][1, 0] >= frequencies.max()
+    return {'POLY_COEFF_AMP': relative_rms(actual['POLY_COEFF_AMP'].squeeze().T, expected)}
+
+
 def append_cases(root, source, native):
     results = {}
     engines = [('casa', casa), ('native', native)]
@@ -282,6 +348,9 @@ def main():
         ('frequency-suffix', source, dict(solint='inf,2ch')),
         ('frequency-bandwidth', source, dict(solint='inf,2MHz')),
         ('selected-channels', source, dict(spw='0:1~10')),
+        ('disjoint-masked-channels', source, dict(spw='0:0~2;8~11', maskcenter=2,
+                                                maskedge=0, degamp=2, degphase=2)),
+        ('channel-stride', source, dict(spw='0:0~11^2')),
         ('single-channel', source, dict(spw='0:5', maskedge=0, degamp=0, degphase=0)),
         ('named-reference', source, dict(refant='A2')),
         ('ranked-reference', source, dict(refant='A2,A1')),
@@ -307,8 +376,18 @@ def main():
         ('scalar-yy', yy, dict(refant='A0', interchange=True)),
         ('wrapped-phases', wrapped, dict(refant='A2')),
         ('phase-only', source, dict(degamp=-1, refant='A0')),
+        ('phase-only-integrations', source, dict(degamp=-1, refant='A0', solint='int')),
         ('amplitude-only', source, dict(degphase=-1, refant='A0')),
     ]
+    for name, options in [
+        ('flat-spectrum', {}),
+        ('weighted-spectrum', dict(alternate_weight=1000.)),
+        ('one-hand-flagged-bins', dict(flagged_hands=1)),
+        ('both-hands-flagged-bins', dict(flagged_hands=2)),
+    ]:
+        dataset = root/f'{name}.ms'
+        frequency_weight_data(source, dataset, **options)
+        cases.append((name, dataset, dict(solint='inf,2ch', maskedge=0, degamp=2, degphase=2)))
     if args.ngc5921 is not None:
         ngc = args.ngc5921.resolve()
         ngc_prior = str(root/'ngc5921.G')
@@ -328,6 +407,16 @@ def main():
         results.update(append_cases(root, multi, native))
     if args.only is None or 'no-fit' in args.only:
         results.update(no_fit_cases(root, source, multi, native))
+    if args.only is None or 'singular-interval' in args.only:
+        results['singular-interval'] = singular_interval(root, source, native)
+    if args.only is None or 'singleton-windows' in args.only:
+        results['singleton-windows'] = singleton_windows(root, multi, native)
+    for left, right in [('flat-spectrum', 'weighted-spectrum'),
+                        ('one-hand-flagged-bins', 'both-hands-flagged-bins')]:
+        if left in results and right in results:
+            left_coefficients, right_coefficients = (
+                contents(root/label/'casa.bpoly')['POLY_COEFF_AMP'] for label in (left, right))
+            assert relative_rms(left_coefficients, right_coefficients) > .01
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, errors in results.items():
         assert max(errors.values(), default=0.) < 1e-3, (name, errors)
