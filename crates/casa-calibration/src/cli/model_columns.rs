@@ -5,6 +5,7 @@ use std::path::Path;
 
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_provider_contracts::{CasaValue, ParameterValue};
+use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use crate::model_columns::{delete_model, reset_scratch_columns};
@@ -32,10 +33,12 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
 }
 
 fn run_one(task: &TaskInvocation<'_>, path: &Path) -> Result<(), TaskFailure> {
+    let mut lock = TableWriteLock::acquire(path, 0)
+        .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     let mut ms = MeasurementSet::open(path)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     let field = task.text("field")?;
-    let result = if task.surface() == "clearcal" {
+    if task.surface() == "clearcal" {
         let selection = MsSelection {
             selectdata: true,
             field: selectvis_text(field),
@@ -43,17 +46,21 @@ fn run_one(task: &TaskInvocation<'_>, path: &Path) -> Result<(), TaskFailure> {
             intent: selectvis_text(task.text("intent")?),
             ..MsSelection::default()
         };
-        reset_scratch_columns(&mut ms, &selection, task.flag("addmodel")?)
+        lock = reset_scratch_columns(&mut ms, &selection, task.flag("addmodel")?, lock)
+            .map_err(|error| TaskFailure::execution(error.to_string()))?;
     } else {
         delete_model(
             &mut ms,
             selectvis_text(field).as_deref(),
             task.flag("otf")?,
             task.flag("scr")?,
+            &mut lock,
         )
-    };
-    result.map_err(|error| TaskFailure::execution(error.to_string()))?;
+        .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    }
     drop(ms);
+    lock.release()
+        .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     super::history::record_task(task, path);
     Ok(())
 }

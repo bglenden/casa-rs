@@ -16,6 +16,7 @@ use casa_ms::write_session::{
     MeasurementSetWriteSession, maximum_visibility_cell_elements,
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection};
+use casa_tables::TableWriteLock;
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
@@ -29,7 +30,8 @@ pub(crate) fn reset_scratch_columns(
     ms: &mut MeasurementSet,
     selection: &MsSelection,
     add_model: bool,
-) -> MsResult<()> {
+    mut lock: TableWriteLock,
+) -> MsResult<TableWriteLock> {
     let has_corrected = has_column(ms, CORRECTED);
     let has_model = has_column(ms, MODEL);
     let mut new = Vec::new();
@@ -44,7 +46,7 @@ pub(crate) fn reset_scratch_columns(
         // before resolving the user's selectors.
         let all =
             resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
-        reset(ms, all, &new, true)?;
+        lock = reset(ms, all, &new, true, lock)?;
     }
     if has_corrected {
         let selected = resolve_casa_calibration_selection(ms, selection).map_err(invalid)?;
@@ -56,9 +58,9 @@ pub(crate) fn reset_scratch_columns(
         } else {
             &[CORRECTED]
         };
-        reset(ms, selected, columns, false)?;
+        lock = reset(ms, selected, columns, false, lock)?;
     }
-    Ok(())
+    Ok(lock)
 }
 
 pub(crate) fn delete_model(
@@ -66,13 +68,14 @@ pub(crate) fn delete_model(
     field: Option<&str>,
     virtual_model: bool,
     scratch: bool,
+    lock: &mut TableWriteLock,
 ) -> MsResult<()> {
     if virtual_model {
         let (fields, _) = casa_ms::virtual_model::virtual_model_clear_ids(ms, field, None)?;
-        casa_ms::virtual_model::clear_virtual_model(ms, &fields, &[])?;
+        casa_ms::virtual_model::clear_virtual_model_holding(ms, &fields, &[], lock)?;
     }
     if scratch {
-        scratch_columns::remove_scratch_model(ms)?;
+        scratch_columns::remove_scratch_model_holding(ms, lock)?;
     }
     Ok(())
 }
@@ -101,9 +104,10 @@ fn reset(
     selected: ResolvedMsSelection,
     columns: &[VisibilityDataColumn],
     create: bool,
-) -> MsResult<()> {
+    mut lock: TableWriteLock,
+) -> MsResult<TableWriteLock> {
     for &column in columns {
-        scratch_columns::prepare_write(ms, column, create)?;
+        scratch_columns::prepare_write_holding(ms, column, create, &mut lock)?;
     }
     if create {
         for &column in columns {
@@ -176,13 +180,14 @@ fn reset(
         })
         .collect::<BTreeMap<_, _>>();
     let mut session =
-        MeasurementSetWriteSession::start_selected_row_mutation(ms, plan).map_err(invalid)?;
+        MeasurementSetWriteSession::start_selected_row_mutation_holding(ms, plan, lock)
+            .map_err(invalid)?;
     for rows in selected.selected_rows.chunks(batch_rows) {
         let batch = reset_batch(ms, rows, columns, &ranges, &polarizations)?;
         session.write_mutation_batch(ms, batch).map_err(invalid)?;
     }
-    session.finish_mutation().map_err(invalid)?;
-    Ok(())
+    let (_, lock) = session.finish_mutation_holding().map_err(invalid)?;
+    Ok(lock)
 }
 
 fn model_polarizations(ms: &MeasurementSet) -> MsResult<BTreeMap<i32, Vec<Complex32>>> {

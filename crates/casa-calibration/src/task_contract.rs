@@ -681,6 +681,8 @@ mod tests {
                 "bandpass",
                 "fluxscale",
                 "gencal",
+                "clearcal",
+                "delmod",
             ]
         );
         assert!(
@@ -694,7 +696,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            6
+            8
         );
         assert!(
             bundle

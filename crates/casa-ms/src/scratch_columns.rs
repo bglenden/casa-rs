@@ -93,28 +93,29 @@ pub fn prepare_write(
     prepare(ms, column, adds, None)
 }
 
-/// Remove the scratch visibility model while preserving the virtual model.
-/// An absent scratch column is already in the requested state.
-pub fn remove_scratch_model(ms: &mut MeasurementSet) -> MsResult<()> {
-    let name = VisibilityDataColumn::ModelData.name();
+/// Remove the scratch model and its compression columns under the MAIN lock.
+#[doc(hidden)]
+pub fn remove_scratch_model_holding(
+    ms: &mut MeasurementSet,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
     let table = ms.main_table_mut();
-    if !table
-        .schema()
-        .is_some_and(|schema| schema.contains_column(name))
-    {
-        return Ok(());
-    }
-    let independent = table
-        .data_manager_info()
-        .iter()
-        .any(|manager| manager.columns.len() == 1 && manager.columns[0] == name);
-    if independent {
-        table.remove_columns_in_place(&[name])?;
-    } else {
-        change_in_place(table, 0, Write::Full, None, |main| {
-            main.remove_column(name)?;
-            Ok(())
-        })?;
+    let columns: Vec<_> = [
+        "MODEL_DATA",
+        "MODEL_DATA_COMPRESSED",
+        "MODEL_DATA_SCALE",
+        "MODEL_DATA_OFFSET",
+    ]
+    .into_iter()
+    .filter(|name| {
+        table
+            .schema()
+            .is_some_and(|schema| schema.contains_column(name))
+    })
+    .collect();
+    if !columns.is_empty() {
+        table.remove_columns_preserving_managers(&columns)?;
+        lock.record_write();
     }
     Ok(())
 }
