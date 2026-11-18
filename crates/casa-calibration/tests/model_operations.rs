@@ -96,7 +96,8 @@ fn deletes_only_the_named_virtual_model_window() {
     let mut ms = MeasurementSet::open(&path).unwrap();
     populate_model(&mut ms);
     let mut lock = TableWriteLock::acquire(&path, 0).unwrap();
-    delete_calibration_model(&mut ms, Some("0"), Some("0"), true, false, &mut lock).unwrap();
+    let name = ms.spectral_window().unwrap().name(0).unwrap().to_owned();
+    delete_calibration_model(&mut ms, Some("0"), Some(&name), true, false, &mut lock).unwrap();
     lock.release().unwrap();
     let reopened = MeasurementSet::open(&path).unwrap();
     let record = virtual_model(&reopened, 0).unwrap().unwrap().record;
@@ -107,7 +108,7 @@ fn deletes_only_the_named_virtual_model_window() {
     delete_calibration_model(
         &mut ms,
         Some("false"),
-        Some("FALSE"),
+        Some("missing-window"),
         true,
         false,
         &mut lock,
@@ -118,5 +119,32 @@ fn deletes_only_the_named_virtual_model_window() {
         virtual_model(&MeasurementSet::open(&path).unwrap(), 0)
             .unwrap()
             .is_none()
+    );
+}
+
+#[test]
+fn invalid_selectors_leave_both_model_representations_in_place() {
+    let temp = TempDir::new().unwrap();
+    let path = common::create_apply_fixture_ms(temp.path(), true);
+    let mut ms = MeasurementSet::open(&path).unwrap();
+    add_scratch_model(&mut ms);
+    populate_model(&mut ms);
+    drop(ms);
+    let mut lock = TableWriteLock::acquire_to_reread(&path, 0).unwrap();
+    let mut ms = MeasurementSet::open(&path).unwrap();
+    for (field, spw) in [("999", None), ("0", Some("999"))] {
+        assert!(
+            delete_calibration_model(&mut ms, Some(field), spw, true, true, &mut lock).is_err()
+        );
+    }
+    lock.release().unwrap();
+    let reopened = MeasurementSet::open(&path).unwrap();
+    assert!(virtual_model(&reopened, 0).unwrap().is_some());
+    assert!(
+        reopened
+            .main_table()
+            .schema()
+            .unwrap()
+            .contains_column("MODEL_DATA")
     );
 }
