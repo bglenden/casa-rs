@@ -648,6 +648,12 @@ def point_models(root, source, native):
                 case.mkdir()
                 results[name] = gain_and_apply(case, vis, native, gain, 'inf', calmode=mode,
                                                smodel=model, minblperant=2)
+                if gain == 'G' and basis.endswith('-full-cross'):
+                    parang_case = root/f'{name}-parang'
+                    parang_case.mkdir()
+                    results[parang_case.name] = gain_and_apply(
+                        parang_case, vis, native, gain, 'inf', calmode=mode, smodel=model,
+                        parang=True, minblperant=2, apply_options={'parang': True})
     for name, fixture_source, write_model in [
         ('stored-column', source, True),
         ('stored-column-full', root/'linear-full'/'amplitude.ms', True),
@@ -670,6 +676,51 @@ def point_models(root, source, native):
         for gain in ['G', 'T']:
             results[f'{name}-{gain}'] = gain_and_apply(fixture, vis, native, gain, 'inf',
                 calmode='ap', field='0', smodel=[], minblperant=2)
+    results.update(point_model_edges(root, root/'linear-full'/'amplitude.ms', native))
+    return results
+
+
+def point_model_edges(root, source, native):
+    results = {}
+    for name in ['mixed-model-column', 'mixed-model-robust', 'weak-cross-hands', 'nominal-baseline']:
+        case = root/name
+        case.mkdir()
+        vis = case/'source.ms'
+        copy_ms(source, vis)
+        options = dict(calmode='ap', corrdepflags=True, minblperant=2)
+        t = table()
+        t.open(str(vis), nomodify=False)
+        try:
+            if name.startswith('mixed-model'):
+                model = t.getcol('MODEL_DATA')
+                model[0], model[3], model[1:3] = 1.2, .8, 0.
+                model[1, ::2, 1::2] = .2 + .1j
+                model[2, ::2, 1::2] = .2 - .1j
+                t.putcol('MODEL_DATA', model)
+                flags = t.getcol('FLAG')
+                flags[1:3, ::2, 1::4] = True
+                t.putcol('FLAG', flags)
+                options['smodel'] = []
+                if name == 'mixed-model-robust':
+                    options.update(solmode='R', rmsthresh=[5., 4.])
+            elif name == 'weak-cross-hands':
+                options.update(smodel=[1., 0., .0001, 0.], minsnr=4., compare_flagged_gains=False)
+            else:
+                first, second = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+                baseline = (first == 0) & (second == 1)
+                flags = t.getcol('FLAG')
+                flags[0, :, baseline] = True
+                flags[3, :, baseline] = True
+                t.putcol('FLAG', flags)
+                options['minblperant'] = 4
+        finally:
+            t.close()
+        results[name] = gain_and_apply(case, vis, native, 'T', 'inf', **options)
+        expected = contents(case/'ap-T-inf-mean-norm0-casa.cal')
+        if name == 'weak-cross-hands':
+            assert np.any(expected['FLAG']) and np.any(~expected['FLAG'])
+        if name == 'nominal-baseline':
+            assert not np.any(expected['FLAG'])
     return results
 
 

@@ -16,6 +16,13 @@ pub(super) struct AveragedBaseline {
     pub(super) start_bits: u64,
 }
 
+/// A weighted mean of times.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct WeightedTime {
+    pub(super) weighted_sum: f64,
+    pub(super) weight: f64,
+}
+
 /// Each selected row of `rows`, in solve order, with the group and
 /// interval it is solved in.
 ///

@@ -23,8 +23,8 @@ use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
 use crate::solve::kernel::{RobustSample, SolveGraph};
-use samples::SolveAccumulationKey;
-use time::{AveragedBaseline, FirstTBuffer, bucketed_rows, first_t_buffers};
+use samples::{SolveAccumulationKey, SolveEdgeAccumulation, SolveRowLayout, SolveRowLayouts};
+use time::{AveragedBaseline, FirstTBuffer, WeightedTime, bucketed_rows, first_t_buffers};
 
 pub(crate) fn load_preapplied_rows(
     ms: &MeasurementSet,
@@ -61,7 +61,7 @@ pub(crate) fn build_solve_groups(
     options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
-    let mut layouts_by_ddid = HashMap::new();
+    let mut layouts = SolveRowLayouts::new(ms, options.rotate_point_model)?;
     let needs_first_buffer = options.gain_type == GainType::T || options.robust_seed;
     let mut ordered = bucketed_rows(
         rows,
@@ -118,7 +118,7 @@ pub(crate) fn build_solve_groups(
                 row,
                 preapplied,
                 &options,
-                &mut layouts_by_ddid,
+                &mut layouts,
                 (&inputs, index),
             )?;
         }
@@ -509,6 +509,7 @@ pub(crate) struct SolveGroupOptions {
     pub(crate) gain_type: GainType,
     pub(crate) model_source: GainSolveModelSource,
     pub(crate) point_stokes: [f32; 4],
+    pub(crate) rotate_point_model: bool,
     pub(crate) solve_interval: GainSolveInterval,
     pub(crate) combine: GainSolveCombine,
     /// Maximum time from the first sample in an average of one baseline.
@@ -576,6 +577,7 @@ pub(crate) struct SolveSamples<'a> {
     pub(crate) flags: ArrayView2<'a, bool>,
     pub(crate) weights: ArrayView2<'a, f32>,
     pub(crate) model: Option<ArrayView2<'a, Complex32>>,
+    pub(crate) point_model: Option<&'a [Complex32]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -646,31 +648,6 @@ impl SolveEdgeStats {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct SolveEdgeAccumulation {
-    weighted_sum: Complex32,
-    weight: f32,
-    weighted_sample_power: f64,
-    sample_count: usize,
-}
-
-/// A weighted mean of times.
-#[derive(Debug, Clone, Copy, Default)]
-struct WeightedTime {
-    weighted_sum: f64,
-    weight: f64,
-}
-
-/// A data description's row-invariant layout; shape/selection changes refresh
-/// the plan, so variable-shaped cells keep the same validation.
-struct SolveRowLayout {
-    correlations: Vec<i32>,
-    channel_count: usize,
-    selection: Option<ChannelSelection>,
-    channels: Vec<usize>,
-    all_channels: bool,
-}
-
 /// One MAIN row's checked two-dimensional solve arrays. Scalar SIGMA weights
 /// have one channel, broadcast to the data's channel count without copying.
 struct SolveRowInputs<'a> {
@@ -693,6 +670,7 @@ impl SolveRowInputs<'_> {
                 .into_dimensionality::<Ix2>()
                 .expect("checked two-dimensional"),
             model: self.model.map(two_dimensional),
+            point_model: None,
         }
     }
 }
@@ -741,12 +719,12 @@ impl SolveAccumulator {
         row: &SelectedSolveRow,
         preapplied_row: Option<&EvaluatedApplyRow>,
         options: &SolveGroupOptions,
-        layouts_by_ddid: &mut HashMap<i32, SolveRowLayout>,
+        layouts: &mut SolveRowLayouts,
         inputs: (&SolveInputBatch, usize),
     ) -> Result<(), GainSolveError> {
         let inputs = read_row_inputs(ms, row, preapplied_row, options.model_source, inputs)?;
         let channel_count = inputs.data.shape()[1];
-        let layout = match layouts_by_ddid.entry(row.data_desc_id) {
+        let layout = match layouts.by_ddid.entry(row.data_desc_id) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => entry.insert(SolveRowLayout {
                 correlations: correlation_types_for_ddid(ms, row.data_desc_id)?,
@@ -762,9 +740,24 @@ impl SolveAccumulator {
             layout.channel_count = channel_count;
             layout.selection.clone_from(&row.channel_selection);
         }
+        let rotated = layouts
+            .rotation
+            .as_ref()
+            .map(|state| {
+                samples::rotate_point_model(
+                    ms,
+                    row,
+                    state,
+                    &layout.correlations,
+                    options.point_stokes,
+                )
+            })
+            .transpose()?;
+        let mut samples = inputs.samples();
+        samples.point_model = rotated.as_deref();
         self.observe_selected_samples(
             &SolveSampleRow::of(row),
-            &inputs.samples(),
+            &samples,
             &layout.correlations,
             &layout.channels,
             options,
@@ -869,31 +862,36 @@ impl SolveAccumulator {
                 });
             };
             let parallel_hand = receptors.0 == receptors.1;
-            if no_weighted_data || (!parallel_hand && options.gain_type == GainType::G) {
+            if no_weighted_data {
                 continue;
             }
             let graph_index = match options.gain_type {
                 GainType::G => receptors.0,
                 GainType::T => 0,
             };
-            let point = samples::point_visibility(
-                options.point_stokes,
-                correlation_type,
-                correlation_types[0],
-            );
-            let zero_model = options.gain_type == GainType::T
-                && samples::zero_model(samples, corr_index, channels, point);
-            let (samples, point) = if zero_model {
-                (
-                    SolveSamples {
-                        model: None,
-                        ..*samples
-                    },
-                    Complex32::new(1.0, 0.0),
-                )
+            let point = if options.channelized {
+                Complex32::new(options.point_stokes[0], 0.0)
+            } else if let Some(rotated) = samples.point_model {
+                rotated[corr_index]
             } else {
-                (*samples, point)
+                samples::point_visibility(
+                    options.point_stokes,
+                    correlation_type,
+                    correlation_types[0],
+                )
             };
+            if !parallel_hand && options.gain_type == GainType::G {
+                if samples.point_model.is_some() {
+                    row_weight += samples::centroid_weight(
+                        samples,
+                        corr_index,
+                        channels,
+                        shared_flags.as_deref(),
+                        point,
+                    );
+                }
+                continue;
+            }
             // Look the baseline/correlation up once per row; channels are
             // dense indices, not independent hash keys for every sample.
             let accumulations = self.receptor_accumulations[graph_index]
@@ -901,16 +899,16 @@ impl SolveAccumulator {
                     baseline,
                     correlation_index: corr_index,
                     parallel_hand,
-                    zero_model,
                 })
                 .or_insert_with(|| vec![SolveEdgeAccumulation::default(); solution_channels]);
             row_weight += samples::SampleAccumulation {
                 values: accumulations,
                 attempted: &mut self.attempted,
                 channelized: options.channelized,
+                retain_zero_model: options.gain_type == GainType::T,
             }
             .observe(
-                &samples,
+                samples,
                 corr_index,
                 shared_flags.as_deref(),
                 channels,
@@ -960,7 +958,7 @@ impl SolveAccumulator {
         for (receptor, accumulations) in self.receptor_accumulations.iter().enumerate() {
             for (key, channels) in accumulations {
                 for (channel_index, accumulation) in channels.iter().enumerate() {
-                    if accumulation.weight <= f32::EPSILON {
+                    if accumulation.weight <= 0.0 {
                         continue;
                     }
                     let averaged =
@@ -981,11 +979,12 @@ impl SolveAccumulator {
                         }
                         GainSolveMode::AmplitudePhase => (averaged, accumulation.weight),
                     };
-                    let fit_weight = if key.zero_model { 0.0 } else { weight };
+                    let model = accumulation.model_weight / accumulation.weight;
+                    let model_weight = weight * model;
                     self.channel_graphs[channel_index][receptor].accumulate(
                         key.baseline.antennas,
-                        fit_weight,
-                        sample * fit_weight,
+                        model_weight * model,
+                        sample * model_weight,
                         SolveEdgeStats {
                             weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
                             raw_weighted_sample_power: accumulation.weighted_sample_power,
@@ -1001,7 +1000,7 @@ impl SolveAccumulator {
                                 correlation: key.correlation_index,
                                 visibility: sample,
                                 weight,
-                                zero_model: key.zero_model,
+                                model,
                                 in_first_buffer: self
                                     .first_t_buffer
                                     .is_some_and(|buffer| buffer.contains(key.baseline)),
@@ -1070,10 +1069,7 @@ impl SolveAccumulator {
                     .entry(key)
                     .or_insert_with(|| vec![SolveEdgeAccumulation::default(); channels.len()]);
                 for (entry, accumulation) in entries.iter_mut().zip(channels) {
-                    entry.weighted_sum += accumulation.weighted_sum;
-                    entry.weight += accumulation.weight;
-                    entry.weighted_sample_power += accumulation.weighted_sample_power;
-                    entry.sample_count += accumulation.sample_count;
+                    entry.merge(accumulation);
                 }
             }
         }
@@ -1312,12 +1308,12 @@ mod tests {
                 baseline: unaveraged_baseline((0, 1)),
                 correlation_index,
                 parallel_hand: true,
-                zero_model: false,
             })
             .or_insert_with(|| vec![SolveEdgeAccumulation::default()]);
         let accumulation = &mut accumulation[0];
         accumulation.weighted_sum += sample;
         accumulation.weight += 1.0;
+        accumulation.model_weight += 1.0;
         accumulation.weighted_sample_power += f64::from(sample.norm_sqr());
         accumulation.sample_count += 1;
     }
@@ -1375,11 +1371,11 @@ mod tests {
                     baseline: unaveraged_baseline(baseline),
                     correlation_index: 0,
                     parallel_hand: true,
-                    zero_model: false,
                 },
                 vec![SolveEdgeAccumulation {
                     weighted_sum: Complex32::new(weight, 0.0),
                     weight,
+                    model_weight: weight,
                     weighted_sample_power: f64::from(weight),
                     sample_count: 1,
                 }],
