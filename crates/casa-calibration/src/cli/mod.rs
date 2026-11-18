@@ -55,7 +55,7 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    if matches!(task.surface(), "clearcal" | "delmod") {
+    if matches!(task.surface(), "clearcal" | "delmod" | "uvsub") {
         return model_columns::run(task);
     }
     let report = read::report(task)?;

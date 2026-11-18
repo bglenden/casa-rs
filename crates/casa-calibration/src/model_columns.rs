@@ -80,13 +80,13 @@ pub(crate) fn delete_model(
     Ok(())
 }
 
-fn has_column(ms: &MeasurementSet, column: VisibilityDataColumn) -> bool {
+pub(crate) fn has_column(ms: &MeasurementSet, column: VisibilityDataColumn) -> bool {
     ms.main_table()
         .schema()
         .is_some_and(|schema| schema.contains_column(column.name()))
 }
 
-fn observed_column(ms: &MeasurementSet) -> &'static str {
+pub(crate) fn observed_column(ms: &MeasurementSet) -> &'static str {
     let float = OptionalMainColumn::FloatData.name();
     if ms
         .main_table()
@@ -106,8 +106,56 @@ fn reset(
     create: bool,
     mut lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
+    let plan = scratch_write_plan(
+        ms,
+        selected.row_indices().collect(),
+        columns,
+        create,
+        &mut lock,
+    )?;
+    let batch_rows = plan.batch_rows().max(1);
+    let polarizations = if columns.contains(&MODEL) {
+        model_polarizations(ms)?
+    } else {
+        BTreeMap::new()
+    };
+    let ranges = selected
+        .channel_selections
+        .iter()
+        .filter_map(|(&spw, selection)| {
+            let first = selection
+                .segments
+                .iter()
+                .map(|segment| segment.start.min(segment.end))
+                .min()?;
+            let last = selection
+                .segments
+                .iter()
+                .map(|segment| segment.start.max(segment.end))
+                .max()?;
+            Some((spw, first as usize..last as usize + 1))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut session =
+        MeasurementSetWriteSession::start_selected_row_mutation_holding(ms, plan, lock)
+            .map_err(invalid)?;
+    for rows in selected.selected_rows.chunks(batch_rows) {
+        let batch = reset_batch(ms, rows, columns, &ranges, &polarizations)?;
+        session.write_mutation_batch(ms, batch).map_err(invalid)?;
+    }
+    let (_, lock) = session.finish_mutation_holding().map_err(invalid)?;
+    Ok(lock)
+}
+
+pub(crate) fn scratch_write_plan(
+    ms: &mut MeasurementSet,
+    row_indices: Vec<usize>,
+    columns: &[VisibilityDataColumn],
+    create: bool,
+    lock: &mut TableWriteLock,
+) -> MsResult<MeasurementSetWritePlan> {
     for &column in columns {
-        scratch_columns::prepare_write_holding(ms, column, create, &mut lock)?;
+        scratch_columns::prepare_write_holding(ms, column, create, lock)?;
     }
     if create {
         for &column in columns {
@@ -150,44 +198,8 @@ fn reset(
         })
         .collect();
     let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(invalid)?;
-    let plan = MeasurementSetWritePlan::selected_row_mutation(
-        selected.row_indices().collect(),
-        write_columns,
-        resources,
-    )
-    .map_err(invalid)?;
-    let batch_rows = plan.batch_rows().max(1);
-    let polarizations = if columns.contains(&MODEL) {
-        model_polarizations(ms)?
-    } else {
-        BTreeMap::new()
-    };
-    let ranges = selected
-        .channel_selections
-        .iter()
-        .filter_map(|(&spw, selection)| {
-            let first = selection
-                .segments
-                .iter()
-                .map(|segment| segment.start.min(segment.end))
-                .min()?;
-            let last = selection
-                .segments
-                .iter()
-                .map(|segment| segment.start.max(segment.end))
-                .max()?;
-            Some((spw, first as usize..last as usize + 1))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let mut session =
-        MeasurementSetWriteSession::start_selected_row_mutation_holding(ms, plan, lock)
-            .map_err(invalid)?;
-    for rows in selected.selected_rows.chunks(batch_rows) {
-        let batch = reset_batch(ms, rows, columns, &ranges, &polarizations)?;
-        session.write_mutation_batch(ms, batch).map_err(invalid)?;
-    }
-    let (_, lock) = session.finish_mutation_holding().map_err(invalid)?;
-    Ok(lock)
+    MeasurementSetWritePlan::selected_row_mutation(row_indices, write_columns, resources)
+        .map_err(invalid)
 }
 
 fn model_polarizations(ms: &MeasurementSet) -> MsResult<BTreeMap<i32, Vec<Complex32>>> {

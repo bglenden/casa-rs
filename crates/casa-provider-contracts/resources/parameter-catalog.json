@@ -5848,6 +5848,28 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.reverse",
+      "semantic_revision": 1,
+      "casa_name": "reverse",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Add the visibility model back to corrected data.",
+        "details": "The default subtracts the current visibility model from corrected data.",
+        "examples": [
+          "True"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.scr",
       "semantic_revision": 1,
       "casa_name": "scr",

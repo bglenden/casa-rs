@@ -75,29 +75,7 @@ pub(super) fn bucketed_rows(
     let mut keyed = rows
         .iter()
         .filter(|row| include_autocorrelations || row.antenna1 != row.antenna2)
-        .map(|row| {
-            let base_key = SolveBaseKey {
-                array_id: row.array_id,
-                field_id: if combine.fields { 0 } else { row.field_id },
-                spw_id: if combine.spectral_windows {
-                    0
-                } else {
-                    row.data_spw_id
-                },
-                data_desc_id: if combine.spectral_windows {
-                    0
-                } else {
-                    row.data_desc_id
-                },
-                observation_id: if combine.observations {
-                    0
-                } else {
-                    row.observation_id
-                },
-                scan_number: if combine.scans { 0 } else { row.scan_number },
-            };
-            (row, base_key)
-        })
+        .map(|row| (row, SolveBaseKey::for_row(row, combine)))
         .collect::<Vec<_>>();
     keyed.sort_by(|(a, a_key), (b, b_key)| {
         a_key

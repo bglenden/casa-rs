@@ -16,6 +16,7 @@ crate-type = ["cdylib"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
+casa-calibration = { path = "../casa-calibration" }
 casa-components = { path = "../casa-components" }
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
@@ -40,7 +41,6 @@ serde_json = "1"
 tempfile = "3"
 
 [dev-dependencies]
-casa-calibration = { path = "../casa-calibration" }
 casa-vla = { path = "../casa-vla" }
 casars-msconvert = { path = "../casars-msconvert" }
 

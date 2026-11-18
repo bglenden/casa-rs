@@ -645,5 +645,8 @@
     "clipminmax": "cBool",
     "minweight": "cFloat",
     "brightnessunit": "cStr"
+  },
+  "uvsub": {
+    "reverse": "cBool"
   }
 }
