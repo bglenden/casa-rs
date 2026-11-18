@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["emit_header_log","history_string","history_value","image_error","main","run","run_imhead","run_imstat","statistics_text"]};
+window.SIDEBAR_ITEMS = {"fn":["axes_list","emit_header_log","history_string","history_value","image_error","main","planes_text","run","run_imhead","run_imstat","statistics_text"]};

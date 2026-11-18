@@ -592,10 +592,32 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#clearcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        clearcal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#concat" class="md-nav__link">
     <span class="md-ellipsis">
       
         concat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delmod" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        delmod
       
     </span>
   </a>
@@ -5540,10 +5562,32 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#clearcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        clearcal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#concat" class="md-nav__link">
     <span class="md-ellipsis">
       
         concat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delmod" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        delmod
       
     </span>
   </a>
@@ -10090,6 +10134,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">0</td>
 </tr>
 <tr>
+<td>clearcal</td>
+<td>clearcal</td>
+<td>yes</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
 <td>concat</td>
 <td>concat</td>
 <td>yes</td>
@@ -10097,6 +10152,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">9</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>delmod</td>
+<td>delmod</td>
+<td>yes</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 </tr>
@@ -10272,7 +10338,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">20</td>
 <td style="text-align: right;">20</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">8</td>
+<td style="text-align: right;">6</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 </tr>
@@ -10685,6 +10751,18 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Shared parameters: 35, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
 </ul>
+<h3 id="clearcal">clearcal<a class="headerlink" href="#clearcal" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/clearcal.py</code>, 5 parameters</li>
+<li>Implementation: <code>casatasks/private/task_clearcal.py</code>, <code>clearcal</code> (line 9): 1 return statements, 1 raise statements</li>
+<li>returns at line 23: <code>None</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 5, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
+</ul>
 <h3 id="concat">concat<a class="headerlink" href="#concat" title="Permanent link">&para;</a></h3>
 <ul>
 <li>CASA source: <code>casatasks/concat.py</code>, 9 parameters</li>
@@ -10695,6 +10773,18 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Accepted only at CASA's default until #939: <code>respectname</code>, <code>timesort</code>, <code>forcesingleephemfield</code></li>
 <li>casa-rs parameters CASA lacks: none</li>
 <li>Shared parameters: 9, in CASA's order: yes</li>
+<li>Defaults that differ: none</li>
+</ul>
+<h3 id="delmod">delmod<a class="headerlink" href="#delmod" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA source: <code>casatasks/delmod.py</code>, 4 parameters</li>
+<li>Implementation: <code>casatasks/private/task_delmod.py</code>, <code>delmod</code> (line 13): 1 return statements, 1 raise statements</li>
+<li>returns at line 21: <code>None</code></li>
+<li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
+<li>CASA's signature: yes</li>
+<li>CASA parameters casa-rs lacks: none</li>
+<li>casa-rs parameters CASA lacks: none</li>
+<li>Shared parameters: 4, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
 </ul>
 <h3 id="exportfits">exportfits<a class="headerlink" href="#exportfits" title="Permanent link">&para;</a></h3>
@@ -11115,7 +11205,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the imagename parameter must be a path that exists ('' does not exist)</li>
 <li>CASA's signature: yes</li>
 <li>CASA parameters casa-rs lacks: none</li>
-<li>Accepted only at CASA's default until #977: <code>axes</code>, <code>stokes</code>, <code>listit</code>, <code>verbose</code>, <code>mask</code>, <code>stretch</code>, <code>logfile</code>, <code>append</code></li>
+<li>Accepted only at CASA's default until #977: <code>listit</code>, <code>verbose</code>, <code>mask</code>, <code>stretch</code>, <code>logfile</code>, <code>append</code></li>
 <li>casa-rs parameters CASA lacks: none</li>
 <li>Shared parameters: 20, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>

@@ -3904,6 +3904,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#duplicated-imstat-axes-crash-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Duplicated imstat axes crash CASA
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9975,6 +9986,21 @@ lists, CASA silently discards trailing elements in longer rows (<code>[[1.0, 2.0
 and rejects empty or ragged nested Python sequences with CASA's catchable
 <code>Illegal Quantum record in QuantumHolder::fromRecord</code> <code>RuntimeError</code> instead of
 crashing or corrupting values (#1252, #1170).</p>
+<h2 id="duplicated-imstat-axes-crash-casa">Duplicated <code>imstat</code> axes crash CASA<a class="headerlink" href="#duplicated-imstat-axes-crash-casa" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-18</li>
+<li>Status: CASA aborts; casa-rs refuses the request (#977).</li>
+<li>Affected code: <code>casatools</code> image statistics, <code>ImageStatsCalculator::statistics</code>.</li>
+</ul>
+<p>In CASA 6.7.6.14, <code>imstat(imagename, axes=[0, 0])</code> aborts the Python process
+(SIGABRT, exit 134) inside the statistics calculation; the same happens for any
+duplicated axis. An out-of-range or negative axis is refused with the catchable
+<code>Invalid cursor axes: [4].</code> instead, so the crash on duplicates is an
+uncontrolled path, not a policy.</p>
+<p>casa-rs refuses a duplicated axis with <code>Invalid cursor axes: [0, 0]: an axis
+is named twice; CASA 6.7.6.14 aborts on it</code> (crates/casa-images/src/analysis.rs,
+<code>parse_axes</code>), keeping every other axes form CASA accepts, including the
+minimum-forms <code>-1</code> for all axes (#977).</p>
 
 
 

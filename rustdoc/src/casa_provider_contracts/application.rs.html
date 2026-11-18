@@ -162,141 +162,153 @@
 <a href=#162 id=162 data-nosnippet>162</a>    <span class="attr">#[test]
 <a href=#163 id=163 data-nosnippet>163</a>    </span><span class="kw">fn </span>builtin_catalog_covers_every_surface_with_one_task_each() {
 <a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span>catalog = builtin_application_catalog().expect(<span class="string">"valid application catalog"</span>);
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="macro">assert_eq!</span>(catalog.applications.len(), <span class="number">31</span>);
-<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">for </span>application <span class="kw">in </span><span class="kw-2">&amp;</span>catalog.applications {
-<a href=#167 id=167 data-nosnippet>167</a>            <span class="macro">assert_eq!</span>(
-<a href=#168 id=168 data-nosnippet>168</a>                application.surface_bundle().unwrap().surface.id(),
-<a href=#169 id=169 data-nosnippet>169</a>                application.id
-<a href=#170 id=170 data-nosnippet>170</a>            );
-<a href=#171 id=171 data-nosnippet>171</a>        }
-<a href=#172 id=172 data-nosnippet>172</a>        <span class="comment">// The launcher is retired (#931): Python starts each task directly.
-<a href=#173 id=173 data-nosnippet>173</a>        </span><span class="macro">assert!</span>(catalog.application(<span class="string">"casars"</span>).is_none());
-<a href=#174 id=174 data-nosnippet>174</a>    }
-<a href=#175 id=175 data-nosnippet>175</a>
-<a href=#176 id=176 data-nosnippet>176</a>    <span class="attr">#[test]
-<a href=#177 id=177 data-nosnippet>177</a>    </span><span class="kw">fn </span>task_presentation_is_owned_by_the_referenced_surface() {
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">let </span>application = builtin_application_catalog()
-<a href=#179 id=179 data-nosnippet>179</a>            .unwrap()
-<a href=#180 id=180 data-nosnippet>180</a>            .application(<span class="string">"tclean"</span>)
-<a href=#181 id=181 data-nosnippet>181</a>            .unwrap();
-<a href=#182 id=182 data-nosnippet>182</a>        <span class="kw">let </span>surface = application.surface_bundle().unwrap();
-<a href=#183 id=183 data-nosnippet>183</a>        <span class="macro">assert_eq!</span>(surface.surface.display_name(), <span class="string">"Tclean"</span>);
-<a href=#184 id=184 data-nosnippet>184</a>        <span class="macro">assert_eq!</span>(surface.surface.category(), <span class="string">"Imaging"</span>);
-<a href=#185 id=185 data-nosnippet>185</a>        <span class="macro">assert_eq!</span>(application.protocol_family().unwrap(), <span class="string">"imager"</span>);
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="kw">let </span>surfaces = <span class="kw">crate</span>::builtin_surface_catalog().expect(<span class="string">"valid parameter catalog"</span>);
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">let </span>expected: std::collections::BTreeSet&lt;<span class="kw">_</span>&gt; = surfaces
+<a href=#167 id=167 data-nosnippet>167</a>            .surfaces
+<a href=#168 id=168 data-nosnippet>168</a>            .iter()
+<a href=#169 id=169 data-nosnippet>169</a>            .map(|surface| surface.id())
+<a href=#170 id=170 data-nosnippet>170</a>            .collect();
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="kw">let </span>launched: std::collections::BTreeSet&lt;<span class="kw">_</span>&gt; = catalog
+<a href=#172 id=172 data-nosnippet>172</a>            .applications
+<a href=#173 id=173 data-nosnippet>173</a>            .iter()
+<a href=#174 id=174 data-nosnippet>174</a>            .map(|application| application.id.as_str())
+<a href=#175 id=175 data-nosnippet>175</a>            .collect();
+<a href=#176 id=176 data-nosnippet>176</a>        <span class="macro">assert_eq!</span>(launched, expected);
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="macro">assert_eq!</span>(launched.len(), catalog.applications.len());
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">for </span>application <span class="kw">in </span><span class="kw-2">&amp;</span>catalog.applications {
+<a href=#179 id=179 data-nosnippet>179</a>            <span class="macro">assert_eq!</span>(
+<a href=#180 id=180 data-nosnippet>180</a>                application.surface_bundle().unwrap().surface.id(),
+<a href=#181 id=181 data-nosnippet>181</a>                application.id
+<a href=#182 id=182 data-nosnippet>182</a>            );
+<a href=#183 id=183 data-nosnippet>183</a>        }
+<a href=#184 id=184 data-nosnippet>184</a>        <span class="comment">// The launcher is retired (#931): Python starts each task directly.
+<a href=#185 id=185 data-nosnippet>185</a>        </span><span class="macro">assert!</span>(catalog.application(<span class="string">"casars"</span>).is_none());
 <a href=#186 id=186 data-nosnippet>186</a>    }
 <a href=#187 id=187 data-nosnippet>187</a>
-<a href=#188 id=188 data-nosnippet>188</a>    <span class="doccomment">/// Version 2 (#972) holds only what a launch and the suite read: a
-<a href=#189 id=189 data-nosnippet>189</a>    /// version-1 entry's presentation fields are refused, as is the old
-<a href=#190 id=190 data-nosnippet>190</a>    /// version number.
-<a href=#191 id=191 data-nosnippet>191</a>    </span><span class="attr">#[test]
-<a href=#192 id=192 data-nosnippet>192</a>    </span><span class="kw">fn </span>the_retired_presentation_fields_are_refused() {
-<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">let </span>catalog = builtin_application_catalog().unwrap();
-<a href=#194 id=194 data-nosnippet>194</a>        <span class="macro">assert_eq!</span>(catalog.schema_version, APPLICATION_CATALOG_SCHEMA_VERSION);
-<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">let </span><span class="kw-2">mut </span>entry = serde_json::to_value(<span class="kw-2">&amp;</span>catalog.applications[<span class="number">0</span>]).unwrap();
-<a href=#196 id=196 data-nosnippet>196</a>        <span class="comment">// As a set: serde_json keeps insertion order when another crate in
-<a href=#197 id=197 data-nosnippet>197</a>        // the build enables its `preserve_order` feature.
-<a href=#198 id=198 data-nosnippet>198</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#199 id=199 data-nosnippet>199</a>            entry
-<a href=#200 id=200 data-nosnippet>200</a>                .as_object()
-<a href=#201 id=201 data-nosnippet>201</a>                .unwrap()
-<a href=#202 id=202 data-nosnippet>202</a>                .keys()
-<a href=#203 id=203 data-nosnippet>203</a>                .map(String::as_str)
-<a href=#204 id=204 data-nosnippet>204</a>                .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#205 id=205 data-nosnippet>205</a>            BTreeSet::from([<span class="string">"dataset_kinds"</span>, <span class="string">"id"</span>, <span class="string">"include_in_suite"</span>, <span class="string">"launch"</span>])
-<a href=#206 id=206 data-nosnippet>206</a>        );
-<a href=#207 id=207 data-nosnippet>207</a>        entry[<span class="string">"show_in_tui"</span>] = <span class="macro">serde_json::json!</span>(<span class="bool-val">true</span>);
-<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>error = serde_json::from_value::&lt;ApplicationDefinition&gt;(entry).unwrap_err();
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"show_in_tui"</span>), <span class="string">"{error}"</span>);
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span><span class="kw-2">mut </span>old = catalog.clone();
-<a href=#211 id=211 data-nosnippet>211</a>        old.schema_version = <span class="number">1</span>;
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>errors = old.validate().unwrap_err();
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="macro">assert!</span>(
-<a href=#214 id=214 data-nosnippet>214</a>            errors
-<a href=#215 id=215 data-nosnippet>215</a>                .iter()
-<a href=#216 id=216 data-nosnippet>216</a>                .any(|error| error.contains(<span class="string">"unsupported application catalog version 1"</span>)),
-<a href=#217 id=217 data-nosnippet>217</a>            <span class="string">"{errors:?}"
-<a href=#218 id=218 data-nosnippet>218</a>        </span>);
-<a href=#219 id=219 data-nosnippet>219</a>    }
-<a href=#220 id=220 data-nosnippet>220</a>
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="attr">#[test]
-<a href=#222 id=222 data-nosnippet>222</a>    </span><span class="kw">fn </span>validation_rejects_an_application_without_a_surface() {
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span><span class="kw-2">mut </span>catalog = builtin_application_catalog().unwrap().clone();
-<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">let </span><span class="kw-2">mut </span>casars = catalog.applications[<span class="number">0</span>].clone();
-<a href=#225 id=225 data-nosnippet>225</a>        casars.id = <span class="string">"casars"</span>.to_string();
-<a href=#226 id=226 data-nosnippet>226</a>        catalog.applications.push(casars);
-<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw">let </span>errors = catalog.validate().unwrap_err();
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="macro">assert!</span>(
-<a href=#229 id=229 data-nosnippet>229</a>            errors
-<a href=#230 id=230 data-nosnippet>230</a>                .iter()
-<a href=#231 id=231 data-nosnippet>231</a>                .any(|error| error.contains(<span class="string">"\"casars\" has no canonical surface"</span>)),
-<a href=#232 id=232 data-nosnippet>232</a>            <span class="string">"{errors:?}"
-<a href=#233 id=233 data-nosnippet>233</a>        </span>);
-<a href=#234 id=234 data-nosnippet>234</a>    }
-<a href=#235 id=235 data-nosnippet>235</a>
-<a href=#236 id=236 data-nosnippet>236</a>    <span class="attr">#[test]
-<a href=#237 id=237 data-nosnippet>237</a>    </span><span class="kw">fn </span>every_override_is_named_for_the_resolver() {
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span><span class="kw-2">mut </span>catalog = builtin_application_catalog().unwrap().clone();
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">let </span>impbcor = catalog.application(<span class="string">"impbcor"</span>).unwrap();
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="macro">assert_eq!</span>(impbcor.launch.override_env, <span class="string">"CASARS_IMPBCOR_BIN"</span>);
-<a href=#241 id=241 data-nosnippet>241</a>        catalog.applications[<span class="number">0</span>].launch.override_env = <span class="string">"CASA_RS_MSEXPLORE_BIN"</span>.to_string();
-<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span>errors = catalog.validate().unwrap_err();
-<a href=#243 id=243 data-nosnippet>243</a>        <span class="macro">assert!</span>(
-<a href=#244 id=244 data-nosnippet>244</a>            errors
-<a href=#245 id=245 data-nosnippet>245</a>                .iter()
-<a href=#246 id=246 data-nosnippet>246</a>                .any(|error| error.contains(<span class="string">"is not named CASARS_&lt;APP&gt;_BIN"</span>)),
-<a href=#247 id=247 data-nosnippet>247</a>            <span class="string">"{errors:?}"
-<a href=#248 id=248 data-nosnippet>248</a>        </span>);
-<a href=#249 id=249 data-nosnippet>249</a>    }
-<a href=#250 id=250 data-nosnippet>250</a>
-<a href=#251 id=251 data-nosnippet>251</a>    <span class="attr">#[test]
-<a href=#252 id=252 data-nosnippet>252</a>    </span><span class="kw">fn </span>validation_rejects_incomplete_launch_metadata() {
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span><span class="kw-2">mut </span>catalog = builtin_application_catalog().unwrap().clone();
-<a href=#254 id=254 data-nosnippet>254</a>        catalog.applications[<span class="number">0</span>].launch.cargo_package.clear();
-<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">let </span>errors = catalog.validate().unwrap_err();
-<a href=#256 id=256 data-nosnippet>256</a>        <span class="macro">assert!</span>(
-<a href=#257 id=257 data-nosnippet>257</a>            errors
-<a href=#258 id=258 data-nosnippet>258</a>                .iter()
-<a href=#259 id=259 data-nosnippet>259</a>                .any(|error| error.contains(<span class="string">"incomplete launch descriptor"</span>))
-<a href=#260 id=260 data-nosnippet>260</a>        );
+<a href=#188 id=188 data-nosnippet>188</a>    <span class="attr">#[test]
+<a href=#189 id=189 data-nosnippet>189</a>    </span><span class="kw">fn </span>task_presentation_is_owned_by_the_referenced_surface() {
+<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span>application = builtin_application_catalog()
+<a href=#191 id=191 data-nosnippet>191</a>            .unwrap()
+<a href=#192 id=192 data-nosnippet>192</a>            .application(<span class="string">"tclean"</span>)
+<a href=#193 id=193 data-nosnippet>193</a>            .unwrap();
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">let </span>surface = application.surface_bundle().unwrap();
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="macro">assert_eq!</span>(surface.surface.display_name(), <span class="string">"Tclean"</span>);
+<a href=#196 id=196 data-nosnippet>196</a>        <span class="macro">assert_eq!</span>(surface.surface.category(), <span class="string">"Imaging"</span>);
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="macro">assert_eq!</span>(application.protocol_family().unwrap(), <span class="string">"imager"</span>);
+<a href=#198 id=198 data-nosnippet>198</a>    }
+<a href=#199 id=199 data-nosnippet>199</a>
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="doccomment">/// Version 2 (#972) holds only what a launch and the suite read: a
+<a href=#201 id=201 data-nosnippet>201</a>    /// version-1 entry's presentation fields are refused, as is the old
+<a href=#202 id=202 data-nosnippet>202</a>    /// version number.
+<a href=#203 id=203 data-nosnippet>203</a>    </span><span class="attr">#[test]
+<a href=#204 id=204 data-nosnippet>204</a>    </span><span class="kw">fn </span>the_retired_presentation_fields_are_refused() {
+<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">let </span>catalog = builtin_application_catalog().unwrap();
+<a href=#206 id=206 data-nosnippet>206</a>        <span class="macro">assert_eq!</span>(catalog.schema_version, APPLICATION_CATALOG_SCHEMA_VERSION);
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">let </span><span class="kw-2">mut </span>entry = serde_json::to_value(<span class="kw-2">&amp;</span>catalog.applications[<span class="number">0</span>]).unwrap();
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="comment">// As a set: serde_json keeps insertion order when another crate in
+<a href=#209 id=209 data-nosnippet>209</a>        // the build enables its `preserve_order` feature.
+<a href=#210 id=210 data-nosnippet>210</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#211 id=211 data-nosnippet>211</a>            entry
+<a href=#212 id=212 data-nosnippet>212</a>                .as_object()
+<a href=#213 id=213 data-nosnippet>213</a>                .unwrap()
+<a href=#214 id=214 data-nosnippet>214</a>                .keys()
+<a href=#215 id=215 data-nosnippet>215</a>                .map(String::as_str)
+<a href=#216 id=216 data-nosnippet>216</a>                .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#217 id=217 data-nosnippet>217</a>            BTreeSet::from([<span class="string">"dataset_kinds"</span>, <span class="string">"id"</span>, <span class="string">"include_in_suite"</span>, <span class="string">"launch"</span>])
+<a href=#218 id=218 data-nosnippet>218</a>        );
+<a href=#219 id=219 data-nosnippet>219</a>        entry[<span class="string">"show_in_tui"</span>] = <span class="macro">serde_json::json!</span>(<span class="bool-val">true</span>);
+<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">let </span>error = serde_json::from_value::&lt;ApplicationDefinition&gt;(entry).unwrap_err();
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"show_in_tui"</span>), <span class="string">"{error}"</span>);
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">let </span><span class="kw-2">mut </span>old = catalog.clone();
+<a href=#223 id=223 data-nosnippet>223</a>        old.schema_version = <span class="number">1</span>;
+<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">let </span>errors = old.validate().unwrap_err();
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="macro">assert!</span>(
+<a href=#226 id=226 data-nosnippet>226</a>            errors
+<a href=#227 id=227 data-nosnippet>227</a>                .iter()
+<a href=#228 id=228 data-nosnippet>228</a>                .any(|error| error.contains(<span class="string">"unsupported application catalog version 1"</span>)),
+<a href=#229 id=229 data-nosnippet>229</a>            <span class="string">"{errors:?}"
+<a href=#230 id=230 data-nosnippet>230</a>        </span>);
+<a href=#231 id=231 data-nosnippet>231</a>    }
+<a href=#232 id=232 data-nosnippet>232</a>
+<a href=#233 id=233 data-nosnippet>233</a>    <span class="attr">#[test]
+<a href=#234 id=234 data-nosnippet>234</a>    </span><span class="kw">fn </span>validation_rejects_an_application_without_a_surface() {
+<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">let </span><span class="kw-2">mut </span>catalog = builtin_application_catalog().unwrap().clone();
+<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span><span class="kw-2">mut </span>casars = catalog.applications[<span class="number">0</span>].clone();
+<a href=#237 id=237 data-nosnippet>237</a>        casars.id = <span class="string">"casars"</span>.to_string();
+<a href=#238 id=238 data-nosnippet>238</a>        catalog.applications.push(casars);
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">let </span>errors = catalog.validate().unwrap_err();
+<a href=#240 id=240 data-nosnippet>240</a>        <span class="macro">assert!</span>(
+<a href=#241 id=241 data-nosnippet>241</a>            errors
+<a href=#242 id=242 data-nosnippet>242</a>                .iter()
+<a href=#243 id=243 data-nosnippet>243</a>                .any(|error| error.contains(<span class="string">"\"casars\" has no canonical surface"</span>)),
+<a href=#244 id=244 data-nosnippet>244</a>            <span class="string">"{errors:?}"
+<a href=#245 id=245 data-nosnippet>245</a>        </span>);
+<a href=#246 id=246 data-nosnippet>246</a>    }
+<a href=#247 id=247 data-nosnippet>247</a>
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="attr">#[test]
+<a href=#249 id=249 data-nosnippet>249</a>    </span><span class="kw">fn </span>every_override_is_named_for_the_resolver() {
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">let </span><span class="kw-2">mut </span>catalog = builtin_application_catalog().unwrap().clone();
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>impbcor = catalog.application(<span class="string">"impbcor"</span>).unwrap();
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="macro">assert_eq!</span>(impbcor.launch.override_env, <span class="string">"CASARS_IMPBCOR_BIN"</span>);
+<a href=#253 id=253 data-nosnippet>253</a>        catalog.applications[<span class="number">0</span>].launch.override_env = <span class="string">"CASA_RS_MSEXPLORE_BIN"</span>.to_string();
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">let </span>errors = catalog.validate().unwrap_err();
+<a href=#255 id=255 data-nosnippet>255</a>        <span class="macro">assert!</span>(
+<a href=#256 id=256 data-nosnippet>256</a>            errors
+<a href=#257 id=257 data-nosnippet>257</a>                .iter()
+<a href=#258 id=258 data-nosnippet>258</a>                .any(|error| error.contains(<span class="string">"is not named CASARS_&lt;APP&gt;_BIN"</span>)),
+<a href=#259 id=259 data-nosnippet>259</a>            <span class="string">"{errors:?}"
+<a href=#260 id=260 data-nosnippet>260</a>        </span>);
 <a href=#261 id=261 data-nosnippet>261</a>    }
 <a href=#262 id=262 data-nosnippet>262</a>
 <a href=#263 id=263 data-nosnippet>263</a>    <span class="attr">#[test]
-<a href=#264 id=264 data-nosnippet>264</a>    </span><span class="kw">fn </span>suite_projection_has_stable_complete_executable_ownership() {
-<a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">let </span>catalog = builtin_application_catalog().unwrap();
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="kw">let </span>suite = catalog
-<a href=#267 id=267 data-nosnippet>267</a>            .applications
-<a href=#268 id=268 data-nosnippet>268</a>            .iter()
-<a href=#269 id=269 data-nosnippet>269</a>            .filter(|application| application.include_in_suite)
-<a href=#270 id=270 data-nosnippet>270</a>            .map(|application| application.launch.executable.as_str())
-<a href=#271 id=271 data-nosnippet>271</a>            .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#272 id=272 data-nosnippet>272</a>        <span class="macro">assert_eq!</span>(
-<a href=#273 id=273 data-nosnippet>273</a>            suite,
-<a href=#274 id=274 data-nosnippet>274</a>            BTreeSet::from([
-<a href=#275 id=275 data-nosnippet>275</a>                <span class="string">"calibrate"</span>,
-<a href=#276 id=276 data-nosnippet>276</a>                <span class="string">"concat"</span>,
-<a href=#277 id=277 data-nosnippet>277</a>                <span class="string">"casars-imager"</span>,
-<a href=#278 id=278 data-nosnippet>278</a>                <span class="string">"importvla"</span>,
-<a href=#279 id=279 data-nosnippet>279</a>                <span class="string">"exportfits"</span>,
-<a href=#280 id=280 data-nosnippet>280</a>                <span class="string">"feather"</span>,
-<a href=#281 id=281 data-nosnippet>281</a>                <span class="string">"flagdata"</span>,
-<a href=#282 id=282 data-nosnippet>282</a>                <span class="string">"flagmanager"</span>,
-<a href=#283 id=283 data-nosnippet>283</a>                <span class="string">"imexplore"</span>,
-<a href=#284 id=284 data-nosnippet>284</a>                <span class="string">"immath"</span>,
-<a href=#285 id=285 data-nosnippet>285</a>                <span class="string">"immoments"</span>,
-<a href=#286 id=286 data-nosnippet>286</a>                <span class="string">"impbcor"</span>,
-<a href=#287 id=287 data-nosnippet>287</a>                <span class="string">"importfits"</span>,
-<a href=#288 id=288 data-nosnippet>288</a>                <span class="string">"impv"</span>,
-<a href=#289 id=289 data-nosnippet>289</a>                <span class="string">"imregrid"</span>,
-<a href=#290 id=290 data-nosnippet>290</a>                <span class="string">"imsubimage"</span>,
-<a href=#291 id=291 data-nosnippet>291</a>                <span class="string">"msconvert"</span>,
-<a href=#292 id=292 data-nosnippet>292</a>                <span class="string">"msexplore"</span>,
-<a href=#293 id=293 data-nosnippet>293</a>                <span class="string">"mstransform"</span>,
-<a href=#294 id=294 data-nosnippet>294</a>                <span class="string">"simobserve"</span>,
-<a href=#295 id=295 data-nosnippet>295</a>                <span class="string">"tsdimaging"</span>,
-<a href=#296 id=296 data-nosnippet>296</a>                <span class="string">"simanalyze"</span>,
-<a href=#297 id=297 data-nosnippet>297</a>                <span class="string">"simalma"</span>,
-<a href=#298 id=298 data-nosnippet>298</a>            ])
-<a href=#299 id=299 data-nosnippet>299</a>        );
-<a href=#300 id=300 data-nosnippet>300</a>    }
-<a href=#301 id=301 data-nosnippet>301</a>}
+<a href=#264 id=264 data-nosnippet>264</a>    </span><span class="kw">fn </span>validation_rejects_incomplete_launch_metadata() {
+<a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">let </span><span class="kw-2">mut </span>catalog = builtin_application_catalog().unwrap().clone();
+<a href=#266 id=266 data-nosnippet>266</a>        catalog.applications[<span class="number">0</span>].launch.cargo_package.clear();
+<a href=#267 id=267 data-nosnippet>267</a>        <span class="kw">let </span>errors = catalog.validate().unwrap_err();
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="macro">assert!</span>(
+<a href=#269 id=269 data-nosnippet>269</a>            errors
+<a href=#270 id=270 data-nosnippet>270</a>                .iter()
+<a href=#271 id=271 data-nosnippet>271</a>                .any(|error| error.contains(<span class="string">"incomplete launch descriptor"</span>))
+<a href=#272 id=272 data-nosnippet>272</a>        );
+<a href=#273 id=273 data-nosnippet>273</a>    }
+<a href=#274 id=274 data-nosnippet>274</a>
+<a href=#275 id=275 data-nosnippet>275</a>    <span class="attr">#[test]
+<a href=#276 id=276 data-nosnippet>276</a>    </span><span class="kw">fn </span>suite_projection_has_stable_complete_executable_ownership() {
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="kw">let </span>catalog = builtin_application_catalog().unwrap();
+<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">let </span>suite = catalog
+<a href=#279 id=279 data-nosnippet>279</a>            .applications
+<a href=#280 id=280 data-nosnippet>280</a>            .iter()
+<a href=#281 id=281 data-nosnippet>281</a>            .filter(|application| application.include_in_suite)
+<a href=#282 id=282 data-nosnippet>282</a>            .map(|application| application.launch.executable.as_str())
+<a href=#283 id=283 data-nosnippet>283</a>            .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#284 id=284 data-nosnippet>284</a>        <span class="macro">assert_eq!</span>(
+<a href=#285 id=285 data-nosnippet>285</a>            suite,
+<a href=#286 id=286 data-nosnippet>286</a>            BTreeSet::from([
+<a href=#287 id=287 data-nosnippet>287</a>                <span class="string">"calibrate"</span>,
+<a href=#288 id=288 data-nosnippet>288</a>                <span class="string">"concat"</span>,
+<a href=#289 id=289 data-nosnippet>289</a>                <span class="string">"casars-imager"</span>,
+<a href=#290 id=290 data-nosnippet>290</a>                <span class="string">"importvla"</span>,
+<a href=#291 id=291 data-nosnippet>291</a>                <span class="string">"exportfits"</span>,
+<a href=#292 id=292 data-nosnippet>292</a>                <span class="string">"feather"</span>,
+<a href=#293 id=293 data-nosnippet>293</a>                <span class="string">"flagdata"</span>,
+<a href=#294 id=294 data-nosnippet>294</a>                <span class="string">"flagmanager"</span>,
+<a href=#295 id=295 data-nosnippet>295</a>                <span class="string">"imexplore"</span>,
+<a href=#296 id=296 data-nosnippet>296</a>                <span class="string">"immath"</span>,
+<a href=#297 id=297 data-nosnippet>297</a>                <span class="string">"immoments"</span>,
+<a href=#298 id=298 data-nosnippet>298</a>                <span class="string">"impbcor"</span>,
+<a href=#299 id=299 data-nosnippet>299</a>                <span class="string">"importfits"</span>,
+<a href=#300 id=300 data-nosnippet>300</a>                <span class="string">"impv"</span>,
+<a href=#301 id=301 data-nosnippet>301</a>                <span class="string">"imregrid"</span>,
+<a href=#302 id=302 data-nosnippet>302</a>                <span class="string">"imsubimage"</span>,
+<a href=#303 id=303 data-nosnippet>303</a>                <span class="string">"msconvert"</span>,
+<a href=#304 id=304 data-nosnippet>304</a>                <span class="string">"msexplore"</span>,
+<a href=#305 id=305 data-nosnippet>305</a>                <span class="string">"mstransform"</span>,
+<a href=#306 id=306 data-nosnippet>306</a>                <span class="string">"simobserve"</span>,
+<a href=#307 id=307 data-nosnippet>307</a>                <span class="string">"tsdimaging"</span>,
+<a href=#308 id=308 data-nosnippet>308</a>                <span class="string">"simanalyze"</span>,
+<a href=#309 id=309 data-nosnippet>309</a>                <span class="string">"simalma"</span>,
+<a href=#310 id=310 data-nosnippet>310</a>            ])
+<a href=#311 id=311 data-nosnippet>311</a>        );
+<a href=#312 id=312 data-nosnippet>312</a>    }
+<a href=#313 id=313 data-nosnippet>313</a>}
 </code></pre></div></section></main></body></html>

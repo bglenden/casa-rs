@@ -567,6 +567,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#clear-calibration-clearcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clear Calibration (clearcal)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#delete-model-delmod" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delete Model (delmod)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#gencal-gencal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1237,6 +1259,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#clear-calibration-clearcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clear Calibration (clearcal)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#delete-model-delmod" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delete Model (delmod)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#gencal-gencal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1441,8 +1485,8 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
 <li>Concepts: 626</li>
-<li>Surfaces: 31 (31 task, 0 session)</li>
-<li>Surface bindings: 896</li>
+<li>Surfaces: 33 (33 task, 0 session)</li>
+<li>Surface bindings: 905</li>
 </ul>
 <table>
 <thead>
@@ -1575,6 +1619,22 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">18</td>
 <td>Scale gain solutions using reference calibrator fields.</td>
+</tr>
+<tr>
+<td><a href="#surface-clearcal">Clear Calibration</a><br><code>clearcal</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">5</td>
+<td>Initialize or reset scratch visibility columns.</td>
+</tr>
+<tr>
+<td><a href="#surface-delmod">Delete Model</a><br><code>delmod</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">4</td>
+<td>Remove scratch or virtual model visibilities.</td>
 </tr>
 <tr>
 <td><a href="#surface-gencal">Gencal</a><br><code>gencal</code></td>
@@ -6304,6 +6364,124 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"text"</code>; optional</td>
 <td>Output</td>
 <td>Execution report format</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-clearcal"></a></p>
+<h2 id="clear-calibration-clearcal">Clear Calibration (<code>clearcal</code>)<a class="headerlink" href="#clear-calibration-clearcal" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Initialize or reset scratch visibility columns.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input MeasurementSet path or paths.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Input</td>
+<td>Applycal field selector text.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Input</td>
+<td>Applycal spw selector text.</td>
+</tr>
+<tr>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Input</td>
+<td>Intent selector.</td>
+</tr>
+<tr>
+<td><code>addmodel</code></td>
+<td><code>parameter.addmodel@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Scratch columns</td>
+<td>Create MODEL_DATA column.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-delmod"></a></p>
+<h2 id="delete-model-delmod">Delete Model (<code>delmod</code>)<a class="headerlink" href="#delete-model-delmod" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Remove scratch or virtual model visibilities.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input MeasurementSet path or paths.</td>
+</tr>
+<tr>
+<td><code>otf</code></td>
+<td><code>parameter.otf@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Scratch columns</td>
+<td>Delete OTF model.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Input</td>
+<td>Applycal field selector text.</td>
+</tr>
+<tr>
+<td><code>scr</code></td>
+<td><code>parameter.scr@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Scratch columns</td>
+<td>Delete scratch model.</td>
 </tr>
 </tbody>
 </table>
