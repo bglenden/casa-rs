@@ -214,6 +214,16 @@ pub struct MosaicWindow {
     pub buffer_band: Option<MosaicBufferBand>,
 }
 
+impl MosaicWindow {
+    /// Whether CASA would generate the same beam planes for both selected
+    /// bands. The channel-to-plane mappings can still differ.
+    pub fn shares_beam_frequencies(&self, other: &Self) -> Result<bool, OperatorError> {
+        let current = FrequencyCells::new(MosaicRules::Tclean, self, 0)?;
+        let previous = FrequencyCells::new(MosaicRules::Tclean, other, 0)?;
+        Ok(current.frequencies_hz == previous.frequencies_hz)
+    }
+}
+
 /// The observed band of a REST mosaic's first buffer, before
 /// interpolation. CASA uses it to limit the beam cells.
 #[derive(Clone, Copy, Debug, PartialEq)]

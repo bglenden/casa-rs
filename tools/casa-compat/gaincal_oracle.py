@@ -1046,6 +1046,12 @@ def virtual_fourier(root, source, native):
                 assert difference < 1e-5
             else:
                 assert difference > .01
+            if name == 'mosaic-image-beam':
+                selected = folder/f'{gain}-selected'
+                selected.mkdir()
+                results[f'{name}-{gain}-selected'] = gain_and_apply(
+                    selected, vis, native, gain, 'inf', calmode='ap', field='0', spw='0:0~3',
+                    smodel=[], minblperant=2)
     verify_missing_maximum_w(root, native)
     return results
 

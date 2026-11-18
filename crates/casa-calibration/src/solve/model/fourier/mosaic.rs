@@ -50,8 +50,16 @@ impl MosaicLayout {
             .map_err(model_error)?
             .string(row.row.observation_id as usize, "TELESCOPE_NAME")
             .map_err(model_error)?;
-        let window = beam_window(row, convert_frequencies)?;
-        let loaded = saved::planes(record, beam, &window)?;
+        let (window, complete_window) = beam_window(row, convert_frequencies)?;
+        let mut loaded = saved::planes(record, beam, &window)?;
+        if loaded.is_none()
+            && let Some(complete) = complete_window
+            && window
+                .shares_beam_frequencies(&complete)
+                .map_err(model_error)?
+        {
+            loaded = saved::planes(record, beam, &complete)?;
+        }
         let class = saved::integer(beam, "pbclass")?;
         let custom = !matches!(class, 1 | 2);
         let (dishes, antenna_classes) = match (custom, loaded.as_ref()) {
@@ -145,7 +153,7 @@ impl MosaicLayout {
 fn beam_window(
     row: &FourierRow<'_>,
     convert_frequencies: bool,
-) -> Result<MosaicWindow, GainSolveError> {
+) -> Result<(MosaicWindow, Option<MosaicWindow>), GainSolveError> {
     let spw = row.row.data_spw_id as usize;
     let windows = row.ms.spectral_window().map_err(model_error)?;
     let channel_width_hz = windows
@@ -169,23 +177,30 @@ fn beam_window(
     } else {
         1.0
     };
-    let selected = if let Some(selection) = &row.row.channel_selection {
-        selection
-            .indices(row.frequencies.len())
-            .map_err(model_error)?
-    } else {
-        (0..row.frequencies.len()).collect()
-    };
-    Ok(MosaicWindow {
+    let full = MosaicWindow {
         spectral_window: spw as u32,
         window_frequencies_hz: row.frequencies.to_vec(),
         channel_width_hz,
-        selected_frequencies_hz: selected
-            .into_iter()
-            .map(|index| row.frequencies[index] * ratio)
+        selected_frequencies_hz: row
+            .frequencies
+            .iter()
+            .map(|frequency| frequency * ratio)
             .collect(),
         buffer_band: None,
-    })
+    };
+    if let Some(selection) = &row.row.channel_selection {
+        let selected = selection
+            .indices(row.frequencies.len())
+            .map_err(model_error)?;
+        let mut window = full.clone();
+        window.selected_frequencies_hz = selected
+            .into_iter()
+            .map(|index| full.selected_frequencies_hz[index])
+            .collect();
+        Ok((window, Some(full)))
+    } else {
+        Ok((full, None))
+    }
 }
 
 fn antenna_beams(
