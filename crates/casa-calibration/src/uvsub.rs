@@ -85,6 +85,7 @@ pub fn subtract_visibility_model_holding(
         selected.row_indices().collect(),
         &[CORRECTED],
         create,
+        false,
         lock,
     )?;
     let batch_rows = plan.batch_rows().max(1);

@@ -287,6 +287,8 @@ def main():
         ('create-both', {}, dict(field='MISSING', addmodel=True), False),
         ('keep-existing-model', dict(model=True), dict(addmodel=False), False),
         ('selected-reset', virtual, dict(field='0', spw='0:2~4'), False),
+        ('corrected-only-reset-virtual', dict(corrected=True, virtual=True),
+         dict(field='0', spw='0:2~4'), False),
         ('selected-direct-standard-manager', {**scratch, 'direct_scratch': True},
          dict(field='0', spw='0:2~4'), False),
         ('channel-envelope', scratch, dict(field='0', spw='0:0~2;7~9'), False),

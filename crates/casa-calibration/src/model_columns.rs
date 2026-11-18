@@ -48,10 +48,10 @@ pub(crate) fn reset_scratch_columns(
         // before resolving the user's selectors.
         let all =
             resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
-        lock = reset(ms, all, &new, true, lock)?;
+        lock = reset(ms, all, &new, true, false, lock)?;
     }
     if has_corrected {
-        lock = reset_existing_scratch(ms, selection, has_model, lock)?;
+        lock = reset_existing_scratch(ms, selection, has_model, true, lock)?;
     }
     Ok(lock)
 }
@@ -73,22 +73,25 @@ pub fn reset_calibration_set(
     old_iterator: bool,
     mut lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
-    if calset == 1 {
-        casa_ms::virtual_model::clear_virtual_model_holding(ms, &[], &[], &mut lock)?;
+    let clear_virtual = calset == 1;
+    if !old_iterator || !has_column(ms, CORRECTED) {
+        if clear_virtual {
+            casa_ms::virtual_model::clear_virtual_model_holding(ms, &[], &[], &mut lock)?;
+        }
+        return Err(invalid(if old_iterator {
+            "the MeasurementSet has no CORRECTED_DATA column"
+        } else {
+            "Calibrater::initCalSet not implemented"
+        }));
     }
-    if !old_iterator {
-        return Err(invalid("Calibrater::initCalSet not implemented"));
-    }
-    if !has_column(ms, CORRECTED) {
-        return Err(invalid("the MeasurementSet has no CORRECTED_DATA column"));
-    }
-    reset_existing_scratch(ms, selection, has_column(ms, MODEL), lock)
+    reset_existing_scratch(ms, selection, has_column(ms, MODEL), clear_virtual, lock)
 }
 
 fn reset_existing_scratch(
     ms: &mut MeasurementSet,
     selection: &MsSelection,
     has_model: bool,
+    clear_virtual: bool,
     lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
     let selected = resolve_casa_calibration_selection(ms, selection).map_err(invalid)?;
@@ -100,7 +103,7 @@ fn reset_existing_scratch(
     } else {
         &[CORRECTED]
     };
-    reset(ms, selected, columns, false, lock)
+    reset(ms, selected, columns, false, clear_virtual, lock)
 }
 
 /// Add one absent visibility scratch column before data selection.
@@ -113,7 +116,7 @@ pub(crate) fn initialize_scratch_column(
         return Ok(lock);
     }
     let all = resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
-    reset(ms, all, &[column], true, lock)
+    reset(ms, all, &[column], true, false, lock)
 }
 
 /// Delete selected virtual models and/or the entire scratch model column.
@@ -200,6 +203,7 @@ fn reset(
     selected: ResolvedMsSelection,
     columns: &[VisibilityDataColumn],
     create: bool,
+    clear_virtual: bool,
     mut lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
     let (plan, destinations) = scratch_write_plan(
@@ -207,6 +211,7 @@ fn reset(
         selected.row_indices().collect(),
         columns,
         create,
+        clear_virtual,
         &mut lock,
     )?;
     let batch_rows = plan.batch_rows().max(1);
@@ -236,16 +241,20 @@ pub(crate) fn scratch_write_plan(
     row_indices: Vec<usize>,
     columns: &[VisibilityDataColumn],
     create: bool,
+    clear_virtual: bool,
     lock: &mut TableWriteLock,
 ) -> MsResult<(MeasurementSetWritePlan, Vec<ScratchDestination>)> {
     let destinations = columns
         .iter()
         .map(|&column| ScratchDestination::new(ms, column))
         .collect::<MsResult<Vec<_>>>()?;
-    for &column in columns {
-        scratch_columns::prepare_write_holding(ms, column, create, lock)?;
+    if clear_virtual {
+        casa_ms::virtual_model::clear_virtual_model_holding(ms, &[], &[], lock)?;
     }
     if create {
+        for &column in columns {
+            scratch_columns::prepare_write_holding(ms, column, true, lock)?;
+        }
         for &column in columns {
             let keyword = ms
                 .main_table()
