@@ -931,7 +931,7 @@ fn remove_entry(record: &mut RecordValue, kind: VirtualModelKind, name: &str, re
 }
 
 /// The keywords and model cells CASA's model functions read and write,
-/// changed in memory and written once ([`Self::write`]).
+/// changed in memory and written once ([`Self::write_holding`]).
 struct ModelState {
     main: RecordValue,
     main_changed: bool,
