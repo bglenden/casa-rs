@@ -270,6 +270,17 @@ impl ModelInputs {
         correlations: &[i32],
         raw_flags: &ArrayD<bool>,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
+        self.predict_model(ms, row, correlations, (raw_flags, None), false)
+    }
+
+    pub(super) fn predict_model(
+        &self,
+        ms: &MeasurementSet,
+        row: &SelectedSolveRow,
+        correlations: &[i32],
+        (raw_flags, previous): (&ArrayD<bool>, Option<ArrayD<Complex32>>),
+        scratch_model: bool,
+    ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
         let Some(entries) = self.virtual_models.get(&row.field_id) else {
             return Ok(None);
         };
@@ -321,8 +332,12 @@ impl ModelInputs {
                 "virtual component prediction requires one correlation basis",
             ));
         }
-        let mut model =
-            ArrayD::<Complex32>::zeros(IxDyn(&[correlations.len(), frequencies.len()]).f());
+        let shape = [correlations.len(), frequencies.len()];
+        let mut model = match previous {
+            Some(model) if model.shape() == shape => model,
+            Some(_) => return Err(model_error("MODEL_DATA does not match its layout")),
+            None => ArrayD::<Complex32>::zeros(IxDyn(&shape).f()),
+        };
         for entry in matching {
             let components = match &entry.prediction {
                 Prediction::Components(components) => components,
@@ -343,6 +358,7 @@ impl ModelInputs {
                             focus_rows: &buffer.focus_rows,
                         },
                         &mut model,
+                        scratch_model,
                     )?;
                     continue;
                 }

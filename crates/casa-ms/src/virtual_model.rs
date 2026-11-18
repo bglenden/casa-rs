@@ -549,8 +549,20 @@ pub fn virtual_model_index_combination(
     ms: &MeasurementSet,
     selection: &MsSelection,
 ) -> MsResult<VirtualModelSelection> {
-    const CHUNK_ROWS: usize = 65_536;
     let rows = selection.compile(ms)?.apply(ms)?;
+    selected_model_combinations(ms, &rows)
+}
+
+/// Recover the virtual-model keys for a selection's resolved physical rows.
+///
+/// This preserves the selection semantics of the caller, including the
+/// task-specific CASA selection grammar and any in-memory changes to rows.
+#[doc(hidden)]
+pub fn selected_model_combinations(
+    ms: &MeasurementSet,
+    rows: &[usize],
+) -> MsResult<VirtualModelSelection> {
+    const CHUNK_ROWS: usize = 65_536;
     let main = ms.main_table();
     let mut combinations = VirtualModelCombinations::new(ms)?;
     for chunk in rows.chunks(CHUNK_ROWS) {

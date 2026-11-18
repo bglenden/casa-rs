@@ -448,6 +448,22 @@ impl VisibilityModels {
             None => Ok(None),
         }
     }
+
+    pub(crate) fn predict_scratch(
+        &self,
+        ms: &MeasurementSet,
+        row: usize,
+        correlations: &[i32],
+        flags: &ArrayD<bool>,
+        previous: Option<ArrayD<Complex32>>,
+    ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
+        match self.rows.get(&row) {
+            Some(row) => self
+                .models
+                .predict_model(ms, row, correlations, (flags, previous), true),
+            None => Ok(None),
+        }
+    }
 }
 
 pub(crate) fn correlation_types_for_ddid(

@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::virtual_model::{put_virtual_model_holding, virtual_model_index_combination};
+use casa_ms::virtual_model::{put_virtual_model_holding, selected_model_combinations};
 use casa_ms::write_session::{
     MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession,
 };
@@ -51,8 +51,11 @@ pub(crate) fn model_entry(
     }
     Ok(VirtualModelEntry {
         kind,
-        index_combination: virtual_model_index_combination(ms, &selected.request)?
-            .index_combination,
+        index_combination: selected_model_combinations(
+            ms,
+            &selected.row_indices().collect::<Vec<_>>(),
+        )?
+        .index_combination,
         channel_selection,
         container,
     })
@@ -155,24 +158,31 @@ impl Prediction<'_> {
                 None => &no_flags,
                 _ => return Err(invalid("FLAG is not a Bool array")),
             };
-            let sampled = self
-                .models
-                .predict(ms, row.row_index, correlation, flags)
-                .map_err(invalid)?
-                .ok_or_else(|| invalid("the selected row is absent from the prediction"))?;
             let slice = self.channels.get(&row.spectral_window_id);
-            let value = if self.incremental || slice.is_some() {
-                let Some(ArrayValue::Complex32(mut previous)) =
+            let previous = if self.incremental || slice.is_some() {
+                let Some(ArrayValue::Complex32(previous)) =
                     existing.as_mut().and_then(|cells| cells[offset].take())
                 else {
                     return Err(invalid("MODEL_DATA is not a defined Complex array"));
                 };
-                let full = 0..sampled.shape()[1];
-                let (span, step) = slice
-                    .map(|(span, step)| (span, *step))
-                    .unwrap_or((&full, 1));
+                Some(previous)
+            } else {
+                None
+            };
+            let starting = if self.incremental {
+                previous.clone()
+            } else {
+                None
+            };
+            let sampled = self
+                .models
+                .predict_scratch(ms, row.row_index, correlation, flags, starting)
+                .map_err(invalid)?
+                .ok_or_else(|| invalid("the selected row is absent from the prediction"))?;
+            let value = if let Some((span, step)) = slice {
+                let mut previous = previous.expect("selected channels retain previous cells");
                 ranges.insert(row.spectral_window_id, span.clone());
-                update_channels(&mut previous, &sampled, span, step, self.incremental)?;
+                update_channels(&mut previous, &sampled, span, *step)?;
                 previous
             } else {
                 sampled
@@ -218,7 +228,6 @@ fn update_channels(
     current: &ArrayD<Complex32>,
     span: &Range<usize>,
     stride: usize,
-    incremental: bool,
 ) -> MsResult<()> {
     if previous.shape() != current.shape() || span.end > current.shape()[1] {
         return Err(invalid(
@@ -228,11 +237,7 @@ fn update_channels(
     for channel in span.clone().step_by(stride) {
         let mut destination = previous.index_axis_mut(Axis(1), channel);
         let source = current.index_axis(Axis(1), channel);
-        if incremental {
-            destination += &source;
-        } else {
-            destination.assign(&source);
-        }
+        destination.assign(&source);
     }
     Ok(())
 }

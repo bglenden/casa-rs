@@ -83,6 +83,7 @@ impl FourierModel {
         &self,
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
+        scratch_model: bool,
     ) -> Result<(), GainSolveError> {
         let mut prepared = self
             .prepared
@@ -100,7 +101,7 @@ impl FourierModel {
         layouts
             .get_mut(row.correlations)
             .expect("correlation layout was prepared")
-            .predict(row, output)
+            .predict(row, output, scratch_model)
     }
 }
 
@@ -123,6 +124,7 @@ struct PreparedFourierModel {
     scratch: PredictionScratch,
     data: Vec<Complex32>,
     output: Vec<Complex32>,
+    covered: Vec<bool>,
     weights: Vec<f32>,
     flags: Vec<bool>,
     frequencies: Vec<f64>,
@@ -230,6 +232,7 @@ impl PreparedFourierModel {
             scratch: PredictionScratch::default(),
             data: Vec::new(),
             output: Vec::new(),
+            covered: Vec::new(),
             weights: Vec::new(),
             flags: Vec::new(),
             frequencies: Vec::new(),
@@ -240,6 +243,7 @@ impl PreparedFourierModel {
         &mut self,
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
+        scratch_model: bool,
     ) -> Result<(), GainSolveError> {
         let shift = self
             .tracking
@@ -347,46 +351,64 @@ impl PreparedFourierModel {
                 spectral_window: row.row.data_spw_id as u32,
             },
         };
+        let keep_unvisited = self.legacy_flags && scratch_model;
+        let coverage = keep_unvisited.then(|| {
+            self.covered.resize(cells, false);
+            &mut self.covered[..]
+        });
         self.resampler
-            .predict_row(
+            .predict_row_with_coverage(
                 &self.operator,
                 &mut self.backend,
                 &self.grids,
                 &native,
                 &mut self.scratch,
-                &mut self.output,
+                (&mut self.output, coverage),
             )
             .map_err(model_error)?;
-        if self.scale.is_some() || self.legacy_taylor.is_some() {
-            for (samples, frequency) in self
-                .output
-                .chunks_exact_mut(row.correlations.len())
-                .zip(row.frequencies)
-            {
-                let factor = self
-                    .scale
-                    .as_ref()
-                    .map_or(1.0, |scale| scale.at(*frequency * lsrk_ratio));
-                let taylor = self.legacy_taylor.map_or(1.0, |(term, reference)| {
-                    // MultiTermFT::modifyModelVis rounds the raw frequency
-                    // to Float before constructing the Taylor coordinate.
-                    let offset = ((f64::from(*frequency as f32) - reference) / reference) as f32;
-                    offset.powi(term)
-                });
-                for sample in samples {
-                    *sample *= factor * taylor;
-                }
+        self.accumulate(row, output, lsrk_ratio, keep_unvisited);
+        Ok(())
+    }
+
+    fn accumulate(
+        &self,
+        row: FourierRow<'_>,
+        output: &mut ArrayD<Complex32>,
+        lsrk_ratio: f64,
+        keep_unvisited: bool,
+    ) {
+        let correlations = row.correlations.len();
+        let destination = output
+            .as_slice_memory_order_mut()
+            .expect("contiguous model output");
+        if !keep_unvisited && self.scale.is_none() && self.legacy_taylor.is_none() {
+            for (value, &model) in destination.iter_mut().zip(&self.output) {
+                *value += model;
+            }
+            return;
+        }
+        for (channel, &frequency) in row.frequencies.iter().enumerate() {
+            let factor = self
+                .scale
+                .as_ref()
+                .map_or(1.0, |scale| scale.at(frequency * lsrk_ratio));
+            let taylor = self.legacy_taylor.map_or(1.0, |(term, reference)| {
+                // Legacy MultiTermFT rounds the raw frequency to Float.
+                let offset = ((f64::from(frequency as f32) - reference) / reference) as f32;
+                offset.powi(term)
+            });
+            for correlation in 0..correlations {
+                let index = channel * correlations + correlation;
+                // SkyEquation adds the original model to GridFT's output.
+                // GridFT leaves flagged or unmapped samples in that output.
+                let sample = if keep_unvisited && !self.covered[index] {
+                    destination[index]
+                } else {
+                    self.output[index]
+                };
+                destination[index] += sample * (factor * taylor);
             }
         }
-        for (destination, &value) in output
-            .as_slice_memory_order_mut()
-            .expect("virtual model output is contiguous")
-            .iter_mut()
-            .zip(&self.output)
-        {
-            *destination += value;
-        }
-        Ok(())
     }
 }
 
