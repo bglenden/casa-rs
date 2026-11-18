@@ -307,7 +307,7 @@ pub(crate) fn solve_bandpass(
             gain_type: GainType::G,
             model_source: GainSolveModelSource::PointSource,
             point_stokes: request.smodel,
-            rotate_point_model: false,
+            rotate_model: false,
             solve_interval: GainSolveInterval::Infinite,
             combine: GainSolveCombine {
                 scans: request.combine.scans,

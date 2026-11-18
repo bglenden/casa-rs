@@ -795,7 +795,7 @@ def virtual_components(root, source, native):
     finally:
         t.close()
     variants = {'overrides-column': (vis, '0'), 'unrelated-field': (vis, '1')}
-    for name in ['without-column', 'offset-component', 'unmatched-entry']:
+    for name in ['without-column', 'offset-component', 'unmatched-entry', 'legacy-record']:
         variant = root/f'{name}.ms'
         copy_ms(vis, variant)
         if name == 'without-column':
@@ -814,8 +814,18 @@ def virtual_components(root, source, native):
                     longitude = entry['container']['component0']['shape']['direction']['m0']
                     assert longitude['unit'] == 'rad'
                     longitude['value'] += .00015
-                else:
+                elif name == 'unmatched-entry':
                     entry['indexcombination'][..., 2] += 1000
+                else:
+                    record.pop('version')
+                    record['cl_0'] = dict(
+                        fields=np.array([0], dtype=np.int32),
+                        spws=np.array([0], dtype=np.int32),
+                        start=np.array([0], dtype=np.int32),
+                        nchan=np.array([8], dtype=np.int32),
+                        incr=np.array([1], dtype=np.int32),
+                        type=entry['type'], container=entry['container'],
+                    )
                 t.putcell('SOURCE_MODEL', row, record)
             finally:
                 t.close()
@@ -836,6 +846,50 @@ def virtual_components(root, source, native):
                 unit = solve(casa, case, 'unit', variant, gaintype=gain, calmode='ap',
                              field=field, minblperant=2)
                 assert relative_rms(unit['CPARAM'], sky['CPARAM']) > .2
+    results.update(virtual_component_geometry(root, vis, native))
+    return results
+
+
+def virtual_component_geometry(root, vis, native):
+    results = {}
+    linear = root/'linear'
+    linear.mkdir()
+    make_cal_ms(str(linear/'source.ms'), stokes='XX XY YX YY')
+    source = amplitude_data(linear, linear/'source.ms')
+    for name, scratch in [('parang-virtual', False), ('parang-scratch', True)]:
+        case = root/name
+        case.mkdir()
+        polarized = case/'source.ms'
+        copy_ms(source, polarized)
+        casa.setjy(vis=str(polarized), field='0', standard='manual',
+                   fluxdensity=[1.5, .3, .2, .1], usescratch=scratch)
+        results[name] = gain_and_apply(
+            case, polarized, native, 'G', 'inf', calmode='ap', field='0',
+            smodel=[], parang=True, minblperant=2, apply_options={'parang': True})
+
+    moving = root/'polynomial.ms'
+    copy_ms(vis, moving)
+    t = table()
+    t.open(str(moving))
+    try:
+        first_time = float(t.getcol('TIME').min())
+    finally:
+        t.close()
+    t.open(str(moving/'FIELD'), nomodify=False)
+    try:
+        t.putcell('NUM_POLY', 0, 1)
+        t.putcell('TIME', 0, first_time)
+        for column in ['PHASE_DIR', 'DELAY_DIR', 'REFERENCE_DIR']:
+            constant = t.getcell(column, 0)[:, 0]
+            t.putcell(column, 0, np.column_stack([constant, [1e-6, 0.]]))
+    finally:
+        t.close()
+    for interval in ['int', 'inf']:
+        case = root/f'polynomial-{interval}'
+        case.mkdir()
+        results[case.name] = gain_and_apply(
+            case, moving, native, 'G', interval, calmode='ap',
+            field='0', smodel=[], minblperant=2)
     return results
 
 

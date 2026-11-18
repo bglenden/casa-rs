@@ -63,8 +63,7 @@ pub(crate) fn build_solve_groups(
     options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
-    let models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
-    let mut layouts = SolveRowLayouts::new(ms, options.rotate_point_model, &models)?;
+    let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let needs_first_buffer = options.gain_type == GainType::T || options.robust_seed;
     let mut ordered = bucketed_rows(
         rows,
@@ -80,6 +79,9 @@ pub(crate) fn build_solve_groups(
         } else {
             BTreeMap::new()
         };
+    models.phase_times =
+        weights::chunk_phase_times(&ordered, options.combine, models.dynamic_fields());
+    let mut layouts = SolveRowLayouts::new(ms, options.rotate_model, &models)?;
     let spectral_weights = SpectralWeights::new(ms, &ordered, options.combine)?;
     let pipelined = overlap_inputs(ordered.len());
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
@@ -526,7 +528,7 @@ pub(crate) struct SolveGroupOptions {
     pub(crate) gain_type: GainType,
     pub(crate) model_source: GainSolveModelSource,
     pub(crate) point_stokes: [f32; 4],
-    pub(crate) rotate_point_model: bool,
+    pub(crate) rotate_model: bool,
     pub(crate) solve_interval: GainSolveInterval,
     pub(crate) combine: GainSolveCombine,
     /// Maximum time from the first sample in an average of one baseline.
@@ -764,20 +766,25 @@ impl SolveAccumulator {
             layout.channel_count = channel_count;
             layout.selection.clone_from(&row.channel_selection);
         }
+        let mut predicted = layouts.models.predict(ms, row, &layout.correlations)?;
         let rotated = layouts
             .rotation
             .as_ref()
             .map(|state| {
-                samples::rotate_point_model(
+                if predicted.is_none() {
+                    predicted = inputs.model.cloned();
+                }
+                samples::rotate_model(
                     ms,
                     row,
                     state,
                     &layout.correlations,
                     options.point_stokes,
+                    predicted.as_mut(),
                 )
             })
-            .transpose()?;
-        let predicted = layouts.models.predict(ms, row, &layout.correlations)?;
+            .transpose()?
+            .flatten();
         let mut samples = inputs.samples();
         if let Some(predicted) = &predicted {
             if predicted.shape() != samples.data.shape() {
@@ -915,7 +922,7 @@ impl SolveAccumulator {
                 )
             };
             if !parallel_hand && options.gain_type == GainType::G {
-                if samples.point_model.is_some() {
+                if options.rotate_model {
                     row_weight += samples::centroid_weight(
                         samples,
                         corr_index,

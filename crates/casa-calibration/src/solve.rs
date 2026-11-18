@@ -417,18 +417,24 @@ pub(crate) fn solve_gain_rows(
     }
     validate_solve_interval(request.solve_interval)?;
     // P Jones is later in CASA's Jones chain than G, so the rotation
-    // corrupts a polarized point model before a diagonal gain is fitted.
-    let rotate_point_model = request.parang
+    // corrupts the MeasurementSet model or a polarized explicit point
+    // before a diagonal gain is fitted.
+    let rotate_model = request.parang
         && request.gain_type == GainType::G
-        && request.model_source == GainSolveModelSource::PointSource
-        && request.smodel[1..].iter().any(|value| *value != 0.0);
+        && (request.model_source != GainSolveModelSource::PointSource
+            || request.smodel[1..].iter().any(|value| *value != 0.0));
+    let point_stokes = if request.model_source == GainSolveModelSource::PointSource {
+        request.smodel
+    } else {
+        [1.0, 0.0, 0.0, 0.0]
+    };
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
-        request.parang && !rotate_point_model,
+        request.parang && !rotate_model,
         true,
     )?;
     let requested_preaverage = request.preaverage_seconds as f32;
@@ -449,8 +455,8 @@ pub(crate) fn solve_gain_rows(
         SolveGroupOptions {
             gain_type: request.gain_type,
             model_source: request.model_source,
-            point_stokes: request.smodel,
-            rotate_point_model,
+            point_stokes,
+            rotate_model,
             solve_interval: request.solve_interval,
             combine: request.combine,
             // VbAvg applies this boundary to either source of the interval.

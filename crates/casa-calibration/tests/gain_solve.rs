@@ -68,6 +68,23 @@ fn phase_gain_request(output_table: std::path::PathBuf) -> GainSolveRequest {
 }
 
 #[test]
+fn measurement_set_unit_fallback_ignores_the_point_source_request() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let mut request = phase_gain_request(dir.path().join("unit.gcal"));
+    request.solve_mode = GainSolveMode::AmplitudePhase;
+    run_gain_solve(&ms, &request).unwrap();
+    let unit = Table::open(TableOptions::new(&request.output_table)).unwrap();
+    request.output_table = dir.path().join("fallback.gcal");
+    request.model_source = GainSolveModelSource::FromMeasurementSet;
+    request.smodel = [4.0, 0.0, 0.0, 0.0];
+    run_gain_solve(&ms, &request).unwrap();
+    let fallback = Table::open(TableOptions::new(&request.output_table)).unwrap();
+    assert!(unit.row_count() > 0);
+    assert_eq!(fallback.rows().unwrap(), unit.rows().unwrap());
+}
+
+#[test]
 fn unavailable_prior_spectral_window_excludes_data_from_solving() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path =

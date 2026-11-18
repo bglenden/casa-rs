@@ -33,10 +33,10 @@ pub(super) struct SolveRowLayouts<'a> {
 impl<'a> SolveRowLayouts<'a> {
     pub(super) fn new(
         ms: &MeasurementSet,
-        rotate_point_model: bool,
+        rotate_model: bool,
         models: &'a ModelInputs,
     ) -> Result<Self, GainSolveError> {
-        let rotation = rotate_point_model
+        let rotation = rotate_model
             .then(|| crate::execute::load_parallactic_angle_state(ms))
             .transpose()
             .map_err(|source| GainSolveError::OpenMeasurementSet {
@@ -152,13 +152,14 @@ pub(super) fn point_visibility([i, q, u, v]: [f32; 4], code: i32, first_code: i3
     }
 }
 
-pub(super) fn rotate_point_model(
+pub(super) fn rotate_model(
     ms: &MeasurementSet,
     row: &SelectedSolveRow,
     state: &crate::execute::ParallacticAngleState,
     correlations: &[i32],
     stokes: [f32; 4],
-) -> Result<Vec<Complex32>, GainSolveError> {
+    model: Option<&mut ArrayD<Complex32>>,
+) -> Result<Option<Vec<Complex32>>, GainSolveError> {
     let apply_error = |source| GainSolveError::PriorCalibrationApply {
         source: Box::new(source),
     };
@@ -174,19 +175,22 @@ pub(super) fn rotate_point_model(
             )
             .map_err(apply_error)
     };
-    let mut model = ArrayD::from_shape_fn(IxDyn(&[correlations.len(), 1]), |index| {
+    // The apply kernel inverts P. Negating its angles applies P to the sky model.
+    let first = -angle(row.antenna1, "FEED1")?;
+    let second = -angle(row.antenna2, "FEED2")?;
+    let rotate = |model| {
+        crate::execute::parang::apply(row.data_desc_id, correlations, first, second, model)
+            .map_err(apply_error)
+    };
+    if let Some(model) = model {
+        rotate(model)?;
+        return Ok(None);
+    }
+    let mut point = ArrayD::from_shape_fn(IxDyn(&[correlations.len(), 1]), |index| {
         point_visibility(stokes, correlations[index[0]], correlations[0])
     });
-    // The apply kernel inverts P. Negating its angles applies P to the sky model.
-    crate::execute::parang::apply(
-        row.data_desc_id,
-        correlations,
-        -angle(row.antenna1, "FEED1")?,
-        -angle(row.antenna2, "FEED2")?,
-        &mut model,
-    )
-    .map_err(apply_error)?;
-    Ok(model.into_raw_vec_and_offset().0)
+    rotate(&mut point)?;
+    Ok(Some(point.into_raw_vec_and_offset().0))
 }
 
 /// The time averager sees all correlations before G restricts the fit.
@@ -197,8 +201,6 @@ pub(super) fn centroid_weight(
     shared_flags: Option<&[bool]>,
     point: Complex32,
 ) -> f64 {
-    let power = point.norm_sqr();
-    let scale = if power == 0.0 { 1.0 } else { power };
     channels
         .iter()
         .map(|&channel| {
@@ -209,6 +211,11 @@ pub(super) fn centroid_weight(
             if flagged {
                 0.0
             } else {
+                let model = samples
+                    .model
+                    .map_or(point, |model| model[[correlation, channel]]);
+                let power = model.norm_sqr();
+                let scale = if power == 0.0 { 1.0 } else { power };
                 f64::from(samples.weights[[correlation, channel]] * scale)
             }
         })

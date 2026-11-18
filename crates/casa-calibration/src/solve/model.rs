@@ -5,10 +5,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use casa_components::{ComponentList, Polarisation};
+use casa_ms::columns::direction_columns::DirectionColumn;
 use casa_ms::derived::engine::{MsCalEngine, raw_field_phase_direction};
-use casa_ms::{MeasurementSet, MsError, VirtualModelEntry, VirtualModelKind, virtual_model};
+use casa_ms::{
+    MeasurementSet, MsError, SubTable, VirtualModelEntry, VirtualModelKind, virtual_model,
+};
+use casa_types::measures::direction::MDirection;
 use casa_types::measures::{MEpoch, MeasFrame, UvwMachine};
-use casa_types::{ArrayValue, Complex32};
+use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 
@@ -20,11 +24,29 @@ pub(super) struct ModelInputs {
     virtual_models: BTreeMap<i32, Vec<Entry>>,
     frequencies: BTreeMap<i32, Vec<f64>>,
     geometry: Option<MsCalEngine>,
+    dynamic_fields: BTreeSet<i32>,
+    pub(super) phase_times: BTreeMap<usize, f64>,
 }
 
 struct Entry {
-    combinations: Vec<[i32; 4]>,
+    selection: EntrySelection,
     prediction: Prediction,
+}
+
+enum EntrySelection {
+    Rows(Vec<[i32; 4]>),
+    FieldAndWindow { fields: Vec<i32>, windows: Vec<i32> },
+}
+
+impl EntrySelection {
+    fn matches(&self, combination: [i32; 4]) -> bool {
+        match self {
+            Self::Rows(rows) => rows.contains(&combination),
+            Self::FieldAndWindow { fields, windows } => {
+                fields.contains(&combination[0]) && windows.contains(&combination[1])
+            }
+        }
+    }
 }
 
 enum Prediction {
@@ -49,6 +71,8 @@ impl ModelInputs {
             virtual_models: BTreeMap::new(),
             frequencies: BTreeMap::new(),
             geometry: None,
+            dynamic_fields: BTreeSet::new(),
+            phase_times: BTreeMap::new(),
         };
         if source != GainSolveModelSource::FromMeasurementSet {
             return Ok(inputs);
@@ -58,24 +82,9 @@ impl ModelInputs {
             if let Some(record) =
                 virtual_model(ms, field).map_err(|source| read_error(ms, source))?
             {
-                let entries = VirtualModelEntry::entries(&record.record).map_err(model_error)?;
-                let decoded = entries
-                    .into_iter()
-                    .map(|entry| {
-                        let prediction = match entry.kind {
-                            VirtualModelKind::ComponentList => Prediction::Components(
-                                ComponentList::from_record(&entry.container)
-                                    .map_err(model_error)?,
-                            ),
-                            VirtualModelKind::FtMachine => Prediction::FourierGrid,
-                        };
-                        Ok(Entry {
-                            combinations: entry.index_combination,
-                            prediction,
-                        })
-                    })
-                    .collect::<Result<_, GainSolveError>>()?;
-                inputs.virtual_models.insert(field, decoded);
+                inputs
+                    .virtual_models
+                    .insert(field, decode_entries(&record.record)?);
             }
         }
         if inputs
@@ -97,13 +106,32 @@ impl ModelInputs {
                     .map_err(|source| read_error(ms, source))?;
                 inputs.frequencies.insert(window, frequencies);
             }
-            inputs.geometry = Some(MsCalEngine::new(ms).map_err(|source| read_error(ms, source))?);
+            let engine = MsCalEngine::new(ms)
+                .and_then(|engine| engine.with_field_ephemerides(ms))
+                .map_err(|source| read_error(ms, source))?;
+            let field = ms.field().map_err(|source| read_error(ms, source))?;
+            for &id in inputs.virtual_models.keys() {
+                let index = id as usize;
+                if engine.field_moves(index)
+                    || field
+                        .num_poly(index)
+                        .map_err(|source| read_error(ms, source))?
+                        > 0
+                {
+                    inputs.dynamic_fields.insert(id);
+                }
+            }
+            inputs.geometry = Some(engine);
         }
         Ok(inputs)
     }
 
     pub(super) fn reads_column(&self, field: i32) -> bool {
         self.read_column && !self.virtual_models.contains_key(&field)
+    }
+
+    pub(super) fn dynamic_fields(&self) -> &BTreeSet<i32> {
+        &self.dynamic_fields
     }
 
     /// A defined virtual model overrides MODEL_DATA. CASA uses a unit point
@@ -124,7 +152,7 @@ impl ModelInputs {
         let combination = [row.field_id, row.data_spw_id, row.scan_number, state];
         let mut matching = entries
             .iter()
-            .filter(|entry| entry.combinations.contains(&combination))
+            .filter(|entry| entry.selection.matches(combination))
             .peekable();
         if matching.peek().is_none() {
             return Ok(None);
@@ -133,7 +161,12 @@ impl ModelInputs {
             .geometry
             .as_ref()
             .expect("virtual models have geometry");
-        let field = raw_field_phase_direction(ms, row.field_id as usize)
+        let phase_time = self
+            .phase_times
+            .get(&row.row_index)
+            .copied()
+            .unwrap_or(row.time_seconds);
+        let field = field_direction(ms, engine, row.field_id as usize, phase_time)
             .map_err(|source| read_error(ms, source))?;
         let frame = MeasFrame::new()
             .with_epoch(MEpoch::from_mjd(
@@ -193,6 +226,100 @@ impl ModelInputs {
         }
         Ok(Some(model))
     }
+}
+
+fn decode_entries(record: &RecordValue) -> Result<Vec<Entry>, GainSolveError> {
+    if record.get("version").is_some() {
+        return VirtualModelEntry::entries(record)
+            .map_err(model_error)?
+            .into_iter()
+            .map(|entry| {
+                decode_entry(
+                    entry.kind,
+                    EntrySelection::Rows(entry.index_combination),
+                    &entry.container,
+                )
+            })
+            .collect();
+    }
+    let mut entries = Vec::new();
+    for (kind, count, prefix) in [
+        (VirtualModelKind::FtMachine, "numft", "ft"),
+        (VirtualModelKind::ComponentList, "numcl", "cl"),
+    ] {
+        let Some(Value::Scalar(ScalarValue::Int32(count))) = record.get(count) else {
+            continue;
+        };
+        for index in 0..*count {
+            let name = format!("{prefix}_{index}");
+            let Some(Value::Record(entry)) = record.get(&name) else {
+                return Err(model_error(format!(
+                    "legacy virtual model has no {name} record"
+                )));
+            };
+            let Some(Value::Record(container)) = entry.get("container") else {
+                return Err(model_error(format!("legacy model {name} has no container")));
+            };
+            let selection = EntrySelection::FieldAndWindow {
+                fields: legacy_ids(entry, "fields")?,
+                windows: legacy_ids(entry, "spws")?,
+            };
+            entries.push(decode_entry(kind, selection, container)?);
+        }
+    }
+    Ok(entries)
+}
+
+fn decode_entry(
+    kind: VirtualModelKind,
+    selection: EntrySelection,
+    container: &RecordValue,
+) -> Result<Entry, GainSolveError> {
+    let prediction = match kind {
+        VirtualModelKind::ComponentList => {
+            Prediction::Components(ComponentList::from_record(container).map_err(model_error)?)
+        }
+        VirtualModelKind::FtMachine => Prediction::FourierGrid,
+    };
+    Ok(Entry {
+        selection,
+        prediction,
+    })
+}
+
+fn legacy_ids(record: &RecordValue, field: &str) -> Result<Vec<i32>, GainSolveError> {
+    match record.get(field) {
+        Some(Value::Array(ArrayValue::Int32(values))) if values.ndim() == 1 => {
+            Ok(values.iter().copied().collect())
+        }
+        _ => Err(model_error(format!(
+            "legacy virtual model has no {field} vector"
+        ))),
+    }
+}
+
+fn field_direction(
+    ms: &MeasurementSet,
+    engine: &MsCalEngine,
+    field_id: usize,
+    time: f64,
+) -> Result<MDirection, MsError> {
+    if engine.field_moves(field_id) {
+        return engine.observation_direction_j2000(time, field_id);
+    }
+    let field = ms.field()?;
+    let direction = raw_field_phase_direction(ms, field_id)?;
+    if field.num_poly(field_id)? == 0 {
+        return Ok(direction);
+    }
+    let dt = time - field.time(field_id)?;
+    let polynomial = DirectionColumn::phase_dir(field.table()).get_direction_at(field_id, dt)?;
+    let (longitude, latitude) = polynomial.as_angles();
+    Ok(MDirection::from_angles(
+        longitude,
+        latitude,
+        direction.refer(),
+    ))
 }
 
 fn uvw(ms: &MeasurementSet, row: usize) -> Result<[f64; 3], GainSolveError> {
