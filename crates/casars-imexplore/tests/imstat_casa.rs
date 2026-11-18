@@ -78,7 +78,7 @@ fn run_imstat_failure(image: &Path, extra: Value) -> String {
 }
 
 /// Every recorded key agrees with casa-rs: strings and positions
-/// exactly, statistics within the normalized agreement.
+/// exactly, statistics within the normalized agreement, at any nesting.
 fn assert_record_matches(ours: &Value, casa: &Value, case: &str) {
     let ours = ours
         .as_object()
@@ -106,28 +106,29 @@ fn assert_record_matches(ours: &Value, casa: &Value, case: &str) {
                 ours_value, reference,
                 "{case}: {key} is casa-rs {ours_value}, CASA {reference}"
             ),
-            Value::Array(items) if !items.is_empty() && items[0].is_number() => {
-                let numbers = ours_value
-                    .as_array()
-                    .unwrap_or_else(|| panic!("{case}: {key} is {ours_value}"));
-                assert_eq!(numbers.len(), items.len(), "{case}: {key} shape");
-                for (mine, theirs) in numbers.iter().zip(items) {
-                    let (mine, theirs) = (
-                        mine.as_f64()
-                            .unwrap_or_else(|| panic!("{case}: {key} holds {mine}")),
-                        theirs
-                            .as_f64()
-                            .unwrap_or_else(|| panic!("{case}: {key} records {theirs}")),
-                    );
-                    let allowed = 1.0e-3 * theirs.abs().max(1.0);
-                    assert!(
-                        (mine - theirs).abs() <= allowed,
-                        "{case}: {key} is casa-rs {mine}, CASA {theirs}"
-                    );
-                }
-            }
-            other => panic!("{case}: {key} records {other}"),
+            other => assert_numbers_match(ours_value, other, case, key),
         }
+    }
+}
+
+/// Statistics agree within the normalized agreement, at any nesting.
+fn assert_numbers_match(ours: &Value, casa: &Value, case: &str, key: &str) {
+    match (ours, casa) {
+        (Value::Array(ours), Value::Array(casa)) => {
+            assert_eq!(ours.len(), casa.len(), "{case}: {key} shape");
+            for (mine, theirs) in ours.iter().zip(casa) {
+                assert_numbers_match(mine, theirs, case, key);
+            }
+        }
+        (Value::Number(mine), Value::Number(theirs)) => {
+            let (mine, theirs) = (mine.as_f64().unwrap(), theirs.as_f64().unwrap());
+            let allowed = 1.0e-3 * theirs.abs().max(1.0);
+            assert!(
+                (mine - theirs).abs() <= allowed,
+                "{case}: {key} is casa-rs {mine}, CASA {theirs}"
+            );
+        }
+        other => panic!("{case}: {key} records {other:?}",),
     }
 }
 
@@ -326,6 +327,116 @@ fn imstat_robust_algorithms_match_casa_without_a_beam() {
             "{case}: an image without a beam returns no flux"
         );
     }
+}
+
+/// Every `axes` form the oracle recorded: the per-plane records, with
+/// CASA's degenerate display axes dropped, and the invalid-axes
+/// refusals.
+#[test]
+fn imstat_axes_match_casas_per_plane_records() {
+    let expected = expected();
+    let values = fixture("values.im");
+    for (case, call) in [
+        ("axes 0 1", json!({"axes": [0, 1]})),
+        ("axes 1 0", json!({"axes": [1, 0]})),
+        ("axes scalar 0", json!({"axes": 0})),
+        ("axes scalar 3", json!({"axes": 3})),
+        ("axes scalar -1", json!({"axes": -1})),
+        ("axes all four", json!({"axes": [0, 1, 2, 3]})),
+        ("axes 3", json!({"axes": [3]})),
+        ("axes 2", json!({"axes": [2]})),
+        ("axes empty list", json!({"axes": []})),
+        ("axes minus one list", json!({"axes": [-1]})),
+        (
+            "axes 0 1 with box",
+            json!({"axes": [0, 1], "box": "2,2,5,5"}),
+        ),
+        (
+            "axes 0 1 with chans",
+            json!({"axes": [0, 1], "chans": "1~2"}),
+        ),
+        (
+            "biweight with axes",
+            json!({"algorithm": "biweight", "axes": [0, 1]}),
+        ),
+        (
+            "fit-half with axes",
+            json!({"algorithm": "fit-half", "axes": [0, 1]}),
+        ),
+        (
+            "chauvenet with axes",
+            json!({"algorithm": "chauvenet", "axes": [0, 1]}),
+        ),
+        (
+            "hinges-fences with axes",
+            json!({"algorithm": "hinges-fences", "fence": 1.0, "axes": [0, 1]}),
+        ),
+    ] {
+        let ours = run_imstat(&values, call);
+        assert_record_matches(&ours, &expected["values"][case], case);
+    }
+    for (case, call) in [
+        ("axes minus one twice", json!({"axes": [-1, -1]})),
+        ("axes negative -4 -3", json!({"axes": [-4, -3]})),
+        ("axes out of range 4", json!({"axes": [4]})),
+        ("axes out of range -5", json!({"axes": -5})),
+    ] {
+        let message = run_imstat_failure(&values, call);
+        assert_eq!(
+            message.trim_end().trim_end_matches('.'),
+            expected["values"][case]["error"]
+                .as_str()
+                .expect("the recorded refusal")
+                .trim_end()
+                .trim_end_matches('.'),
+            "{case}"
+        );
+    }
+}
+
+/// Every `stokes` form the oracle recorded on the four-Stokes image,
+/// with CASA's refusal for the forms that are not plane names. A name
+/// the image does not carry is a recorded CASA deviation: casa-rs
+/// refuses it clearly where CASA reports an internal bounds error.
+#[test]
+fn imstat_stokes_match_casas_selections() {
+    let expected = expected();
+    let stokes4 = fixture("stokes4.im");
+    for (case, call) in [
+        ("classic", json!({})),
+        ("stokes I", json!({"stokes": "I"})),
+        ("stokes IQUV", json!({"stokes": "IQUV"})),
+        ("stokes QU", json!({"stokes": "QU"})),
+        ("stokes reverse IU", json!({"stokes": "IU"})),
+        ("stokes comma Q,U", json!({"stokes": "Q,U"})),
+        ("stokes empty", json!({"stokes": ""})),
+        ("stokes with axes", json!({"stokes": "QU", "axes": [0, 1]})),
+        ("stokes with chans", json!({"stokes": "QU", "chans": "1"})),
+    ] {
+        let ours = run_imstat(&stokes4, call);
+        assert_record_matches(&ours, &expected["stokes4"][case], case);
+    }
+    for (case, call) in [
+        ("stokes numeric", json!({"stokes": "0"})),
+        ("stokes numeric range", json!({"stokes": "0~2"})),
+        ("stokes unknown", json!({"stokes": "Z"})),
+        ("stokes out of range", json!({"stokes": "5"})),
+    ] {
+        let message = run_imstat_failure(&stokes4, call);
+        assert_eq!(
+            message.trim_end().trim_end_matches('.'),
+            expected["stokes4"][case]["error"]
+                .as_str()
+                .expect("the recorded refusal")
+                .trim_end()
+                .trim_end_matches('.'),
+            "{case}"
+        );
+    }
+    // CASA reports an internal LCBox bounds error for a plane the image
+    // does not carry; casa-rs refuses the name clearly instead.
+    let message = run_imstat_failure(&fixture("values.im"), json!({"stokes": "Q"}));
+    assert_eq!(message, "Stokes Q is not one of this image's Stokes planes");
 }
 
 #[test]

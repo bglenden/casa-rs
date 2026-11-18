@@ -6,7 +6,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
-    Coordinate, CoordinateSystem, CoordinateType, FitsHeader, FitsValue, fits::try_to_fits_header,
+    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, FitsValue,
+    StokesType, fits::try_to_fits_header,
 };
 use casa_fft::Fft2;
 use casa_lattices::{
@@ -72,16 +73,7 @@ pub fn run_image_analysis_task(
             Ok(ImageAnalysisTaskResult::Imhead(imhead(&request.imagename)?))
         }
         ImageAnalysisTaskRequest::Imstat(request) => {
-            let algorithm =
-                parse_imstat_algorithm(&request).map_err(ImageError::InvalidMetadata)?;
-            Ok(ImageAnalysisTaskResult::Imstat(imstat(
-                &request.imagename,
-                request.box_pixels.as_deref(),
-                request.region.as_deref(),
-                request.chans.as_deref(),
-                request.includepix,
-                &algorithm,
-            )?))
+            Ok(ImageAnalysisTaskResult::Imstat(imstat(&request)?))
         }
         ImageAnalysisTaskRequest::Immoments(request) => {
             Ok(ImageAnalysisTaskResult::Immoments(immoments(&request)?))
@@ -160,24 +152,15 @@ pub fn parse_imstat_algorithm(request: &ImstatRequest) -> Result<StatisticsAlgor
     })
 }
 
-/// Return CASA `imstat`-style statistics for tutorial selections.
-pub fn imstat(
-    path: impl AsRef<Path>,
-    box_pixels: Option<&str>,
-    region: Option<&str>,
-    chans: Option<&str>,
-    includepix: Option<[f64; 2]>,
-    algorithm: &StatisticsAlgorithm,
-) -> Result<ImageStatisticsSummary, ImageError> {
-    let path = path.as_ref();
-    let image = AnyPagedImage::open(path)?;
+/// Return CASA `imstat`-style statistics for one request: the global
+/// statistics over the whole selection, or one per display plane when
+/// the request collapses only some axes.
+pub fn imstat(request: &ImstatRequest) -> Result<ImstatOutcome, ImageError> {
+    let image = AnyPagedImage::open(&request.imagename)?;
+    let path = request.imagename.as_path();
     match &image {
-        AnyPagedImage::Float32(image) => imstat_typed(
-            path, image, box_pixels, region, chans, includepix, algorithm,
-        ),
-        AnyPagedImage::Float64(image) => imstat_typed(
-            path, image, box_pixels, region, chans, includepix, algorithm,
-        ),
+        AnyPagedImage::Float32(image) => imstat_typed(path, image, request),
+        AnyPagedImage::Float64(image) => imstat_typed(path, image, request),
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => Err(
             ImageError::InvalidMetadata("imstat currently supports real-valued images".to_string()),
         ),
@@ -1955,47 +1938,121 @@ fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageA
 fn imstat_typed<T>(
     path: &Path,
     image: &PagedImage<T>,
-    box_pixels: Option<&str>,
-    region: Option<&str>,
-    chans: Option<&str>,
-    includepix: Option<[f64; 2]>,
-    algorithm: &StatisticsAlgorithm,
-) -> Result<ImageStatisticsSummary, ImageError>
+    request: &ImstatRequest,
+) -> Result<ImstatOutcome, ImageError>
 where
     T: ImagePixel + StatsElement,
 {
-    let region_selection = region_pixels(image, region)?;
-    if box_pixels.is_some_and(|text| !text.trim().is_empty()) && region_selection.is_some() {
+    let algorithm = parse_imstat_algorithm(request).map_err(ImageError::InvalidMetadata)?;
+    let axes =
+        parse_axes(request.axes.as_deref(), image.ndim()).map_err(ImageError::CasaSelection)?;
+    let region_selection = region_pixels(image, request.region.as_deref())?;
+    if request
+        .box_pixels
+        .as_deref()
+        .is_some_and(|text| !text.trim().is_empty())
+        && region_selection.is_some()
+    {
         return Err(ImageError::InvalidMetadata(
             "imstat accepts either box or region, not both".to_string(),
         ));
     }
-    let explicit_box = match box_pixels.filter(|text| !text.trim().is_empty()) {
+    let explicit_box = match request
+        .box_pixels
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+    {
         Some(box_text) => Some(PixelRegion::Box(parse_box(box_text)?)),
         None => None,
     };
     let effective_region = explicit_box.as_ref().or(region_selection.as_ref());
-    let selection = Selection::new(image, effective_region, chans)?;
+    let selection = Selection::new(
+        image,
+        effective_region,
+        request.chans.as_deref(),
+        request.stokes.as_deref(),
+    )?;
     let pixel_mask = selection_pixel_mask(image, effective_region, &selection)?;
     let coordinates = image.coordinates();
     let world_text = |position: &[usize]| -> Result<String, ImageError> {
         let pixel: Vec<f64> = position.iter().map(|&value| value as f64).collect();
         Ok(casa_coordinates::format_world_display(coordinates, &pixel)?)
     };
-    let blcf = world_text(&selection.start)?;
+    let blc = selection.start.clone();
     let trc = trc_pixels(&selection.start, &selection.shape);
+    let blcf = world_text(&blc)?;
     let trcf = world_text(&trc)?;
 
+    let display_axes: Vec<usize> = match &axes {
+        AxisSelection::All => Vec::new(),
+        AxisSelection::Collapsed(collapse) => (0..image.ndim())
+            .filter(|axis| !collapse.contains(axis))
+            .collect(),
+    };
+    if display_axes.is_empty() {
+        let summary = imstat_global_summary(
+            path,
+            image,
+            request,
+            &algorithm,
+            &selection,
+            pixel_mask.as_ref(),
+            blc,
+            trc,
+            blcf,
+            trcf,
+            &world_text,
+        )?;
+        Ok(ImstatOutcome::Global(summary))
+    } else {
+        let summary = imstat_planes_summary(
+            path,
+            image,
+            request,
+            &algorithm,
+            &selection,
+            pixel_mask.as_ref(),
+            &display_axes,
+            blc,
+            trc,
+            blcf,
+            trcf,
+        )?;
+        Ok(ImstatOutcome::Planes(summary))
+    }
+}
+
+/// The whole selection's statistics, as `imstat` reports them with every
+/// axis collapsed.
+#[allow(clippy::too_many_arguments)]
+fn imstat_global_summary<T>(
+    path: &Path,
+    image: &PagedImage<T>,
+    request: &ImstatRequest,
+    algorithm: &StatisticsAlgorithm,
+    selection: &Selection,
+    pixel_mask: Option<&ndarray::ArrayD<bool>>,
+    blc: Vec<usize>,
+    trc: Vec<usize>,
+    blcf: String,
+    trcf: String,
+    world_text: &dyn Fn(&[usize]) -> Result<String, ImageError>,
+) -> Result<ImageStatisticsSummary, ImageError>
+where
+    T: ImagePixel + StatsElement,
+{
     // The statistics the algorithm reports, with the extremum positions
     // relative to the original image.
     let computed = match algorithm {
-        StatisticsAlgorithm::Classic => {
+        StatisticsAlgorithm::Classic if !selection.stokes_has_gaps() => {
+            // The classical moments stream through the lattice
+            // statistics; a gapped Stokes set needs the sample route.
             let sub = image.sub_image(selection.start.clone(), selection.shape.clone())?;
             let mut stats = LatticeStatistics::new(&sub);
-            if let Some([min, max]) = includepix {
+            if let Some([min, max]) = request.includepix {
                 stats.set_include_range(min, max);
             }
-            if let Some(mask) = pixel_mask {
+            if let Some(mask) = pixel_mask.cloned() {
                 stats.set_pixel_mask(mask);
             }
             let (minpos, maxpos) = stats.get_min_max_pos()?;
@@ -2019,7 +2076,14 @@ where
         }
         robust => {
             let pixels = image.get_slice(&selection.start, &selection.shape)?;
-            let sample = sample_points(&pixels, pixel_mask.as_ref(), includepix);
+            let sample = sample_points(
+                &pixels,
+                pixel_mask,
+                request.includepix,
+                selection.stokes_axis,
+                selection.stokes_indices.as_deref(),
+                &selection.start,
+            );
             match compute_robust_stats(&sample, robust)? {
                 RobustStats::Sample(stats) => ComputedStats {
                     npts: stats.npts,
@@ -2087,7 +2151,7 @@ where
     let flux = if algorithm.kind() == StatisticsAlgorithmKind::Biweight {
         None
     } else {
-        image_flux(image, computed.sum, &selection)
+        image_flux(image, computed.sum, selection)
     };
     Ok(ImageStatisticsSummary {
         blcf,
@@ -2110,11 +2174,196 @@ where
         minpos: computed.minpos,
         maxpos: computed.maxpos,
         imagename: path.display().to_string(),
-        blc: selection.start.clone(),
+        blc,
         trc,
         flux,
         units: image.units().to_string(),
     })
+}
+
+/// Each display plane's statistics, as `imstat` reports them with only
+/// some axes collapsed: one value per display position, in display
+/// order, with CASA's degenerate display axes dropped from the record's
+/// shape.
+#[allow(clippy::too_many_arguments)]
+fn imstat_planes_summary<T>(
+    path: &Path,
+    image: &PagedImage<T>,
+    request: &ImstatRequest,
+    algorithm: &StatisticsAlgorithm,
+    selection: &Selection,
+    pixel_mask: Option<&ndarray::ArrayD<bool>>,
+    display_axes: &[usize],
+    blc: Vec<usize>,
+    trc: Vec<usize>,
+    blcf: String,
+    trcf: String,
+) -> Result<ImstatPlanesSummary, ImageError>
+where
+    T: ImagePixel + StatsElement,
+{
+    let display_positions: Vec<Vec<usize>> = display_axes
+        .iter()
+        .map(|&axis| selection.axis_positions(axis))
+        .collect();
+    let display_counts: Vec<usize> = display_positions.iter().map(|p| p.len()).collect();
+    let display_shape: Vec<usize> = display_counts
+        .iter()
+        .copied()
+        .filter(|&count| count > 1)
+        .collect();
+    let plane_count: usize = display_counts.iter().product();
+
+    // One pass over the selection's pixels, bucketed by display
+    // position: each pixel's plane is its display coordinates' index.
+    let pixels = image.get_slice(&selection.start, &selection.shape)?;
+    let mut buckets: Vec<Vec<SamplePoint>> = vec![Vec::new(); plane_count];
+    let stokes_collapsed = selection
+        .stokes_axis
+        .is_some_and(|axis| display_axes.iter().all(|&display| display != axis));
+    let mut strides = Vec::with_capacity(pixels.shape().len());
+    let mut stride = 1u64;
+    for &axis_length in pixels.shape() {
+        strides.push(stride);
+        stride *= axis_length as u64;
+    }
+    for (index, value) in pixels.indexed_iter() {
+        if let Some(mask) = pixel_mask {
+            let mask_index: &[usize] = index.slice();
+            if !mask[mask_index] {
+                continue;
+            }
+        }
+        let number = value.to_f64_stats();
+        if let Some([min, max]) = request.includepix
+            && !(min <= number && number <= max)
+        {
+            continue;
+        }
+        let mut linear = 0u64;
+        for (axis, &axis_stride) in strides.iter().enumerate() {
+            linear += index[axis] as u64 * axis_stride;
+        }
+        let mut bucket = 0usize;
+        // The display positions run in Fortran order, the order casacore
+        // keeps array data in and casa-rs's records carry.
+        let mut slot_stride = 1usize;
+        let mut in_selection = true;
+        for (slot, &axis) in display_axes.iter().enumerate() {
+            let absolute = index[axis] + selection.start[axis];
+            let Some(slot_index) = display_positions[slot]
+                .iter()
+                .position(|&position| position == absolute)
+            else {
+                in_selection = false;
+                break;
+            };
+            bucket += slot_index * slot_stride;
+            slot_stride *= display_counts[slot];
+        }
+        if !in_selection {
+            continue;
+        }
+        if stokes_collapsed {
+            let axis = selection.stokes_axis.expect("the axis was found above");
+            let kept = selection.stokes_indices.as_deref().unwrap_or(&[]);
+            let absolute = index[axis] + selection.start[axis];
+            if !kept.contains(&absolute) {
+                continue;
+            }
+        }
+        buckets[bucket].push(SamplePoint {
+            value: number,
+            position: linear,
+        });
+    }
+
+    let biweight = algorithm.kind() == StatisticsAlgorithmKind::Biweight;
+    let spectral_collapsed = image
+        .find_axis(CoordinateType::Spectral)
+        .is_some_and(|axis| display_axes.iter().all(|&display| display != axis));
+    // CASA's flux density exists per plane only when the direction plane
+    // is at least partly collapsed, as casacore beam-integrates the sky
+    // it sums: a plane that still varies over the whole sky has none.
+    let [plane_x, plane_y] = selection.plane;
+    let flux_over_sky = !display_axes.contains(&plane_x) || !display_axes.contains(&plane_y);
+    let mut planes = ImstatPlanesSummary {
+        imagename: path.display().to_string(),
+        blc,
+        trc,
+        blcf,
+        trcf,
+        display_shape,
+        npts: Vec::with_capacity(plane_count),
+        min: Vec::with_capacity(plane_count),
+        max: Vec::with_capacity(plane_count),
+        sum: Vec::with_capacity(plane_count),
+        sumsq: Vec::with_capacity(plane_count),
+        mean: Vec::with_capacity(plane_count),
+        rms: Vec::with_capacity(plane_count),
+        sigma: Vec::with_capacity(plane_count),
+        median: Vec::with_capacity(plane_count),
+        medabsdevmed: Vec::with_capacity(plane_count),
+        q1: Vec::with_capacity(plane_count),
+        q3: Vec::with_capacity(plane_count),
+        quartile: Vec::with_capacity(plane_count),
+        flux: None,
+        biweight,
+    };
+    for bucket in &buckets {
+        let mut sample = bucket.clone();
+        sample.sort_by_key(|point| point.position);
+        match compute_robust_stats(&sample, algorithm)? {
+            RobustStats::Sample(stats) => {
+                planes.npts.push(stats.npts);
+                planes.min.push(stats.min);
+                planes.max.push(stats.max);
+                planes.sum.push(stats.sum);
+                planes.sumsq.push(stats.sumsq);
+                planes.mean.push(stats.mean);
+                planes.rms.push(stats.rms);
+                planes.sigma.push(stats.sigma);
+                planes.median.push(stats.median);
+                planes.medabsdevmed.push(stats.medabsdevmed);
+                planes.q1.push(stats.q1);
+                planes.q3.push(stats.q3);
+                planes.quartile.push(stats.quartile);
+                let flux = if flux_over_sky {
+                    image_flux_with_integration(image, stats.sum, selection, spectral_collapsed)
+                } else {
+                    None
+                };
+                if let Some(flux) = flux {
+                    planes
+                        .flux
+                        .get_or_insert_with(|| Vec::with_capacity(plane_count))
+                        .push(flux);
+                }
+            }
+            RobustStats::Biweight { location, scale } => {
+                let count = sample.len() as f64;
+                let min = sample.iter().map(|p| p.value).fold(f64::NAN, f64::min);
+                let max = sample.iter().map(|p| p.value).fold(f64::NAN, f64::max);
+                planes.npts.push(count);
+                planes.min.push(min);
+                planes.max.push(max);
+                planes.sum.push(f64::NAN);
+                planes.sumsq.push(f64::NAN);
+                planes.mean.push(location);
+                planes.rms.push(f64::NAN);
+                planes.sigma.push(scale);
+                planes.median.push(f64::NAN);
+                planes.medabsdevmed.push(f64::NAN);
+                planes.q1.push(f64::NAN);
+                planes.q3.push(f64::NAN);
+                planes.quartile.push(f64::NAN);
+            }
+        }
+    }
+    if biweight {
+        planes.flux = None;
+    }
+    Ok(planes)
 }
 
 /// The statistics one `imstat` computation reports, before the record and
@@ -2165,11 +2414,16 @@ where
 
 /// The selection's pixel values as a robust-algorithm sample, with each
 /// value's Fortran-linear position inside the selection, filtered by
-/// the pixel mask and an inclusive pixel-value range.
+/// the pixel mask, an inclusive pixel-value range, and a named Stokes
+/// set.
+#[allow(clippy::too_many_arguments)]
 fn sample_points<T>(
     pixels: &ndarray::ArrayD<T>,
     pixel_mask: Option<&ndarray::ArrayD<bool>>,
     includepix: Option<[f64; 2]>,
+    stokes_axis: Option<usize>,
+    stokes_indices: Option<&[usize]>,
+    start: &[usize],
 ) -> Vec<SamplePoint>
 where
     T: ImagePixel + StatsElement,
@@ -2194,6 +2448,12 @@ where
             && !(min <= number && number <= max)
         {
             continue;
+        }
+        if let (Some(axis), Some(indices)) = (stokes_axis, stokes_indices) {
+            let absolute = index[axis] + start[axis];
+            if !indices.contains(&absolute) {
+                continue;
+            }
         }
         let mut linear = 0u64;
         for (axis, &axis_stride) in strides.iter().enumerate() {
@@ -2256,7 +2516,14 @@ struct Selection {
     full_shape: Vec<usize>,
     start: Vec<usize>,
     shape: Vec<usize>,
+    /// The spectral axis its named channels belong to.
+    channel_axis: Option<usize>,
     channel_indices: Option<Vec<usize>>,
+    /// The Stokes axis its named planes belong to.
+    stokes_axis: Option<usize>,
+    /// The image's Stokes-axis indices the selection holds, when a Stokes
+    /// selection named them.
+    stokes_indices: Option<Vec<usize>>,
     /// The image axes a box or polygon's x and y run along: the direction
     /// plane's.
     plane: [usize; 2],
@@ -2267,6 +2534,7 @@ impl Selection {
         image: &impl ImageInterface<T>,
         region: Option<&PixelRegion>,
         chans: Option<&str>,
+        stokes: Option<&str>,
     ) -> Result<Self, ImageError> {
         let mut start = vec![0; image.ndim()];
         let mut shape = image.shape().to_vec();
@@ -2285,27 +2553,166 @@ impl Selection {
             shape[x] = x1 - x0 + 1;
             shape[y] = y1 - y0 + 1;
         }
-        let channel_indices = if let Some(chans) = chans.filter(|text| !text.trim().is_empty()) {
-            let spectral_axis = image.find_axis(CoordinateType::Spectral).ok_or_else(|| {
-                ImageError::InvalidMetadata(
-                    "channel selection requires a spectral axis".to_string(),
-                )
-            })?;
-            let indices = parse_image_channel_selection(chans, image.shape()[spectral_axis])?;
-            start[spectral_axis] = indices[0];
-            shape[spectral_axis] = indices[indices.len() - 1] - indices[0] + 1;
-            Some(indices)
-        } else {
-            None
-        };
+        let (channel_axis, channel_indices) =
+            if let Some(chans) = chans.filter(|text| !text.trim().is_empty()) {
+                let spectral_axis = image.find_axis(CoordinateType::Spectral).ok_or_else(|| {
+                    ImageError::InvalidMetadata(
+                        "channel selection requires a spectral axis".to_string(),
+                    )
+                })?;
+                let indices = parse_image_channel_selection(chans, image.shape()[spectral_axis])?;
+                start[spectral_axis] = indices[0];
+                shape[spectral_axis] = indices[indices.len() - 1] - indices[0] + 1;
+                (Some(spectral_axis), Some(indices))
+            } else {
+                (None, None)
+            };
+        let (stokes_axis, stokes_indices) =
+            if let Some(text) = stokes.filter(|text| !text.trim().is_empty()) {
+                let indices = parse_stokes_selection(image, text)?;
+                let axis = image
+                    .find_axis(CoordinateType::Stokes)
+                    .expect("parse_stokes_selection found the axis");
+                start[axis] = indices[0];
+                shape[axis] = indices[indices.len() - 1] - indices[0] + 1;
+                (Some(axis), Some(indices))
+            } else {
+                (None, None)
+            };
         Ok(Self {
             full_shape: image.shape().to_vec(),
             start,
             shape,
+            channel_axis,
             channel_indices,
+            stokes_axis,
+            stokes_indices,
             plane,
         })
     }
+
+    /// The image-axis indices this selection holds along `axis`, in
+    /// order: a named set's, or the bounding rectangle's span.
+    fn axis_positions(&self, axis: usize) -> Vec<usize> {
+        if Some(axis) == self.channel_axis
+            && let Some(indices) = &self.channel_indices
+        {
+            return indices.clone();
+        }
+        if Some(axis) == self.stokes_axis
+            && let Some(indices) = &self.stokes_indices
+        {
+            return indices.clone();
+        }
+        (self.start[axis]..self.start[axis] + self.shape[axis]).collect()
+    }
+
+    /// Whether the named Stokes set is not a contiguous span, which the
+    /// streaming classical path cannot express.
+    fn stokes_has_gaps(&self) -> bool {
+        match (self.stokes_axis, &self.stokes_indices) {
+            (Some(_), Some(indices)) => {
+                indices.len() > 1 && indices[indices.len() - 1] - indices[0] + 1 != indices.len()
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Parse CASA's `stokes` selection: comma-separated Stokes plane names,
+/// concatenated as in `QU` or `IQUV`. Numeric forms are not names.
+fn parse_stokes_selection<T: ImagePixel>(
+    image: &impl ImageInterface<T>,
+    text: &str,
+) -> Result<Vec<usize>, ImageError> {
+    let axis = image.find_axis(CoordinateType::Stokes).ok_or_else(|| {
+        ImageError::InvalidMetadata("Stokes selection requires a Stokes axis".to_string())
+    })?;
+    let Some(CoordinateModel::Stokes(stokes)) = coordinate_for_axis(image.coordinates(), axis)
+    else {
+        return Err(ImageError::InvalidMetadata(
+            "Stokes selection requires a Stokes coordinate".to_string(),
+        ));
+    };
+    let mut indices = Vec::new();
+    for part in text.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let mut rest = part;
+        while !rest.is_empty() {
+            let name = if rest.len() >= 2 && StokesType::from_name(&rest[..2]).is_some() {
+                rest[..2].to_string()
+            } else if let Some(kind) = rest
+                .chars()
+                .next()
+                .and_then(|first| StokesType::from_name(&first.to_string()))
+            {
+                let _ = kind;
+                rest[..1].to_string()
+            } else {
+                return Err(ImageError::CasaSelection(format!(
+                    "(Sub)String {part} in stokes specification part {part} does not match a known polarization"
+                )));
+            };
+            let kind =
+                StokesType::from_name(&name).expect("the name was matched against the table");
+            let Some(index) = stokes.stokes().iter().position(|known| *known == kind) else {
+                return Err(ImageError::CasaSelection(format!(
+                    "Stokes {name} is not one of this image's Stokes planes"
+                )));
+            };
+            indices.push(index);
+            rest = &rest[name.len()..];
+        }
+    }
+    if indices.is_empty() {
+        return Err(ImageError::InvalidMetadata(
+            "the Stokes selection names no plane".to_string(),
+        ));
+    }
+    indices.sort_unstable();
+    indices.dedup();
+    Ok(indices)
+}
+
+/// The `axes` selection: all axes, or the named axes to collapse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AxisSelection {
+    /// Every axis: the statistics of the whole selection.
+    All,
+    /// Collapse these pixel axes; the statistics vary along the rest.
+    Collapsed(Vec<usize>),
+}
+
+/// Parse CASA's `axes` argument: a pixel-axis list, `-1` for all of them,
+/// or an empty list for the default. A negative axis other than a lone
+/// `-1` is invalid, with CASA's wording.
+fn parse_axes(axes: Option<&[i64]>, n_dim: usize) -> Result<AxisSelection, String> {
+    let Some(axes) = axes else {
+        return Ok(AxisSelection::All);
+    };
+    if axes.is_empty() {
+        return Ok(AxisSelection::All);
+    }
+    if axes == [-1] {
+        return Ok(AxisSelection::All);
+    }
+    let mut named = Vec::with_capacity(axes.len());
+    for &axis in axes {
+        if !(0..n_dim as i64).contains(&axis) {
+            return Err(format!("Invalid cursor axes: {axes:?}."));
+        }
+        if named.contains(&(axis as usize)) {
+            return Err(format!(
+                "Invalid cursor axes: {axes:?}: an axis is named twice; CASA 6.7.6.14 aborts on it"
+            ));
+        }
+        named.push(axis as usize);
+    }
+    named.sort_unstable();
+    Ok(AxisSelection::Collapsed(named))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2819,6 +3226,15 @@ fn image_flux<T: ImagePixel>(
     sum: f64,
     selection: &Selection,
 ) -> Option<f64> {
+    image_flux_with_integration(image, sum, selection, true)
+}
+
+fn image_flux_with_integration<T: ImagePixel>(
+    image: &PagedImage<T>,
+    sum: f64,
+    selection: &Selection,
+    spectral_axis_collapsed: bool,
+) -> Option<f64> {
     let units = image.units();
     let pixel_area = direction_pixel_area(image.coordinates())?;
     let flux = if units.contains('K') {
@@ -2833,7 +3249,12 @@ fn image_flux<T: ImagePixel>(
     } else {
         return None;
     };
-    Some(flux * spectral_integration(image, selection).unwrap_or(1.0))
+    let factor = if spectral_axis_collapsed {
+        spectral_integration(image, selection).unwrap_or(1.0)
+    } else {
+        1.0
+    };
+    Some(flux * factor)
 }
 
 /// The width casacore integrates `flux` over: one channel of the selected
@@ -2905,7 +3326,7 @@ where
     let spectral_axis = image.find_axis(CoordinateType::Spectral).ok_or_else(|| {
         ImageError::InvalidMetadata("immoments requires a spectral axis".to_string())
     })?;
-    let selection = Selection::new(image, None, request.chans.as_deref())?;
+    let selection = Selection::new(image, None, request.chans.as_deref(), None)?;
     let input = image.get_slice(&selection.start, &selection.shape)?;
     let mask = combined_moment_mask(image, &selection, request.mask.as_deref())?;
     let local_axis = spectral_axis;
@@ -3112,7 +3533,7 @@ where
         Some(box_text) => Some(PixelRegion::Box(parse_box(box_text)?)),
         None => None,
     };
-    let selection = Selection::new(image, box_region.as_ref(), request.chans.as_deref())?;
+    let selection = Selection::new(image, box_region.as_ref(), request.chans.as_deref(), None)?;
     let data = image.get_slice(&selection.start, &selection.shape)?;
     let mask = image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
     let output_coordinates =
@@ -4627,6 +5048,28 @@ mod tests {
     use casa_types::measures::direction::DirectionRef;
     use casa_types::measures::frequency::FrequencyRef;
 
+    /// An imstat request for a classic run with one selection.
+    fn imstat_request(
+        imagename: &Path,
+        box_pixels: Option<&str>,
+        region: Option<&str>,
+    ) -> ImstatRequest {
+        ImstatRequest {
+            imagename: imagename.to_path_buf(),
+            box_pixels: box_pixels.map(str::to_string),
+            region: region.map(str::to_string),
+            ..ImstatRequest::default()
+        }
+    }
+
+    /// The global statistics of a classic run.
+    fn imstat_global(request: &ImstatRequest) -> ImageStatisticsSummary {
+        match imstat(request).unwrap() {
+            ImstatOutcome::Global(summary) => summary,
+            other => panic!("expected global statistics: {other:?}"),
+        }
+    }
+
     #[test]
     fn parse_box_is_inclusive() {
         assert_eq!(parse_box("100,100,150,150").unwrap(), [100, 100, 150, 150]);
@@ -4761,8 +5204,8 @@ mod tests {
                 ..ImstatRequest::default()
             }))
             .unwrap();
-        let ImageAnalysisTaskResult::Imstat(stats) = imstat_result else {
-            panic!("expected imstat result");
+        let ImageAnalysisTaskResult::Imstat(ImstatOutcome::Global(stats)) = imstat_result else {
+            panic!("expected a global imstat result");
         };
         assert_eq!(stats.blc, vec![0, 0, 1]);
         assert_eq!(stats.trc, vec![1, 1, 2]);
@@ -4993,7 +5436,7 @@ mod tests {
         assert_eq!(complex_header.axes.len(), 2);
 
         assert!(matches!(
-            imstat(&complex_path, None, None, None, None, &StatisticsAlgorithm::Classic),
+            imstat(&imstat_request(&complex_path, None, None)),
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("real-valued images")
         ));
@@ -5017,33 +5460,27 @@ mod tests {
         ));
 
         assert!(matches!(
-            imstat(
-                &real_path,
-                Some("0,0,4,4"),
-                None,
-                None,
-                None,
-                &StatisticsAlgorithm::Classic
-            ),
+            imstat(&imstat_request(&real_path, Some("0,0,4,4"), None)),
             Err(ImageError::ShapeMismatch { .. })
         ));
         assert!(matches!(
-            imstat(&real_path, None, None, Some("0"), None, &StatisticsAlgorithm::Classic),
+            imstat(&ImstatRequest {
+                imagename: real_path.clone(),
+                chans: Some("0".to_string()),
+                ..ImstatRequest::default()
+            }),
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("spectral axis")
         ));
         assert!(matches!(
-            imstat(
-                &real_path,
-                Some("0,0,1,1"),
-                Some("box:0,0,1,1"),
-                None,
-                None,
-                &StatisticsAlgorithm::Classic
-            ),
-            Err(ImageError::InvalidMetadata(message))
-                if message.contains("either box or region")
-        ));
+        imstat(&imstat_request(
+                        &real_path,
+                        Some("0,0,1,1"),
+                        Some("box:0,0,1,1"),
+                    )),
+                    Err(ImageError::InvalidMetadata(message))
+                        if message.contains("either box or region")
+                ));
         assert!(matches!(
             parse_box("2,0,1,1"),
             Err(ImageError::InvalidMetadata(message))
@@ -5098,15 +5535,11 @@ mod tests {
         let region_path = temp.path().join("source.crtf");
         create_direction_only_test_image(&image_path);
 
-        let inline = imstat(
+        let inline = imstat_global(&imstat_request(
             &image_path,
             None,
             Some("box[[0pix,0pix],[0pix,0pix]]"),
-            None,
-            None,
-            &StatisticsAlgorithm::Classic,
-        )
-        .unwrap();
+        ));
         assert_eq!(inline.npts, 1.0);
         assert_eq!(inline.sum, 1.0);
 
@@ -5116,15 +5549,11 @@ mod tests {
         )
         .unwrap();
 
-        let from_file = imstat(
+        let from_file = imstat_global(&imstat_request(
             &image_path,
             None,
             Some(region_path.to_str().unwrap()),
-            None,
-            None,
-            &StatisticsAlgorithm::Classic,
-        )
-        .unwrap();
+        ));
         assert_eq!(from_file.npts, 2.0);
         assert_eq!(from_file.sum, 3.0);
         assert_eq!(from_file.blc, vec![0, 0]);
@@ -5150,15 +5579,11 @@ mod tests {
         )
         .unwrap();
 
-        let from_file = imstat(
+        let from_file = imstat_global(&imstat_request(
             &image_path,
             None,
             Some(region_path.to_str().unwrap()),
-            None,
-            None,
-            &StatisticsAlgorithm::Classic,
-        )
-        .unwrap();
+        ));
         assert_eq!(from_file.npts, 2.0);
         assert_eq!(from_file.sum, 3.0);
         assert_eq!(from_file.blc, vec![0, 0]);
@@ -5177,15 +5602,11 @@ mod tests {
         )
         .unwrap();
 
-        let from_file = imstat(
+        let from_file = imstat_global(&imstat_request(
             &image_path,
             None,
             Some(region_path.to_str().unwrap()),
-            None,
-            None,
-            &StatisticsAlgorithm::Classic,
-        )
-        .unwrap();
+        ));
 
         assert_eq!(from_file.blc, vec![0, 0]);
         assert_eq!(from_file.trc, vec![2, 2]);
@@ -5212,15 +5633,11 @@ mod tests {
         )
         .unwrap();
 
-        let from_file = imstat(
+        let from_file = imstat_global(&imstat_request(
             &image_path,
             None,
             Some(region_path.to_str().unwrap()),
-            None,
-            None,
-            &StatisticsAlgorithm::Classic,
-        )
-        .unwrap();
+        ));
 
         assert_eq!(from_file.blc, vec![0, 0]);
         assert_eq!(from_file.trc, vec![2, 2]);
@@ -5434,15 +5851,13 @@ mod tests {
         let header = imhead(&imported_path).unwrap();
         assert_eq!(header.pixel_type, "Float64");
         assert_eq!(header.object_name, "Double Test");
-        let stats = imstat(
-            &imported_path,
-            Some("0,0,1,1"),
-            None,
-            Some("0~1"),
-            Some([1.0, 8.0]),
-            &StatisticsAlgorithm::Classic,
-        )
-        .unwrap();
+        let stats = imstat_global(&ImstatRequest {
+            imagename: imported_path.clone(),
+            box_pixels: Some("0,0,1,1".to_string()),
+            chans: Some("0~1".to_string()),
+            includepix: Some([1.0, 8.0]),
+            ..ImstatRequest::default()
+        });
         assert_eq!(stats.npts, 7.0);
         assert_eq!(stats.units, "K");
     }

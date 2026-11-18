@@ -1128,7 +1128,7 @@ fn a_parameter_casa_rs_takes_only_at_its_default_is_refused_otherwise() {
     let (output, reply) = json_run(
         workspace.path(),
         "imstat",
-        json!({"imagename": image, "axes": [0, 1]}),
+        json!({"imagename": image, "listit": false}),
     );
     assert_eq!(output.status.code(), Some(2));
     let Some(TaskReply::Failed {
@@ -1137,21 +1137,17 @@ fn a_parameter_casa_rs_takes_only_at_its_default_is_refused_otherwise() {
     else {
         panic!("{reply:?}");
     };
-    assert_eq!(parameter.as_deref(), Some("axes"));
+    assert_eq!(parameter.as_deref(), Some("listit"));
     assert!(message.contains("#977"), "{message}");
     // CASA's default is accepted, on the command line as from Python.
-    let (output, _) = json_run(
-        workspace.path(),
-        "imstat",
-        json!({"imagename": image, "axes": []}),
-    );
+    let (output, _) = json_run(workspace.path(), "imstat", json!({"imagename": image}));
     assert!(output.status.success());
     let command_line = Command::new(env!("CARGO_BIN_EXE_imexplore"))
         .args([
             "imstat",
             image.to_str().unwrap(),
-            "--stokes",
-            "I",
+            "--mask",
+            "other.im",
             "--no-save-last",
         ])
         .current_dir(workspace.path())
@@ -1213,7 +1209,7 @@ fn imstat_takes_casas_spellings_of_its_defaults() {
     let (output, reply) = json_run(
         workspace.path(),
         "imstat",
-        json!({"imagename": image, "axes": [0, 1], "stretch": true}),
+        json!({"imagename": image, "mask": "other.im", "stretch": true}),
     );
     assert_eq!(output.status.code(), Some(2));
     let Some(TaskReply::Failed {
@@ -1222,7 +1218,7 @@ fn imstat_takes_casas_spellings_of_its_defaults() {
     else {
         panic!("{reply:?}");
     };
-    assert_eq!(parameter.as_deref(), Some("axes"));
+    assert_eq!(parameter.as_deref(), Some("mask"));
     assert!(message.contains("#977"), "{message}");
 }
 

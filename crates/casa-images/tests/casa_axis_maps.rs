@@ -293,15 +293,17 @@ fn assert_regions_take_the_direction_plane(path: &Path, plane: [usize; 2]) {
             Some(format!("box[[{}],[{}]]", sky(1.0, 0.0), sky(2.0, 1.0))),
         ),
     ] {
-        let stats = casa_images::imstat(
-            path,
-            box_pixels.as_deref(),
-            region.as_deref(),
-            None,
-            None,
-            &casa_lattices::StatisticsAlgorithm::Classic,
-        )
-        .unwrap();
+        let stats = match casa_images::imstat(&casa_images::ImstatRequest {
+            imagename: path.to_path_buf(),
+            box_pixels: box_pixels.clone(),
+            region: region.clone(),
+            ..casa_images::ImstatRequest::default()
+        })
+        .unwrap()
+        {
+            casa_images::ImstatOutcome::Global(stats) => stats,
+            other => panic!("expected global statistics: {other:?}"),
+        };
         assert_eq!((stats.npts, stats.sum), (npts, sum), "{label} {region:?}");
         assert_eq!((&stats.blc, &stats.trc), (&blc, &trc), "{label} {region:?}");
     }
@@ -318,15 +320,16 @@ fn assert_regions_take_the_direction_plane(path: &Path, plane: [usize; 2]) {
             sky(1.0, 2.0)
         ),
     ] {
-        let stats = casa_images::imstat(
-            path,
-            None,
-            Some(&polygon),
-            None,
-            None,
-            &casa_lattices::StatisticsAlgorithm::Classic,
-        )
-        .unwrap();
+        let stats = match casa_images::imstat(&casa_images::ImstatRequest {
+            imagename: path.to_path_buf(),
+            region: Some(polygon.clone()),
+            ..casa_images::ImstatRequest::default()
+        })
+        .unwrap()
+        {
+            casa_images::ImstatOutcome::Global(stats) => stats,
+            other => panic!("expected global statistics: {other:?}"),
+        };
         assert_eq!((stats.npts, stats.sum), (npts, sum), "{label} {polygon}");
     }
 }
@@ -368,15 +371,16 @@ fn regions_take_the_direction_wherever_its_axes_are() {
     let scratch = tempfile::tempdir().expect("scratch");
     let transposed = copy_image("transposed.image", scratch.path());
     // CASA 6.7.6's imstat of this box on [Stokes, RA, Dec, Freq].
-    let stats = casa_images::imstat(
-        &transposed,
-        Some("1,0,2,1"),
-        None,
-        None,
-        None,
-        &casa_lattices::StatisticsAlgorithm::Classic,
-    )
-    .unwrap();
+    let stats = match casa_images::imstat(&casa_images::ImstatRequest {
+        imagename: transposed.clone(),
+        box_pixels: Some("1,0,2,1".to_string()),
+        ..casa_images::ImstatRequest::default()
+    })
+    .unwrap()
+    {
+        casa_images::ImstatOutcome::Global(stats) => stats,
+        other => panic!("expected global statistics: {other:?}"),
+    };
     assert_eq!((stats.npts, stats.sum), (40.0, 82_640.0));
     assert_eq!((stats.blc, stats.trc), (vec![0, 1, 0, 0], vec![1, 2, 1, 4]));
 

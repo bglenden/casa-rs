@@ -6533,3 +6533,20 @@ casa-rs checks nesting depth and row shapes in `crates/casars-python/src/convert
 and rejects empty or ragged nested Python sequences with CASA's catchable
 `Illegal Quantum record in QuantumHolder::fromRecord` `RuntimeError` instead of
 crashing or corrupting values (#1252, #1170).
+
+## Duplicated `imstat` axes crash CASA
+
+- Date noted: 2026-11-18
+- Status: CASA aborts; casa-rs refuses the request (#977).
+- Affected code: `casatools` image statistics, `ImageStatsCalculator::statistics`.
+
+In CASA 6.7.6.14, `imstat(imagename, axes=[0, 0])` aborts the Python process
+(SIGABRT, exit 134) inside the statistics calculation; the same happens for any
+duplicated axis. An out-of-range or negative axis is refused with the catchable
+`Invalid cursor axes: [4].` instead, so the crash on duplicates is an
+uncontrolled path, not a policy.
+
+casa-rs refuses a duplicated axis with `Invalid cursor axes: [0, 0]: an axis
+is named twice; CASA 6.7.6.14 aborts on it` (crates/casa-images/src/analysis.rs,
+`parse_axes`), keeping every other axes form CASA accepts, including the
+minimum-forms `-1` for all axes (#977).
