@@ -700,7 +700,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            9
+            bundle.parameter_surfaces.len()
         );
         assert!(
             bundle
