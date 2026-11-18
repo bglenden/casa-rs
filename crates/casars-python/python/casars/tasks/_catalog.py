@@ -372,7 +372,7 @@ def imstat(
     append: bool = True,
     algorithm: str = 'classic',
     fence: float = -1.0,
-    center: Literal['mean', 'median', 'zero'] = 'mean',
+    center: str = 'mean',
     lside: bool = True,
     zscore: float = -1.0,
     maxiter: int = -1,
@@ -384,8 +384,7 @@ def imstat(
     CASA's ``imstat``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #977:
     ``axes``, ``stokes``, ``listit``, ``verbose``, ``mask``, ``stretch``,
-    ``logfile``, ``append``, ``algorithm``, ``fence``, ``center``,
-    ``lside``, ``zscore``, ``maxiter``, ``clmethod``, ``niter``.
+    ``logfile``, ``append``.
     """
     return _call_casa(imstat, locals())
 
@@ -719,10 +718,10 @@ def ft(
     field: str = '',
     spw: str = '',
     timerange: str = '',
-    uvrange: ParameterData = '',
+    uvrange: str | int | float | list[str] = '',
     antenna: str = '',
     scan: str = '',
-    observation: ParameterData = '',
+    observation: str | int = '',
     intent: str = '',
     model: str | list[str] = '',
     nterms: int = 1,
