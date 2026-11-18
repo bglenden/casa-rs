@@ -16,9 +16,14 @@ struct GeometryCase {
 }
 
 #[test]
-#[ignore = "requires the pinned CASA ephemeris geometry oracle fixture"]
 fn moving_columns_match_casa_at_each_selected_epoch() {
-    let root = PathBuf::from(std::env::var_os("CASARS_CASA_EPHEMERIS_GEOMETRY").unwrap());
+    let Some(root) = std::env::var_os("CASARS_CASA_EPHEMERIS_GEOMETRY") else {
+        eprintln!(
+            "run calibration_ephemeris_geometry_oracle.py and set CASARS_CASA_EPHEMERIS_GEOMETRY to its work path"
+        );
+        return;
+    };
+    let root = PathBuf::from(root);
     let cases: BTreeMap<String, GeometryCase> =
         serde_json::from_slice(&std::fs::read(root.join("derived.json")).unwrap()).unwrap();
     assert_eq!(cases.len(), 2);
