@@ -5,6 +5,7 @@
 mod focus;
 mod mosaic;
 mod setjy;
+mod tracking;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -52,6 +53,7 @@ pub(super) struct FourierRow<'a> {
     pub(super) frequency_ref: FrequencyRef,
     pub(super) engine: &'a MsCalEngine,
     pub(super) field: &'a MDirection,
+    pub(super) phase_time: f64,
     pub(super) frame: &'a MeasFrame,
     pub(super) uvw: [f64; 3],
     pub(super) focus_rows: &'a [FocusSample],
@@ -107,6 +109,8 @@ struct PreparedFourierModel {
     resampler: SpectralResampler,
     grids: Arc<PreparedModelGrids>,
     phase_centre: MDirection,
+    tracking: Option<tracking::Tracking>,
+    fixed_field: Option<MDirection>,
     project: bool,
     refocus: Option<focus::Refocus>,
     mosaic: Option<MosaicLayout>,
@@ -169,6 +173,7 @@ impl PreparedFourierModel {
         }
         let axis = image_spectral_axis(image, channels)?;
         let (basis, resampler) = spectral_layout(record, &axis, continuum_basis)?;
+        let tracking = tracking::Tracking::load(terms[0])?;
         let (kernels, mosaic) = if mosaic::is_mosaic(terms[0]) {
             let (kernels, layout) = MosaicLayout::load(
                 terms[0],
@@ -203,6 +208,8 @@ impl PreparedFourierModel {
             resampler,
             grids,
             phase_centre,
+            tracking,
+            fixed_field: tracking::fixed_field(terms[0], row)?,
             project,
             refocus: focus::Refocus::from_distance(
                 record_number(terms[0], "distance").unwrap_or(0.0),
@@ -229,31 +236,40 @@ impl PreparedFourierModel {
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
     ) -> Result<(), GainSolveError> {
+        let shift = self
+            .tracking
+            .as_mut()
+            .map(|tracking| tracking.shift(&row))
+            .transpose()?
+            .unwrap_or([0.; 2]);
+        let tracked_centre = self
+            .tracking
+            .as_ref()
+            .map(|tracking| tracking.centre(shift));
+        let phase_centre = tracked_centre.as_ref().unwrap_or(&self.phase_centre);
+        let field = self.fixed_field.as_ref().unwrap_or(row.field);
         let (projection, pointing_offset_rad, antenna_types) = match &self.mosaic {
             Some(layout) => (
-                GridFtProjection::mosaic_between_directions_with_frame(
-                    row.field,
+                GridFtProjection::tracked_mosaic_with_frame(
+                    field,
                     &self.phase_centre,
+                    shift,
                     row.frame,
                 ),
-                layout.pointing_offset(&row)?,
+                layout.pointing_offset(&row, shift)?,
                 layout.antenna_types(&row)?,
             ),
             None if self.project => (
                 GridFtProjection::faceted_between_directions_with_frame(
-                    row.field,
-                    &self.phase_centre,
+                    field,
+                    phase_centre,
                     row.frame,
                 ),
                 [0.0; 2],
                 [0; 2],
             ),
             None => (
-                GridFtProjection::between_directions_with_frame(
-                    row.field,
-                    &self.phase_centre,
-                    row.frame,
-                ),
+                GridFtProjection::between_directions_with_frame(field, phase_centre, row.frame),
                 [0.0; 2],
                 [0; 2],
             ),
@@ -506,14 +522,6 @@ fn open_grid(
     ) {
         return Err(model_error(
             "unsupported Fourier image type in virtual model",
-        ));
-    }
-    if matches!(
-        record.get("fixmovingsource"),
-        Some(Value::Scalar(ScalarValue::Bool(true)))
-    ) {
-        return Err(model_error(
-            "virtual Fourier tracking geometry is unsupported",
         ));
     }
     let recorded = Path::new(record_text(record, "diskimage")?);

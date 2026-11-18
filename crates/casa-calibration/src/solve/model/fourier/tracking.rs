@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Recover FTMachine's moving-source rotation from a stored Fourier model.
+
+use casa_ms::{
+    EphemerisBudget, PhaseCentreEphemeris, PlanetaryEphemeris, columns::time_columns::TimeColumn,
+};
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::position::MPosition;
+use casa_types::measures::record::{direction_from_record, position_from_record};
+use casa_types::{RecordValue, ScalarValue, Value};
+
+use super::{FourierRow, GainSolveError, model_error, record_number, record_text};
+
+pub(super) struct Tracking {
+    source: Source,
+    first_direction: MDirection,
+    image_direction: MDirection,
+    position: MPosition,
+    fixed_epoch: Option<f64>,
+    last_shift: Option<([u64; 3], [f64; 2])>,
+}
+
+enum Source {
+    Field,
+    Ephemeris(PhaseCentreEphemeris),
+    Direction(MDirection),
+    Named(Box<PlanetaryEphemeris>),
+}
+
+impl Tracking {
+    pub(super) fn load(record: &RecordValue) -> Result<Option<Self>, GainSolveError> {
+        if !matches!(
+            record.get("fixmovingsource"),
+            Some(Value::Scalar(ScalarValue::Bool(true)))
+        ) {
+            return Ok(None);
+        }
+        let moving = measure(record, "movingdir_rec")?;
+        let reference = record_text(moving, "refer")?;
+        let source = match reference {
+            "APP" => Source::Field,
+            "COMET" => Source::Ephemeris(
+                PhaseCentreEphemeris::external(
+                    record_text(record, "ephemeristable")?,
+                    EphemerisBudget::new(64 << 20),
+                )
+                .map_err(model_error)?,
+            ),
+            _ if reference.parse::<DirectionRef>().is_ok() => {
+                Source::Direction(direction_from_record(moving).map_err(model_error)?)
+            }
+            _ => Source::Named(Box::new(
+                PlanetaryEphemeris::open_discovered(reference).map_err(model_error)?,
+            )),
+        };
+        Ok(Some(Self {
+            source,
+            first_direction: direction_from_record(measure(record, "firstmovingdir_rec")?)
+                .map_err(model_error)?,
+            image_direction: direction_from_record(measure(record, "mimage_rec")?)
+                .map_err(model_error)?,
+            position: position_from_record(measure(record, "mlocation_rec")?)
+                .map_err(model_error)?,
+            fixed_epoch: record_number(record, "phasecentertime").filter(|time| *time > 0.0),
+            last_shift: None,
+        }))
+    }
+
+    pub(super) fn shift(&mut self, row: &FourierRow<'_>) -> Result<[f64; 2], GainSolveError> {
+        let key = [
+            row.row.time_seconds.to_bits(),
+            row.phase_time.to_bits(),
+            u64::from(row.row.field_id as u32),
+        ];
+        if let Some((previous, shift)) = self.last_shift
+            && previous == key
+        {
+            return Ok(shift);
+        }
+        let frame = row
+            .engine
+            .spectral_frame_observatory_direction(row.row.time_seconds, row.field.clone())
+            .map_err(model_error)?
+            .with_position(self.position.clone());
+        let source = match &self.source {
+            Source::Field => row
+                .engine
+                .tracked_body_direction_j2000(
+                    self.fixed_epoch.unwrap_or(row.phase_time),
+                    row.row.field_id as usize,
+                )
+                .map_err(model_error)?,
+            Source::Ephemeris(ephemeris) => row
+                .engine
+                .ephemeris_direction_j2000(
+                    row.row.time_seconds,
+                    row.row.field_id as usize,
+                    "COMET",
+                    ephemeris,
+                )
+                .map_err(model_error)?,
+            Source::Direction(direction) => direction.clone(),
+            Source::Named(planet) => planet.direction(&frame).map_err(model_error)?,
+        };
+        let (longitude, latitude) = source
+            .convert_to(self.image_direction.refer(), &frame)
+            .map_err(model_error)?
+            .as_angles();
+        let (anchor_lon, anchor_lat) = self.first_direction.as_angles();
+        let shift = [longitude - anchor_lon, latitude - anchor_lat];
+        self.last_shift = Some((key, shift));
+        Ok(shift)
+    }
+
+    pub(super) fn centre(&self, shift: [f64; 2]) -> MDirection {
+        let (image_lon, image_lat) = self.image_direction.as_angles();
+        MDirection::from_angles(
+            image_lon + shift[0],
+            image_lat + shift[1],
+            self.image_direction.refer(),
+        )
+    }
+}
+
+/// CASA indexes the correlator directions by integration time. A saved
+/// positive epoch uses the first integration at or after it, clamped to
+/// the last integration when it lies beyond the MeasurementSet.
+pub(super) fn fixed_field(
+    record: &RecordValue,
+    row: &FourierRow<'_>,
+) -> Result<Option<MDirection>, GainSolveError> {
+    let Some(epoch) = record_number(record, "phasecentertime").filter(|time| *time > 0.0) else {
+        return Ok(None);
+    };
+    let table = row.ms.main_table();
+    let times = TimeColumn::new(table);
+    let mut next = None::<(f64, usize)>;
+    let mut last = None::<(f64, usize)>;
+    for index in 0..table.row_count() {
+        let time = times.get_mjd_seconds(index).map_err(model_error)?;
+        if time >= epoch && next.is_none_or(|(current, _)| time < current) {
+            next = Some((time, index));
+        }
+        if last.is_none_or(|(current, _)| time > current) {
+            last = Some((time, index));
+        }
+    }
+    let (time, index) = next
+        .or(last)
+        .ok_or_else(|| model_error("empty tracking time cache"))?;
+    let ScalarValue::Int32(field) = table
+        .cell_accessor(index, "FIELD_ID")
+        .and_then(|cell| cell.scalar())
+        .map_err(model_error)?
+    else {
+        return Err(model_error("invalid tracking FIELD_ID"));
+    };
+    let field = usize::try_from(*field).map_err(model_error)?;
+    Ok(Some(
+        super::super::field_direction(row.ms, row.engine, field, time).map_err(model_error)?,
+    ))
+}
+
+fn measure<'a>(record: &'a RecordValue, name: &str) -> Result<&'a RecordValue, GainSolveError> {
+    match record.get(name) {
+        Some(Value::Record(measure)) => Ok(measure),
+        _ => Err(model_error(format!(
+            "virtual tracking model has no {name} measure"
+        ))),
+    }
+}
