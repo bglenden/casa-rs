@@ -810,10 +810,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal field selector text. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal spw selector text. |
 | <code>timerange</code> | <code>ms.selection.timerange@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal timerange selector text. |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | UV range selector. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Data selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
 | <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal antenna selector text. |
 | <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal scan selector text. |
-| <code>observation</code> | <code>ms.selection.observation@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Observation selection applied to every MeasurementSet |
+| <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Data selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Intent selector. |
 | <code>model</code> | <code>ft.model@r2</code> | <code>variant</code> | <code>""</code>; optional | Model | A model image name or a list of model image names. |
 | <code>nterms</code> | <code>parameter.nterms@r1</code> | <code>integer</code> | <code>1</code>; optional | Model | Number of Taylor terms. |

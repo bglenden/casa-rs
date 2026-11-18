@@ -16910,7 +16910,7 @@
           "name": "uvrange",
           "concept": {
             "id": "ms.selection.uvrange",
-            "semantic_revision": 3
+            "semantic_revision": 4
           },
           "order": 4,
           "default": {
@@ -17024,7 +17024,7 @@
           "name": "observation",
           "concept": {
             "id": "ms.selection.observation",
-            "semantic_revision": 3
+            "semantic_revision": 4
           },
           "order": 7,
           "default": {
