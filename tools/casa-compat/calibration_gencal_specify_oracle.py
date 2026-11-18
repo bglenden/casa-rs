@@ -133,6 +133,8 @@ def main():
                                  'parameter': [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]})],
         'amp-nonuniform': [('amp', {'antenna': 'A1,A3', 'pol': 'X', 'uniform': False,
                                      'parameter': [2.0, 3.0]})],
+        'amp-boolean-list': [('amp', {'antenna': 'A1,A3', 'pol': 'X', 'parameter': [False, 2.0]})],
+        'amp-boolean-object': [('amp', {'antenna': 'A1', 'parameter': np.array([False], dtype=object)})],
         'amp-neg-and-zero': [('amp', {'spw': '0', 'antenna': 'A1,A3', 'pol': 'L',
                                       'parameter': [-2.0, 0.0]})],
         'amp-baseline': [('amp', {'antenna': 'A1&A2', 'pol': 'X', 'parameter': 2.0})],
@@ -184,16 +186,27 @@ def main():
             assert not candidate.exists()
         results[label] = {'refused': True}
 
+    for label, value in [('boolean-scalar', True), ('boolean-array', np.array([True]))]:
+        for module, exception in ((casa, AssertionError), (native, TypeError)):
+            candidate = root / f'{label}-{module.__name__}.cal'
+            try:
+                module.gencal(str(source), str(candidate), 'amp', parameter=value)
+            except exception as error:
+                assert "must be of cFloatVec type" in str(error)
+            else:
+                raise AssertionError(f'{module.__name__} accepted {label}')
+            assert not candidate.exists()
+        results[label] = {'refused': True}
+
     reference = root / 'amp-broadcast' / 'casa.cal'
     fixed = root / 'fixed-wildcards.cal'
     generate(native, source, fixed, [('amp', {'spw': '*', 'antenna': '*', 'parameter': 2.0})])
     results['wildcards'] = {'table_nrms': compare_tables(fixed, reference)}
     try:
-        native.gencal(str(source), str(root / 'negative-antenna.cal'), 'amp',
-                      antenna='A1;!A3', parameter=2.0)
+        native.gencal(str(source), str(fixed), 'amp', antenna='A1;!A3', parameter=2.0)
     except RuntimeError as error:
         assert 'negative calibration index' in str(error)
-        assert not (root / 'negative-antenna.cal').exists()
+        compare_tables(fixed, reference)
     else:
         raise AssertionError('negative calibration index accepted')
     results['negative-antenna'] = {'refused': True}

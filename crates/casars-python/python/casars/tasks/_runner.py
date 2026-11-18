@@ -211,6 +211,18 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         _validate_required_vis(values, arguments["vis"])
     if name == "applycal":
         return _call_applycal(values)
+    if name == "gencal":
+        import numpy as np
+
+        parameter = arguments["parameter"]
+        if isinstance(parameter, np.ndarray):
+            if parameter.dtype == bool:
+                raise TypeError("{'parameter': ['must be of cFloatVec type']}")
+            if parameter.dtype == object and parameter.ndim == 1:
+                parameter = parameter.tolist()
+        if isinstance(parameter, (list, tuple)) and any(isinstance(item, bool) for item in parameter):
+            # cFloatVec accepts Python bools within a vector, unlike boolean scalars.
+            values["parameter"] = [float(item) if isinstance(item, bool) else item for item in parameter]
     if name == "ft":
         for selector in ("uvrange", "observation"):
             if not isinstance(arguments[selector], str):
