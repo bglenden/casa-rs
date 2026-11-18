@@ -3336,7 +3336,7 @@
 <a href=#3336 id=3336 data-nosnippet>3336</a>}
 <a href=#3337 id=3337 data-nosnippet>3337</a>
 <a href=#3338 id=3338 data-nosnippet>3338</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>load_parallactic_angle_state(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; MsResult&lt;ParallacticAngleState&gt; {
-<a href=#3339 id=3339 data-nosnippet>3339</a>    <span class="kw">let </span>engine = MsCalEngine::new(ms)<span class="question-mark">?</span>.with_field_ephemerides(ms)<span class="question-mark">?</span>;
+<a href=#3339 id=3339 data-nosnippet>3339</a>    <span class="kw">let </span>engine = MsCalEngine::for_calibration(ms)<span class="question-mark">?</span>;
 <a href=#3340 id=3340 data-nosnippet>3340</a>    <span class="kw">let </span><span class="kw-2">mut </span>feed_rows = HashMap::&lt;(i32, i32), Vec&lt;FeedAngleRow&gt;&gt;::new();
 <a href=#3341 id=3341 data-nosnippet>3341</a>    <span class="kw">if let </span><span class="prelude-val">Ok</span>(feed) = ms.feed() {
 <a href=#3342 id=3342 data-nosnippet>3342</a>        <span class="kw">for </span>row_index <span class="kw">in </span><span class="number">0</span>..feed.row_count() {
@@ -4134,7 +4134,7 @@
 <a href=#4134 id=4134 data-nosnippet>4134</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
 <a href=#4135 id=4135 data-nosnippet>4135</a>    }
 <a href=#4136 id=4136 data-nosnippet>4136</a>    <span class="kw">let </span>ms_path = display_ms_path(ms);
-<a href=#4137 id=4137 data-nosnippet>4137</a>    MsCalEngine::new(ms)
+<a href=#4137 id=4137 data-nosnippet>4137</a>    MsCalEngine::for_calibration(ms)
 <a href=#4138 id=4138 data-nosnippet>4138</a>        .map(Arc::new)
 <a href=#4139 id=4139 data-nosnippet>4139</a>        .map(<span class="prelude-val">Some</span>)
 <a href=#4140 id=4140 data-nosnippet>4140</a>        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {

@@ -3701,7 +3701,7 @@
 <a href=#3701 id=3701 data-nosnippet>3701</a>            .any(MsAxis::uses_derived_geometry)
 <a href=#3702 id=3702 data-nosnippet>3702</a>        || (needs_spectral_coordinates &amp;&amp; requested_freqframe.is_some())
 <a href=#3703 id=3703 data-nosnippet>3703</a>    {
-<a href=#3704 id=3704 data-nosnippet>3704</a>        <span class="prelude-val">Some</span>(MsCalEngine::new(ms).map_err(|error| error.to_string())<span class="question-mark">?</span>)
+<a href=#3704 id=3704 data-nosnippet>3704</a>        <span class="prelude-val">Some</span>(MsCalEngine::for_calibration(ms).map_err(|error| error.to_string())<span class="question-mark">?</span>)
 <a href=#3705 id=3705 data-nosnippet>3705</a>    } <span class="kw">else </span>{
 <a href=#3706 id=3706 data-nosnippet>3706</a>        <span class="prelude-val">None
 <a href=#3707 id=3707 data-nosnippet>3707</a>    </span>};
@@ -4519,7 +4519,7 @@
 <a href=#4519 id=4519 data-nosnippet>4519</a>            .any(MsAxis::uses_derived_geometry)
 <a href=#4520 id=4520 data-nosnippet>4520</a>        || (needs_spectral_coordinates &amp;&amp; requested_freqframe.is_some())
 <a href=#4521 id=4521 data-nosnippet>4521</a>    {
-<a href=#4522 id=4522 data-nosnippet>4522</a>        <span class="prelude-val">Some</span>(MsCalEngine::new(ms).map_err(|error| error.to_string())<span class="question-mark">?</span>)
+<a href=#4522 id=4522 data-nosnippet>4522</a>        <span class="prelude-val">Some</span>(MsCalEngine::for_calibration(ms).map_err(|error| error.to_string())<span class="question-mark">?</span>)
 <a href=#4523 id=4523 data-nosnippet>4523</a>    } <span class="kw">else </span>{
 <a href=#4524 id=4524 data-nosnippet>4524</a>        <span class="prelude-val">None
 <a href=#4525 id=4525 data-nosnippet>4525</a>    </span>};
