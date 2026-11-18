@@ -11,9 +11,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, StokesType};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType};
 use casa_images::PagedImage;
-use casa_imaging_model::{GridFtProjection, PolarizationCoordinate};
+use casa_imaging_model::GridFtProjection;
 use casa_imaging_operator::{
     Basis, Boxcar, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
     ImageExtent, MeasurementOperator, NativeRow, PaddingFactor, PlaneRange, PolarizationRouting,
@@ -25,7 +25,7 @@ use casa_ms::{MeasurementSet, convert_frequency_to_frame};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{Complex32, Correlation, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
 
 use super::{FocusSample, GainSolveError, SelectedSolveRow, model_error};
@@ -660,20 +660,8 @@ fn grid_polarization(
         .ok_or_else(|| model_error("virtual grid image has no Stokes coordinate"))?;
     let coordinates = stokes
         .iter()
-        .map(|stokes| match stokes {
-            StokesType::I => PolarizationCoordinate::StokesI,
-            StokesType::Q => PolarizationCoordinate::StokesQ,
-            StokesType::U => PolarizationCoordinate::StokesU,
-            StokesType::V => PolarizationCoordinate::StokesV,
-            StokesType::XX => PolarizationCoordinate::LinearXx,
-            StokesType::XY => PolarizationCoordinate::LinearXy,
-            StokesType::YX => PolarizationCoordinate::LinearYx,
-            StokesType::YY => PolarizationCoordinate::LinearYy,
-            StokesType::RR => PolarizationCoordinate::CircularRr,
-            StokesType::RL => PolarizationCoordinate::CircularRl,
-            StokesType::LR => PolarizationCoordinate::CircularLr,
-            StokesType::LL => PolarizationCoordinate::CircularLl,
-        })
+        .copied()
+        .map(crate::ft::image::polarization_coordinate)
         .collect::<Vec<_>>();
     let correlations = correlations
         .iter()

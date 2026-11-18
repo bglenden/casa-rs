@@ -12,7 +12,8 @@ use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, GridGeometry, GridPadding, GridPolarization, GridPrecision, ImageExtent,
-    MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, PolarizationRouting, Spheroidal,
+    MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, PaddingFactor,
+    PolarizationRouting, Spheroidal,
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral, legacy_multi_term};
@@ -160,7 +161,7 @@ impl ImageTransform {
         let padding = if reference == [nx / 2, ny / 2] && nx % 2 == 0 && ny % 2 == 0 {
             GridPadding::None
         } else {
-            GridPadding::CasaComposite(2.0)
+            GridPadding::CasaComposite(PaddingFactor::new(2.0).map_err(invalid)?)
         };
         let geometry = GridGeometry::new(
             ImageExtent {
@@ -188,7 +189,7 @@ impl ImageTransform {
                 .map(grid_stokes)
                 .collect::<MsResult<_>>()?,
         ));
-        coordinates.add_coordinate(spectral.clone());
+        coordinates.add_coordinate(CoordinateModel::Spectral(spectral.clone()));
         *coordinates.obs_info_mut() = ObsInfo::new("UNKNOWN").with_observer("UNKNOWN");
         let frequencies = (0..channels)
             .map(|index| spectral.world_frequency_hz(index as f64).map_err(invalid))

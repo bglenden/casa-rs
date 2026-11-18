@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 import casatasks as casa
-from casatools import componentlist, table
+from casatools import componentlist, image, table
 import numpy as np
 
 from calibration_scratch_oracle import MAIN, prepare, state
@@ -48,10 +48,111 @@ def compare_outputs(actual, expected):
     np.testing.assert_equal(native_model, casa_model)
 
 
+def make_images(root, source):
+    phase = coordinates(source)
+    tb = table()
+    assert tb.open(str(source/'SPECTRAL_WINDOW'))
+    try:
+        frequencies = tb.getcell('CHAN_FREQ', 0)
+    finally:
+        tb.close()
+    outputs = {}
+    for name, count, flux in [('point', 1, 2.), ('term1', 1, .5),
+                               ('cube', len(frequencies), 1.), ('empty', 1, 0.)]:
+        path = root/f'{name}.im'
+        tool = image()
+        data = np.zeros((32, 32, 1, count), np.float32)
+        data[16, 16, 0, :] = flux
+        if count > 1:
+            data[16, 16, 0, :] += np.arange(count)*.2
+            data[17, 18, 0, :] = .1
+        assert tool.fromarray(outfile=str(path), pixels=data)
+        cs = tool.coordsys()
+        cs.setunits(['rad', 'rad', '', 'Hz'])
+        cs.setreferencevalue(value=f'{phase[0]}rad {phase[1]}rad', type='direction')
+        cs.setincrement(value='-1arcsec 1arcsec', type='direction')
+        cs.setreferencepixel(value=[16., 16.], type='direction')
+        cs.setreferencecode('TOPO', type='spectral', adjust=False)
+        cs.setreferencepixel(value=[0.], type='spectral')
+        cs.setreferencevalue(value=f'{frequencies[0]}Hz', type='spectral')
+        cs.setincrement(value='1000000Hz' if count > 1 else '30000000Hz', type='spectral')
+        assert tool.setcoordsys(cs.torecord())
+        assert tool.setbrightnessunit('Jy/pixel')
+        cs.done()
+        tool.done()
+        outputs[name] = str(path)
+    return outputs
+
+
+def record_layout(path):
+    pointers, source, records = state(path)[1]
+    layout = []
+    for record in records or []:
+        if not record:
+            continue
+        entries = {}
+        for key, entry in record.items():
+            if key.startswith(('ft_', 'cl_')):
+                container = entry['container']
+                entries[key] = (entry['type'], entry['indexcombination'],
+                                entry['channelselection'], container.get('name'),
+                                container.get('thisterm'), container.get('reffreq'))
+            else:
+                entries[key] = entry
+        layout.append(entries)
+    return pointers, source, layout
+
+
+def image_workflows(root, source, native, point):
+    images = make_images(root, source)
+    cases = [
+        ('point-scratch', 'point', True, {}),
+        ('point-virtual', 'point', False, {}),
+        ('cube-scratch', 'cube', True, {}),
+        ('cube-virtual', 'cube', False, {}),
+        ('cube-selected', 'cube', True, {'spw': '0:2~4'}),
+        ('cube-virtual-selected', 'cube', False, {'spw': '0:2~4'}),
+        ('taylor-scratch', ('point', 'term1'), True, {'nterms': 2, 'reffreq': '99GHz'}),
+        ('taylor-virtual', ('point', 'term1'), False, {'nterms': 2, 'reffreq': '99GHz'}),
+        ('taylor-default-frequency', ('point', 'term1'), False, {'nterms': 2}),
+        ('empty-scratch', 'empty', True, {}),
+        ('empty-virtual', 'empty', False, {}),
+        ('add-to-scratch', 'point', True, {'incremental': True}),
+        ('with-component', 'point', True, {'complist': str(point)}),
+        ('with-virtual-component', 'point', False, {'complist': str(point)}),
+    ]
+    outcomes = {}
+    for label, model, scratch, kwargs in cases:
+        model = images[model] if isinstance(model, str) else [images[name] for name in model]
+        results = []
+        for writer, reader in ((casa, casa), (native, casa), (casa, native), (native, native)):
+            ms = root/f'image-{label}-{writer.__name__.split(".")[-1]}-{reader.__name__.split(".")[-1]}.ms'
+            prepare(source, ms, model=scratch)
+            assert writer.ft(str(ms), field='0', model=model, usescratch=scratch, **kwargs) is None
+            record = record_layout(ms)
+            if not scratch:
+                assert reader.uvsub(str(ms)) is None
+            actual, _ = state(ms)
+            column = 'MODEL_DATA' if scratch else 'CORRECTED_DATA'
+            if results:
+                expectation, reference, ref_record = results[0]
+                np.testing.assert_equal(record, ref_record)
+                for name in MAIN:
+                    np.testing.assert_array_equal(actual[name], expectation[name])
+                scale = max(1., float(np.max(np.abs(reference))))
+                np.testing.assert_allclose(actual[column], reference, atol=3e-5*scale, rtol=0,
+                                           err_msg=label)
+            results.append((actual, actual[column], record))
+        outcomes[label] = {'paired_writes_and_cross_reads': True}
+        print(label, flush=True)
+    return outcomes
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
+    parser.add_argument('--images', action='store_true')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -101,6 +202,8 @@ def main():
         compare_outputs(states[1], states[0])
         evidence[label] = {'paired': True}
         print(label, flush=True)
+    if args.images:
+        evidence.update(image_workflows(root, source, tasks, point))
     (root/'results.json').write_text(json.dumps(evidence, indent=2)+'\n')
 
 
