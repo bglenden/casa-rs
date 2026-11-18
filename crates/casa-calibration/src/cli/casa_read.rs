@@ -145,6 +145,7 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
             "median" => GainNormalization::Median,
             other => return Err(unknown("normtype", other, "'mean' or 'median'")),
         },
+        robustness: robust_gain_solve(task)?,
         min_snr,
         min_baselines_per_antenna: count(task, "minblperant")?,
         smodel,
@@ -608,6 +609,30 @@ fn calmode(task: &TaskInvocation<'_>) -> Result<GainSolveMode, TaskFailure> {
         "ap" => Ok(GainSolveMode::AmplitudePhase),
         other => Err(not_yet("calmode", other)),
     }
+}
+
+fn robust_gain_solve(task: &TaskInvocation<'_>) -> Result<crate::GainSolveRobustness, TaskFailure> {
+    let mode = task.required_text("solmode")?;
+    let (l1, reject) = match mode.as_str() {
+        "" => (false, false),
+        "L1" => (true, false),
+        "R" => (false, true),
+        "L1R" => (true, true),
+        other => return Err(unknown("solmode", other, "'', 'L1', 'R' or 'L1R'")),
+    };
+    let mut rms_thresholds = Vec::new();
+    if reject {
+        rms_thresholds = task
+            .numbers("rmsthresh")?
+            .into_iter()
+            .map(|value| value as f32)
+            .collect();
+        // GJones::setSolve and TJones::setSolve supply these for an empty list.
+        if rms_thresholds.is_empty() {
+            rms_thresholds.extend([7.0, 5.0, 4.0, 3.5, 3.0, 2.8, 2.6, 2.4, 2.2, 2.5]);
+        }
+    }
+    Ok(crate::GainSolveRobustness { l1, rms_thresholds })
 }
 
 /// CASA's `solint`, read as `SolvableVisCal::setSolve` reads it: empty

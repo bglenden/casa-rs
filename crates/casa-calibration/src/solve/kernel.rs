@@ -17,9 +17,11 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use casa_types::Complex32;
 use num_complex::Complex64;
 
-use super::{GainSolveMode, GainType};
+use super::{GainSolveMode, GainSolveRobustness, GainType};
 use crate::solve::grouping::{SolveAccumulator, SolveEdgeStats};
 use crate::solve::trace;
+
+mod robust;
 
 /// `VisCalSolver2::maxIter_`: a solve that has not converged after this many
 /// iterations fails.
@@ -51,6 +53,17 @@ pub(crate) struct SolveGraph {
     pub(crate) edges: HashMap<(i32, i32), Complex32>,
     pub(crate) weights: HashMap<(i32, i32), f32>,
     pub(crate) stats: HashMap<(i32, i32), SolveEdgeStats>,
+    pub(crate) robust_samples: Vec<RobustSample>,
+}
+
+/// One unflagged, mode-transformed sample of a gathered buffer.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RobustSample {
+    pub(crate) baseline: (i32, i32),
+    pub(crate) correlation: usize,
+    pub(crate) visibility: Complex32,
+    pub(crate) weight: f32,
+    pub(crate) in_first_buffer: bool,
 }
 
 impl SolveGraph {
@@ -106,6 +119,12 @@ impl SolveGraph {
                 .filter(|(baseline, _)| keep(baseline))
                 .map(|(baseline, value)| (*baseline, *value))
                 .collect(),
+            robust_samples: self
+                .robust_samples
+                .iter()
+                .copied()
+                .filter(|sample| keep(&sample.baseline))
+                .collect(),
         }
     }
 
@@ -155,6 +174,7 @@ pub(crate) struct SolveGraphOptions<'a> {
     pub(crate) scalar_seed: Option<&'a SolveAccumulator>,
     pub(crate) correlation_dependent_flags: bool,
     pub(crate) defer_reference: bool,
+    pub(crate) robustness: Option<&'a GainSolveRobustness>,
 }
 
 pub(crate) struct PhaseStepTrace {
@@ -296,7 +316,7 @@ pub(crate) fn solve_graphs(
         .iter()
         .map(|graph| graph.restricted_to(&constrained))
         .collect::<Vec<_>>();
-    let solved_antennas = active
+    let mut solved_antennas = active
         .iter()
         .map(|graph| {
             let with_data = graph.antennas();
@@ -315,6 +335,14 @@ pub(crate) fn solve_graphs(
             seed.scalar_initial_gains(&solved_antennas[0], options.refant_id, solve_mode)
     {
         vec![guess]
+    } else if options.robustness.is_some() {
+        let first_graphs = robust::first_graphs(&active);
+        let first_reference = first_graphs
+            .iter()
+            .flat_map(SolveGraph::antennas)
+            .min_by_key(|antenna| (*antenna != options.refant_id, *antenna))
+            .unwrap_or(refant_id);
+        first_guess(&first_graphs, &solved_antennas, gain_type, first_reference)
     } else {
         first_guess(&active, &solved_antennas, gain_type, refant_id)
     };
@@ -327,12 +355,29 @@ pub(crate) fn solve_graphs(
             }
         }
     }
-    let gains = solve_lm(&active, &solved_antennas, first, refant_id)?;
+    let (gains, active) = if let Some(robustness) = options.robustness {
+        robust::solve(active, &mut solved_antennas, first, refant_id, robustness)?
+    } else {
+        (
+            solve_lm(
+                &active,
+                &mut solved_antennas,
+                first,
+                refant_id,
+                SolveIteration::Ordinary,
+            )?,
+            active,
+        )
+    };
     let mut receptors = active
         .iter()
         .zip(solved_antennas)
         .zip(gains)
-        .map(|((graph, solved), gains)| {
+        .map(|((graph, mut solved), gains)| {
+            if options.robustness.is_some() {
+                let with_weight = graph.antennas();
+                solved.retain(|id| with_weight.contains(id));
+            }
             finish_receptor(
                 graph,
                 solved,
@@ -451,6 +496,13 @@ fn first_guess(
     guesses
 }
 
+#[derive(Clone, Copy)]
+enum SolveIteration {
+    Ordinary,
+    Rms,
+    L1(f32),
+}
+
 /// The Levenberg–Marquardt iteration of `VisCalSolver2::solve`, with its
 /// step size optimisation (`optStepSize2`) and convergence test
 /// (`converged`): a step counts towards convergence when chi-square has not
@@ -458,15 +510,24 @@ fn first_guess(
 /// converge. `None` when [`MAX_ITERATIONS`] pass without converging.
 fn solve_lm(
     graphs: &[SolveGraph],
-    antennas: &[BTreeSet<i32>],
+    antennas: &mut [BTreeSet<i32>],
     mut gains: Vec<HashMap<i32, Complex64>>,
     refant_id: i32,
+    strategy: SolveIteration,
 ) -> Option<Vec<HashMap<i32, Complex64>>> {
     let mut last_gains = gains.clone();
     let mut last_chi_square = f64::MAX;
     let mut convergence_count = 0_i32;
-
+    let robust_iteration = !matches!(strategy, SolveIteration::Ordinary);
     for iteration in 0..=MAX_ITERATIONS {
+        let weighted = match strategy {
+            SolveIteration::L1(clamp) => Some(robust::working_graphs(graphs, &gains, clamp)),
+            _ => None,
+        };
+        let graphs = weighted.as_deref().unwrap_or(graphs);
+        if robust_iteration && graphs.iter().all(|graph| graph.weights.is_empty()) {
+            return None;
+        }
         let mut chi_square = chi_square_graphs(graphs, &gains);
         if chi_square <= 0.0 {
             return Some(gains);
@@ -486,7 +547,7 @@ fn solve_lm(
             convergence_count = (convergence_count - 1).max(0);
         }
 
-        if delta_chi_square <= 0.0 {
+        if delta_chi_square <= 0.0 || robust_iteration {
             last_chi_square = chi_square;
         } else {
             gains.clone_from(&last_gains);
@@ -495,8 +556,15 @@ fn solve_lm(
 
         let mut gradients = Vec::with_capacity(graphs.len());
         let mut deltas = Vec::with_capacity(graphs.len());
-        for ((graph, antennas), receptor_gains) in graphs.iter().zip(antennas).zip(&gains) {
+        for ((graph, antennas), receptor_gains) in
+            graphs.iter().zip(antennas.iter_mut()).zip(&gains)
+        {
             let (gradient, hessian) = gradient_hessian(graph, antennas, receptor_gains);
+            if robust_iteration {
+                // solveGradHess clears parOK permanently, but residualate2
+                // and getErrors still use the last parameter value.
+                antennas.retain(|id| hessian.get(id).is_some_and(|value| *value > 0.0));
+            }
             let delta = antennas
                 .iter()
                 .map(|antenna_id| {
@@ -514,31 +582,34 @@ fn solve_lm(
         }
 
         last_gains.clone_from(&gains);
-        let step = optimize_step(graphs, &last_gains, &mut gains, &mut deltas, chi_square);
+        let step = (!matches!(strategy, SolveIteration::L1(_)))
+            .then(|| optimize_step(graphs, &last_gains, &mut gains, &mut deltas, chi_square));
         for (receptor_gains, receptor_delta) in gains.iter_mut().zip(&deltas) {
             for (antenna_id, gain) in receptor_gains.iter_mut() {
                 *gain += receptor_delta.get(antenna_id).copied().unwrap_or_default();
             }
         }
-        for (receptor, (antennas, (gradient, hessian))) in
-            antennas.iter().zip(&gradients).enumerate()
-        {
-            trace::trace_phase_solver_iteration(PhaseSolverTraceEvent {
-                iteration,
-                refant_id,
-                chi_square,
-                last_chi_square,
-                delta_chi_square,
-                fractional_delta,
-                convergence_count,
-                step: &step,
-                antenna_ids: antennas,
-                last_gains: &last_gains[receptor],
-                gains: &gains[receptor],
-                gradient,
-                hessian,
-                delta: &deltas[receptor],
-            });
+        if let Some(step) = &step {
+            for (receptor, (antennas, (gradient, hessian))) in
+                antennas.iter().zip(&gradients).enumerate()
+            {
+                trace::trace_phase_solver_iteration(PhaseSolverTraceEvent {
+                    iteration,
+                    refant_id,
+                    chi_square,
+                    last_chi_square,
+                    delta_chi_square,
+                    fractional_delta,
+                    convergence_count,
+                    step,
+                    antenna_ids: antennas,
+                    last_gains: &last_gains[receptor],
+                    gains: &gains[receptor],
+                    gradient,
+                    hessian,
+                    delta: &deltas[receptor],
+                });
+            }
         }
     }
     None
@@ -564,6 +635,11 @@ fn finish_receptor(
         .iter()
         .map(|(antenna_id, gain)| (*antenna_id, gain.norm() as f32))
         .collect::<HashMap<_, _>>();
+    let error_chi_square = if graph.robust_samples.is_empty() {
+        chi_square_for_errors(graph, &error_gains)
+    } else {
+        robust::chi_square(graph, &gains)
+    };
     if solve_mode == GainSolveMode::Phase {
         rereference_complex64(&mut gains, refant_id, true);
     }
@@ -573,7 +649,6 @@ fn finish_receptor(
         .collect::<HashMap<_, _>>();
 
     let hessian = hessian(graph, &error_gains, &solved);
-    let error_chi_square = chi_square_for_errors(graph, &error_gains);
     let good_count = solved.len();
     let sample_count = undirected_collapsed_count(&graph.stats);
     let degrees_of_freedom = (2 * sample_count.saturating_sub(good_count)).max(1);
@@ -636,12 +711,12 @@ fn snrs(
                 .get(antenna_id)
                 .copied()
                 .unwrap_or_else(|| gain.norm());
-            let value = if error > 0.0 {
-                amplitude / error
-            } else if solved.contains(antenna_id) {
-                9_999_999.0
-            } else {
+            let value = if !solved.contains(antenna_id) {
                 0.0
+            } else if error > 0.0 {
+                amplitude / error
+            } else {
+                9_999_999.0
             };
             (*antenna_id, value)
         })
@@ -744,6 +819,9 @@ fn chi_square_graphs(graphs: &[SolveGraph], gains: &[HashMap<i32, Complex64>]) -
 }
 
 fn chi_square_complex64(graph: &SolveGraph, gains: &HashMap<i32, Complex64>) -> f64 {
+    if !graph.robust_samples.is_empty() {
+        return robust::chi_square(graph, gains);
+    }
     let mut total = 0.0_f64;
     for (&(antenna1, antenna2), stat) in &graph.stats {
         if antenna1 > antenna2 {
@@ -865,7 +943,12 @@ fn hessian(
 ) -> HashMap<i32, f32> {
     let mut hessian = HashMap::new();
     for &(antenna_id, other_id) in graph.edges.keys() {
-        if !solved.contains(&antenna_id) || !solved.contains(&other_id) {
+        let included = if graph.robust_samples.is_empty() {
+            solved.contains(&antenna_id) && solved.contains(&other_id)
+        } else {
+            gains.contains_key(&antenna_id) && gains.contains_key(&other_id)
+        };
+        if !included {
             continue;
         }
         let weight = graph.weight((antenna_id, other_id));
@@ -977,6 +1060,7 @@ mod tests {
             scalar_seed: None,
             correlation_dependent_flags: false,
             defer_reference: false,
+            robustness: None,
         }
     }
 

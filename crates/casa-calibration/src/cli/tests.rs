@@ -420,6 +420,7 @@ fn gain_solve() -> SolveGainTaskRequest {
         preaverage_seconds: 0.0,
         correlation_dependent_flags: false,
         normalization_type: Default::default(),
+        robustness: Default::default(),
         min_snr: 2.5,
         min_baselines_per_antenna: 2,
         smodel: [2.5, 0.1, 0.0, -0.2],

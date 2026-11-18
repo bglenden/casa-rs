@@ -76,6 +76,7 @@ fn observe(
         combine: request.combine,
         channelized: false,
         preaverage_max_span: None,
+        robust_seed: false,
         correlation_dependent_flags: false,
     };
     for sample in samples {
@@ -173,7 +174,7 @@ fn finish(
     if group.attempted {
         solved.attempted_spw_ids.insert(group.spw_id);
     }
-    group.finalize_for_solve(request.solve_mode);
+    group.finalize_for_solve(request.solve_mode, request.robustness.enabled());
     solved.rows.extend(
         solve_closed_group(group, available, request, solved.refant_id)
             .into_iter()
