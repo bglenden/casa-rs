@@ -56,12 +56,12 @@ def gapped_data(source, target):
 
 
 def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,),
-            solint='inf', interval_count=None, parang=False, minsnr=0.):
-    products, corrected, returns = [], [], []
+            solint='inf', interval_count=None, parang=False, minsnr=0., spw='', bins=None):
+    products, corrected, returns, windows = [], [], [], []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
         copy_ms(source, ms)
-        result = engine.bandpass(str(ms), str(output), field='0', refant='A0',
+        result = engine.bandpass(str(ms), str(output), field='0', spw=spw, refant='A0',
                                  smodel=list(s_model), minsnr=minsnr, solnorm=normalize,
                                  fillgaps=fillgaps, solint=solint, parang=parang)
         if interval_count is not None:
@@ -69,7 +69,9 @@ def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s
         np.testing.assert_array_equal(result.pop('solve_tables'), [str(output)])
         returns.append(result)
         products.append(contents(output))
-        engine.applycal(str(ms), field='0', gaintable=[str(output)], flagbackup=False,
+        if bins is not None:
+            windows.append(contents(output/'SPECTRAL_WINDOW'))
+        engine.applycal(str(ms), field='0', gaintable=[str(output)], flagbackup=False, spw=spw,
                         parang=parang)
         corrected.append(contents(ms))
     np.testing.assert_equal(returns[1], returns[0])
@@ -92,7 +94,89 @@ def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s
         np.testing.assert_array_equal(actual_ms[column], expected_ms[column], err_msg=column)
     for column in ('CORRECTED_DATA', 'WEIGHT', 'SIGMA'):
         errors[column] = relative_rms(actual_ms[column], expected_ms[column])
+    if bins is not None:
+        compare_bins(windows, contents(source/'SPECTRAL_WINDOW'), bins)
+        assert actual['CPARAM'].shape[1] == len(bins)
     return errors
+
+
+def compare_bins(windows, original, bins):
+    for key in ('NUM_CHAN', 'FLAG_ROW', 'CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW',
+                'RESOLUTION', 'REF_FREQUENCY', 'TOTAL_BANDWIDTH'):
+        np.testing.assert_allclose(windows[1][key], windows[0][key], atol=.001, rtol=0.,
+                                   err_msg=key)
+    centers = [np.mean(original['CHAN_FREQ'][channels, 0]) for channels in bins]
+    widths = [sum(abs(original['CHAN_WIDTH'][channels, 0])) for channels in bins]
+    np.testing.assert_allclose(windows[0]['CHAN_FREQ'][:, 0], centers, atol=.001, rtol=0.)
+    np.testing.assert_array_equal(windows[0]['CHAN_WIDTH'][:, 0], widths)
+
+
+def frequency_cases(root, source, native):
+    descending = root/'descending.ms'
+    copy_ms(source, descending)
+    tool = table()
+    tool.open(str(descending/'SPECTRAL_WINDOW'), nomodify=False)
+    try:
+        count = tool.getcell('NUM_CHAN', 0)
+        first_freq = tool.getcell('CHAN_FREQ', 0)[0]
+        frequencies = first_freq-np.cumsum(np.arange(count)*1.e5)
+        widths = -np.arange(1, count+1)*1.e6
+        tool.putcell('CHAN_FREQ', 0, frequencies)
+        tool.putcell('CHAN_WIDTH', 0, widths)
+        tool.putcell('EFFECTIVE_BW', 0, abs(widths))
+        tool.putcell('RESOLUTION', 0, abs(widths))
+    finally:
+        tool.close()
+    cases = [
+        ('bins-channels', source, 'inf,2ch', '0', [[i, i+1] for i in range(0, 12, 2)], 1),
+        ('bins-bandwidth', source, '25s,3MHz', '0', [list(range(i, i+3)) for i in range(0, 12, 3)], 3),
+        ('bins-descending', descending, 'inf,5ch', '0',
+         [list(range(5)), list(range(5, 10)), [10, 11]], 1),
+        ('bins-disjoint', descending, 'int,2.7ch', '0:1~3;7~10',
+         [[1, 2], [3, 7], [8, 9], [10]], 6),
+    ]
+    results = {}
+    for label, dataset, interval, spw, bins, count in cases:
+        folder = root/label
+        folder.mkdir()
+        results[label] = compare(folder, dataset, native, False, solint=interval,
+                                 interval_count=count, spw=spw, bins=bins)
+    weighted = root/'binned-weights.ms'
+    gapped_data(source, weighted)
+    casa.clearcal(str(weighted), addmodel=True)
+    tool.open(str(weighted), nomodify=False)
+    try:
+        shape = tool.getcol('DATA').shape
+        for column in ('WEIGHT_SPECTRUM', 'SIGMA_SPECTRUM'):
+            if column in tool.colnames():
+                tool.removecols(column)
+            description = tool.getcoldesc('DATA')
+            description.update(valueType='float', dataManagerType='StandardStMan',
+                               dataManagerGroup='StandardStMan', option=0)
+            description.pop('shape', None)
+            tool.addcols({column: description})
+        sigmas = np.broadcast_to(.5 + np.arange(shape[1])[None, :, None]/10
+                                + (np.arange(shape[2]) % 7)[None, None, :]/15, shape)
+        tool.putcol('SIGMA_SPECTRUM', sigmas.astype(np.float32))
+        tool.putcol('WEIGHT_SPECTRUM', np.ones(shape, dtype=np.float32))
+        model = tool.getcol('MODEL_DATA')
+        model[:, 4, ::2] = 0.
+        tool.putcol('MODEL_DATA', model)
+        data = tool.getcol('DATA')
+        data[:, 10, ::3] = 0.
+        tool.putcol('DATA', data)
+    finally:
+        tool.close()
+    folder = root/'bins-weights-and-model'
+    folder.mkdir()
+    results[folder.name] = compare(folder, weighted, native, False, remaining_flags=[3], s_model=(),
+                                   solint='inf,2ch', spw='0', bins=cases[0][4])
+    folder = root/'bins-fractional'
+    folder.mkdir()
+    results[folder.name] = compare(folder, weighted, native, False, remaining_flags=[0, 3, 6, 7, 11],
+                                   s_model=(), solint='inf,1.5ch', spw='0',
+                                   bins=[[channel] for channel in range(12)])
+    return results
 
 
 def model_cases(root, source, native):
@@ -183,6 +267,7 @@ def main():
         folder.mkdir()
         results[folder.name] = compare(folder, source, native, False, solint=interval,
                                        interval_count=count)
+    results.update(frequency_cases(root, source, native))
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, report in results.items():
         assert max(report.values()) < 1e-3, (name, report)

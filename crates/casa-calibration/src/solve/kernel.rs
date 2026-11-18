@@ -167,6 +167,12 @@ pub(crate) struct SolvedGraphs {
     pub(crate) receptors: Vec<SolvedReceptor>,
 }
 
+pub(crate) enum SolveStart<'a> {
+    Guess,
+    PreviousChannel(Option<&'a SolvedGraphs>),
+    LegacyChannel(&'a SolvedGraphs),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SolveGraphOptions<'a> {
     pub(crate) refant_id: i32,
@@ -228,7 +234,7 @@ pub(crate) fn solve_group(
             defer_reference: true,
             ..options
         },
-        None,
+        SolveStart::Guess,
     )?;
 
     let mut antenna_ids = available_antennas.clone();
@@ -297,14 +303,14 @@ pub(crate) fn solve_group(
 /// after [`MAX_ITERATIONS`]. CASA also fails a solve whose chi-square is
 /// exactly zero; here an exact fit is a solution (`docs/CASA (C++) bugs.md`).
 ///
-/// `start`, when given, seeds the antennas it solved in place of the first
-/// guess, as CASA's B solve starts each channel from the one solved before.
+/// CASA's B solve starts each channel from its predecessor's parameters.
+/// Constraint failures leave unity for the affected antennas.
 pub(crate) fn solve_graphs(
     graphs: &[SolveGraph],
     gain_type: GainType,
     solve_mode: GainSolveMode,
     options: SolveGraphOptions<'_>,
-    start: Option<&SolvedGraphs>,
+    start: SolveStart<'_>,
 ) -> Option<SolvedGraphs> {
     let constrained = baseline_constrained_antennas(graphs, options.min_baselines_per_antenna);
     let refant_id = if constrained.contains(&options.refant_id) {
@@ -333,7 +339,26 @@ pub(crate) fn solve_graphs(
     if solved_antennas.iter().all(BTreeSet::is_empty) {
         return None;
     }
-    let mut first = if gain_type == GainType::T
+    let mut first = if let SolveStart::PreviousChannel(previous) = start {
+        solved_antennas
+            .iter()
+            .enumerate()
+            .map(|(index, antennas)| {
+                let fit = previous.and_then(|previous| previous.receptors.get(index));
+                antennas
+                    .iter()
+                    .map(|&antenna| {
+                        let gain = fit
+                            .filter(|fit| fit.solved.contains(&antenna))
+                            .map_or(Complex64::new(1.0, 0.0), |fit| {
+                                complex32_to_64(fit.gains[&antenna])
+                            });
+                        (antenna, gain)
+                    })
+                    .collect()
+            })
+            .collect()
+    } else if gain_type == GainType::T
         && let Some(seed) = options.group_seed
         && let Some(guess) =
             seed.scalar_initial_gains(&solved_antennas[0], options.refant_id, solve_mode)
@@ -365,8 +390,8 @@ pub(crate) fn solve_graphs(
     } else {
         first_guess(&active, &solved_antennas, gain_type, refant_id)
     };
-    if let Some(start) = start {
-        for (guess, receptor) in first.iter_mut().zip(&start.receptors) {
+    if let SolveStart::LegacyChannel(previous) = start {
+        for (guess, receptor) in first.iter_mut().zip(&previous.receptors) {
             for (antenna_id, value) in guess.iter_mut() {
                 if receptor.solved.contains(antenna_id) {
                     *value = complex32_to_64(receptor.gains[antenna_id]);
@@ -1108,7 +1133,7 @@ mod tests {
             GainType::T,
             GainSolveMode::Phase,
             options(0),
-            None,
+            SolveStart::Guess,
         )
         .expect("solve phase graph");
         let receptor = &solved.receptors[0];
@@ -1136,7 +1161,7 @@ mod tests {
             GainType::G,
             GainSolveMode::AmplitudePhase,
             options(0),
-            None,
+            SolveStart::Guess,
         )
         .expect("solve amplitude-phase graph");
         solved.receptors[0]
@@ -1209,7 +1234,7 @@ mod tests {
                 GainType::T,
                 GainSolveMode::Phase,
                 options(2),
-                None
+                SolveStart::Guess
             )
             .is_none()
         );
@@ -1219,7 +1244,7 @@ mod tests {
                 GainType::T,
                 GainSolveMode::Phase,
                 options(1),
-                None
+                SolveStart::Guess
             )
             .is_some()
         );
@@ -1243,7 +1268,7 @@ mod tests {
             GainType::T,
             GainSolveMode::Phase,
             options(2),
-            None,
+            SolveStart::Guess,
         )
         .expect("antennas 1-3 solve");
         assert_eq!(solved.refant_id, 1);

@@ -1,14 +1,61 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selected B-table channelization, including CASA's persisted width defects.
-use super::{BandpassSolutionRow, BandpassSolveError, BandpassSolveRequest};
+use super::{
+    BandpassFrequencyInterval, BandpassSolutionRow, BandpassSolveError, BandpassSolveRequest,
+};
+use crate::solve::grouping::SelectedSolveRow;
+use casa_ms::ms::MeasurementSet;
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, ScalarValue, Value};
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
+
+pub(super) fn bin_widths(
+    ms: &MeasurementSet,
+    rows: &[SelectedSolveRow],
+    interval: Option<BandpassFrequencyInterval>,
+) -> Result<BTreeMap<i32, usize>, BandpassSolveError> {
+    match interval {
+        Some(BandpassFrequencyInterval::Channels(count)) if count > 1.0 => Ok(rows
+            .iter()
+            .map(|row| (row.data_spw_id, count as usize))
+            .collect()),
+        Some(BandpassFrequencyInterval::Hertz(hertz)) => bandwidth_bin_widths(ms, hertz),
+        _ => Ok(BTreeMap::new()),
+    }
+}
+
+fn bandwidth_bin_widths(
+    ms: &MeasurementSet,
+    hertz: f64,
+) -> Result<BTreeMap<i32, usize>, BandpassSolveError> {
+    let fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
+    let window = ms
+        .spectral_window()
+        .map_err(|error| fail(error.to_string()))?;
+    let mut widths = BTreeMap::new();
+    for spw in 0..window.row_count() {
+        let channels = window
+            .chan_width(spw)
+            .map_err(|error| fail(error.to_string()))?;
+        let width = channels
+            .first()
+            .filter(|width| width.is_finite() && **width != 0.0)
+            .ok_or_else(|| fail(format!("SPW {spw} has no valid first channel width")))?;
+        widths.insert(spw as i32, (hertz / width.abs()).floor().max(1.0) as usize);
+    }
+    // Once the layer is installed, even windows with a width of one use
+    // the frequency averager's scalar weights for the time centroid.
+    if widths.values().all(|&width| width == 1) {
+        widths.clear();
+    }
+    Ok(widths)
+}
 
 pub(super) fn write(
     path: &Path,
     request: &BandpassSolveRequest,
     rows: &[BandpassSolutionRow],
+    channel_bin_widths: &BTreeMap<i32, usize>,
 ) -> Result<(), BandpassSolveError> {
     let fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
     let mut table = Table::open(TableOptions::new(path)).map_err(|e| fail(e.to_string()))?;
@@ -46,6 +93,16 @@ pub(super) fn write(
                     .ok_or_else(|| fail("SPW channel width shape mismatch".to_string()))?
                     .abs(),
             );
+        }
+        if let Some(&width) = channel_bin_widths.get(&(row as i32)) {
+            selected_frequencies = selected_frequencies
+                .chunks(width)
+                .map(|bin| bin.iter().sum::<f64>() / bin.len() as f64)
+                .collect();
+            selected_widths = selected_widths
+                .chunks(width)
+                .map(|bin| bin.iter().sum())
+                .collect();
         }
         let count = selected_frequencies.len();
         let total: f64 = selected_frequencies.iter().sum();

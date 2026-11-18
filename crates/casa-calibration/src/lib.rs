@@ -53,8 +53,8 @@ mod writer;
 pub use output::CalibrationOutputMode;
 
 pub use bandpass::{
-    BandpassSolveCombine, BandpassSolveCuts, BandpassSolveError, BandpassSolveReport,
-    BandpassSolveRequest, BandpassType,
+    BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveError,
+    BandpassSolveReport, BandpassSolveRequest, BandpassType,
 };
 pub use callib::{
     CallibError, CallibraryContextMap, CallibraryOptions, load_apply_specs_from_callib,
