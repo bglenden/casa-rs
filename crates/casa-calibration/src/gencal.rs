@@ -70,6 +70,10 @@ impl GencalType {
             _ => (COL_FPARAM, PrimitiveType::Float32, "Float"),
         }
     }
+
+    fn is_specified(self) -> bool {
+        matches!(self, Self::Amp | Self::Ph | Self::Sbd | Self::Mbd)
+    }
 }
 
 impl std::str::FromStr for GencalType {
@@ -218,31 +222,31 @@ pub(crate) fn gencal_with_output_mode(
             source: Box::new(source),
         }
     })?;
+    let updating = mode == crate::CalibrationOutputMode::Update
+        && request.output_table.exists()
+        && request.caltype != GencalType::Gceff;
     let mut rows = match request.caltype {
         GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd => {
-            specified_rows(&ms, request, polarization)?
+            specified_rows(&ms, request, polarization, updating)?
         }
         GencalType::Antpos => antpos_rows(&ms, request)?,
         GencalType::Gceff => gaincurve_rows(&ms, request)?,
         GencalType::Opac => opacity_rows(&ms, request)?,
     };
-    if mode == crate::CalibrationOutputMode::Update
-        && request.output_table.exists()
-        && request.caltype != GencalType::Gceff
-    {
-        crate::output::validate_destination(&request.output_table, "Calibration")?;
-        accumulate_parameters(request, &mut rows)?;
+    if updating && !request.caltype.is_specified() {
+        apply_existing_parameters(request, &mut rows)?;
     }
     write_prior_caltable(&ms, request, &rows, output, mode)
 }
 
-/// SolvableVisCal::setSpecify loads existing parameters; specify adds real
-/// corrections to the selected slice. Gain-curve generation supplies absolute
-/// coefficients instead of additive user corrections.
-fn accumulate_parameters(
+/// Load the existing `setSpecify` parameters and metadata. The ordered gain
+/// and delay selectors apply their corrections directly to the loaded cells.
+/// Other prior writers already contain one additive correction per cell.
+fn apply_existing_parameters(
     request: &GencalRequest,
     rows: &mut [PriorCalRow],
 ) -> Result<(), GencalError> {
+    crate::output::validate_destination(&request.output_table, "Calibration")?;
     let old = crate::output_merge::open(&request.output_table)?;
     if old.keywords().get("VisCal")
         != Some(&Value::Scalar(ScalarValue::String(
@@ -289,23 +293,24 @@ fn accumulate_parameters(
         // setSpecify's existing-table branch leaves currObs at its default
         // -1, then keepNCT writes that for the regenerated rows.
         row.observation_id = -1;
-        if let Some(metadata) = prior.get(&(row.spw_id, row.antenna_id)) {
-            row.preserved = Some(metadata.clone());
+        if let Some(metadata) = prior.remove(&(row.spw_id, row.antenna_id)) {
             match (&mut row.parameters, metadata.get(column)) {
                 (ArrayValue::Float32(delta), Some(Value::Array(ArrayValue::Float32(previous))))
                     if delta.shape() == previous.shape() =>
                 {
-                    for (value, old) in delta.iter_mut().zip(previous) {
-                        *value += old;
+                    if request.caltype.is_specified() {
+                        delta.assign(previous);
+                    } else {
+                        for (value, old) in delta.iter_mut().zip(previous) {
+                            *value += old;
+                        }
                     }
                 }
                 (
                     ArrayValue::Complex32(factor),
                     Some(Value::Array(ArrayValue::Complex32(previous))),
                 ) if factor.shape() == previous.shape() => {
-                    for (value, old) in factor.iter_mut().zip(previous) {
-                        *value = old * *value;
-                    }
+                    factor.assign(previous);
                 }
                 _ => {
                     return Err(GencalError::InvalidRequest(format!(
@@ -313,7 +318,13 @@ fn accumulate_parameters(
                     )));
                 }
             }
+            row.preserved = Some(metadata);
         }
+    }
+    if let Some((&(window, antenna), _)) = prior.first_key_value() {
+        return Err(GencalError::InvalidRequest(format!(
+            "Error in Calibrater::specifycal. Existing table has an entry for window {window}, antenna {antenna}, outside the input grid."
+        )));
     }
     Ok(())
 }
@@ -322,6 +333,7 @@ fn specified_rows(
     ms: &MeasurementSet,
     request: &GencalRequest,
     polarization: &str,
+    updating: bool,
 ) -> Result<Vec<PriorCalRow>, GencalError> {
     let invalid = |message: String| {
         GencalError::InvalidRequest(format!("Error in Calibrater::specifycal. {message}"))
@@ -381,7 +393,25 @@ fn specified_rows(
         )));
     }
     let complex = matches!(request.caltype, GencalType::Amp | GencalType::Ph);
-    let identity = Complex32::new(if complex { 1.0 } else { 0.0 }, 0.0);
+    let identity = if complex {
+        complex_column([Complex32::new(1.0, 0.0); 2])
+    } else {
+        f32_column(&[0.0; 2])
+    };
+    let mut rows = (0..antenna_count * window_count)
+        .map(|row| PriorCalRow {
+            field_id: -1,
+            spw_id: (row / antenna_count) as i32,
+            antenna_id: (row % antenna_count) as i32,
+            observation_id: 0,
+            parameters: identity.clone(),
+            snr_value: 1.0,
+            preserved: None,
+        })
+        .collect::<Vec<_>>();
+    if updating {
+        apply_existing_parameters(request, &mut rows)?;
+    }
     let factors = request
         .parameter
         .iter()
@@ -393,7 +423,6 @@ fn specified_rows(
             _ => Complex32::new(*value as f32, 0.0),
         })
         .collect::<Vec<_>>();
-    let mut parameters = vec![[identity; 2]; antenna_count * window_count];
     for (window_order, window) in windows.into_iter().enumerate() {
         let window_offset = if repeat_windows {
             0
@@ -405,13 +434,12 @@ fn specified_rows(
                 let index = window_offset + antenna_order * receptor_groups.len() + receptor_order;
                 let value = factors[index % given];
                 for antenna in antennas {
+                    let parameters = &mut rows[window * antenna_count + antenna].parameters;
                     for receptor in *receptors {
-                        let parameter =
-                            &mut parameters[window * antenna_count + antenna][*receptor];
-                        if complex {
-                            *parameter *= value;
-                        } else {
-                            parameter.re += value.re;
+                        match parameters {
+                            ArrayValue::Complex32(gains) => gains[[*receptor, 0]] *= value,
+                            ArrayValue::Float32(delays) => delays[[*receptor, 0]] += value.re,
+                            _ => unreachable!("specified prior columns contain gains or delays"),
                         }
                     }
                 }
@@ -419,26 +447,7 @@ fn specified_rows(
         }
     }
 
-    Ok(parameters
-        .into_iter()
-        .enumerate()
-        .map(|(row, values)| {
-            let parameters = if complex {
-                complex_column(values)
-            } else {
-                f32_column(&values.map(|value| value.re))
-            };
-            PriorCalRow {
-                field_id: -1,
-                spw_id: (row / antenna_count) as i32,
-                antenna_id: (row % antenna_count) as i32,
-                observation_id: 0,
-                parameters,
-                snr_value: 1.0,
-                preserved: None,
-            }
-        })
-        .collect())
+    Ok(rows)
 }
 
 fn complex_column(values: [Complex32; 2]) -> ArrayValue {
@@ -928,6 +937,12 @@ fn collapse_spectral_axis(path: &Path, solutions: &[PriorCalRow]) -> Result<(), 
                 } else {
                     1.
                 };
+            if column == "CHAN_WIDTH" {
+                table
+                    .cell_accessor_mut(row, "TOTAL_BANDWIDTH")
+                    .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Float64(value.abs()))))
+                    .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
+            }
             table
                 .cell_accessor_mut(row, column)
                 .and_then(|mut cell| {

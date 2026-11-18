@@ -3,6 +3,8 @@
 """Compare specified gain, phase and delay tables with CASA 6.7.6.14."""
 
 import argparse
+from array import array
+from collections import deque
 import json
 import os
 from pathlib import Path
@@ -27,8 +29,11 @@ def with_second_window(vis):
                     tool.putcell(column, 1, tool.getcell(column, 0))
             if subtable == 'SPECTRAL_WINDOW':
                 tool.putcell('NAME', 1, 'SPW1')
-                for column in ('REF_FREQUENCY', 'CHAN_FREQ'):
-                    tool.putcell(column, 1, tool.getcell(column, 0) + 100e6)
+                frequencies = tool.getcell('CHAN_FREQ', 0) + 100e6
+                frequencies[4:] += 2e6
+                tool.putcell('CHAN_FREQ', 1, frequencies)
+                tool.putcell('REF_FREQUENCY', 1, tool.getcell('REF_FREQUENCY', 0) + 100e6)
+                tool.putcell('TOTAL_BANDWIDTH', 1, tool.getcell('TOTAL_BANDWIDTH', 0) + 2e6)
             else:
                 tool.putcell('SPECTRAL_WINDOW_ID', 1, 1)
         finally:
@@ -61,7 +66,8 @@ def product(path):
     finally:
         tool.close()
     windows = columns(path / 'SPECTRAL_WINDOW', ('NUM_CHAN', 'REF_FREQUENCY', 'CHAN_FREQ',
-                                                'CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION', 'FLAG_ROW'))
+                                                'CHAN_WIDTH', 'TOTAL_BANDWIDTH', 'EFFECTIVE_BW',
+                                                'RESOLUTION', 'FLAG_ROW'))
     return keywords, values, windows
 
 
@@ -80,7 +86,8 @@ def compare_tables(native, reference):
     for name, expected in ref_windows.items():
         np.testing.assert_array_equal(nat_windows[name], expected, err_msg=name)
     name = 'CPARAM' if 'CPARAM' in ref_values else 'FPARAM'
-    return relative_rms(nat_values[name], ref_values[name])
+    metric_type = np.complex128 if name == 'CPARAM' else np.float64
+    return relative_rms(nat_values[name].astype(metric_type), ref_values[name].astype(metric_type))
 
 
 def generate(module, vis, table_path, stages):
@@ -106,6 +113,38 @@ def apply_both(root, source, casa_table, native_table, native):
             errors.append(relative_rms(output[name], expected[name]))
             assert errors[-1] < 3e-5, (name, errors[-1])
     return max(errors)
+
+
+def reject_smaller_grid(root, source, native):
+    expanded = root / 'expanded' / source.name
+    expanded.parent.mkdir()
+    copy_ms(source, expanded)
+    tool = table()
+    assert tool.open(str(expanded / 'ANTENNA'), nomodify=False)
+    try:
+        extra = tool.nrows()
+        tool.addrows(1)
+        for column in tool.colnames():
+            if tool.iscelldefined(column, 0):
+                tool.putcell(column, extra, tool.getcell(column, 0))
+        tool.putcell('NAME', extra, 'extra-antenna')
+    finally:
+        tool.close()
+
+    reference, candidate = root / 'larger-casa.cal', root / 'larger-native.cal'
+    for module, path in ((casa, reference), (native, candidate)):
+        generate(module, expanded, path, [('amp', {'parameter': 2.0})])
+        before = columns(path, ('ANTENNA1', 'SPECTRAL_WINDOW_ID', 'CPARAM'))
+        assert extra in before['ANTENNA1']
+        try:
+            module.gencal(str(source), str(path), 'amp', parameter=3.0)
+        except RuntimeError as error:
+            assert 'Calibrater::specifycal' in str(error)
+        else:
+            raise AssertionError(f'{module.__name__} updated the incompatible table')
+        for name, values in columns(path, before).items():
+            np.testing.assert_array_equal(values, before[name])
+    return {'refused': True, 'table_nrms': compare_tables(candidate, reference)}
 
 
 def main():
@@ -146,10 +185,16 @@ def main():
                            ('ph', {'antenna': 'A1', 'pol': 'X', 'parameter': -30.0})],
         'amp-twice': [('amp', {'antenna': 'A1', 'pol': 'X', 'parameter': 2.0}),
                       ('amp', {'antenna': 'A1', 'pol': 'X', 'parameter': 3.0})],
+        'amp-repeated-update': [('amp', {'antenna': 'A1', 'pol': 'X', 'spw': '1', 'parameter': 1e-30}),
+                                ('amp', {'antenna': 'A1', 'pol': 'X', 'spw': '1:0~1;3~4',
+                                         'parameter': [1e30, 1e30]})],
         'single-band-delay': [('sbd', {'spw': '0', 'antenna': 'A1', 'pol': 'X', 'parameter': 6.0})],
         'multi-band-delay': [('mbd', {'spw': '1', 'antenna': 'A1', 'pol': 'Y', 'parameter': -4.0})],
         'delay-update': [('sbd', {'antenna': 'A1', 'pol': 'X', 'parameter': 6.0}),
                          ('mbd', {'antenna': 'A1', 'pol': 'X', 'parameter': -4.0})],
+        'delay-repeated-update': [('sbd', {'antenna': 'A1', 'pol': 'X', 'spw': '1', 'parameter': 1e8}),
+                                  ('sbd', {'antenna': 'A1', 'pol': 'X', 'spw': '1:0~1;3~4',
+                                           'parameter': [-1e8, 1.0]})],
     }
     application = {'amp-ordered', 'amp-then-phase', 'single-band-delay', 'multi-band-delay'}
     results = {}
@@ -168,6 +213,21 @@ def main():
                 generate(writer, source, transfer, stages[:1])
                 generate(reader, source, transfer, stages[1:])
                 compare_tables(transfer, reference)
+
+    for label, vector in {
+        'object-array': lambda: np.array([2., 3.], dtype=object),
+        'range': lambda: range(2, 4),
+        'generator': lambda: (value for value in (2., 3.)),
+        'array': lambda: array('d', [2., 3.]),
+        'deque': lambda: deque([2., 3.]),
+    }.items():
+        reference, candidate = root / f'{label}-casa.cal', root / f'{label}-native.cal'
+        for module, path in ((casa, reference), (native, candidate)):
+            generate(module, source, path,
+                     [('amp', {'antenna': 'A1,A3', 'pol': 'X', 'parameter': vector()})])
+        results[label] = {'table_nrms': compare_tables(candidate, reference)}
+
+    results['different-antenna-grid'] = reject_smaller_grid(root, source, native)
 
     for label, options in {
         'empty-parameter': {},

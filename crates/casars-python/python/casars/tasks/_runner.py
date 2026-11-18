@@ -211,18 +211,20 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         _validate_required_vis(values, arguments["vis"])
     if name == "applycal":
         return _call_applycal(values)
-    if name == "gencal":
+    if name == "gencal" and "parameter" in values:
         import numpy as np
 
-        parameter = arguments["parameter"]
-        if isinstance(parameter, np.ndarray):
-            if parameter.dtype == bool:
-                raise TypeError("{'parameter': ['must be of cFloatVec type']}")
-            if parameter.dtype == object and parameter.ndim == 1:
-                parameter = parameter.tolist()
-        if isinstance(parameter, (list, tuple)) and any(isinstance(item, bool) for item in parameter):
-            # cFloatVec accepts Python bools within a vector, unlike boolean scalars.
-            values["parameter"] = [float(item) if isinstance(item, bool) else item for item in parameter]
+        parameter = values["parameter"]
+        numbers = (float, int, np.float32, np.float64, np.int32, np.int64)
+        # CASA applies to_list before to_floatvec. Python bools are numeric
+        # inside the resulting list, whereas boolean scalars and np.bool_ are not.
+        try:
+            vector = [parameter] if isinstance(parameter, str) else list(parameter)
+        except TypeError:
+            vector = [parameter] if type(parameter) in numbers else None
+        if vector is None or not all(isinstance(item, numbers) for item in vector):
+            raise TypeError("{'parameter': ['must be of cFloatVec type']}")
+        values["parameter"] = [float(item) for item in vector]
     if name == "ft":
         for selector in ("uvrange", "observation"):
             if not isinstance(arguments[selector], str):
