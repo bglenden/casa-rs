@@ -550,10 +550,12 @@ fn solve_bandpass_group(
             let mut flags = Vec::with_capacity(2 * channel_count);
             let mut param_errors = Vec::with_capacity(2 * channel_count);
             let mut snrs = Vec::with_capacity(2 * channel_count);
-            for (channel, (solved, estimates)) in
-                solved_channels.iter().zip(&channel_errors).enumerate()
+            for ((solved, estimates), phases) in solved_channels
+                .iter()
+                .zip(&channel_errors)
+                .zip(&reference_phases)
             {
-                for receptor_index in 0..2 {
+                for (receptor_index, phase) in phases.iter().enumerate() {
                     let receptor = solved
                         .as_ref()
                         .and_then(|solved| solved.receptors.get(receptor_index));
@@ -563,9 +565,7 @@ fn solve_bandpass_group(
                         .map(|fit| fit.gains[&antenna_id]);
                     let above_min_snr =
                         cuts.is_none_or(|cuts| snr.is_some_and(|snr| snr > cuts.min_snr));
-                    gains.push(solution.map_or(Complex32::new(1.0, 0.0), |gain| {
-                        gain / reference_phases[channel][receptor_index]
-                    }));
+                    gains.push(solution.map_or(Complex32::new(1.0, 0.0), |gain| gain / *phase));
                     flags.push(solution.is_none() || !above_min_snr);
                     let estimates = estimates.and_then(|fit| fit.receptors.get(receptor_index));
                     param_errors.push(
