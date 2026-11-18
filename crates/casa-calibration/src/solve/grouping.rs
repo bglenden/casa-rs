@@ -946,7 +946,9 @@ impl SolveAccumulator {
                 values: accumulations,
                 attempted: &mut self.attempted,
                 channelized: options.channelized,
-                retain_zero_model: options.gain_type == GainType::T,
+                retain_zero_model: options.gain_type == GainType::T
+                    || (!options.channelized
+                        && (samples.model.is_some() || point.norm_sqr() == 0.0)),
             }
             .observe(
                 samples,

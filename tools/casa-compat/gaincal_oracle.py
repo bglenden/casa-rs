@@ -893,11 +893,84 @@ def virtual_component_geometry(root, vis, native):
     return results
 
 
+def virtual_fourier(root, source, native):
+    results = {}
+    wide = root/'wide-window.ms'
+    copy_ms(source, wide)
+    t = table()
+    t.open(str(wide/'SPECTRAL_WINDOW'), nomodify=False)
+    try:
+        freq = t.getcell('CHAN_FREQ', 0)
+        channel_width = 1e9
+        t.putcell('CHAN_FREQ', 0, freq[0] + channel_width*np.arange(freq.size))
+        for name in ['CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION']:
+            t.putcell(name, 0, np.full(freq.size, channel_width))
+        t.putcell('TOTAL_BANDWIDTH', 0, channel_width*freq.size)
+    finally:
+        t.close()
+    cases = [
+        ('continuum', source, 'GridFT', {}),
+        ('off-centre', source, 'GridFT', {'phasecenter': 'J2000 0h0m0.10s -30d00m00s'}),
+        ('cube', source, 'GridFT', {'specmode': 'cube', 'nchan': 3, 'start': 0, 'width': 1}),
+        ('taylor', wide, 'MultiTermFTNew', {'deconvolver': 'mtmfs', 'nterms': 2}),
+        ('taylor-outside', source, 'MultiTermFTNew', {'deconvolver': 'mtmfs', 'nterms': 2}),
+    ]
+    for name, original, machine, arguments in cases:
+        folder = root/name
+        folder.mkdir()
+        vis = folder/'input.ms'
+        copy_ms(original, vis)
+        casa.tclean(
+            vis=str(vis), imagename=str(folder/'image'), field='0', spw='0',
+            imsize=64, cell='1arcsec', niter=5, datacolumn='data',
+            savemodel='virtual', **arguments)
+        t = table()
+        t.open(str(vis/'SOURCE'))
+        try:
+            record = t.getcell('SOURCE_MODEL', t.getkeyword('model_0'))
+            assert record['ft_0']['container']['name'] == machine
+        finally:
+            t.close()
+        if name == 'taylor-outside':
+            verify_no_fourier_solution(folder, vis, native)
+            continue
+        for gain in ['G', 'T']:
+            case = folder/gain
+            case.mkdir()
+            results[f'{name}-{gain}'] = gain_and_apply(
+                case, vis, native, gain, 'inf', calmode='ap', field='0', spw='0',
+                smodel=[], minblperant=2)
+            explicit = solve(casa, case, 'unit', vis, gaintype=gain, calmode='ap',
+                             field='0', spw='0', minblperant=2)
+            sky = contents(case/f'ap-{gain}-inf-mean-norm0-casa.cal')
+            assert relative_rms(explicit['CPARAM'], sky['CPARAM']) > .01
+    return results
+
+
+def verify_no_fourier_solution(root, vis, native):
+    """The reopened Taylor machine matches raw frequencies to its image axis."""
+    statistics = []
+    for name, module in [('casa', casa), ('native', native)]:
+        destination = root/f'{name}.cal'
+        preload = os.environ.pop('LD_PRELOAD', None) if module is native else None
+        try:
+            report = module.gaincal(
+                vis=str(vis), caltable=str(destination), smodel=[], gaintype='G',
+                calmode='ap', field='0', spw='0', refant='A0', minsnr=0., minblperant=2)
+        finally:
+            if preload is not None:
+                os.environ['LD_PRELOAD'] = preload
+        assert not destination.exists()
+        statistics.append(report['solvestats'])
+    for key in ['expected', 'data_unflagged', 'above_minblperant', 'above_minsnr']:
+        np.testing.assert_array_equal(statistics[0][key], statistics[1][key], err_msg=key)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights', 'virtual-components'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights', 'virtual-components', 'virtual-fourier'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -965,6 +1038,8 @@ def main():
         results = spectral_weights(root, amplitude_data(root, source), native)
     elif args.case == 'virtual-components':
         results = virtual_components(root, amplitude_data(root, source), native)
+    elif args.case == 'virtual-fourier':
+        results = virtual_fourier(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

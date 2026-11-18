@@ -330,6 +330,9 @@ pub(crate) fn solve_graphs(
             }
         })
         .collect::<Vec<_>>();
+    if solved_antennas.iter().all(BTreeSet::is_empty) {
+        return None;
+    }
     let mut first = if let Some(seed) = options.scalar_seed
         && let Some(guess) =
             seed.scalar_initial_gains(&solved_antennas[0], options.refant_id, solve_mode)

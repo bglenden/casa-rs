@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's precedence for scratch and virtual model visibilities.
 
+mod fourier;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -11,6 +13,7 @@ use casa_ms::{
     MeasurementSet, MsError, SubTable, VirtualModelEntry, VirtualModelKind, virtual_model,
 };
 use casa_types::measures::direction::MDirection;
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{MEpoch, MeasFrame, UvwMachine};
 use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -18,11 +21,12 @@ use num_complex::Complex64;
 
 use super::grouping::SelectedSolveRow;
 use super::{GainSolveError, GainSolveModelSource, get_i32};
+use fourier::{FourierModel, FourierRow};
 
 pub(super) struct ModelInputs {
     read_column: bool,
     virtual_models: BTreeMap<i32, Vec<Entry>>,
-    frequencies: BTreeMap<i32, Vec<f64>>,
+    frequencies: BTreeMap<i32, (Vec<f64>, FrequencyRef)>,
     geometry: Option<MsCalEngine>,
     dynamic_fields: BTreeSet<i32>,
     pub(super) phase_times: BTreeMap<usize, f64>,
@@ -51,7 +55,7 @@ impl EntrySelection {
 
 enum Prediction {
     Components(ComponentList),
-    FourierGrid,
+    FourierGrid(Box<FourierModel>),
 }
 
 impl ModelInputs {
@@ -104,7 +108,10 @@ impl ModelInputs {
                 let frequencies = spectral_window
                     .chan_freq(window as usize)
                     .map_err(|source| read_error(ms, source))?;
-                inputs.frequencies.insert(window, frequencies);
+                let reference = spectral_window
+                    .frequency_reference(window as usize)
+                    .map_err(|source| read_error(ms, source))?;
+                inputs.frequencies.insert(window, (frequencies, reference));
             }
             let engine = MsCalEngine::new(ms)
                 .and_then(|engine| engine.with_field_ephemerides(ms))
@@ -176,7 +183,7 @@ impl ModelInputs {
             .with_position(engine.observatory_position().clone())
             .with_direction(field.clone());
         let uvw = uvw(ms, row.row_index)?;
-        let frequencies = &self.frequencies[&row.data_spw_id];
+        let (frequencies, frequency_ref) = &self.frequencies[&row.data_spw_id];
         let (basis, offset) = match correlations.first().copied() {
             Some(5..=8) => (Polarisation::Circular, 5),
             Some(9..=12) => (Polarisation::Linear, 9),
@@ -197,10 +204,25 @@ impl ModelInputs {
         let mut model =
             ArrayD::<Complex32>::zeros(IxDyn(&[correlations.len(), frequencies.len()]).f());
         for entry in matching {
-            let Prediction::Components(components) = &entry.prediction else {
-                return Err(model_error(
-                    "Fourier-grid virtual models are pending in #979",
-                ));
+            let components = match &entry.prediction {
+                Prediction::Components(components) => components,
+                Prediction::FourierGrid(grid) => {
+                    grid.predict(
+                        FourierRow {
+                            ms,
+                            row,
+                            correlations,
+                            frequencies,
+                            frequency_ref: *frequency_ref,
+                            engine,
+                            field: &field,
+                            frame: &frame,
+                            uvw,
+                        },
+                        &mut model,
+                    )?;
+                    continue;
+                }
             };
             for component in components.iter() {
                 let projection =
@@ -279,7 +301,9 @@ fn decode_entry(
         VirtualModelKind::ComponentList => {
             Prediction::Components(ComponentList::from_record(container).map_err(model_error)?)
         }
-        VirtualModelKind::FtMachine => Prediction::FourierGrid,
+        VirtualModelKind::FtMachine => {
+            Prediction::FourierGrid(Box::new(FourierModel::new(container.clone())))
+        }
     };
     Ok(Entry {
         selection,
