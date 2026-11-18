@@ -1,0 +1,2311 @@
+{
+  "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+  "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963",
+  "build": {
+    "profile": "release",
+    "command": "VIRTUAL_ENV=target-1252/venv CARGO_TARGET_DIR=target-1252/build CARGO_INCREMENTAL=0 maturin develop --release --manifest-path crates/casars-python/Cargo.toml",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)"
+  },
+  "validation": [
+    {
+      "command": [
+        "target-1252/venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "crates/casars-python/python/tests/test_binding_snapshots.py",
+        "crates/casars-python/python/tests/test_componentlist_ascii.py",
+        "crates/casars-python/python/tests/test_componentlist_concatenate.py",
+        "crates/casars-python/python/tests/test_componentlist_convertfluxpol.py",
+        "crates/casars-python/python/tests/test_componentlist_convertfluxunit.py",
+        "crates/casars-python/python/tests/test_componentlist_convertfrequnit.py",
+        "crates/casars-python/python/tests/test_componentlist_convertrefdir.py",
+        "crates/casars-python/python/tests/test_componentlist_convertshape.py",
+        "crates/casars-python/python/tests/test_componentlist_direction_models.py",
+        "crates/casars-python/python/tests/test_componentlist_edit.py",
+        "crates/casars-python/python/tests/test_componentlist_fluxerror.py",
+        "crates/casars-python/python/tests/test_componentlist_getshape.py",
+        "crates/casars-python/python/tests/test_componentlist_indices.py",
+        "crates/casars-python/python/tests/test_componentlist_iscomponentlist.py",
+        "crates/casars-python/python/tests/test_componentlist_isphysical.py",
+        "crates/casars-python/python/tests/test_componentlist_keyword_read.py",
+        "crates/casars-python/python/tests/test_componentlist_offsets.py",
+        "crates/casars-python/python/tests/test_componentlist_putkeyword.py",
+        "crates/casars-python/python/tests/test_componentlist_record_shape_units.py",
+        "crates/casars-python/python/tests/test_componentlist_records.py",
+        "crates/casars-python/python/tests/test_componentlist_removal.py",
+        "crates/casars-python/python/tests/test_componentlist_replace.py",
+        "crates/casars-python/python/tests/test_componentlist_sample.py",
+        "crates/casars-python/python/tests/test_componentlist_selection.py",
+        "crates/casars-python/python/tests/test_componentlist_setflux.py",
+        "crates/casars-python/python/tests/test_componentlist_setfreq.py",
+        "crates/casars-python/python/tests/test_componentlist_setfreqframe.py",
+        "crates/casars-python/python/tests/test_componentlist_setlabel.py",
+        "crates/casars-python/python/tests/test_componentlist_setrefdir.py",
+        "crates/casars-python/python/tests/test_componentlist_setrefdirframe.py",
+        "crates/casars-python/python/tests/test_componentlist_setshape.py",
+        "crates/casars-python/python/tests/test_componentlist_setspectrum.py",
+        "crates/casars-python/python/tests/test_componentlist_setstokesspectrum.py",
+        "crates/casars-python/python/tests/test_componentlist_simulate.py",
+        "crates/casars-python/python/tests/test_componentlist_sort_summary.py",
+        "crates/casars-python/python/tests/test_componentlist_upstream.py",
+        "crates/casars-python/python/tests/test_measures_addxvalue.py",
+        "crates/casars-python/python/tests/test_measures_getoffset.py",
+        "crates/casars-python/python/tests/test_measures_no_comet.py",
+        "crates/casars-python/python/tests/test_quanta_bare_complex_scalar.py",
+        "crates/casars-python/python/tests/test_quanta_define.py",
+        "crates/casars-python/python/tests/test_quanta_fits.py",
+        "crates/casars-python/python/tests/test_quanta_format_placeholders.py",
+        "crates/casars-python/python/tests/test_quanta_malformed_records.py",
+        "crates/casars-python/python/tests/test_quanta_normalize.py",
+        "crates/casars-python/python/tests/test_quanta_power.py",
+        "crates/casars-python/python/tests/test_quanta_record_complex_array.py",
+        "crates/casars-python/python/tests/test_quanta_record_complex_scalar.py",
+        "crates/casars-python/python/tests/test_quanta_record_empty_array.py",
+        "crates/casars-python/python/tests/test_quanta_record_errors.py",
+        "crates/casars-python/python/tests/test_quanta_record_scalar_types.py",
+        "crates/casars-python/python/tests/test_quanta_record_vector_types.py",
+        "crates/casars-python/python/tests/test_quanta_record_zero_dim.py",
+        "crates/casars-python/python/tests/test_quanta_relational.py",
+        "crates/casars-python/python/tests/test_quanta_spectral_conversion.py",
+        "crates/casars-python/python/tests/test_quanta_underscore_units.py",
+        "crates/casars-python/python/tests/test_quanta_unit_one.py",
+        "crates/casars-python/python/tests/test_tools_componentlist.py",
+        "crates/casars-python/python/tests/test_tools_measures.py",
+        "crates/casars-python/python/tests/test_tools_quanta.py",
+        "crates/casars-python/python/tests/test_tools_table.py",
+        "crates/casars-python/python/tests/test_tools_table_asdm_io.py",
+        "crates/casars-python/python/tests/test_tools_table_cache.py",
+        "crates/casars-python/python/tests/test_tools_table_copies.py",
+        "crates/casars-python/python/tests/test_tools_table_create.py",
+        "crates/casars-python/python/tests/test_tools_table_fits_io.py",
+        "crates/casars-python/python/tests/test_tools_table_row_iter.py",
+        "crates/casars-python/python/tests/test_tools_table_slices.py",
+        "crates/casars-python/python/tests/test_tools_table_taql.py",
+        "crates/casars-python/python/tests/test_tools_table_text_io.py"
+      ],
+      "result": "1069 passed, 5 optional live-CASA checks skipped in the isolated Python environment",
+      "scope": "70 affected Python test files; the upstream componentlist tests were also run in CASA itself",
+      "skips": "Five importorskip(casatools) cross-checks; fixture comparisons, native runtime tests and the separate CASA interpreter oracles passed."
+    },
+    {
+      "command": "cargo test -p casa-components",
+      "result": "52 passed; the CASA oracle and lock-holder helper are opt-in/indirect and checked separately"
+    },
+    {
+      "command": "cargo test -p casa-types --lib",
+      "result": "231 passed",
+      "reuse": "casa-types is unchanged from 0ef38a2aad6817be481faff037f78654ce61134e"
+    },
+    {
+      "command": "cargo test -p casars-python --lib",
+      "result": "60 passed"
+    },
+    {
+      "command": "cargo test -p casa-tables --lib storage::table_control",
+      "result": "7 passed, including C++ binary format and keyword-array tests"
+    },
+    {
+      "command": "cargo test -p casa-components --features cpp-interop-tests --test casacore_cpp_interop",
+      "result": "2 passed; all eleven native dynamical direction labels read by casacore C++"
+    },
+    {
+      "command": "cargo test -p casa-components --test casa_oracle -- --ignored --nocapture",
+      "result": "Four groups pass: nine CASA components, four native constructed components, empty list, and exponentless limb disk; CASA reads every field/cell and rewrites for a native read-back"
+    },
+    {
+      "command": "cargo clippy -p casa-tables -p casa-components -p casa-types -p casars-python --all-targets --no-deps -- -D warnings",
+      "result": "passed"
+    },
+    {
+      "command": "four upstream CASA 6.7.6.14 test_tool_componentlist.py tests",
+      "result": "all four pass in CASA and natively"
+    },
+    {
+      "command": "cargo fmt --all --check",
+      "result": "passed"
+    },
+    {
+      "command": "just arch-check",
+      "result": "passed, including CASA inventory and dependency checks"
+    },
+    {
+      "command": "just docs-check",
+      "result": "passed"
+    }
+  ],
+  "benchmark": {
+    "protocol": "Same CASA Python runtime for both backends; fresh tool per call; setup and cleanup excluded; one warm sample then seven measured samples; 1000 calls/sample (10 for I/O); medians; no concurrent builds/tests",
+    "case_count": 65,
+    "public_method_count": 61,
+    "faster_count": 65,
+    "minimum_speedup": 1.1206033219345384,
+    "casa": {
+      "revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963",
+      "source_dirty": false,
+      "python": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3",
+      "platform": "macOS-27.2.1-arm64-arm-64bit",
+      "backend": "casa",
+      "module": "casatools 6.7.6-14",
+      "casa_version": "6.7.6-14",
+      "command": [
+        "tools/simulation/componentlist_benchmark.py",
+        "--backend",
+        "casa",
+        "--out",
+        "target-1252/evidence/bench-casa-accepted.json",
+        "--workdir",
+        "target-1252/evidence",
+        "--repeat",
+        "1000",
+        "--samples",
+        "7"
+      ],
+      "cases": {
+        "getcomponent": {
+          "median_ns": 120339.082,
+          "samples_ns": [
+            119630.421,
+            122218.686,
+            121164.446,
+            120339.082,
+            118560.038,
+            120710.017,
+            120304.72
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfluxvalue": {
+          "median_ns": 873.764,
+          "samples_ns": [
+            869.51,
+            874.91,
+            876.452,
+            868.118,
+            874.219,
+            873.764,
+            831.57
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfluxerror": {
+          "median_ns": 800.67,
+          "samples_ns": [
+            790.417,
+            809.057,
+            810.322,
+            826.189,
+            800.67,
+            794.898,
+            789.204
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfluxunit": {
+          "median_ns": 534.44,
+          "samples_ns": [
+            515.231,
+            534.44,
+            547.95,
+            558.174,
+            540.706,
+            514.877,
+            513.495
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfluxpol": {
+          "median_ns": 895.436,
+          "samples_ns": [
+            892.574,
+            869.559,
+            883.913,
+            909.123,
+            905.227,
+            895.436,
+            896.287
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfreq": {
+          "median_ns": 886.83,
+          "samples_ns": [
+            870.961,
+            871.724,
+            878.989,
+            906.064,
+            916.412,
+            906.894,
+            886.83
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfreqframe": {
+          "median_ns": 899.307,
+          "samples_ns": [
+            874.887,
+            882.441,
+            908.874,
+            901.484,
+            905.242,
+            899.307,
+            889.866
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfrequnit": {
+          "median_ns": 906.107,
+          "samples_ns": [
+            885.074,
+            899.225,
+            908.857,
+            912.886,
+            910.298,
+            906.107,
+            893.57
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfreqvalue": {
+          "median_ns": 897.139,
+          "samples_ns": [
+            877.893,
+            874.002,
+            933.399,
+            902.878,
+            897.139,
+            905.778,
+            890.375
+          ],
+          "calls_per_sample": 1000
+        },
+        "getlabel": {
+          "median_ns": 541.895,
+          "samples_ns": [
+            541.895,
+            547.557,
+            533.075,
+            531.651,
+            553.651,
+            556.59,
+            524.608
+          ],
+          "calls_per_sample": 1000
+        },
+        "getrefdir": {
+          "median_ns": 16102.277,
+          "samples_ns": [
+            16102.277,
+            16092.11,
+            16516.882,
+            16419.904,
+            16545.999,
+            15912.563,
+            15955.396
+          ],
+          "calls_per_sample": 1000
+        },
+        "getrefdirra": {
+          "median_ns": 967.261,
+          "samples_ns": [
+            990.341,
+            953.584,
+            957.667,
+            965.832,
+            967.261,
+            976.062,
+            1020.251
+          ],
+          "calls_per_sample": 1000
+        },
+        "getrefdirdec": {
+          "median_ns": 969.263,
+          "samples_ns": [
+            955.067,
+            960.141,
+            953.073,
+            969.643,
+            974.298,
+            969.263,
+            971.727
+          ],
+          "calls_per_sample": 1000
+        },
+        "getrefdirframe": {
+          "median_ns": 752.375,
+          "samples_ns": [
+            752.375,
+            754.92,
+            751.748,
+            744.622,
+            755.18,
+            759.889,
+            750.217
+          ],
+          "calls_per_sample": 1000
+        },
+        "getshape": {
+          "median_ns": 49150.8,
+          "samples_ns": [
+            49150.8,
+            50622.039,
+            49921.189,
+            50736.589,
+            46817.123,
+            47035.637,
+            48213.832
+          ],
+          "calls_per_sample": 1000
+        },
+        "getspectrum": {
+          "median_ns": 18321.618,
+          "samples_ns": [
+            18303.473,
+            18321.618,
+            18403.249,
+            18367.017,
+            18284.92,
+            18323.376,
+            18212.082
+          ],
+          "calls_per_sample": 1000
+        },
+        "shapetype": {
+          "median_ns": 644.708,
+          "samples_ns": [
+            647.542,
+            648.574,
+            648.786,
+            644.708,
+            640.511,
+            640.544,
+            629.637
+          ],
+          "calls_per_sample": 1000
+        },
+        "spectrumtype": {
+          "median_ns": 598.055,
+          "samples_ns": [
+            615.306,
+            610.502,
+            614.943,
+            598.055,
+            587.466,
+            584.949,
+            591.891
+          ],
+          "calls_per_sample": 1000
+        },
+        "length": {
+          "median_ns": 373.788,
+          "samples_ns": [
+            377.194,
+            365.514,
+            373.788,
+            383.267,
+            383.758,
+            368.29,
+            361.956
+          ],
+          "calls_per_sample": 1000
+        },
+        "torecord": {
+          "median_ns": 261913.188,
+          "samples_ns": [
+            260456.015,
+            261913.188,
+            262187.888,
+            257685.422,
+            261724.552,
+            263682.341,
+            264050.548
+          ],
+          "calls_per_sample": 1000
+        },
+        "indices": {
+          "median_ns": 893.854,
+          "samples_ns": [
+            871.707,
+            907.702,
+            900.004,
+            882.34,
+            893.854,
+            890.504,
+            903.68
+          ],
+          "calls_per_sample": 1000
+        },
+        "iscomponentlist": {
+          "median_ns": 1142.741,
+          "samples_ns": [
+            1147.801,
+            1168.924,
+            1158.482,
+            1142.741,
+            1139.875,
+            1122.747,
+            1136.087
+          ],
+          "calls_per_sample": 1000
+        },
+        "isphysical": {
+          "median_ns": 2346.279,
+          "samples_ns": [
+            2355.448,
+            2345.745,
+            2346.279,
+            2304.384,
+            2344.91,
+            2371.579,
+            2358.742
+          ],
+          "calls_per_sample": 1000
+        },
+        "selected": {
+          "median_ns": 805.232,
+          "samples_ns": [
+            815.683,
+            810.49,
+            785.976,
+            778.508,
+            805.232,
+            808.171,
+            804.068
+          ],
+          "calls_per_sample": 1000
+        },
+        "select": {
+          "median_ns": 1201.927,
+          "samples_ns": [
+            1185.741,
+            1181.18,
+            1217.149,
+            1201.927,
+            1197.713,
+            1254.388,
+            1282.422
+          ],
+          "calls_per_sample": 1000
+        },
+        "deselect": {
+          "median_ns": 1133.301,
+          "samples_ns": [
+            1153.708,
+            1133.301,
+            1123.477,
+            1200.304,
+            1154.219,
+            1105.635,
+            1106.724
+          ],
+          "calls_per_sample": 1000
+        },
+        "add": {
+          "median_ns": 133337.186,
+          "samples_ns": [
+            133788.326,
+            132397.806,
+            133291.953,
+            132869.877,
+            133586.881,
+            134394.636,
+            133337.186
+          ],
+          "calls_per_sample": 1000
+        },
+        "addcomponent": {
+          "median_ns": 51454.628,
+          "samples_ns": [
+            51069.66,
+            51313.038,
+            52148.386,
+            51454.628,
+            53864.849,
+            51862.374,
+            51127.557
+          ],
+          "calls_per_sample": 1000
+        },
+        "fromrecord": {
+          "median_ns": 300345.486,
+          "samples_ns": [
+            299227.103,
+            300345.486,
+            299939.709,
+            300403.912,
+            301734.125,
+            300371.445,
+            299254.974
+          ],
+          "calls_per_sample": 1000
+        },
+        "concatenate(record)": {
+          "median_ns": 292079.586,
+          "samples_ns": [
+            292830.328,
+            292079.586,
+            291188.584,
+            291023.268,
+            292626.26,
+            292158.566,
+            289319.944
+          ],
+          "calls_per_sample": 1000
+        },
+        "concatenate(table)": {
+          "median_ns": 366045.8,
+          "samples_ns": [
+            369433.4,
+            366616.7,
+            365104.1,
+            364074.9,
+            368925.1,
+            365641.7,
+            366045.8
+          ],
+          "calls_per_sample": 10
+        },
+        "sort(Flux)": {
+          "median_ns": 826.646,
+          "samples_ns": [
+            839.749,
+            843.451,
+            793.43,
+            815.577,
+            835.922,
+            826.646,
+            809.713
+          ],
+          "calls_per_sample": 1000
+        },
+        "sort(Position)": {
+          "median_ns": 1296.796,
+          "samples_ns": [
+            1259.12,
+            1304.529,
+            1303.611,
+            1306.669,
+            1296.796,
+            1266.439,
+            1277.02
+          ],
+          "calls_per_sample": 1000
+        },
+        "sort(Polarization)": {
+          "median_ns": 991.886,
+          "samples_ns": [
+            951.284,
+            1013.156,
+            1011.169,
+            991.886,
+            1001.833,
+            951.571,
+            946.341
+          ],
+          "calls_per_sample": 1000
+        },
+        "summarize": {
+          "median_ns": 9551.239,
+          "samples_ns": [
+            9408.701,
+            9333.316,
+            10374.091,
+            9935.131,
+            9977.336,
+            9551.239,
+            9482.444
+          ],
+          "calls_per_sample": 1000
+        },
+        "setlabel": {
+          "median_ns": 691.658,
+          "samples_ns": [
+            697.21,
+            691.658,
+            680.926,
+            686.92,
+            699.618,
+            718.846,
+            672.529
+          ],
+          "calls_per_sample": 1000
+        },
+        "setflux": {
+          "median_ns": 4546.093,
+          "samples_ns": [
+            4538.034,
+            4552.58,
+            4546.093,
+            4559.329,
+            4451.427,
+            4428.501,
+            4672.63
+          ],
+          "calls_per_sample": 1000
+        },
+        "setfreq": {
+          "median_ns": 1293.005,
+          "samples_ns": [
+            1276.719,
+            1262.93,
+            1314.803,
+            1295.872,
+            1289.771,
+            1293.005,
+            1300.726
+          ],
+          "calls_per_sample": 1000
+        },
+        "setfreqframe": {
+          "median_ns": 1314.481,
+          "samples_ns": [
+            1286.519,
+            1288.157,
+            1341.997,
+            1316.92,
+            1320.743,
+            1305.617,
+            1314.481
+          ],
+          "calls_per_sample": 1000
+        },
+        "setrefdir": {
+          "median_ns": 19061.33,
+          "samples_ns": [
+            18831.867,
+            19300.684,
+            19297.869,
+            19294.673,
+            18976.189,
+            19001.541,
+            19061.33
+          ],
+          "calls_per_sample": 1000
+        },
+        "setrefdirframe": {
+          "median_ns": 1487.391,
+          "samples_ns": [
+            1497.481,
+            1487.391,
+            1479.746,
+            1467.09,
+            1469.513,
+            1558.927,
+            1535.985
+          ],
+          "calls_per_sample": 1000
+        },
+        "setshape": {
+          "median_ns": 42342.785,
+          "samples_ns": [
+            41936.161,
+            42382.545,
+            42090.192,
+            42342.785,
+            42390.146,
+            42465.657,
+            42279.244
+          ],
+          "calls_per_sample": 1000
+        },
+        "setspectrum": {
+          "median_ns": 2471.295,
+          "samples_ns": [
+            2469.959,
+            2448.582,
+            2476.078,
+            2464.413,
+            2471.295,
+            2527.915,
+            2530.591
+          ],
+          "calls_per_sample": 1000
+        },
+        "setstokesspectrum": {
+          "median_ns": 18386.118,
+          "samples_ns": [
+            18386.118,
+            17925.142,
+            18945.151,
+            17874.171,
+            18775.201,
+            18147.925,
+            19141.45
+          ],
+          "calls_per_sample": 1000
+        },
+        "convertfluxpol": {
+          "median_ns": 1449.135,
+          "samples_ns": [
+            1489.47,
+            1516.79,
+            1545.929,
+            1449.135,
+            1421.051,
+            1426.165,
+            1442.971
+          ],
+          "calls_per_sample": 1000
+        },
+        "convertfluxunit": {
+          "median_ns": 1435.773,
+          "samples_ns": [
+            1527.129,
+            1460.641,
+            1473.572,
+            1432.941,
+            1418.948,
+            1426.534,
+            1435.773
+          ],
+          "calls_per_sample": 1000
+        },
+        "convertfrequnit": {
+          "median_ns": 790.665,
+          "samples_ns": [
+            858.095,
+            851.125,
+            826.395,
+            786.417,
+            780.258,
+            788.779,
+            790.665
+          ],
+          "calls_per_sample": 1000
+        },
+        "convertrefdir": {
+          "median_ns": 5809.962,
+          "samples_ns": [
+            6233.372,
+            6174.791,
+            5848.132,
+            5744.655,
+            5809.962,
+            5747.688,
+            5783.941
+          ],
+          "calls_per_sample": 1000
+        },
+        "convertshape": {
+          "median_ns": 1011.16,
+          "samples_ns": [
+            1025.614,
+            1024.146,
+            1006.109,
+            982.163,
+            1011.16,
+            985.609,
+            1020.502
+          ],
+          "calls_per_sample": 1000
+        },
+        "simulate": {
+          "median_ns": 11118.798,
+          "samples_ns": [
+            11153.735,
+            11102.679,
+            10929.899,
+            11050.723,
+            11146.529,
+            11118.798,
+            11138.766
+          ],
+          "calls_per_sample": 1000
+        },
+        "remove": {
+          "median_ns": 3839.673,
+          "samples_ns": [
+            3792.641,
+            3874.286,
+            3839.673,
+            3987.406,
+            3788.985,
+            3797.167,
+            3964.231
+          ],
+          "calls_per_sample": 1000
+        },
+        "recover": {
+          "median_ns": 972.296,
+          "samples_ns": [
+            996.095,
+            933.09,
+            913.126,
+            975.682,
+            979.535,
+            972.296,
+            970.455
+          ],
+          "calls_per_sample": 1000
+        },
+        "purge": {
+          "median_ns": 692.669,
+          "samples_ns": [
+            695.164,
+            693.067,
+            692.669,
+            679.576,
+            683.855,
+            686.575,
+            692.928
+          ],
+          "calls_per_sample": 1000
+        },
+        "sample": {
+          "median_ns": 2401.25,
+          "samples_ns": [
+            2367.934,
+            2253.659,
+            2401.25,
+            2335.285,
+            2463.383,
+            2505.446,
+            2421.537
+          ],
+          "calls_per_sample": 1000
+        },
+        "edit": {
+          "median_ns": 874.087,
+          "samples_ns": [
+            902.791,
+            874.087,
+            898.757,
+            861.942,
+            836.082,
+            847.869,
+            894.745
+          ],
+          "calls_per_sample": 1000
+        },
+        "replace": {
+          "median_ns": 153166.918,
+          "samples_ns": [
+            153135.865,
+            153166.918,
+            153208.849,
+            153004.939,
+            152866.562,
+            153453.014,
+            153246.074
+          ],
+          "calls_per_sample": 1000
+        },
+        "asciitocomponentlist": {
+          "median_ns": 1883.787,
+          "samples_ns": [
+            1863.671,
+            1825.077,
+            1864.911,
+            1902.922,
+            1914.643,
+            1907.107,
+            1883.787
+          ],
+          "calls_per_sample": 1000
+        },
+        "getkeyword": {
+          "median_ns": 2012.3,
+          "samples_ns": [
+            2120.9,
+            2041.7,
+            2020.7,
+            2012.3,
+            1991.8,
+            1958.4,
+            1970.7
+          ],
+          "calls_per_sample": 10
+        },
+        "haskeyword": {
+          "median_ns": 612.6,
+          "samples_ns": [
+            616.6,
+            612.6,
+            604.1,
+            616.6,
+            629.3,
+            604.4,
+            604.1
+          ],
+          "calls_per_sample": 10
+        },
+        "putkeyword": {
+          "median_ns": 4408.2,
+          "samples_ns": [
+            4758.3,
+            5020.9,
+            4254.2,
+            4125.0,
+            4408.2,
+            4146.1,
+            4412.7
+          ],
+          "calls_per_sample": 10
+        },
+        "open": {
+          "median_ns": 612120.8,
+          "samples_ns": [
+            659241.7,
+            608729.1,
+            721579.0,
+            612120.8,
+            606837.6,
+            672333.4,
+            611891.8
+          ],
+          "calls_per_sample": 10
+        },
+        "rename": {
+          "median_ns": 688162.5,
+          "samples_ns": [
+            724687.5,
+            688162.5,
+            694462.4,
+            667820.8,
+            626104.0,
+            705128.9,
+            625266.5
+          ],
+          "calls_per_sample": 10
+        },
+        "close": {
+          "median_ns": 24439.324,
+          "samples_ns": [
+            24128.094,
+            24698.775,
+            24119.608,
+            24454.851,
+            24336.308,
+            24722.159,
+            24439.324
+          ],
+          "calls_per_sample": 1000
+        },
+        "done": {
+          "median_ns": 24079.698,
+          "samples_ns": [
+            23944.081,
+            24079.698,
+            24072.745,
+            24356.457,
+            24306.636,
+            23969.948,
+            24390.067
+          ],
+          "calls_per_sample": 1000
+        },
+        "construction": {
+          "median_ns": 37944.427,
+          "samples_ns": [
+            38065.213,
+            37992.394,
+            37927.701,
+            37944.427,
+            37964.619,
+            37749.625,
+            37684.951
+          ],
+          "calls_per_sample": 1000
+        }
+      }
+    },
+    "native": {
+      "revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963",
+      "source_dirty": false,
+      "python": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3",
+      "platform": "macOS-27.2.1-arm64-arm-64bit",
+      "backend": "casars",
+      "module": "/Users/brianglendenning/SoftwareProjects/casa-rs/crates/casars-python/python/casars/_core.cpython-312-darwin.so",
+      "casa_version": "6.7.6-14",
+      "command": [
+        "tools/simulation/componentlist_benchmark.py",
+        "--backend",
+        "casars",
+        "--out",
+        "target-1252/evidence/bench-native-accepted.json",
+        "--workdir",
+        "target-1252/evidence",
+        "--repeat",
+        "1000",
+        "--samples",
+        "7"
+      ],
+      "cases": {
+        "getcomponent": {
+          "median_ns": 10595.916,
+          "samples_ns": [
+            10576.902,
+            10595.916,
+            10595.596,
+            10629.575,
+            10630.547,
+            10638.112,
+            10482.043
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfluxvalue": {
+          "median_ns": 423.84,
+          "samples_ns": [
+            423.018,
+            446.899,
+            446.741,
+            435.207,
+            421.108,
+            423.84,
+            420.112
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfluxerror": {
+          "median_ns": 433.019,
+          "samples_ns": [
+            430.237,
+            442.346,
+            457.599,
+            427.601,
+            433.019,
+            428.477,
+            433.527
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfluxunit": {
+          "median_ns": 314.937,
+          "samples_ns": [
+            316.582,
+            320.274,
+            318.717,
+            314.937,
+            302.65,
+            304.499,
+            299.021
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfluxpol": {
+          "median_ns": 553.054,
+          "samples_ns": [
+            535.008,
+            549.861,
+            537.152,
+            560.702,
+            553.054,
+            573.765,
+            570.071
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfreq": {
+          "median_ns": 554.537,
+          "samples_ns": [
+            555.166,
+            554.537,
+            556.874,
+            551.206,
+            533.282,
+            554.772,
+            552.661
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfreqframe": {
+          "median_ns": 568.732,
+          "samples_ns": [
+            568.732,
+            809.747,
+            569.245,
+            570.101,
+            561.3,
+            560.16,
+            547.434
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfrequnit": {
+          "median_ns": 544.617,
+          "samples_ns": [
+            533.361,
+            541.943,
+            541.299,
+            548.289,
+            544.617,
+            554.131,
+            552.751
+          ],
+          "calls_per_sample": 1000
+        },
+        "getfreqvalue": {
+          "median_ns": 553.733,
+          "samples_ns": [
+            551.107,
+            562.697,
+            540.752,
+            553.733,
+            541.724,
+            567.473,
+            563.107
+          ],
+          "calls_per_sample": 1000
+        },
+        "getlabel": {
+          "median_ns": 302.361,
+          "samples_ns": [
+            304.825,
+            298.932,
+            299.517,
+            306.144,
+            302.361,
+            306.302,
+            300.703
+          ],
+          "calls_per_sample": 1000
+        },
+        "getrefdir": {
+          "median_ns": 3991.719,
+          "samples_ns": [
+            3969.8,
+            3992.367,
+            3991.719,
+            4011.669,
+            3997.956,
+            3971.935,
+            3959.699
+          ],
+          "calls_per_sample": 1000
+        },
+        "getrefdirra": {
+          "median_ns": 546.762,
+          "samples_ns": [
+            539.035,
+            544.434,
+            550.106,
+            541.49,
+            546.762,
+            559.381,
+            559.329
+          ],
+          "calls_per_sample": 1000
+        },
+        "getrefdirdec": {
+          "median_ns": 550.176,
+          "samples_ns": [
+            550.176,
+            545.217,
+            536.512,
+            546.398,
+            552.601,
+            565.929,
+            553.464
+          ],
+          "calls_per_sample": 1000
+        },
+        "getrefdirframe": {
+          "median_ns": 315.221,
+          "samples_ns": [
+            315.838,
+            315.221,
+            323.257,
+            316.612,
+            307.523,
+            304.959,
+            314.507
+          ],
+          "calls_per_sample": 1000
+        },
+        "getshape": {
+          "median_ns": 2409.227,
+          "samples_ns": [
+            2488.84,
+            2409.02,
+            2409.227,
+            2399.187,
+            2414.029,
+            2381.16,
+            2421.444
+          ],
+          "calls_per_sample": 1000
+        },
+        "getspectrum": {
+          "median_ns": 1585.109,
+          "samples_ns": [
+            1585.109,
+            1650.854,
+            1650.305,
+            1657.955,
+            1559.438,
+            1508.36,
+            1518.997
+          ],
+          "calls_per_sample": 1000
+        },
+        "shapetype": {
+          "median_ns": 305.082,
+          "samples_ns": [
+            320.953,
+            318.219,
+            305.082,
+            300.211,
+            302.139,
+            299.32,
+            306.129
+          ],
+          "calls_per_sample": 1000
+        },
+        "spectrumtype": {
+          "median_ns": 301.61,
+          "samples_ns": [
+            306.879,
+            288.123,
+            309.895,
+            301.61,
+            308.547,
+            290.248,
+            292.921
+          ],
+          "calls_per_sample": 1000
+        },
+        "length": {
+          "median_ns": 231.25,
+          "samples_ns": [
+            230.094,
+            231.091,
+            237.662,
+            239.476,
+            240.325,
+            231.25,
+            226.762
+          ],
+          "calls_per_sample": 1000
+        },
+        "torecord": {
+          "median_ns": 16591.657,
+          "samples_ns": [
+            16771.204,
+            16817.822,
+            16675.502,
+            16591.657,
+            16451.748,
+            16062.906,
+            16462.932
+          ],
+          "calls_per_sample": 1000
+        },
+        "indices": {
+          "median_ns": 673.24,
+          "samples_ns": [
+            651.867,
+            673.24,
+            709.533,
+            706.387,
+            687.097,
+            661.254,
+            664.859
+          ],
+          "calls_per_sample": 1000
+        },
+        "iscomponentlist": {
+          "median_ns": 517.575,
+          "samples_ns": [
+            524.148,
+            527.531,
+            517.575,
+            508.43,
+            509.484,
+            518.909,
+            516.572
+          ],
+          "calls_per_sample": 1000
+        },
+        "isphysical": {
+          "median_ns": 319.87,
+          "samples_ns": [
+            328.132,
+            327.205,
+            317.393,
+            309.478,
+            318.968,
+            320.052,
+            319.87
+          ],
+          "calls_per_sample": 1000
+        },
+        "selected": {
+          "median_ns": 352.342,
+          "samples_ns": [
+            340.286,
+            351.133,
+            353.964,
+            359.211,
+            352.342,
+            364.385,
+            350.255
+          ],
+          "calls_per_sample": 1000
+        },
+        "select": {
+          "median_ns": 924.803,
+          "samples_ns": [
+            924.803,
+            889.091,
+            909.025,
+            957.086,
+            958.967,
+            939.833,
+            890.969
+          ],
+          "calls_per_sample": 1000
+        },
+        "deselect": {
+          "median_ns": 693.404,
+          "samples_ns": [
+            681.37,
+            692.689,
+            700.156,
+            693.404,
+            686.664,
+            699.146,
+            720.59
+          ],
+          "calls_per_sample": 1000
+        },
+        "add": {
+          "median_ns": 28254.698,
+          "samples_ns": [
+            28850.846,
+            28150.44,
+            28521.492,
+            28254.698,
+            28241.567,
+            28119.011,
+            28373.932
+          ],
+          "calls_per_sample": 1000
+        },
+        "addcomponent": {
+          "median_ns": 2160.491,
+          "samples_ns": [
+            2186.184,
+            2201.978,
+            2175.838,
+            2158.59,
+            2160.491,
+            2148.77,
+            2147.758
+          ],
+          "calls_per_sample": 1000
+        },
+        "fromrecord": {
+          "median_ns": 50881.491,
+          "samples_ns": [
+            50070.789,
+            51313.263,
+            51627.818,
+            50881.491,
+            49700.973,
+            56114.363,
+            50029.497
+          ],
+          "calls_per_sample": 1000
+        },
+        "concatenate(record)": {
+          "median_ns": 50994.481,
+          "samples_ns": [
+            50136.302,
+            50562.335,
+            50346.417,
+            52098.023,
+            52250.918,
+            51618.924,
+            50994.481
+          ],
+          "calls_per_sample": 1000
+        },
+        "concatenate(table)": {
+          "median_ns": 233583.5,
+          "samples_ns": [
+            235383.3,
+            233375.0,
+            233779.0,
+            233583.5,
+            233558.2,
+            233283.3,
+            234512.6
+          ],
+          "calls_per_sample": 10
+        },
+        "sort(Flux)": {
+          "median_ns": 652.38,
+          "samples_ns": [
+            647.227,
+            656.567,
+            652.38,
+            655.317,
+            652.338,
+            653.983,
+            646.618
+          ],
+          "calls_per_sample": 1000
+        },
+        "sort(Position)": {
+          "median_ns": 621.516,
+          "samples_ns": [
+            617.494,
+            615.855,
+            621.516,
+            618.126,
+            626.751,
+            633.045,
+            648.674
+          ],
+          "calls_per_sample": 1000
+        },
+        "sort(Polarization)": {
+          "median_ns": 636.174,
+          "samples_ns": [
+            629.291,
+            630.009,
+            636.174,
+            636.298,
+            629.313,
+            636.959,
+            647.921
+          ],
+          "calls_per_sample": 1000
+        },
+        "summarize": {
+          "median_ns": 4295.018,
+          "samples_ns": [
+            4295.018,
+            4299.374,
+            4306.156,
+            4312.232,
+            4260.992,
+            4293.349,
+            4289.861
+          ],
+          "calls_per_sample": 1000
+        },
+        "setlabel": {
+          "median_ns": 306.933,
+          "samples_ns": [
+            304.763,
+            305.945,
+            306.933,
+            306.608,
+            307.956,
+            309.618,
+            322.06
+          ],
+          "calls_per_sample": 1000
+        },
+        "setflux": {
+          "median_ns": 2108.136,
+          "samples_ns": [
+            2071.222,
+            2046.702,
+            2043.036,
+            2124.259,
+            2108.136,
+            2137.191,
+            2130.44
+          ],
+          "calls_per_sample": 1000
+        },
+        "setfreq": {
+          "median_ns": 449.365,
+          "samples_ns": [
+            440.375,
+            441.028,
+            445.609,
+            451.47,
+            449.365,
+            460.028,
+            471.932
+          ],
+          "calls_per_sample": 1000
+        },
+        "setfreqframe": {
+          "median_ns": 363.897,
+          "samples_ns": [
+            365.938,
+            360.14,
+            362.241,
+            363.897,
+            356.602,
+            365.648,
+            372.368
+          ],
+          "calls_per_sample": 1000
+        },
+        "setrefdir": {
+          "median_ns": 1008.712,
+          "samples_ns": [
+            1034.305,
+            1042.615,
+            1031.145,
+            1008.712,
+            1008.234,
+            1001.179,
+            983.925
+          ],
+          "calls_per_sample": 1000
+        },
+        "setrefdirframe": {
+          "median_ns": 277.266,
+          "samples_ns": [
+            284.661,
+            283.021,
+            289.195,
+            267.311,
+            265.9,
+            267.308,
+            277.266
+          ],
+          "calls_per_sample": 1000
+        },
+        "setshape": {
+          "median_ns": 2074.829,
+          "samples_ns": [
+            2092.414,
+            2074.829,
+            2079.874,
+            2000.663,
+            1986.918,
+            2029.444,
+            2171.764
+          ],
+          "calls_per_sample": 1000
+        },
+        "setspectrum": {
+          "median_ns": 888.781,
+          "samples_ns": [
+            914.706,
+            894.169,
+            891.499,
+            886.498,
+            877.168,
+            888.781,
+            886.814
+          ],
+          "calls_per_sample": 1000
+        },
+        "setstokesspectrum": {
+          "median_ns": 2815.481,
+          "samples_ns": [
+            2835.671,
+            2794.838,
+            2782.253,
+            2882.109,
+            2899.196,
+            2801.628,
+            2815.481
+          ],
+          "calls_per_sample": 1000
+        },
+        "convertfluxpol": {
+          "median_ns": 380.592,
+          "samples_ns": [
+            367.615,
+            364.559,
+            363.489,
+            395.337,
+            396.135,
+            399.516,
+            380.592
+          ],
+          "calls_per_sample": 1000
+        },
+        "convertfluxunit": {
+          "median_ns": 725.475,
+          "samples_ns": [
+            718.125,
+            726.218,
+            724.275,
+            725.475,
+            729.106,
+            722.113,
+            753.161
+          ],
+          "calls_per_sample": 1000
+        },
+        "convertfrequnit": {
+          "median_ns": 429.809,
+          "samples_ns": [
+            454.708,
+            440.202,
+            429.809,
+            426.914,
+            427.956,
+            427.247,
+            434.859
+          ],
+          "calls_per_sample": 1000
+        },
+        "convertrefdir": {
+          "median_ns": 342.338,
+          "samples_ns": [
+            348.317,
+            348.194,
+            350.461,
+            336.661,
+            334.611,
+            333.507,
+            342.338
+          ],
+          "calls_per_sample": 1000
+        },
+        "convertshape": {
+          "median_ns": 432.366,
+          "samples_ns": [
+            429.166,
+            425.172,
+            419.222,
+            432.366,
+            445.658,
+            436.457,
+            440.624
+          ],
+          "calls_per_sample": 1000
+        },
+        "simulate": {
+          "median_ns": 721.079,
+          "samples_ns": [
+            721.079,
+            755.621,
+            788.549,
+            734.292,
+            676.195,
+            677.26,
+            688.796
+          ],
+          "calls_per_sample": 1000
+        },
+        "remove": {
+          "median_ns": 1478.33,
+          "samples_ns": [
+            1461.728,
+            1453.433,
+            1435.548,
+            1478.33,
+            1527.721,
+            1520.067,
+            1525.991
+          ],
+          "calls_per_sample": 1000
+        },
+        "recover": {
+          "median_ns": 209.311,
+          "samples_ns": [
+            211.539,
+            212.176,
+            214.534,
+            209.311,
+            203.655,
+            206.212,
+            205.772
+          ],
+          "calls_per_sample": 1000
+        },
+        "purge": {
+          "median_ns": 341.474,
+          "samples_ns": [
+            381.882,
+            356.486,
+            340.028,
+            341.137,
+            344.265,
+            340.779,
+            341.474
+          ],
+          "calls_per_sample": 1000
+        },
+        "sample": {
+          "median_ns": 712.417,
+          "samples_ns": [
+            687.885,
+            709.902,
+            705.429,
+            712.417,
+            742.907,
+            722.122,
+            716.986
+          ],
+          "calls_per_sample": 1000
+        },
+        "edit": {
+          "median_ns": 515.436,
+          "samples_ns": [
+            472.481,
+            478.089,
+            473.325,
+            620.646,
+            515.436,
+            555.952,
+            560.699
+          ],
+          "calls_per_sample": 1000
+        },
+        "replace": {
+          "median_ns": 2137.409,
+          "samples_ns": [
+            2124.119,
+            2137.409,
+            2142.876,
+            2186.899,
+            2171.676,
+            2135.459,
+            2131.825
+          ],
+          "calls_per_sample": 1000
+        },
+        "asciitocomponentlist": {
+          "median_ns": 474.514,
+          "samples_ns": [
+            462.823,
+            480.072,
+            477.259,
+            479.61,
+            445.424,
+            445.444,
+            474.514
+          ],
+          "calls_per_sample": 1000
+        },
+        "getkeyword": {
+          "median_ns": 521.0,
+          "samples_ns": [
+            533.4,
+            525.0,
+            499.9,
+            520.9,
+            529.3,
+            521.0,
+            508.3
+          ],
+          "calls_per_sample": 10
+        },
+        "haskeyword": {
+          "median_ns": 370.9,
+          "samples_ns": [
+            366.7,
+            362.6,
+            362.6,
+            370.9,
+            391.5,
+            370.9,
+            370.9
+          ],
+          "calls_per_sample": 10
+        },
+        "putkeyword": {
+          "median_ns": 3233.3,
+          "samples_ns": [
+            3591.7,
+            3233.3,
+            3162.4,
+            3166.6,
+            3479.0,
+            4145.8,
+            3204.1
+          ],
+          "calls_per_sample": 10
+        },
+        "open": {
+          "median_ns": 431371.0,
+          "samples_ns": [
+            430633.4,
+            435599.7,
+            431371.0,
+            428520.8,
+            430900.1,
+            462216.6,
+            439454.2
+          ],
+          "calls_per_sample": 10
+        },
+        "rename": {
+          "median_ns": 614100.0,
+          "samples_ns": [
+            587137.6,
+            650633.1,
+            614100.0,
+            663812.7,
+            526629.0,
+            617654.4,
+            564437.7
+          ],
+          "calls_per_sample": 10
+        },
+        "close": {
+          "median_ns": 569.223,
+          "samples_ns": [
+            571.083,
+            528.455,
+            568.647,
+            569.223,
+            566.046,
+            569.285,
+            589.078
+          ],
+          "calls_per_sample": 1000
+        },
+        "done": {
+          "median_ns": 547.106,
+          "samples_ns": [
+            484.065,
+            525.899,
+            547.106,
+            544.732,
+            555.111,
+            574.496,
+            558.555
+          ],
+          "calls_per_sample": 1000
+        },
+        "construction": {
+          "median_ns": 271.484,
+          "samples_ns": [
+            272.957,
+            270.789,
+            270.954,
+            272.152,
+            269.002,
+            272.089,
+            271.484
+          ],
+          "calls_per_sample": 1000
+        }
+      }
+    },
+    "comparison": {
+      "getcomponent": {
+        "casa_ns": 120339.082,
+        "native_ns": 10595.916,
+        "speedup": 11.357119290111397
+      },
+      "getfluxvalue": {
+        "casa_ns": 873.764,
+        "native_ns": 423.84,
+        "speedup": 2.0615420913552285
+      },
+      "getfluxerror": {
+        "casa_ns": 800.67,
+        "native_ns": 433.019,
+        "speedup": 1.8490412660876312
+      },
+      "getfluxunit": {
+        "casa_ns": 534.44,
+        "native_ns": 314.937,
+        "speedup": 1.6969743154980204
+      },
+      "getfluxpol": {
+        "casa_ns": 895.436,
+        "native_ns": 553.054,
+        "speedup": 1.6190751716830547
+      },
+      "getfreq": {
+        "casa_ns": 886.83,
+        "native_ns": 554.537,
+        "speedup": 1.5992260209868774
+      },
+      "getfreqframe": {
+        "casa_ns": 899.307,
+        "native_ns": 568.732,
+        "speedup": 1.5812491648087326
+      },
+      "getfrequnit": {
+        "casa_ns": 906.107,
+        "native_ns": 544.617,
+        "speedup": 1.6637508561062178
+      },
+      "getfreqvalue": {
+        "casa_ns": 897.139,
+        "native_ns": 553.733,
+        "speedup": 1.6201653143301917
+      },
+      "getlabel": {
+        "casa_ns": 541.895,
+        "native_ns": 302.361,
+        "speedup": 1.7922119585528558
+      },
+      "getrefdir": {
+        "casa_ns": 16102.277,
+        "native_ns": 3991.719,
+        "speedup": 4.033920473861011
+      },
+      "getrefdirra": {
+        "casa_ns": 967.261,
+        "native_ns": 546.762,
+        "speedup": 1.7690713692612143
+      },
+      "getrefdirdec": {
+        "casa_ns": 969.263,
+        "native_ns": 550.176,
+        "speedup": 1.7617326092014192
+      },
+      "getrefdirframe": {
+        "casa_ns": 752.375,
+        "native_ns": 315.221,
+        "speedup": 2.386817502641004
+      },
+      "getshape": {
+        "casa_ns": 49150.8,
+        "native_ns": 2409.227,
+        "speedup": 20.401066400135814
+      },
+      "getspectrum": {
+        "casa_ns": 18321.618,
+        "native_ns": 1585.109,
+        "speedup": 11.558585560992967
+      },
+      "shapetype": {
+        "casa_ns": 644.708,
+        "native_ns": 305.082,
+        "speedup": 2.113228574612727
+      },
+      "spectrumtype": {
+        "casa_ns": 598.055,
+        "native_ns": 301.61,
+        "speedup": 1.9828752362322202
+      },
+      "length": {
+        "casa_ns": 373.788,
+        "native_ns": 231.25,
+        "speedup": 1.6163805405405405
+      },
+      "torecord": {
+        "casa_ns": 261913.188,
+        "native_ns": 16591.657,
+        "speedup": 15.785836700939514
+      },
+      "indices": {
+        "casa_ns": 893.854,
+        "native_ns": 673.24,
+        "speedup": 1.3276899768284713
+      },
+      "iscomponentlist": {
+        "casa_ns": 1142.741,
+        "native_ns": 517.575,
+        "speedup": 2.207875187170941
+      },
+      "isphysical": {
+        "casa_ns": 2346.279,
+        "native_ns": 319.87,
+        "speedup": 7.335101760090036
+      },
+      "selected": {
+        "casa_ns": 805.232,
+        "native_ns": 352.342,
+        "speedup": 2.2853704639242554
+      },
+      "select": {
+        "casa_ns": 1201.927,
+        "native_ns": 924.803,
+        "speedup": 1.2996573324264735
+      },
+      "deselect": {
+        "casa_ns": 1133.301,
+        "native_ns": 693.404,
+        "speedup": 1.63440216670224
+      },
+      "add": {
+        "casa_ns": 133337.186,
+        "native_ns": 28254.698,
+        "speedup": 4.719115596280661
+      },
+      "addcomponent": {
+        "casa_ns": 51454.628,
+        "native_ns": 2160.491,
+        "speedup": 23.816173268021018
+      },
+      "fromrecord": {
+        "casa_ns": 300345.486,
+        "native_ns": 50881.491,
+        "speedup": 5.902843648980332
+      },
+      "concatenate(record)": {
+        "casa_ns": 292079.586,
+        "native_ns": 50994.481,
+        "speedup": 5.727670529679477
+      },
+      "concatenate(table)": {
+        "casa_ns": 366045.8,
+        "native_ns": 233583.5,
+        "speedup": 1.5670875725383
+      },
+      "sort(Flux)": {
+        "casa_ns": 826.646,
+        "native_ns": 652.38,
+        "speedup": 1.2671234556546798
+      },
+      "sort(Position)": {
+        "casa_ns": 1296.796,
+        "native_ns": 621.516,
+        "speedup": 2.0865046113052603
+      },
+      "sort(Polarization)": {
+        "casa_ns": 991.886,
+        "native_ns": 636.174,
+        "speedup": 1.5591426245021016
+      },
+      "summarize": {
+        "casa_ns": 9551.239,
+        "native_ns": 4295.018,
+        "speedup": 2.223794871173997
+      },
+      "setlabel": {
+        "casa_ns": 691.658,
+        "native_ns": 306.933,
+        "speedup": 2.253449449879941
+      },
+      "setflux": {
+        "casa_ns": 4546.093,
+        "native_ns": 2108.136,
+        "speedup": 2.1564514813086064
+      },
+      "setfreq": {
+        "casa_ns": 1293.005,
+        "native_ns": 449.365,
+        "speedup": 2.877404782303918
+      },
+      "setfreqframe": {
+        "casa_ns": 1314.481,
+        "native_ns": 363.897,
+        "speedup": 3.6122336815087785
+      },
+      "setrefdir": {
+        "casa_ns": 19061.33,
+        "native_ns": 1008.712,
+        "speedup": 18.896701932761783
+      },
+      "setrefdirframe": {
+        "casa_ns": 1487.391,
+        "native_ns": 277.266,
+        "speedup": 5.364491138473523
+      },
+      "setshape": {
+        "casa_ns": 42342.785,
+        "native_ns": 2074.829,
+        "speedup": 20.407843248768934
+      },
+      "setspectrum": {
+        "casa_ns": 2471.295,
+        "native_ns": 888.781,
+        "speedup": 2.7805443635721288
+      },
+      "setstokesspectrum": {
+        "casa_ns": 18386.118,
+        "native_ns": 2815.481,
+        "speedup": 6.530364793795447
+      },
+      "convertfluxpol": {
+        "casa_ns": 1449.135,
+        "native_ns": 380.592,
+        "speedup": 3.807581346954219
+      },
+      "convertfluxunit": {
+        "casa_ns": 1435.773,
+        "native_ns": 725.475,
+        "speedup": 1.979079913160343
+      },
+      "convertfrequnit": {
+        "casa_ns": 790.665,
+        "native_ns": 429.809,
+        "speedup": 1.839572926579015
+      },
+      "convertrefdir": {
+        "casa_ns": 5809.962,
+        "native_ns": 342.338,
+        "speedup": 16.971420058538637
+      },
+      "convertshape": {
+        "casa_ns": 1011.16,
+        "native_ns": 432.366,
+        "speedup": 2.3386667776837218
+      },
+      "simulate": {
+        "casa_ns": 11118.798,
+        "native_ns": 721.079,
+        "speedup": 15.419666915830307
+      },
+      "remove": {
+        "casa_ns": 3839.673,
+        "native_ns": 1478.33,
+        "speedup": 2.5973043907652555
+      },
+      "recover": {
+        "casa_ns": 972.296,
+        "native_ns": 209.311,
+        "speedup": 4.645221703589396
+      },
+      "purge": {
+        "casa_ns": 692.669,
+        "native_ns": 341.474,
+        "speedup": 2.028467760356572
+      },
+      "sample": {
+        "casa_ns": 2401.25,
+        "native_ns": 712.417,
+        "speedup": 3.370568080211449
+      },
+      "edit": {
+        "casa_ns": 874.087,
+        "native_ns": 515.436,
+        "speedup": 1.6958206256450847
+      },
+      "replace": {
+        "casa_ns": 153166.918,
+        "native_ns": 2137.409,
+        "speedup": 71.66008845288852
+      },
+      "asciitocomponentlist": {
+        "casa_ns": 1883.787,
+        "native_ns": 474.514,
+        "speedup": 3.969929232857197
+      },
+      "getkeyword": {
+        "casa_ns": 2012.3,
+        "native_ns": 521.0,
+        "speedup": 3.862380038387716
+      },
+      "haskeyword": {
+        "casa_ns": 612.6,
+        "native_ns": 370.9,
+        "speedup": 1.651658128875708
+      },
+      "putkeyword": {
+        "casa_ns": 4408.2,
+        "native_ns": 3233.3,
+        "speedup": 1.3633748801534036
+      },
+      "open": {
+        "casa_ns": 612120.8,
+        "native_ns": 431371.0,
+        "speedup": 1.419012404635453
+      },
+      "rename": {
+        "casa_ns": 688162.5,
+        "native_ns": 614100.0,
+        "speedup": 1.1206033219345384
+      },
+      "close": {
+        "casa_ns": 24439.324,
+        "native_ns": 569.223,
+        "speedup": 42.934533565931105
+      },
+      "done": {
+        "casa_ns": 24079.698,
+        "native_ns": 547.106,
+        "speedup": 44.012856740741285
+      },
+      "construction": {
+        "casa_ns": 37944.427,
+        "native_ns": 271.484,
+        "speedup": 139.76671553388047
+      }
+    }
+  },
+  "unchanged_storage_bytes": {
+    "table.f0": {
+      "equal": true,
+      "bytes": 98816
+    },
+    "table.f0i": {
+      "equal": true,
+      "bytes": 924
+    },
+    "table.info": {
+      "equal": true,
+      "bytes": 128
+    },
+    "table.dat": {
+      "equal": true,
+      "bytes": 6040
+    }
+  },
+  "superseded_steady_benchmark": {
+    "source_revision": "b8eff0cd322961d8dde9bd880b8cd66afcdb9b85",
+    "faster_count": 51,
+    "failures": {
+      "getfluxpol": {
+        "casa_ns": 895.837,
+        "native_ns": 1259.702,
+        "speedup": 0.7111499386362806
+      },
+      "getfreq": {
+        "casa_ns": 895.604,
+        "native_ns": 1300.43,
+        "speedup": 0.6886983536214945
+      },
+      "getfreqframe": {
+        "casa_ns": 903.022,
+        "native_ns": 1252.319,
+        "speedup": 0.7210798526573502
+      },
+      "getfrequnit": {
+        "casa_ns": 923.227,
+        "native_ns": 1248.397,
+        "speedup": 0.73952997323768
+      },
+      "getfreqvalue": {
+        "casa_ns": 908.882,
+        "native_ns": 1218.364,
+        "speedup": 0.7459856003624532
+      },
+      "getrefdirra": {
+        "casa_ns": 966.146,
+        "native_ns": 1262.4,
+        "speedup": 0.7653247782002534
+      },
+      "getrefdirdec": {
+        "casa_ns": 972.221,
+        "native_ns": 1231.612,
+        "speedup": 0.7893890283628285
+      },
+      "indices": {
+        "casa_ns": 906.69,
+        "native_ns": 1390.734,
+        "speedup": 0.6519506965386624
+      },
+      "iscomponentlist": {
+        "casa_ns": 1185.712,
+        "native_ns": 1209.325,
+        "speedup": 0.9804742314927748
+      },
+      "convertshape": {
+        "casa_ns": 1003.715,
+        "native_ns": 1149.889,
+        "speedup": 0.872879904060305
+      },
+      "edit": {
+        "casa_ns": 862.397,
+        "native_ns": 1154.124,
+        "speedup": 0.7472308001566557
+      },
+      "getkeyword": {
+        "casa_ns": 2054.1,
+        "native_ns": 2683.2,
+        "speedup": 0.7655411449016101
+      },
+      "haskeyword": {
+        "casa_ns": 612.4,
+        "native_ns": 2495.7,
+        "speedup": 0.24538205713827785
+      },
+      "rename": {
+        "casa_ns": 752341.6,
+        "native_ns": 1063204.1,
+        "speedup": 0.7076172862764543
+      }
+    }
+  },
+  "rejected_hypotheses": [
+    {
+      "candidate": "timestamp/size keyword-cache invalidation",
+      "result": "A same-size published write with restored mtime returned a stale value; use the casacore publication counter after explicit lock relinquishment. The regression remains in test_componentlist_putkeyword.py."
+    }
+  ],
+  "baseline_limitation": "Dependency-wide macOS clippy fails on an unchanged calibration/timing.rs needless_return when Linux code is absent. Changed packages pass --no-deps; no calibration change or unrelated issue is included.",
+  "source_verification": "All crates and tools/simulation were clean at the measured source revision; the benchmark guard now checks all crates for future runs."
+}
