@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import casatasks as casa
 from casatools import ms as casa_ms, table
@@ -184,6 +185,54 @@ with open(sys.argv[1], 'rb+') as lock:
                                               for actual, expected in zip(*comparisons, strict=True)]}
 
 
+def published_while_waiting(root, source):
+    writer = """
+import sys
+from casatools import table
+tool = table()
+tool.open(sys.argv[1], lockoptions={'option': 'user'}, nomodify=False)
+tool.lock(write=True)
+value = tool.getcell('CORRECTED_DATA', 0)
+tool.putcell('CORRECTED_DATA', 0, 23+11j+value*0)
+tool.putcell('FIELD_ID', 0, 1)
+print('held', flush=True)
+sys.stdin.readline()
+tool.close()
+"""
+    consumer = """
+import sys
+from casars import tasks
+print('started', flush=True)
+options = {'field': '0'} if sys.argv[2] == 'clearcal' else {}
+assert getattr(tasks, sys.argv[2])(sys.argv[1], **options) is None
+"""
+    outcomes = {}
+    for task, expected in [('uvsub', 10+4j), ('clearcal', 23+11j)]:
+        path = root/f'{task}-published-while-waiting.ms'
+        prepare(source, path, model=True, corrected=True)
+        first = subprocess.Popen([sys.executable, '-c', writer, str(path)], text=True,
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        second = None
+        try:
+            assert first.stdout.readline().strip() == 'held', first.stderr.read()
+            second = subprocess.Popen([sys.executable, '-c', consumer, str(path), task], text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            assert second.stdout.readline().strip() == 'started', second.stderr.read()
+            time.sleep(.3)
+            assert second.poll() is None
+        finally:
+            if first.poll() is None:
+                _, error = first.communicate('\n', timeout=15)
+                assert first.returncode == 0, error
+            if second is not None:
+                _, error = second.communicate(timeout=20)
+                assert second.returncode == 0, error
+        arrays, _ = state(path)
+        np.testing.assert_array_equal(arrays['CORRECTED_DATA'][..., 0], expected)
+        outcomes[f'{task}-fresh-input-after-lock-wait'] = True
+    return outcomes
+
+
 def mms_case(root, source, native):
     outputs = []
     for engine, task in [('native', native.uvsub), ('casa', casa.uvsub)]:
@@ -223,6 +272,7 @@ def main():
     got.update(tool_cases(root, source, native_ms))
     got.update(mms_case(root, source, native))
     got.update(permanent_parts(root, source, native_ms))
+    got.update(published_while_waiting(root, source))
     (root/'results.json').write_text(json.dumps(got, indent=2)+'\n')
 
 
