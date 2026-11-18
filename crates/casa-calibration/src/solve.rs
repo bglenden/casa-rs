@@ -7,7 +7,7 @@
 //! - `calmode='p|a|ap'`
 //! - `solint='inf'|'int'|<seconds>`
 //! - explicit reference antenna
-//! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`) or `MODEL_DATA`
+//! - point-source Stokes sky model (`smodel=[I,Q,U,V]`) or `MODEL_DATA`
 //!
 //! The acceptance contract is downstream behavior: the resulting caltable
 //! should be CASA-compatible on disk and should yield corrected visibilities
@@ -36,7 +36,7 @@ use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
 use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder};
 use crate::{ApplyExecutionError, ApplyPlanError};
-use grouping::{SolveGroupOptions, build_solve_groups, validate_smodel, validate_solve_interval};
+use grouping::{SolveGroupOptions, build_solve_groups, validate_solve_interval};
 use kernel::solve_group;
 use writer::write_gain_caltable;
 
@@ -106,7 +106,7 @@ impl GainSolveRobustness {
 /// Visibility model source used by the gain solver.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveModelSource {
-    /// Use the point-source Stokes-I model from `smodel`.
+    /// Use the point-source Stokes model from `smodel`.
     #[default]
     PointSource,
     /// Use per-sample visibilities from the MS `MODEL_DATA` column.
@@ -256,8 +256,8 @@ pub enum GainSolveError {
         data_desc_ids: Vec<i32>,
     },
 
-    /// The solve requires a point-source Stokes-I model.
-    #[error("unsupported smodel {smodel:?}; only [I,0,0,0] is supported in this wave")]
+    /// The point-source Stokes vector is invalid for the solve.
+    #[error("unsupported smodel {smodel:?}")]
     UnsupportedSkyModel {
         /// Model vector passed by the caller.
         smodel: [f32; 4],
@@ -399,7 +399,7 @@ pub(crate) fn solve_gain_rows(
     request: &GainSolveRequest,
 ) -> Result<SolvedGains, GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
-        validate_smodel(request.smodel)?;
+        validate_smodel(request.smodel, true)?;
     } else if !ms
         .main_table()
         .schema()
@@ -435,7 +435,7 @@ pub(crate) fn solve_gain_rows(
         SolveGroupOptions {
             gain_type: request.gain_type,
             model_source: request.model_source,
-            stokes_i: request.smodel[0],
+            point_stokes: request.smodel,
             solve_interval: request.solve_interval,
             combine: request.combine,
             // VbAvg applies this boundary to either source of the interval.
@@ -850,6 +850,16 @@ pub(crate) fn get_f64(table: &Table, row: usize, column: &str) -> Result<f64, Ga
             shape: vec![row],
         }),
     }
+}
+
+pub(crate) fn validate_smodel(smodel: [f32; 4], polarized: bool) -> Result<(), GainSolveError> {
+    if smodel[0] <= 0.0
+        || smodel.iter().any(|value| !value.is_finite())
+        || (!polarized && smodel[1..].iter().any(|value| *value != 0.0))
+    {
+        return Err(GainSolveError::UnsupportedSkyModel { smodel });
+    }
+    Ok(())
 }
 
 pub(crate) fn correlation_receptors(code: i32) -> Option<(usize, usize)> {

@@ -38,9 +38,7 @@ use crate::constants::{
 };
 use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
-use crate::solve::grouping::{
-    SolveAccumulator, SolveGroupOptions, build_solve_groups, validate_smodel,
-};
+use crate::solve::grouping::{SolveAccumulator, SolveGroupOptions, build_solve_groups};
 use crate::solve::kernel::{SolveGraphOptions, SolvedGraphs, solve_graphs};
 use crate::solve::spectral_window_ids;
 use crate::solve::{
@@ -308,7 +306,7 @@ pub(crate) fn solve_bandpass(
         SolveGroupOptions {
             gain_type: GainType::G,
             model_source: GainSolveModelSource::PointSource,
-            stokes_i: request.smodel[0],
+            point_stokes: request.smodel,
             solve_interval: GainSolveInterval::Infinite,
             combine: GainSolveCombine {
                 scans: request.combine.scans,
@@ -404,7 +402,7 @@ pub(crate) fn solve_bandpass(
 }
 
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
-    validate_smodel(request.smodel)?;
+    crate::solve::validate_smodel(request.smodel, false)?;
     if matches!(
         request.refant,
         RefAntSelector::Unspecified | RefAntSelector::Expression { .. }

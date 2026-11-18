@@ -71,7 +71,7 @@ fn observe(
     let options = SolveGroupOptions {
         gain_type: request.gain_type,
         model_source: request.model_source,
-        stokes_i: request.smodel[0],
+        point_stokes: request.smodel,
         solve_interval: request.solve_interval,
         combine: request.combine,
         channelized: false,

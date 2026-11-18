@@ -86,6 +86,19 @@ impl SolveAccumulator {
     }
 }
 
+/// The parallel-hand point model from `VisBufferImpl2::setVisCubeModel`.
+/// CASA indexes its basis vector relative to the first selected correlation.
+pub(super) fn point_visibility(stokes: [f32; 4], code: i32, first_code: i32) -> Complex32 {
+    let [i, q, _, v] = stokes;
+    let polarization = if code < 9 { v } else { q };
+    let intensity = if code == first_code {
+        i + polarization
+    } else {
+        i - polarization
+    };
+    Complex32::new(intensity, 0.0)
+}
+
 /// CASA's correlation-independent flags are shared by every receptor.
 pub(super) fn channel_flags(samples: &SolveSamples<'_>) -> Vec<bool> {
     let correlations = samples.flags.shape()[0];
@@ -126,7 +139,7 @@ impl SampleAccumulation<'_> {
         correlation: usize,
         shared_flags: Option<&[bool]>,
         channels: &[usize],
-        stokes_i: f32,
+        point: Complex32,
         all_channels: bool,
     ) -> f64 {
         let data = samples.data.index_axis(Axis(0), correlation);
@@ -138,7 +151,6 @@ impl SampleAccumulation<'_> {
         let model = samples
             .model
             .map(|model| model.index_axis_move(Axis(0), correlation));
-        let point = Complex32::new(stokes_i, 0.0);
         let correlations = samples.data.nrows();
         if all_channels
             && model.is_none()

@@ -318,7 +318,6 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         ("gaintype", json!("K")),
         ("gaintype", json!("GSPLINE")),
         ("solint", json!("inf,2ch")),
-        ("smodel", json!([1, 0.1, 0, 0])),
     ] {
         let mut values = base.clone();
         values[name] = value.clone();
@@ -331,10 +330,11 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
     }
     // CASA 6.7.6.14's gaincal aborts on more than four Stokes values.
     assert!(refused(with("smodel", json!([1, 0, 0, 0, 0])), "smodel").contains("[I, Q, U, V]"));
-    // A shorter model's missing Stokes are zero; a polarized one is not
-    // implemented yet.
-    let message = refused(with("smodel", json!([1, 0.1])), "smodel");
-    assert!(message.contains("#979"), "{message}");
+    // Short models zero-fill omitted Stokes values.
+    assert_eq!(
+        gain(json!({"vis": "d.ms", "caltable": "g.gcal", "smodel": [1, 0.1]})).smodel,
+        [1.0, 0.1, 0.0, 0.0]
+    );
 }
 
 #[test]

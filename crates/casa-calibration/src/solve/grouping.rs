@@ -35,13 +35,6 @@ pub(crate) fn validate_solve_interval(
     }
 }
 
-pub(crate) fn validate_smodel(smodel: [f32; 4]) -> Result<(), GainSolveError> {
-    if smodel[0] <= 0.0 || smodel[1] != 0.0 || smodel[2] != 0.0 || smodel[3] != 0.0 {
-        return Err(GainSolveError::UnsupportedSkyModel { smodel });
-    }
-    Ok(())
-}
-
 pub(crate) fn load_preapplied_rows(
     ms: &MeasurementSet,
     selection: &MsSelection,
@@ -524,7 +517,7 @@ pub(crate) fn correlation_types_for_ddid(
 pub(crate) struct SolveGroupOptions {
     pub(crate) gain_type: GainType,
     pub(crate) model_source: GainSolveModelSource,
-    pub(crate) stokes_i: f32,
+    pub(crate) point_stokes: [f32; 4],
     pub(crate) solve_interval: GainSolveInterval,
     pub(crate) combine: GainSolveCombine,
     /// Maximum time from the first sample in an average of one baseline.
@@ -915,7 +908,11 @@ impl SolveAccumulator {
                 corr_index,
                 shared_flags.as_deref(),
                 channels,
-                options.stokes_i,
+                samples::point_visibility(
+                    options.point_stokes,
+                    correlation_type,
+                    correlation_types[0],
+                ),
                 all_channels,
             );
         }

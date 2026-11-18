@@ -17,12 +17,13 @@ from calibration_lifecycle_oracle import contents
 from record_casa_returns import make_cal_ms
 
 
-def solve(module, root, label, source, refant='A0', minsnr=0., **options):
+def solve(module, root, label, source, refant='A0', minsnr=0.,
+          smodel=(1., 0., 0., 0.), **options):
     caltable = root/f'{label}.cal'
     preload = os.environ.pop('LD_PRELOAD', None) if module is not casa else None
     try:
         module.gaincal(vis=str(source), caltable=str(caltable), refant=refant,
-                       smodel=[1., 0., 0., 0.], minsnr=minsnr, **options)
+                       smodel=list(smodel), minsnr=minsnr, **options)
     finally:
         if preload is not None:
             os.environ['LD_PRELOAD'] = preload
@@ -627,11 +628,50 @@ def grouping_edge_cases(root, source, native):
     return results
 
 
+def point_models(root, source, native):
+    results = {}
+    for basis, stokes, model in [
+        ('linear', 'XX YY', [1.5, .3, .2, .1]),
+        ('circular', 'RR LL', [1.5, .3, .2, -.2]),
+        ('linear-full', 'XX XY YX YY', [1.5, .3]),
+    ]:
+        fixture = root/basis
+        fixture.mkdir()
+        make_cal_ms(str(fixture/'source.ms'), stokes=stokes)
+        vis = amplitude_data(fixture, fixture/'source.ms')
+        for gain in ['G', 'T']:
+            for mode in ['p', 'a', 'ap']:
+                name = f'{basis}-{gain}-{mode}'
+                case = root/name
+                case.mkdir()
+                results[name] = gain_and_apply(case, vis, native, gain, 'inf', calmode=mode,
+                                               smodel=model, minblperant=2)
+    for name, write_model in [('stored-column', True), ('point-fallback', False)]:
+        fixture = root/name
+        fixture.mkdir()
+        vis = fixture/'source.ms'
+        copy_ms(source, vis)
+        if write_model:
+            casa.setjy(vis=str(vis), field='0', standard='manual',
+                       fluxdensity=[1.7, 0., 0., 0.], usescratch=True)
+        else:
+            t = table()
+            t.open(str(vis), nomodify=False)
+            try:
+                t.removecols('MODEL_DATA')
+            finally:
+                t.close()
+        for gain in ['G', 'T']:
+            results[f'{name}-{gain}'] = gain_and_apply(fixture, vis, native, gain, 'inf',
+                calmode='ap', field='0', smodel=[], minblperant=2)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -693,6 +733,8 @@ def main():
         results = solve_selections(root, amplitude_data(root, source), native)
     elif args.case == 'grouping':
         results = solve_grouping(root, amplitude_data(root, source), native)
+    elif args.case == 'point-models':
+        results = point_models(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
