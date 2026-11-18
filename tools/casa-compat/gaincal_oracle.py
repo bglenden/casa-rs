@@ -678,6 +678,44 @@ def point_models(root, source, native):
             results[f'{name}-{gain}'] = gain_and_apply(fixture, vis, native, gain, 'inf',
                 calmode='ap', field='0', smodel=[], minblperant=2)
     results.update(point_model_edges(root, root/'linear-full'/'amplitude.ms', native))
+    results.update(nonpositive_stokes_models(root, root/'linear-full'/'amplitude.ms', native))
+    return results
+
+
+def nonpositive_stokes_models(root, source, native):
+    results = {}
+    for name, model, signs in [('negative-stokes-i', [-1.], [-1, 1, 1, -1]),
+                               ('zero-stokes', [0.], [1, 1, 1, 1]),
+                               ('stokes-q-only', [0., 1.], [1, 1, 1, -1])]:
+        outputs = []
+        for label, api in [('casa', casa), ('native', native)]:
+            vis = root/f'{name}-{label}.ms'
+            product = root/f'{name}-{label}.cal'
+            copy_ms(source, vis)
+            t = table()
+            assert t.open(str(vis), nomodify=False)
+            try:
+                observations = t.getcol('DATA') * np.asarray(signs, dtype=np.float32)[:, None, None]
+                t.putcol('DATA', observations)
+            finally:
+                t.close()
+            api.gaincal(str(vis), caltable=str(product), field='0', spw='0', refant='0',
+                        calmode='ap', smodel=model, minblperant=2, minsnr=0.)
+            if name == 'zero-stokes':
+                assert not product.exists()
+            else:
+                outputs.append(contents(product))
+        if name == 'zero-stokes':
+            results[name] = {'no_product': True}
+        else:
+            expected, actual = outputs
+            for column in ('FLAG', 'ANTENNA1'):
+                np.testing.assert_equal(expected[column], actual[column])
+            good = ~expected['FLAG']
+            assert np.any(good)
+            error = relative_rms(actual['CPARAM'][good], expected['CPARAM'][good])
+            assert error < 1e-3, (name, error)
+            results[name] = {'gain_nrms': float(error)}
     return results
 
 

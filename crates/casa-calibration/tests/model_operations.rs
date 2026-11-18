@@ -47,7 +47,9 @@ fn selected_scratch_initialization_handles_virtual_models_by_calset() {
         let mut ms = MeasurementSet::open(&path).unwrap();
         add_scratch_model(&mut ms);
         populate_model(&mut ms);
-        let lock = TableWriteLock::acquire(&path, 0).unwrap();
+        drop(ms);
+        let lock = TableWriteLock::acquire_to_reread(&path, 0).unwrap();
+        let mut ms = MeasurementSet::open(&path).unwrap();
         let selection = MsSelection {
             field: Some("0".into()),
             spw: Some("0:1".into()),
@@ -101,4 +103,20 @@ fn deletes_only_the_named_virtual_model_window() {
     let entries = VirtualModelEntry::entries(&record).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].index_combination, [[0, 1, 0, 0]]);
+    let mut lock = TableWriteLock::acquire(&path, 0).unwrap();
+    delete_calibration_model(
+        &mut ms,
+        Some("false"),
+        Some("FALSE"),
+        true,
+        false,
+        &mut lock,
+    )
+    .unwrap();
+    lock.release().unwrap();
+    assert!(
+        virtual_model(&MeasurementSet::open(&path).unwrap(), 0)
+            .unwrap()
+            .is_none()
+    );
 }
