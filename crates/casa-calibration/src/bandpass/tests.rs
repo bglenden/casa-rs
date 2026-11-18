@@ -15,6 +15,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
         gain_type: GainType::G,
         model_source: GainSolveModelSource::PointSource,
         point_stokes: [1.0, 0.0, 0.0, 0.0],
+        rotate_point_model: false,
         solve_interval: GainSolveInterval::Infinite,
         combine: GainSolveCombine::default(),
         channelized: true,
@@ -48,6 +49,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
                 flags: flags.view(),
                 weights: weights.view(),
                 model: None,
+                point_model: None,
             };
             group
                 .observe_samples(&row, &samples, &[5, 8], &[0], &options)

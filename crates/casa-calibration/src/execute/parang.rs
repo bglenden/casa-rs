@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) fn apply(
+pub(crate) fn apply(
     data_desc_id: i32,
     correlations: &[i32],
     first_angle: f64,

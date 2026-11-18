@@ -66,7 +66,7 @@ mod initialization;
 use gain_validity::correcting_gain;
 mod bandpass;
 mod channels;
-mod parang;
+pub(crate) mod parang;
 mod weights;
 use channels::{DataChannelGrid, apply_row};
 
@@ -1812,7 +1812,7 @@ fn calibration_lookup_key(
     }
 }
 
-struct ParallacticAngleState {
+pub(crate) struct ParallacticAngleState {
     engine: MsCalEngine,
     feed_rows: HashMap<(i32, i32), Vec<FeedAngleRow>>,
 }
@@ -3207,7 +3207,7 @@ fn materialize_row_dependent_grid(
 }
 
 impl ParallacticAngleState {
-    fn feed_parallactic_angle(
+    pub(crate) fn feed_parallactic_angle(
         &self,
         time_seconds: f64,
         field_id: i32,
@@ -3273,7 +3273,7 @@ fn feed_row_distance(row: &FeedAngleRow, time_seconds: f64) -> f64 {
     (row.time_seconds - time_seconds).abs()
 }
 
-fn load_parallactic_angle_state(ms: &MeasurementSet) -> MsResult<ParallacticAngleState> {
+pub(crate) fn load_parallactic_angle_state(ms: &MeasurementSet) -> MsResult<ParallacticAngleState> {
     let engine = MsCalEngine::new(ms)?;
     let mut feed_rows = HashMap::<(i32, i32), Vec<FeedAngleRow>>::new();
     if let Ok(feed) = ms.feed() {
