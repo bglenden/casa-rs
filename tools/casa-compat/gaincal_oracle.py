@@ -922,8 +922,26 @@ def virtual_fourier(root, source, native):
         ('off-centre', source, 'GridFT', {'phasecenter': 'J2000 0h0m0.10s -30d00m00s'}),
         ('cube', source, 'GridFT', {'specmode': 'cube', 'nchan': 3, 'start': 0, 'width': 1}),
         ('partially-flagged', source, 'GridFT', {}),
+        ('faceted', source, 'GridFT', {'facets': 2}),
+        ('faceted-east-west', source, 'GridFT', {'facets': 2}),
+        ('polarized', source, 'GridFT', {'stokes': 'IQUV'}),
+        ('finite-distance', source, 'GridFT', {'stokes': 'IQUV'}),
+        ('finite-distance-combined', source, 'GridFT', {'stokes': 'IQUV'}),
+        ('virtual-scan-buffer', source, 'GridFT', {}),
         ('wproject', long_w, 'WProjectFT', {'gridder': 'wproject', 'wprojplanes': 8}),
+        ('wproject-facets', long_w, 'WProjectFT', {'gridder': 'wproject', 'wprojplanes': 8, 'facets': 2}),
         ('wproject-measured', long_w, 'WProjectFT', {'gridder': 'wproject', 'wprojplanes': 8}),
+        ('mosaic', source, 'MosaicFTNew', {'gridder': 'mosaic'}),
+        ('mosaic-image-beam', source, 'MosaicFTNew', {'gridder': 'mosaic'}),
+        ('mosaic-saved-plane', source, 'MosaicFTNew', {'gridder': 'mosaic'}),
+        ('mosaic-legacy-name', source, 'MosaicFTNew', {'gridder': 'mosaic'}),
+        ('mosaic-shifted', source, 'MosaicFTNew',
+         {'gridder': 'mosaic', 'phasecenter': 'J2000 0h0m0.10s -30d00m00s'}),
+        ('mosaic-pointing-table', source, 'MosaicFTNew', {'gridder': 'mosaic', 'usepointing': True}),
+        ('mosaic-cube', source, 'MosaicFTNew',
+         {'gridder': 'mosaic', 'specmode': 'cube', 'nchan': 3, 'start': 0, 'width': 1}),
+        ('setjy-grid', source, 'SetJyGridFT', {}),
+        ('setjy-grid-varying', source, 'SetJyGridFT', {}),
         ('taylor', wide, 'MultiTermFTNew', {'deconvolver': 'mtmfs', 'nterms': 2}),
         ('taylor-outside', source, 'MultiTermFTNew', {'deconvolver': 'mtmfs', 'nterms': 2}),
     ]
@@ -932,27 +950,77 @@ def virtual_fourier(root, source, native):
         folder.mkdir()
         vis = folder/'input.ms'
         copy_ms(original, vis)
+        if name == 'mosaic-pointing-table':
+            offset_mosaic_pointings(vis)
+        if name == 'mosaic-image-beam':
+            arguments = {**arguments, 'vptable': str(mosaic_image_beam(folder, root/'mosaic'/'image.pb'))}
+        from_setjy = name.startswith('setjy-grid')
+        varying_setjy = name == 'setjy-grid-varying'
+        finite_distance = name.startswith('finite-distance')
+        combined_scans = name in ['finite-distance-combined', 'virtual-scan-buffer']
         casa.tclean(
             vis=str(vis), imagename=str(folder/'image'), field='0', spw='0',
             imsize=64, cell='1arcsec', niter=5, datacolumn='data',
-            savemodel='virtual', **arguments)
+            savemodel='none' if from_setjy else 'virtual', **arguments)
+        if from_setjy:
+            casa.setjy(vis=str(vis), field='0', spw='0', model=str(folder/'image.model'),
+                       standard='manual', fluxdensity=[1., 0., 0., 0.], usescratch=False)
         t = table()
         measured_w = name == 'wproject-measured'
-        t.open(str(vis/'SOURCE'), nomodify=not measured_w)
+        legacy_mosaic = name == 'mosaic-legacy-name'
+        saved_mosaic = name == 'mosaic-saved-plane'
+        t.open(str(vis/'SOURCE'), nomodify=not (measured_w or legacy_mosaic or varying_setjy
+                                                or finite_distance or saved_mosaic))
         try:
             source_row = t.getkeyword('model_0')
             record = t.getcell('SOURCE_MODEL', source_row)
             assert record['ft_0']['container']['name'] == machine
+            if name == 'mosaic-image-beam':
+                assert record['ft_0']['container']['pbconvfunc']['pbclass'] == 8
+            if name == 'mosaic-pointing-table':
+                assert record['ft_0']['container']['usepointingtable']
             # A restored WProjectFT keeps its chosen plane count but can
             # rebuild the kernels using the measured maximum stored with it.
             if measured_w:
                 record['ft_0']['container']['maxw'] = 30000.
+                t.putcell('SOURCE_MODEL', source_row, record)
+            if legacy_mosaic:
+                record['ft_0']['container']['name'] = 'MosaicFT'
+                t.putcell('SOURCE_MODEL', source_row, record)
+            if varying_setjy:
+                # Give the persisted flux spectrum a measurable slope even on
+                # this narrow band, before either engine reopens the model.
+                scales = record['ft_0']['container']['scaleamp']
+                record['ft_0']['container']['scaleamp'] = scales*np.linspace(.9, 1.15, scales.size)
+                t.putcell('SOURCE_MODEL', source_row, record)
+            if finite_distance:
+                record['ft_0']['container']['distance'] = 4e4 if combined_scans else 5e6
+                if combined_scans:
+                    # The same finite-distance sky applies to both scan labels.
+                    entry = record['ft_0']
+                    index = entry['indexcombination'].copy()
+                    index[:, 2] = 2
+                    entry['indexcombination'] = np.concatenate([entry['indexcombination'], index])
+                t.putcell('SOURCE_MODEL', source_row, record)
+            if saved_mosaic:
+                beam = record['ft_0']['container']['pbconvfunc']
+                assert np.all(beam['donemainconv'])
+                beam['convfunctions0'] *= .5
                 t.putcell('SOURCE_MODEL', source_row, record)
         finally:
             t.close()
         if name == 'taylor-outside':
             verify_no_fourier_solution(folder, vis, native)
             continue
+        if combined_scans:
+            t.open(str(vis), nomodify=False)
+            try:
+                scans = (t.getcol('ANTENNA1') + t.getcol('ANTENNA2'))%2 + 1
+                t.putcol('SCAN_NUMBER', scans.astype(np.int32))
+            finally:
+                t.close()
+        if name == 'faceted-east-west':
+            east_west_facet(t, vis)
         partial_flags = name == 'partially-flagged'
         if partial_flags:
             t.open(str(vis), nomodify=False)
@@ -967,13 +1035,88 @@ def virtual_fourier(root, source, native):
             case.mkdir()
             results[f'{name}-{gain}'] = gain_and_apply(
                 case, vis, native, gain, 'inf', calmode='ap', field='0', spw='0',
-                smodel=[], minblperant=2, corrdepflags=partial_flags)
+                smodel=[], minblperant=2, corrdepflags=partial_flags,
+                combine='scan' if combined_scans else '')
             explicit = solve(casa, case, 'unit', vis, gaintype=gain, calmode='ap',
-                             field='0', spw='0', minblperant=2)
+                             field='0', spw='0', minblperant=2,
+                             combine='scan' if combined_scans else '')
             sky = contents(case/f'ap-{gain}-inf-mean-norm0-casa.cal')
-            assert relative_rms(explicit['CPARAM'], sky['CPARAM']) > .01
+            difference = relative_rms(explicit['CPARAM'], sky['CPARAM'])
+            if name == 'virtual-scan-buffer':
+                assert difference < 1e-5
+            else:
+                assert difference > .01
+            if name == 'mosaic-image-beam':
+                selected = folder/f'{gain}-selected'
+                selected.mkdir()
+                results[f'{name}-{gain}-selected'] = gain_and_apply(
+                    selected, vis, native, gain, 'inf', calmode='ap', field='0', spw='0:0~3',
+                    smodel=[], minblperant=2)
     verify_missing_maximum_w(root, native)
     return results
+
+
+def offset_mosaic_pointings(vis):
+    t = table()
+    t.open(str(vis/'POINTING'), nomodify=False)
+    try:
+        direction = t.getcol('DIRECTION')
+        _, integration = np.unique(t.getcol('TIME'), return_inverse=True)
+        direction[0, 0, :] = 6e-5*(1.+t.getcol('ANTENNA_ID')/4.)
+        direction[1, 0, :] = -np.pi/6+(integration%3-1)*2e-5
+        t.putcol('DIRECTION', direction)
+        t.putcol('TARGET', direction)
+    finally:
+        t.close()
+
+
+def mosaic_image_beam(folder, template):
+    from casatools import image, vpmanager
+
+    tool = image()
+    tool.open(str(template))
+    try:
+        coords = tool.coordsys()
+        try:
+            coords.setstokes(['XX', 'XY', 'YX', 'YY'])
+            record = coords.torecord()
+        finally:
+            coords.done()
+        power = tool.getchunk()
+    finally:
+        tool.close()
+    voltage = np.zeros((*power.shape[:2], 4, power.shape[3]), dtype=np.float32)
+    voltage[:, :, 0, :] = np.sqrt(np.maximum(power[:, :, 0, :], 0.))
+    voltage[:, :, 3, :] = .96*voltage[:, :, 0, :]
+    beam = folder/'beam.image'
+    tool.fromarray(str(beam), voltage, csys=record)
+    tool.done()
+    manager = vpmanager()
+    manager.reset()
+    table_path = folder/'beam.tab'
+    try:
+        manager.setpbimage(telescope='ALMA', realimage=str(beam), antnames=['*'])
+        assert manager.setuserdefault(vplistnum=0, telescope='ALMA')
+        assert manager.saveastable(str(table_path))
+    finally:
+        manager.reset()
+    return table_path
+
+
+def east_west_facet(t, vis):
+    t.open(str(vis/'OBSERVATION'), nomodify=False)
+    try:
+        t.putcell('TELESCOPE_NAME', 0, 'ATCA')
+    finally:
+        t.close()
+    t.open(str(vis/'FIELD'), nomodify=False)
+    try:
+        for column in ['PHASE_DIR', 'DELAY_DIR', 'REFERENCE_DIR']:
+            direction = t.getcell(column, 0)
+            direction[0, 0] += .003
+            t.putcell(column, 0, direction)
+    finally:
+        t.close()
 
 
 def verify_missing_maximum_w(root, native):
@@ -1061,6 +1204,7 @@ def shared_window_descriptions(root, source, native):
                 spectral_metadata(case, label)
     results.update(coincident_description_references(root, native))
     results.update(simultaneous_distinct_windows(root, native))
+    results.update(separate_arrays(root, source, native))
     for gain in ['G', 'T']:
         for interval in ['inf,2ch', 'int,5MHz', '30s,unused']:
             case = root/f'interval-{gain}-{interval.replace(",", "-")}'
@@ -1134,11 +1278,97 @@ def simultaneous_distinct_windows(root, native):
     return {case.name: errors}
 
 
+def solve_preapply(root, source, native):
+    prior = root/'prior.cal'
+    solve(casa, root, 'prior', source, gaintype='G', calmode='ap', solint='int',
+          field='0', minblperant=2)
+    library = root/'prior.callib'
+    library.write_text(f"caltable='{prior}' tinterp='nearest' fldmap=[0] calwt=True\n")
+    results = {}
+    cases = [
+        ('scalar-chain', dict(gaintable=str(prior), gainfield='0', interp='nearest', spwmap=[0])),
+        ('nested-chain', dict(gaintable=[str(prior)], gainfield=['0'],
+                              interp=['linear'], spwmap=[[0]])),
+        ('callibrary', dict(docallib=True, callib=str(library),
+                             gaintable=[str(root/'ignored.cal')])),
+        ('traditional', dict(docallib=False, callib=str(root/'ignored.callib'),
+                             gaintable=[str(prior)], interp=['nearest'])),
+    ]
+    for name, options in cases:
+        case = root/name
+        case.mkdir()
+        results[name] = gain_and_apply(case, source, native, 'T', 'inf', calmode='ap',
+                                       field='0', minblperant=2, **options)
+    return results
+
+
+def separate_arrays(root, source, native):
+    vis = root/'arrays.ms'
+    copy_ms(source, vis)
+    t = table()
+    t.open(str(vis), nomodify=False)
+    try:
+        _, integration = np.unique(t.getcol('TIME'), return_inverse=True)
+        array_ids = (integration%2).astype(np.int32)
+        t.putcol('ARRAY_ID', array_ids)
+        t.putcol('DATA', t.getcol('DATA')*(1.+.6*array_ids))
+        t.putcol('SCAN_NUMBER', np.ones(t.nrows(), np.int32))
+    finally:
+        t.close()
+    results = {}
+    for gain in ['G', 'T']:
+        case = root/f'arrays-{gain}'
+        case.mkdir()
+        results[case.name] = gain_and_apply(case, vis, native, gain, 'inf', calmode='ap',
+                                            field='0', combine='scan', minblperant=2)
+        expected = contents(case/f'ap-{gain}-inf-mean-norm0-casa.cal')
+        assert len(expected['TIME']) == 10
+    return results
+
+
+def ephemeris_parallactic_angle(root, source, native):
+    from casaconfig import config
+    from casatools import ms
+
+    vis = amplitude_data(root, source)
+    t = table()
+    t.open(str(vis), nomodify=False)
+    try:
+        times = t.getcol('TIME')
+        origin = times.min()
+        stretched = origin + 25. * (times-origin)
+        t.putcol('TIME', stretched)
+        t.putcol('TIME_CENTROID', stretched)
+    finally:
+        t.close()
+    t.open(str(vis/'FIELD'), nomodify=False)
+    try:
+        t.putcell('TIME', 0, origin)
+        for column in ['DELAY_DIR', 'PHASE_DIR', 'REFERENCE_DIR']:
+            t.putcell(column, 0, np.array([[1e-6], [-2e-6]]))
+    finally:
+        t.close()
+    ephemeris = Path(config.measurespath)/'ephemerides'/'JPL-Horizons'/'Uranus_55197-59214dUTC_J2000.tab'
+    assert ephemeris.is_dir(), ephemeris
+    tool = ms()
+    tool.open(str(vis), nomodify=False)
+    try:
+        assert tool.addephemeris(0, str(ephemeris), 'Uranus', [0])
+    finally:
+        tool.done()
+    case = root/'uranus-parallactic-angle'
+    case.mkdir()
+    errors = gain_and_apply(case, vis, native, 'G', 'int', calmode='ap', field='0', spw='0',
+                            minblperant=2, smodel=[1., .15, .1, 0.], parang=True,
+                            apply_options={'parang': True})
+    return {case.name: errors}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights', 'virtual-components', 'virtual-fourier', 'descriptions'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights', 'virtual-components', 'virtual-fourier', 'descriptions', 'preapply', 'ephemeris'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -1149,7 +1379,7 @@ def main():
     assert not any(root.iterdir()), 'work directory must be empty'
     os.chdir(root)
     source = root/'source.ms'
-    make_cal_ms(str(source))
+    make_cal_ms(str(source), stokes='XX XY YX YY' if args.case == 'ephemeris' else 'XX YY')
     if args.case == 'amplitude':
         source = amplitude_data(root, source)
         results = {f'{gain}-{interval}-norm{int(norm)}': gain_and_apply(root, source, native, gain, interval, norm)
@@ -1210,6 +1440,10 @@ def main():
         results = virtual_fourier(root, amplitude_data(root, source), native)
     elif args.case == 'descriptions':
         results = shared_window_descriptions(root, amplitude_data(root, source), native)
+    elif args.case == 'preapply':
+        results = solve_preapply(root, amplitude_data(root, source), native)
+    elif args.case == 'ephemeris':
+        results = ephemeris_parallactic_angle(root, source, native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

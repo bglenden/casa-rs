@@ -20,6 +20,8 @@
 //! an EVLA MeasurementSet (`PBMathInterface::COMMONPB`) and which takes the
 //! polynomial fit of each beam frequency (`PBMath1DEVLA::nearestVPArray`).
 
+use std::borrow::Cow;
+
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use num_complex::{Complex32, Complex64};
 
@@ -38,10 +40,10 @@ use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, GridEdge, ImageCorrection, KernelNormalisation,
     MuellerRouting, RowContext, TapFootprint, TapLayout,
 };
-use crate::dense::dense_cell_bytes;
+use crate::dense::{OversampledPlane, dense_cell, dense_cell_bytes};
 use crate::error::OperatorError;
 use crate::fft::PlaneFft;
-use crate::geometry::{GridGeometry, next_larger_even_composite};
+use crate::geometry::{CellLocation, GridGeometry, next_larger_even_composite};
 use crate::polarization::PolarizationRouting;
 use crate::sample::CfKey;
 
@@ -212,6 +214,16 @@ pub struct MosaicWindow {
     pub buffer_band: Option<MosaicBufferBand>,
 }
 
+impl MosaicWindow {
+    /// Whether CASA would generate the same beam planes for both selected
+    /// bands. The channel-to-plane mappings can still differ.
+    pub fn shares_beam_frequencies(&self, other: &Self) -> Result<bool, OperatorError> {
+        let current = FrequencyCells::new(MosaicRules::Tclean, self, 0)?;
+        let previous = FrequencyCells::new(MosaicRules::Tclean, other, 0)?;
+        Ok(current.frequencies_hz == previous.frequencies_hz)
+    }
+}
+
 /// The observed band of a REST mosaic's first buffer, before
 /// interpolation. CASA uses it to limit the beam cells.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -220,6 +232,22 @@ pub struct MosaicBufferBand {
     pub channels: usize,
     /// The lowest selected channel in TOPO, in Hz.
     pub lowest_topocentric_hz: f64,
+}
+
+/// The oversampled prediction planes reopened from a CASA mosaic cache.
+pub struct SavedMosaicPlanes<'a> {
+    /// One square lattice per cell and dish pair, x fastest.
+    pub values: Cow<'a, [Complex32]>,
+    /// Lattice side in fine pixels.
+    pub side: usize,
+    /// Number of beam frequency cells in each pair plane.
+    pub cells: usize,
+    /// Number of dish classes whose pairs the cache stores.
+    pub dishes: usize,
+    /// Half of the widest convolution support in grid cells.
+    pub half_support: u16,
+    /// Fine offsets per grid cell.
+    pub sampling: u16,
 }
 
 /// The mosaic primary-beam kernel set: dense complex cells per dish-class
@@ -321,6 +349,70 @@ impl MosaicLayout {
 }
 
 impl MosaicPb {
+    /// Restore a prediction-only set from the oversampled lattices saved
+    /// by `HetArrayConvFunc`. `None` means CASA needs at least one new cell
+    /// for the selected band, so the stored cache cannot supply it.
+    pub fn from_saved_planes(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        window: &MosaicWindow,
+        saved: SavedMosaicPlanes<'_>,
+    ) -> Result<Option<Self>, OperatorError> {
+        let cells = FrequencyCells::new(MosaicRules::Tclean, window, 0)?;
+        let used = cells.frequencies_hz.len();
+        if saved.cells < used {
+            return Ok(None);
+        }
+        let span = usize::from(saved.half_support) * usize::from(saved.sampling)
+            + usize::from(CellLocation::fine_centre(saved.sampling));
+        let invalid = || OperatorError::ConvolutionFunction {
+            reason: "invalid saved mosaic convolution planes",
+        };
+        let plane_size = saved.side.checked_mul(saved.side).ok_or_else(invalid)?;
+        let pairs = pair_planes(saved.dishes);
+        if saved.sampling == 0
+            || saved.half_support > (u16::MAX - 1) / 2
+            || saved.side <= span
+            || saved.side / 2 < span
+            || saved.side / 2 + span >= saved.side
+            || plane_size
+                .checked_mul(saved.cells)
+                .and_then(|n| n.checked_mul(pairs))
+                != Some(saved.values.len())
+        {
+            return Err(invalid());
+        }
+        let mut imaging = Vec::with_capacity(pairs * used);
+        for pair in 0..pairs {
+            for cell in 0..used {
+                let start = (pair * saved.cells + cell) * plane_size;
+                imaging.push(dense_cell(
+                    &[OversampledPlane {
+                        values: &saved.values[start..start + plane_size],
+                        side: saved.side,
+                        centre: [saved.side / 2; 2],
+                        sampling: saved.sampling,
+                    }],
+                    [saved.half_support; 2],
+                ));
+            }
+        }
+        let grid = geometry.grid_shape();
+        Ok(Some(Self {
+            bounded_pointings: true,
+            dishes: saved.dishes,
+            windows: vec![cells],
+            cells_per_plane: used,
+            imaging,
+            weight: Vec::new(),
+            conjugate: Vec::new(),
+            max_half_support: saved.half_support,
+            conv_size: saved.side,
+            mueller: MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols()),
+            correction: ImageCorrection::mosaic_sinc(grid, saved.sampling),
+        }))
+    }
+
     /// Build the cells under `rules` for `geometry`'s image (which is the
     /// grid: the mosaic set grids without padding), `dishes` in CASA's
     /// dish-class order and the selected `windows`: [`Self::screens`], then
@@ -805,7 +897,7 @@ impl ConvolutionFunctionSet for MosaicPb {
     }
 
     fn weight_taps<'s>(&'s self, key: CfKey, _hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
-        Some(self.weight[self.index(key)].layout())
+        self.weight.get(self.index(key)).map(DenseCell::layout)
     }
 
     fn mueller(&self) -> &MuellerRouting {

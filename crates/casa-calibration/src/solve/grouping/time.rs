@@ -76,6 +76,7 @@ pub(super) fn bucketed_rows(
         .filter(|row| include_autocorrelations || row.antenna1 != row.antenna2)
         .map(|row| {
             let base_key = SolveBaseKey {
+                array_id: row.array_id,
                 field_id: if combine.fields { 0 } else { row.field_id },
                 spw_id: if combine.spectral_windows {
                     0
@@ -142,6 +143,7 @@ pub(super) struct FirstTBuffer {
     pub(super) data_desc_id: i32,
     pub(super) spw_id: i32,
     pub(super) observation_id: i32,
+    pub(super) scan_number: i32,
     pub(super) time: f64,
     pub(super) max_span: Option<f64>,
     pub(super) skipped_baseline: (i32, i32),
@@ -193,6 +195,7 @@ pub(super) fn first_t_buffers(
                     data_desc_id: row.data_desc_id,
                     spw_id: row.data_spw_id,
                     observation_id: row.observation_id,
+                    scan_number: row.scan_number,
                     time: row.time_seconds,
                     max_span,
                     skipped_baseline: (row.antenna1, row.antenna2),

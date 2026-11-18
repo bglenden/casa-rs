@@ -217,7 +217,7 @@ pub(crate) fn solve_group(
     options: SolveGraphOptions<'_>,
 ) -> Option<Vec<SolutionRow>> {
     let refant_id = options.refant_id;
-    let scan_number = *group.scan_numbers.iter().next().unwrap_or(&0);
+    let scan_number = group.scan_number();
     let graphs = group.channel_graphs.first()?;
     let solved = solve_graphs(
         graphs,

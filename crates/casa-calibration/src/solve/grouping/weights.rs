@@ -129,13 +129,16 @@ struct VisibilityChunk {
 
 /// The subchunk groups rows at the same exact time inside the outer chunk.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct VisibilityBuffer {
+pub(in crate::solve) struct VisibilityBuffer {
     chunk: VisibilityChunk,
     time: u64,
 }
 
 impl VisibilityBuffer {
-    fn new(&(row, base, bucket): &BucketedRow<'_>, combine: GainSolveCombine) -> Self {
+    pub(in crate::solve) fn new(
+        &(row, base, bucket): &BucketedRow<'_>,
+        combine: GainSolveCombine,
+    ) -> Self {
         Self {
             chunk: VisibilityChunk {
                 array: row.array_id,

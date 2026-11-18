@@ -3274,7 +3274,7 @@ fn feed_row_distance(row: &FeedAngleRow, time_seconds: f64) -> f64 {
 }
 
 pub(crate) fn load_parallactic_angle_state(ms: &MeasurementSet) -> MsResult<ParallacticAngleState> {
-    let engine = MsCalEngine::new(ms)?;
+    let engine = MsCalEngine::new(ms)?.with_field_ephemerides(ms)?;
     let mut feed_rows = HashMap::<(i32, i32), Vec<FeedAngleRow>>::new();
     if let Ok(feed) = ms.feed() {
         for row_index in 0..feed.row_count() {

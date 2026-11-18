@@ -87,6 +87,23 @@ impl PolarizationRouting {
         correlations: &[Correlation],
         requested: &[PolarizationCoordinate],
     ) -> Result<Self, OperatorError> {
+        Self::compile_planes(correlations, requested, true)
+    }
+
+    /// Route visibilities through saved Fourier planes in image order.
+    /// A stored plane can be absent from the selected visibility products.
+    pub fn from_saved_planes(
+        correlations: &[Correlation],
+        saved_planes: &[PolarizationCoordinate],
+    ) -> Result<Self, OperatorError> {
+        Self::compile_planes(correlations, saved_planes, false)
+    }
+
+    fn compile_planes(
+        correlations: &[Correlation],
+        requested: &[PolarizationCoordinate],
+        require_all: bool,
+    ) -> Result<Self, OperatorError> {
         let feed = feed_basis(correlations)?;
         if requested.is_empty() {
             return Err(OperatorError::Polarization {
@@ -113,8 +130,7 @@ impl PolarizationRouting {
                 .iter()
                 .map(|coordinate| {
                     let correlation = correlation_of(*coordinate);
-                    correlations
-                        .contains(&correlation)
+                    (!require_all || correlations.contains(&correlation))
                         .then_some(GridPolarization::Correlation(correlation))
                         .ok_or(OperatorError::Polarization {
                             reason: "requested correlation is not selected",
@@ -126,8 +142,7 @@ impl PolarizationRouting {
                 .iter()
                 .map(|coordinate| {
                     let correlation = correlation_of(*coordinate);
-                    correlations
-                        .contains(&correlation)
+                    (!require_all || correlations.contains(&correlation))
                         .then_some(GridPolarization::Correlation(correlation))
                         .ok_or(OperatorError::Polarization {
                             reason: "requested Stokes parameter is not selected",
@@ -148,7 +163,7 @@ impl PolarizationRouting {
                     .map(|index| index as u8)
             })
             .collect::<Vec<_>>();
-        if !(0..grid.len()).any(|gpol| pol_map.contains(&Some(gpol as u8))) {
+        if require_all && pol_map.iter().all(Option::is_none) {
             return Err(OperatorError::Polarization {
                 reason: "selected correlations feed no grid polarization",
             });
