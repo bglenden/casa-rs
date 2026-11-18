@@ -807,14 +807,14 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | CASA field selector. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Inclusive TIME range in MJD seconds |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | UV range selector. |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Comma-separated scan numbers |
-| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Comma-separated OBSERVATION_ID integers |
-| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Intent selector. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal field selector text. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal spw selector text. |
+| <code>timerange</code> | <code>ms.selection.timerange@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal timerange selector text. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | UV range selector. |
+| <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal antenna selector text. |
+| <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal scan selector text. |
+| <code>observation</code> | <code>ms.selection.observation@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Observation selection applied to every MeasurementSet |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Intent selector. |
 | <code>model</code> | <code>ft.model@r2</code> | <code>variant</code> | <code>""</code>; optional | Model | A model image name or a list of model image names. |
 | <code>nterms</code> | <code>parameter.nterms@r1</code> | <code>integer</code> | <code>1</code>; optional | Model | Number of Taylor terms. |
 | <code>reffreq</code> | <code>parameter.reffreq@r1</code> | <code>string</code> | <code>""</code>; optional | Model | Reference frequency. |

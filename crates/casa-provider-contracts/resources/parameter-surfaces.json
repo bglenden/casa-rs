@@ -16796,7 +16796,7 @@
           "name": "field",
           "concept": {
             "id": "ms.selection.field",
-            "semantic_revision": 1
+            "semantic_revision": 4
           },
           "order": 1,
           "default": {
@@ -16834,7 +16834,7 @@
           "name": "spw",
           "concept": {
             "id": "ms.selection.spw",
-            "semantic_revision": 1
+            "semantic_revision": 3
           },
           "order": 2,
           "default": {
@@ -16872,7 +16872,7 @@
           "name": "timerange",
           "concept": {
             "id": "ms.selection.timerange",
-            "semantic_revision": 1
+            "semantic_revision": 4
           },
           "order": 3,
           "default": {
@@ -16910,7 +16910,7 @@
           "name": "uvrange",
           "concept": {
             "id": "ms.selection.uvrange",
-            "semantic_revision": 1
+            "semantic_revision": 3
           },
           "order": 4,
           "default": {
@@ -16948,7 +16948,7 @@
           "name": "antenna",
           "concept": {
             "id": "ms.selection.antenna",
-            "semantic_revision": 1
+            "semantic_revision": 4
           },
           "order": 5,
           "default": {
@@ -16986,7 +16986,7 @@
           "name": "scan",
           "concept": {
             "id": "ms.selection.scan",
-            "semantic_revision": 1
+            "semantic_revision": 4
           },
           "order": 6,
           "default": {
@@ -17024,7 +17024,7 @@
           "name": "observation",
           "concept": {
             "id": "ms.selection.observation",
-            "semantic_revision": 1
+            "semantic_revision": 3
           },
           "order": 7,
           "default": {
@@ -17062,7 +17062,7 @@
           "name": "intent",
           "concept": {
             "id": "ms.selection.intent",
-            "semantic_revision": 1
+            "semantic_revision": 3
           },
           "order": 8,
           "default": {
