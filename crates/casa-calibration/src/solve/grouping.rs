@@ -914,7 +914,10 @@ impl SolveAccumulator {
                 )
             };
             if !parallel_hand && options.gain_type == GainType::G {
-                if options.rotate_model {
+                // VbAvg uses the input row's full correlation weight to
+                // form a baseline centroid. G takes only parallel hands
+                // when weighting those centroids for the final solution.
+                if !options.channelized || options.rotate_model {
                     row_weight += samples::centroid_weight(
                         samples,
                         corr_index,

@@ -297,6 +297,7 @@ impl ModelInputs {
                             frequency_ref: *frequency_ref,
                             engine,
                             field: &field,
+                            phase_time,
                             frame: &frame,
                             uvw,
                             focus_rows: &buffer.focus_rows,

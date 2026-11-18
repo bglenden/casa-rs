@@ -33,7 +33,7 @@ pub use simple::SimpleMosaicScreens;
 use cells::FrequencyCells;
 use screen::{
     LANCZOS_A, PairLattices, conjugate_side, finish_pair, screen_pair,
-    simulator_weight_plane_support, weight_plane_support,
+    simulator_weight_plane_support, transform_pair, weight_plane_support,
 };
 
 use crate::convolution::{
@@ -288,7 +288,31 @@ impl MosaicLayout {
         dishes: &[PrimaryBeam],
         windows: &[MosaicWindow],
     ) -> Result<Self, OperatorError> {
-        if dishes.is_empty() || dishes.len() > usize::from(u8::MAX) {
+        let image = geometry.image();
+        let support = dishes
+            .iter()
+            .map(|dish| dish.support_pixels(image.increment_rad[0], image_frequency_hz))
+            .max()
+            .unwrap_or(0);
+        Self::with_support(
+            rules,
+            geometry,
+            image_frequency_hz,
+            dishes.len(),
+            support,
+            windows,
+        )
+    }
+
+    fn with_support(
+        rules: MosaicRules,
+        geometry: &GridGeometry,
+        image_frequency_hz: f64,
+        dishes: usize,
+        support_pixels: usize,
+        windows: &[MosaicWindow],
+    ) -> Result<Self, OperatorError> {
+        if dishes == 0 || dishes > usize::from(u8::MAX) {
             return Err(OperatorError::ConvolutionFunction {
                 reason: "the mosaic set needs between one and 255 dish classes",
             });
@@ -305,17 +329,13 @@ impl MosaicLayout {
         }
         let image = geometry.image();
         let [nx, ny] = image.shape;
-        let increment = image.increment_rad;
         // `findConvFunction`: the screen size from the widest dish class,
         // at least a tenth of the image in tclean's machine.
-        let mut support = match rules {
+        let min_support = match rules {
             MosaicRules::Tclean | MosaicRules::TcleanConjugateBeams => nx.max(ny) / 10,
             MosaicRules::Simulator => 0,
         };
-        for dish in dishes {
-            support = support.max(dish.support_pixels(increment[0], image_frequency_hz));
-        }
-        support = support.min(nx.max(ny));
+        let support = support_pixels.max(min_support).min(nx.max(ny));
         // `HetArrayConvFunc::findConvFunction`: the support limited by the
         // image extent, `CompositeNumber::nextLargerEven` (the first even
         // composite strictly above its argument), then `/16*16`.
@@ -496,48 +516,133 @@ impl MosaicPb {
         dishes: &[PrimaryBeam],
         windows: &[MosaicWindow],
     ) -> Result<MosaicScreens, OperatorError> {
+        let layout = MosaicLayout::new(rules, geometry, image_frequency_hz, dishes, windows)?;
+        let patterns = dishes
+            .iter()
+            .map(|dish| (dish.pattern(), dish.maximum_radius_arcmin_ghz()))
+            .collect::<Vec<_>>();
+        Self::screens_from_layout(
+            rules,
+            geometry,
+            polarization,
+            image_frequency_hz,
+            dishes.len(),
+            layout,
+            |fft, screen, size, increment, [k, j], hz, _| {
+                screen_pair(
+                    fft,
+                    screen,
+                    size,
+                    increment.map(f64::to_degrees),
+                    [&patterns[k], &patterns[j]],
+                    hz,
+                    rules.conjugate_hz(image_frequency_hz, hz)?,
+                )
+            },
+        )
+    }
+
+    /// Construct a scalar CASA mosaic kernel from sampled image voltage and
+    /// power products. The callback fills both screens in x-fastest order
+    /// for the pair of class indices, side, increments in radians, and Hz.
+    pub fn from_image_screens(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        image_frequency_hz: f64,
+        dishes: usize,
+        support_pixels: usize,
+        windows: &[MosaicWindow],
+        mut sample: impl FnMut([usize; 2], usize, [f64; 2], f64, &mut [Complex32], &mut [Complex32]),
+    ) -> Result<Self, OperatorError> {
+        let rules = MosaicRules::Tclean;
+        let layout = MosaicLayout::with_support(
+            rules,
+            geometry,
+            image_frequency_hz,
+            dishes,
+            support_pixels,
+            windows,
+        )?;
+        let mut imaging = vec![Complex32::default(); layout.conv_size * layout.conv_size];
+        let mut weight = imaging.clone();
+        Self::screens_from_layout(
+            rules,
+            geometry,
+            polarization,
+            image_frequency_hz,
+            dishes,
+            layout,
+            |fft, screen, size, increment, pair, _, reference_hz| {
+                // SubImage adjusts the reference pixel for each beam
+                // channel. PBMath2DImage uses the unchanged reference value.
+                sample(
+                    pair,
+                    size,
+                    increment,
+                    reference_hz,
+                    &mut imaging,
+                    &mut weight,
+                );
+                transform_pair(fft, screen, size, &imaging, &weight)
+            },
+        )?
+        .finish()
+    }
+
+    fn screens_from_layout(
+        rules: MosaicRules,
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        image_frequency_hz: f64,
+        dishes: usize,
+        layout: MosaicLayout,
+        mut pair_lattices: impl FnMut(
+            &mut PlaneFft<f64>,
+            &mut [Complex64],
+            usize,
+            [f64; 2],
+            [usize; 2],
+            f64,
+            f64,
+        ) -> Result<PairLattices, OperatorError>,
+    ) -> Result<MosaicScreens, OperatorError> {
         let MosaicLayout {
             conv_size,
             cells,
             cell_count,
-        } = MosaicLayout::new(rules, geometry, image_frequency_hz, dishes, windows)?;
+        } = layout;
         let image = geometry.image();
         let [nx, ny] = image.shape;
         let increment = image.increment_rad;
         let lattice = conv_size / 4;
         // The screen covers the image field at `conv_size` pixels, so its
-        // increment is `Δ · n / convSize` per axis, in degrees as
-        // `PBMath1D::apply` works.
-        let screen_increment_deg = [
-            (increment[0] * nx as f64 / conv_size as f64).to_degrees(),
-            (increment[1] * ny as f64 / conv_size as f64).to_degrees(),
+        // increment is `Δ · n / convSize` per axis.
+        let screen_increment = [
+            increment[0] * nx as f64 / conv_size as f64,
+            increment[1] * ny as f64 / conv_size as f64,
         ];
-        let patterns = dishes
-            .iter()
-            .map(|dish| (dish.pattern(), dish.maximum_radius_arcmin_ghz()))
-            .collect::<Vec<_>>();
         let mut fft = PlaneFft::<f64>::new([conv_size, conv_size], false)?;
         let mut screen = vec![Complex64::default(); conv_size * conv_size];
-        let planes = pair_planes(dishes.len());
+        let planes = pair_planes(dishes);
         // One lattice per beam frequency of every pair and window, in
         // CASA's `[x][y]` quarter-cropped layout, with the pair's support
         // (`supportAndNormalizeLatt`: from the weight plane of the last beam
         // frequency), in the cell order the keys index.
         let mut screened = Vec::with_capacity(planes * cells.len());
         let mut window_support = vec![0_usize; cells.len()];
-        for k in 0..dishes.len() {
-            for j in k..dishes.len() {
+        for k in 0..dishes {
+            for j in k..dishes {
                 for (window_index, window) in cells.iter().enumerate() {
                     let mut lattices = Vec::with_capacity(window.frequencies_hz.len());
                     for &frequency_hz in &window.frequencies_hz {
-                        lattices.push(screen_pair(
+                        lattices.push(pair_lattices(
                             &mut fft,
                             &mut screen,
                             conv_size,
-                            screen_increment_deg,
-                            [&patterns[k], &patterns[j]],
+                            screen_increment,
+                            [k, j],
                             frequency_hz,
-                            rules.conjugate_hz(image_frequency_hz, frequency_hz)?,
+                            window.frequencies_hz[0],
                         )?);
                     }
                     let last = lattices.last().expect("a window has a cell");
@@ -571,7 +676,7 @@ impl MosaicPb {
             }
         }
         Ok(MosaicScreens {
-            dishes: dishes.len(),
+            dishes,
             windows: cells,
             cell_count,
             screened,
@@ -890,6 +995,17 @@ impl ConvolutionFunctionSet for MosaicPb {
     /// whatever its gridding takes.
     fn prediction_taps<'s>(&'s self, key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
         self.imaging[self.index(key)].layout()
+    }
+
+    // MosaicFT passes the cell unchanged to the gridder and conjugated
+    // to the degridder, independently of the sign of w. The CPU gather
+    // already takes the adjoint of the supplied taps.
+    fn adjoint_conjugates(&self, _key: CfKey, _mode: crate::accumulator::Mode, _w: bool) -> bool {
+        false
+    }
+
+    fn prediction_conjugates(&self, _key: CfKey, _w: bool) -> bool {
+        false
     }
 
     fn max_half_support(&self) -> [u16; 2] {

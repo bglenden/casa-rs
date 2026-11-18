@@ -93,10 +93,24 @@ impl GridFtProjection {
         tangent_point: &MDirection,
         frame: &MeasFrame,
     ) -> Result<Self, MeasureError> {
+        Self::tracked_mosaic_with_frame(phase_centre, tangent_point, [0.; 2], frame)
+    }
+
+    /// MosaicFT's two-stage reprojection, with the motion applied to the
+    /// correlator direction in the first rotation.
+    pub fn tracked_mosaic_with_frame(
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        shift_rad: [f64; 2],
+        frame: &MeasFrame,
+    ) -> Result<Self, MeasureError> {
         let in_field = phase_centre.convert_to(tangent_point.refer(), frame)?;
+        let (lon, lat) = in_field.as_angles();
+        let shifted =
+            MDirection::from_angles(lon + shift_rad[0], lat + shift_rad[1], in_field.refer());
         Ok(Self {
             machine: Reprojection::Girar {
-                frame: UvwMachine::with_frame(&in_field, phase_centre, frame)?,
+                frame: UvwMachine::with_frame(&shifted, phase_centre, frame)?,
                 phase: UvwMachine::with_frame(tangent_point, &in_field, frame)?,
             },
         })

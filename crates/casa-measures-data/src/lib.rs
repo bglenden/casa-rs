@@ -26,6 +26,7 @@ use tar::Archive;
 mod interp;
 mod observatory;
 mod parser;
+mod planet;
 mod source;
 mod spectral_line;
 
@@ -33,6 +34,7 @@ mod spectral_line;
 pub mod update;
 
 pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
+pub use planet::PlanetaryEphemeris;
 pub use source::{SourceCatalog, SourceEntry};
 pub use spectral_line::{SpectralLineCatalog, SpectralLineEntry};
 

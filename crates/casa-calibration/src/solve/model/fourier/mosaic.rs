@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Reopen the primary-beam convolution used by a stored mosaic grid.
 
+mod image_beam;
 mod saved;
 
 use casa_coordinates::DirectionCoordinate;
 use casa_imaging_operator::{
     AiryDish, ConvolutionFunctionSet, GridGeometry, MosaicPb, MosaicRules, MosaicWindow,
-    PolarizationRouting,
+    PolarizationRouting, SavedMosaicPlanes,
 };
-use casa_ms::convert_frequency_to_frame;
+use casa_ms::{convert_frequency_to_frame, voltage_pattern};
 use casa_numerics::PrimaryBeam;
 use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{RecordValue, Value};
+use casa_types::{Complex32, RecordValue, Value};
 
 use super::{FourierRow, GainSolveError, model_error, record_text};
 
@@ -61,52 +62,36 @@ impl MosaicLayout {
             loaded = saved::planes(record, beam, &complete)?;
         }
         let class = saved::integer(beam, "pbclass")?;
-        let custom = !matches!(class, 1 | 2);
-        let (dishes, antenna_classes) = match (custom, loaded.as_ref()) {
-            (true, Some(planes)) if planes.dishes == 1 => {
-                let path = record_text(beam, "vptable")?;
-                if path.is_empty() || !std::path::Path::new(path).is_dir() {
-                    return Err(model_error(
-                        "virtual mosaic voltage-pattern table is unavailable",
-                    ));
-                }
-                let antennas = row.ms.antenna().map_err(model_error)?;
-                (Vec::new(), vec![0; antennas.row_count()])
-            }
-            (true, _) => {
-                return Err(model_error(
-                    "virtual mosaic custom voltage-pattern selection requires a saved single-class convolution",
-                ));
-            }
-            (false, _) => antenna_beams(row, geometry, &telescope, class)?,
-        };
-        let restored = if let Some(planes) = loaded {
-            if planes.dishes != dishes.len() && !custom {
-                return Err(model_error(
-                    "virtual mosaic beam classes do not match the saved convolution",
-                ));
-            }
-            MosaicPb::from_saved_planes(geometry, polarization, &window, planes)
-                .map_err(model_error)?
+        let (kernels, antenna_classes) = if class == 8 {
+            let path = std::path::Path::new(record_text(beam, "vptable")?);
+            let beams = image_beam::ImageBeams::load(path, row)?;
+            let kernels = match restore(geometry, polarization, &window, loaded, beams.len())? {
+                Some(kernels) => kernels,
+                None => image_kernels(
+                    geometry,
+                    direction,
+                    polarization,
+                    reference_hz,
+                    window,
+                    &beams,
+                )?,
+            };
+            (kernels, beams.classes)
         } else {
-            None
-        };
-        let kernels = match restored {
-            Some(kernels) => kernels,
-            None if custom => {
-                return Err(model_error(
-                    "virtual mosaic has no saved convolution for the selected custom beam band",
-                ));
-            }
-            None => MosaicPb::new(
-                MosaicRules::Tclean,
-                geometry,
-                polarization,
-                reference_hz,
-                &dishes,
-                &[window],
-            )
-            .map_err(model_error)?,
+            let (dishes, classes) = antenna_beams(row, geometry, &telescope, class, beam)?;
+            let kernels = match restore(geometry, polarization, &window, loaded, dishes.len())? {
+                Some(kernels) => kernels,
+                None => MosaicPb::new(
+                    MosaicRules::Tclean,
+                    geometry,
+                    polarization,
+                    reference_hz,
+                    &dishes,
+                    &[window],
+                )
+                .map_err(model_error)?,
+            };
+            (kernels, classes)
         };
         let grid = geometry.image();
         Ok((
@@ -120,7 +105,11 @@ impl MosaicLayout {
         ))
     }
 
-    pub(super) fn pointing_offset(&self, row: &FourierRow<'_>) -> Result<[f64; 2], GainSolveError> {
+    pub(super) fn pointing_offset(
+        &self,
+        row: &FourierRow<'_>,
+        shift: [f64; 2],
+    ) -> Result<[f64; 2], GainSolveError> {
         // HetArrayConvFunc does not save its inherited POINTING selector.
         // Reopened MosaicFT calls get without initializing a new predictor,
         // so its convolution phases use the field direction.
@@ -131,7 +120,7 @@ impl MosaicLayout {
         let (longitude, latitude) = pointing.as_angles();
         let pixel = self
             .direction
-            .world_to_pixel([longitude, latitude])
+            .world_to_pixel([longitude - shift[0], latitude - shift[1]])
             .map_err(model_error)?;
         Ok(std::array::from_fn(|axis| {
             (pixel[axis] - self.centre[axis]) * self.increment[axis]
@@ -148,6 +137,64 @@ impl MosaicLayout {
         };
         Ok([first, second])
     }
+}
+
+fn restore(
+    geometry: &GridGeometry,
+    polarization: &PolarizationRouting,
+    window: &MosaicWindow,
+    loaded: Option<SavedMosaicPlanes<'_>>,
+    dishes: usize,
+) -> Result<Option<MosaicPb>, GainSolveError> {
+    let Some(planes) = loaded else {
+        return Ok(None);
+    };
+    if planes.dishes != dishes {
+        return Err(model_error(
+            "virtual mosaic beam classes do not match the saved convolution",
+        ));
+    }
+    MosaicPb::from_saved_planes(geometry, polarization, window, planes).map_err(model_error)
+}
+
+fn image_kernels(
+    geometry: &GridGeometry,
+    direction: &DirectionCoordinate,
+    polarization: &PolarizationRouting,
+    reference_hz: f64,
+    window: MosaicWindow,
+    patterns: &image_beam::ImageBeams,
+) -> Result<MosaicPb, GainSolveError> {
+    let patterns = patterns.screens()?;
+    let support = patterns
+        .iter()
+        .map(|beam| beam.support_pixels(geometry.image().increment_rad[0], reference_hz))
+        .max()
+        .unwrap_or(0);
+    let pc = direction.pc_matrix();
+    MosaicPb::from_image_screens(
+        geometry,
+        polarization,
+        reference_hz,
+        patterns.len(),
+        support,
+        &[window],
+        |[first, second], side, increment, hz, voltage, power| {
+            let centre = (side / 2) as f64;
+            for (i, (voltage, power)) in voltage.iter_mut().zip(power).enumerate() {
+                let x = (i % side) as f64 - centre;
+                let y = (i / side) as f64 - centre;
+                let offset = std::array::from_fn(|axis| {
+                    increment[axis] * (pc[[axis, 0]] * x + pc[[axis, 1]] * y)
+                });
+                let a = patterns[first].value(offset, hz);
+                let b = patterns[second].value(offset, hz);
+                *voltage = a * b;
+                *power = Complex32::new(a.norm_sqr() * b.norm_sqr(), 0.);
+            }
+        },
+    )
+    .map_err(model_error)
 }
 
 fn beam_window(
@@ -208,8 +255,19 @@ fn antenna_beams(
     geometry: &GridGeometry,
     telescope: &str,
     class: i32,
+    beam: &RecordValue,
 ) -> Result<(Vec<PrimaryBeam>, Vec<u8>), GainSolveError> {
     let antennas = row.ms.antenna().map_err(model_error)?;
+    if !matches!(class, 1 | 2) {
+        let path = std::path::Path::new(record_text(beam, "vptable")?);
+        let table = voltage_pattern::VoltagePatternTable::open(path).map_err(model_error)?;
+        let record = table
+            .default_record(telescope)
+            .map_err(model_error)?
+            .ok_or_else(|| model_error("no custom mosaic voltage pattern for the telescope"))?;
+        let pattern = voltage_pattern::radial_pattern(&record).map_err(model_error)?;
+        return Ok((vec![pattern], vec![0; antennas.row_count()]));
+    }
     if class == 1 {
         let reference = row
             .ms

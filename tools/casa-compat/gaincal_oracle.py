@@ -120,7 +120,8 @@ def amplitude_data(root, source):
 
 
 def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normtype='mean',
-                   calmode='a', compare_flagged_gains=True, apply_options=None, sort_solutions=False,
+                   calmode='a', compare_flagged_gains=True, apply_options=None,
+                   sort_solutions=False, native_source=None,
                    **extra):
     label = f'{calmode}-{gaintype}-{solint.replace(",", "-")}-{normtype}-norm{int(solnorm)}'
     if 'preavg' in extra:
@@ -131,7 +132,7 @@ def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normty
     for engine, module in [('casa', casa), ('native', native)]:
         case = f'{label}-{engine}'
         vis = root/f'{case}.ms'
-        copy_ms(source, vis)
+        copy_ms(native_source if engine == 'native' and native_source is not None else source, vis)
         solution = solve(module, root, case, vis, **options)
         if sort_solutions:
             # Different observing blocks can have the same solution time.
@@ -893,23 +894,27 @@ def virtual_component_geometry(root, vis, native):
     return results
 
 
-def virtual_fourier(root, source, native):
-    results = {}
-    wide = root/'wide-window.ms'
-    copy_ms(source, wide)
+def copy_with_channel_spacing(source, destination, channel_width):
+    copy_ms(source, destination)
     t = table()
-    t.open(str(wide/'SPECTRAL_WINDOW'), nomodify=False)
+    t.open(str(destination/'SPECTRAL_WINDOW'), nomodify=False)
     try:
         freq = t.getcell('CHAN_FREQ', 0)
-        channel_width = 1e9
         t.putcell('CHAN_FREQ', 0, freq[0] + channel_width*np.arange(freq.size))
         for name in ['CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION']:
             t.putcell(name, 0, np.full(freq.size, channel_width))
         t.putcell('TOTAL_BANDWIDTH', 0, channel_width*freq.size)
     finally:
         t.close()
+
+
+def virtual_fourier(root, source, native):
+    results = {}
+    wide = root/'wide-window.ms'
+    copy_with_channel_spacing(source, wide, 1e9)
     long_w = root/'long-w.ms'
     copy_ms(source, long_w)
+    t = table()
     t.open(str(long_w), nomodify=False)
     try:
         uvw = t.getcol('UVW')
@@ -1053,6 +1058,42 @@ def virtual_fourier(root, source, native):
                     selected, vis, native, gain, 'inf', calmode='ap', field='0', spw='0:0~3',
                     smodel=[], minblperant=2)
     verify_missing_maximum_w(root, native)
+    results.update(rebuilt_image_beam(root, source, native))
+    results.update(rebuilt_image_beam(root, source, native, heterogeneous=True))
+    return results
+
+
+def rebuilt_image_beam(root, source, native, heterogeneous=False):
+    folder = root/('mixed-image-beams' if heterogeneous else 'rebuilt-image-beam')
+    folder.mkdir()
+    vis = folder/'input.ms'
+    copy_with_channel_spacing(source, vis, 250e6)
+    vptable = (
+        mosaic_image_beam(folder, root/'mosaic'/'image.pb', heterogeneous=True)
+        if heterogeneous else root/'mosaic-image-beam'/'beam.tab'
+    )
+    casa.tclean(vis=str(vis), imagename=str(folder/'image'), field='0', spw='0',
+                imsize=64, cell='1arcsec', niter=5, datacolumn='data',
+                savemodel='virtual', gridder='mosaic', vptable=str(vptable))
+    t = table()
+    t.open(str(vis/'SOURCE'))
+    try:
+        beam = t.getcell('SOURCE_MODEL', t.getkeyword('model_0'))['ft_0']['container']['pbconvfunc']
+        assert beam['key0'] == '0_0_8' and beam['ndefined'] == 1
+        assert beam['convfunctions0'].shape[3:] == (3, 3 if heterogeneous else 1)
+    finally:
+        t.close()
+    results = {}
+    selections = [('rebuilt', '0:4~7')]
+    if heterogeneous:
+        selections.append(('cached', '0'))
+    for label, selection in selections:
+        for gain in ('G', 'T'):
+            case = folder/f'{label}-{gain}'
+            case.mkdir()
+            results[f'{folder.name}-{label}-{gain}'] = gain_and_apply(
+                case, vis, native, gain, 'inf', calmode='ap', field='0', spw=selection,
+                smodel=[], minblperant=2)
     return results
 
 
@@ -1070,7 +1111,7 @@ def offset_mosaic_pointings(vis):
         t.close()
 
 
-def mosaic_image_beam(folder, template):
+def mosaic_image_beam(folder, template, heterogeneous=False):
     from casatools import image, vpmanager
 
     tool = image()
@@ -1090,12 +1131,32 @@ def mosaic_image_beam(folder, template):
     voltage[:, :, 3, :] = .96*voltage[:, :, 0, :]
     beam = folder/'beam.image'
     tool.fromarray(str(beam), voltage, csys=record)
+    if heterogeneous:
+        x = np.linspace(-1., 1., voltage.shape[0])[:, None, None, None]
+        second = folder/'second.image'
+        imaginary = folder/'imaginary.image'
+        tool.close()
+        tool.fromarray(str(second), voltage*(1.+.10*x), csys=record)
+        coords = tool.coordsys()
+        try:
+            coords.setstokes(['YY', 'YX', 'XY', 'XX'])
+            imaginary_coords = coords.torecord()
+        finally:
+            coords.done()
+        tool.close()
+        imaginary_voltage = voltage*.07*x
+        imaginary_voltage[:, :, 0, :] = .4*voltage[:, :, 0, :]*(1.+x[:, :, 0, :])
+        tool.fromarray(str(imaginary), imaginary_voltage, csys=imaginary_coords)
     tool.done()
     manager = vpmanager()
     manager.reset()
     table_path = folder/'beam.tab'
     try:
-        manager.setpbimage(telescope='ALMA', realimage=str(beam), antnames=['*'])
+        names = ['A0', 'A1'] if heterogeneous else ['*']
+        assert manager.setpbimage(telescope='ALMA', realimage=str(beam), antnames=names)
+        if heterogeneous:
+            assert manager.setpbimage(telescope='ALMA', realimage=str(second),
+                                      imagimage=str(imaginary), antnames=['A2', 'A3', 'A4'])
         assert manager.setuserdefault(vplistnum=0, telescope='ALMA')
         assert manager.saveastable(str(table_path))
     finally:
@@ -1361,7 +1422,122 @@ def ephemeris_parallactic_angle(root, source, native):
     errors = gain_and_apply(case, vis, native, 'G', 'int', calmode='ap', field='0', spw='0',
                             minblperant=2, smodel=[1., .15, .1, 0.], parang=True,
                             apply_options={'parang': True})
-    return {case.name: errors}
+    tracked = {'phasecenter': 'TRACKFIELD'}
+    return {
+        case.name: errors,
+        **tracked_image(root, vis, native, 'grid', 'GridFT', tracked, ('int', 'inf')),
+        **tracked_image(root, vis, native, 'mosaic', 'MosaicFTNew',
+                        {**tracked, 'gridder': 'mosaic'}, ('int',)),
+        **tracked_image(root, vis, native, 'ephemeris-table', 'GridFT',
+                        {'phasecenter': str(ephemeris)}, ('int',)),
+        **tracked_image(root, vis, native, 'planet', 'GridFT',
+                        {'phasecenter': 'URANUS'}, ('int',)),
+        **fixed_tracking_epoch(root, vis, native, ephemeris),
+    }
+
+
+def tracked_image(root, source, native, name, machine, arguments, intervals):
+    folder = root/f'tracked-{name}'
+    folder.mkdir()
+    scratch, virtual = folder/'scratch.ms', folder/'virtual.ms'
+    for vis, storage in [(scratch, 'modelcolumn'), (virtual, 'virtual')]:
+        copy_ms(source, vis)
+        casa.tclean(vis=str(vis), imagename=str(folder/storage), field='0', spw='0',
+                    niter=5, imsize=64, cell='1arcsec', datacolumn='data',
+                    savemodel=storage, **arguments)
+    t = table()
+    t.open(str(virtual/'SOURCE'))
+    try:
+        grid = t.getcell('SOURCE_MODEL', t.getkeyword('model_0'))['ft_0']['container']
+        assert grid['name'] == machine and grid['fixmovingsource']
+        assert Path(grid['diskimage']).is_dir()
+    finally:
+        t.close()
+    t.open(str(scratch))
+    try:
+        model = t.getcol('MODEL_DATA')
+        assert np.any(np.abs(model - 1.) > .01) and np.ptp(np.angle(model)) > .1
+    finally:
+        t.close()
+    # CASA 6.7.6.14 crashes while reopening the synthetic virtual record.
+    # Its live predictor writes the same tracked image's model to scratch.
+    results = {}
+    for gain in ('G', 'T'):
+        for interval in intervals:
+            case = folder/f'{gain}-{interval}'
+            case.mkdir()
+            results[f'{folder.name}-{case.name}'] = gain_and_apply(
+                case, scratch, native, gain, interval, calmode='ap', field='0', spw='0',
+                minblperant=2, smodel=[], native_source=virtual)
+    return results
+
+
+def fixed_tracking_epoch(root, source, native, ephemeris):
+    from casatools import measures
+
+    folder = root/'fixed-tracking-epoch'
+    folder.mkdir()
+    scratch, virtual = folder/'scratch.ms', folder/'virtual.ms'
+    planet = root/'tracked-planet'
+    copy_ms(source, scratch)
+    copy_ms(planet/'virtual.ms', virtual)
+    t = table()
+    t.open(str(scratch))
+    try:
+        times = t.getcol('TIME')
+    finally:
+        t.close()
+    epoch = float(times.min() + 100.)
+    integration = float(times[times >= epoch].min())
+    assert integration > epoch
+    t.open(str(virtual/'SOURCE'), nomodify=False)
+    try:
+        row = t.getkeyword('model_0')
+        record = t.getcell('SOURCE_MODEL', row)
+        grid = record['ft_0']['container']
+        assert grid['movingdir_rec']['refer'] == 'URANUS'
+        grid['phasecentertime'] = epoch
+        t.putcell('SOURCE_MODEL', row, record)
+    finally:
+        t.close()
+
+    # VisBufferUtil::getPhaseCenter uses the next integration for a
+    # requested epoch between samples. Freeze the scratch predictor's
+    # FIELD direction independently using CASA Measures at that time.
+    tool = measures()
+    assert tool.doframe(tool.observatory('ALMA'))
+    assert tool.doframe(tool.epoch('UTC', f'{integration}s'))
+    assert tool.framecomet(str(ephemeris))
+    direction = tool.measure(tool.measure(tool.direction('COMET'), 'AZEL'), 'J2000')
+    t.open(str(scratch/'FIELD'), nomodify=False)
+    try:
+        dl, db = t.getcell('REFERENCE_DIR', 0)[:, 0]
+        longitude, latitude = direction['m0']['value'], direction['m1']['value'] + db
+        x = np.cos(dl)*np.cos(latitude)*np.cos(longitude)-np.sin(dl)*np.sin(longitude)
+        y = np.cos(dl)*np.cos(latitude)*np.sin(longitude)+np.sin(dl)*np.cos(longitude)
+        z = np.cos(dl)*np.sin(latitude)
+        frozen = np.array([[np.arctan2(y, x)], [np.arctan2(z, np.hypot(x, y))]])
+        t.putcell('EPHEMERIS_ID', 0, -1)
+        for column in ('PHASE_DIR', 'REFERENCE_DIR', 'DELAY_DIR'):
+            t.putcell(column, 0, frozen)
+    finally:
+        t.close()
+
+    casa.tclean(vis=str(scratch), imagename=str(folder/'fixed'), field='0', spw='0',
+                niter=0, imsize=64, cell='1arcsec', datacolumn='data',
+                phasecenter='URANUS', startmodel=str(planet/'virtual.model'),
+                savemodel='modelcolumn')
+    results = {}
+    for gain in ('G', 'T'):
+        case = folder/gain
+        case.mkdir()
+        results[f'{folder.name}-{gain}'] = gain_and_apply(
+            case, scratch, native, gain, 'int', calmode='ap', field='0', spw='0',
+            minblperant=2, smodel=[], native_source=virtual)
+    original = contents(planet/'G-int'/'ap-G-int-mean-norm0-casa.cal')
+    fixed = contents(folder/'G'/'ap-G-int-mean-norm0-casa.cal')
+    assert relative_rms(fixed['CPARAM'], original['CPARAM']) > .01
+    return results
 
 
 def main():
