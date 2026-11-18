@@ -32,7 +32,7 @@ pub(super) fn first_graphs(graphs: &[SolveGraph]) -> Vec<SolveGraph> {
 
 pub(super) fn solve(
     nominal: Vec<SolveGraph>,
-    antennas: &[BTreeSet<i32>],
+    antennas: &mut [BTreeSet<i32>],
     mut gains: Gains,
     refant_id: i32,
     options: &GainSolveRobustness,
@@ -62,29 +62,45 @@ pub(super) fn solve(
         }
     }
     if options.l1 {
-        selected = l1_graphs(&selected, &gains, L1_CLAMPS[2]);
+        selected = working_graphs(&selected, &gains, L1_CLAMPS[2]);
     }
     Some((gains, selected))
 }
 
-/// Recompute CASA's working weight spectrum from the current residuals.
-pub(super) fn l1_graphs(graphs: &[SolveGraph], gains: &Gains, clamp: f32) -> Vec<SolveGraph> {
+/// Reweight each residual for the current L1 stage.
+pub(super) fn working_graphs(graphs: &[SolveGraph], gains: &Gains, clamp: f32) -> Vec<SolveGraph> {
     graphs
         .iter()
         .zip(gains)
         .map(|(graph, gains)| {
             let mut weighted = SolveGraph::default();
             for sample in &graph.robust_samples {
-                if let Some(power) = sample.residual_power(gains)
-                    && power > 0.0
-                {
-                    let weight = sample.weight / (power + clamp).sqrt();
-                    sample.accumulate(&mut weighted, weight);
-                }
+                let Some(power) = sample.residual_power(gains).filter(|power| *power > 0.0) else {
+                    continue;
+                };
+                let weight = sample.weight / (power + clamp).sqrt();
+                sample.accumulate(&mut weighted, weight);
+                weighted
+                    .robust_samples
+                    .push(RobustSample { weight, ..*sample });
             }
             weighted
         })
         .collect()
+}
+
+/// Summing residual powers avoids cancellation when the gains nearly fit
+/// the visibilities. CASA's `chiSquare2` uses the individual residuals.
+pub(super) fn chi_square(graph: &SolveGraph, gains: &HashMap<i32, Complex64>) -> f64 {
+    graph
+        .robust_samples
+        .iter()
+        .filter_map(|sample| {
+            sample
+                .residual_power(gains)
+                .map(|power| f64::from(sample.weight * power))
+        })
+        .sum()
 }
 
 fn reject_outliers(
