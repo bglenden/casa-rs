@@ -443,6 +443,11 @@ def robust_edge_cases(root, source, native):
 
 def solve_selections(root, source, native):
     t = table()
+    t.open(str(source/'SPECTRAL_WINDOW'), nomodify=False)
+    try:
+        t.putcell('NAME', 0, 'SPW0')
+    finally:
+        t.close()
     t.open(str(source/'STATE'), nomodify=False)
     try:
         state_ids = [t.nrows(), t.nrows()+1]
@@ -465,16 +470,25 @@ def solve_selections(root, source, native):
         field = t.getcol('FIELD_ID')
         t.putcol('STATE_ID', np.asarray(state_ids, dtype=np.int32)[field])
         t.putcol('OBSERVATION_ID', np.where(field==0, 0, observation).astype(np.int32))
+        baseline_lengths = np.linalg.norm(t.getcol('UVW')[:2], axis=0)
+        assert np.any(baseline_lengths < 50.) and np.any(baseline_lengths >= 50.)
+    finally:
+        t.close()
+    t.open(str(source/'FIELD'))
+    try:
+        field_name = t.getcell('NAME', 1)
     finally:
         t.close()
 
     results = {}
     for name, interval, expected_field, options in [
         ('intent', 'inf', [1], dict(intent='*PHASE*')),
-        ('uvrange', 'inf', [0, 1], dict(uvrange='>20m')),
+        ('uvrange', 'inf', [0, 1], dict(uvrange='<50m')),
+        ('named-field', 'inf', [1], dict(field=field_name)),
         ('observation-number', 'inf', [1], dict(observation=int(observation))),
         ('solint-number', 25.0, [0, 1], {}),
         ('taql', 'inf', [1], dict(msselect='FIELD_ID == 1')),
+        ('named-spw-channels', 'inf', [0, 1], dict(spw='SPW0:0~1')),
         ('disabled', 'inf', [1], dict(selectdata=False, intent='*PHASE*', scan='4000',
                                      observation=9000, antenna='MISSING', uvrange='>10000km')),
     ]:
@@ -484,6 +498,18 @@ def solve_selections(root, source, native):
                                        calmode='ap', minblperant=2, **options)
         expected = contents(case/f'ap-G-{interval}-mean-norm0-casa.cal')
         np.testing.assert_array_equal(np.unique(expected['FIELD_ID']), expected_field)
+        if name == 'named-spw-channels':
+            windows = []
+            for engine in ['casa', 'native']:
+                t.open(str(case/f'ap-G-{interval}-mean-norm0-{engine}.cal'/'SPECTRAL_WINDOW'))
+                try:
+                    windows.append({col: t.getcell(col, 0) for col in [
+                        'CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION', 'NUM_CHAN',
+                        'TOTAL_BANDWIDTH', 'FLAG_ROW']})
+                finally:
+                    t.close()
+            for col, expected in windows[0].items():
+                np.testing.assert_allclose(windows[1][col], expected, rtol=1e-9, atol=0., err_msg=col)
     return results
 
 

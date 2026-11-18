@@ -651,7 +651,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
 | <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Solve | Calibration table the task writes. |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal field selector text.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal field selector text.<br><em>Surface:</em> Select fields by CASA field ID, name, or pattern. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |

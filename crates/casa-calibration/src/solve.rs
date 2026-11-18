@@ -23,9 +23,9 @@ pub(crate) mod writer;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
+use casa_ms::{ChannelSelection, MsError};
 use casa_tables::{Table, TableError};
 use casa_types::{Complex32, ScalarValue};
 use schemars::JsonSchema;
@@ -378,6 +378,8 @@ pub(crate) struct SolvedGains {
     /// The spectral windows an interval reached a solve in, whether or not
     /// it succeeded ([`grouping::SolveAccumulator::attempted`]).
     pub(crate) attempted_spw_ids: BTreeSet<i32>,
+    /// The resolved channels used in each selected spectral window.
+    pub(crate) channel_selections: BTreeMap<i32, ChannelSelection>,
     /// The data the solve selected.
     pub(crate) selected_data: SelectedData,
     /// How far its intervals got.
@@ -533,10 +535,19 @@ pub(crate) fn solve_gain_rows(
         }
     }
     drop(kernel_phase);
+    let mut channel_selections = BTreeMap::new();
+    for row in &context.rows {
+        if let Some(channels) = &row.channel_selection {
+            channel_selections
+                .entry(row.data_spw_id)
+                .or_insert_with(|| channels.clone());
+        }
+    }
     Ok(SolvedGains {
         rows: solution_rows,
         refant_id: context.refant_id,
         attempted_spw_ids,
+        channel_selections,
         selected_data: context.selected_data,
         solve_stats: solve_stats.finish(),
     })

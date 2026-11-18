@@ -165,7 +165,7 @@ pub(crate) fn write_gain_caltable_named(
         (SubtableId::Field, "FIELD"),
         (SubtableId::History, "HISTORY"),
     ])?;
-    write_gain_spectral_window_subtable(ms, writer.output_path(), request, solved)?;
+    write_gain_spectral_window_subtable(ms, writer.output_path(), solved)?;
     writer.save_main()?;
 
     Ok(gain_report(request, solved))
@@ -194,7 +194,6 @@ fn gain_report(request: &GainSolveRequest, solved: &SolvedGains) -> GainSolveRep
 fn write_gain_spectral_window_subtable(
     ms: &MeasurementSet,
     output_root: &Path,
-    request: &GainSolveRequest,
     solved: &SolvedGains,
 ) -> Result<(), GainSolveError> {
     let destination = output_root.join("SPECTRAL_WINDOW");
@@ -238,8 +237,8 @@ fn write_gain_spectral_window_subtable(
             });
         }
         let collapsed = if attempted {
-            let selection = request.selection.channel_selection_for_spw(row as i32);
-            let channels = selected_channels(selection.as_ref(), frequencies.len())?;
+            let selection = solved.channel_selections.get(&(row as i32));
+            let channels = selected_channels(selection, frequencies.len())?;
             let window =
                 CollapsedWindow::solved(&frequencies, &widths, channels).ok_or_else(|| {
                     GainSolveError::UnsupportedParameterShape {
