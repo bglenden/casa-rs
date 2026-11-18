@@ -19,9 +19,9 @@ use crate::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, BandpassSolveCombine,
     BandpassType, CalibrationStatsAxis, CalibrationTaskRequest, ExecuteApplyTaskRequest,
     ExportCorrectedDataTaskRequest, FluxScaleRequest, GainFieldSelector, GainSolveCombine,
-    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalTaskRequest,
-    GencalType, RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest,
-    SummaryTaskRequest, load_apply_specs_from_callib,
+    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalRequest,
+    GencalTaskRequest, GencalType, RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest,
+    StatsTaskRequest, SummaryTaskRequest, load_apply_specs_from_callib,
 };
 
 /// How a command line prints a run's report.
@@ -197,15 +197,18 @@ fn fluxscale(task: &TaskInvocation<'_>) -> Result<FluxScaleRequest, TaskFailure>
 
 fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
     Ok(GencalTaskRequest {
-        measurement_set: task.path("vis")?,
-        output_table: PathBuf::from(task.required_text("out_table")?),
-        caltype: parsed(task, "caltype", str::parse::<GencalType>)?,
-        antenna: task.text("antenna")?.unwrap_or_default(),
-        spw: task.text("spw")?.unwrap_or_default(),
-        parameter: optional_parsed(task, "parameter", |value| {
-            parse_f64_list("parameter", value)
-        })?,
-        gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
+        prior: GencalRequest {
+            measurement_set: task.path("vis")?,
+            output_table: PathBuf::from(task.required_text("out_table")?),
+            caltype: parsed(task, "caltype", str::parse::<GencalType>)?,
+            antenna: task.text("antenna")?.unwrap_or_default(),
+            spw: task.text("spw")?.unwrap_or_default(),
+            parameter: optional_parsed(task, "parameter", |value| {
+                parse_f64_list("parameter", value)
+            })?,
+            gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
+        },
+        polarization: String::new(),
     })
 }
 

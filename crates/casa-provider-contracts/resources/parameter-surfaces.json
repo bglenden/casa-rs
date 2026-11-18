@@ -18543,7 +18543,12 @@
             "python": {"name": "pol"},
             "presentation": {"label": "Polarization", "group": "Gencal", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "not", "predicate": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "amp"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "ph"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "sbd"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "mbd"}}
+          ]}}}
         },
         {
           "name": "parameter",
