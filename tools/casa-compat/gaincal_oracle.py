@@ -133,11 +133,24 @@ def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normty
         np.testing.assert_allclose(actual['CPARAM'].imag, 0., rtol=0., atol=1e-7)
     errors = {name: relative_rms(actual[name], expected[name])
               for name in ['CPARAM', 'PARAMERR', 'SNR']}
+    raw_cparam = errors['CPARAM']
+    if extra.get('refant') == '' and calmode != 'a':
+        # With no reference, a constant phase per receptor and solution
+        # interval leaves the baseline gain products invariant.
+        aligned = actual['CPARAM'].copy()
+        for time in np.unique(expected['TIME']):
+            rows = expected['TIME'] == time
+            left, right = aligned[..., rows], expected['CPARAM'][..., rows]
+            product = np.where(expected['FLAG'][..., rows], 0., left.conj()*right)
+            aligned[..., rows] *= np.exp(1j*np.angle(product.sum(axis=-1, keepdims=True)))
+        errors['CPARAM'] = relative_rms(aligned, expected['CPARAM'])
     expected_ms, actual_ms = corrected
     errors['CORRECTED_DATA'] = relative_rms(actual_ms['CORRECTED_DATA'], expected_ms['CORRECTED_DATA'])
     errors['WEIGHT'] = relative_rms(actual_ms['WEIGHT'], expected_ms['WEIGHT'])
     np.testing.assert_array_equal(actual_ms['FLAG'], expected_ms['FLAG'], err_msg=label)
     assert max(errors.values()) < 1e-3, (label, errors)
+    if extra.get('refant') == '':
+        errors['CPARAM_before_phase_alignment'] = raw_cparam
     return errors
 
 
@@ -145,7 +158,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'amplitude', 'median', 'preavg'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'amplitude', 'median', 'preavg', 'refant'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -182,6 +195,13 @@ def main():
             baseline = contents(root/f'a-{gain}-inf-mean-norm0-preavg0-casa.cal')
             averaged = contents(root/f'a-{gain}-inf-mean-norm0-preavg20-casa.cal')
             assert relative_rms(averaged['CPARAM'], baseline['CPARAM']) > 0.002
+    elif args.case == 'refant':
+        source = amplitude_data(root, source)
+        results = {f'{gain}-{mode}': gain_and_apply(root, source, native, gain, 'inf', calmode=mode, refant='')
+                   for gain in ['G', 'T'] for mode in ['a', 'p', 'ap']}
+        for gain in ['G', 'T']:
+            expected = contents(root/f'ap-{gain}-inf-mean-norm0-casa.cal')
+            np.testing.assert_array_equal(expected['ANTENNA2'], -1)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

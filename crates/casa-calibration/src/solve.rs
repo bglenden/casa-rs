@@ -121,6 +121,8 @@ pub struct GainSolveCombine {
 /// Reference antenna selector for solve requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum RefAntSelector {
+    /// Solve without rereferencing solution phases across intervals.
+    Unspecified,
     /// Exact antenna id.
     AntennaId(i32),
     /// Exact ANTENNA.NAME match.
@@ -457,11 +459,13 @@ pub(crate) fn solve_gain_rows(
         solution_rows.extend(group_rows);
         intervals.push((spw_id, start..solution_rows.len()));
     }
-    apply_flex_refant(
-        &mut solution_rows,
-        context.refant_id,
-        &refant_distance_order(ms, context.refant_id)?,
-    );
+    if context.refant_id >= 0 {
+        apply_flex_refant(
+            &mut solution_rows,
+            context.refant_id,
+            &refant_distance_order(ms, context.refant_id)?,
+        );
+    }
     // CASA enforces amplitudes on the final gains after referencing and
     // before normalizing across all intervals (`globalPostSolveTinker`).
     if request.solve_mode == GainSolveMode::Amplitude {

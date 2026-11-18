@@ -245,6 +245,7 @@ fn gaincal_reads_casas_values() {
         "caltable": "phase.gcal",
         "field": "0",
         "solint": "30s",
+        "preavg": 12.5,
         "combine": "scan,field",
         "refant": "VA15",
         "minblperant": 2,
@@ -282,7 +283,7 @@ fn gaincal_reads_casas_values() {
             parang: true,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: true,
-            preaverage_seconds: 0.0,
+            preaverage_seconds: 12.5,
             normalization_type: crate::GainNormalization::Median,
             min_snr: 2.5,
             min_baselines_per_antenna: 2,
@@ -307,8 +308,6 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         ("combine", json!("Scan,SPW")),
         ("solint", json!("inf,2ch")),
         ("refant", json!("A0,A1")),
-        // CASA's default: a solve with no reference antenna.
-        ("refant", json!("")),
         ("smodel", json!([1, 0.1, 0, 0])),
     ] {
         let mut values = base.clone();
@@ -359,6 +358,7 @@ fn gaincal_reads_solint_and_combine_as_casa_does() {
         values[name] = json!(value);
         gain(values)
     };
+    assert_eq!(read("refant", "").refant, RefAntSelector::Unspecified);
     for (solint, interval) in [
         ("", GainSolveInterval::Infinite),
         ("INF", GainSolveInterval::Infinite),

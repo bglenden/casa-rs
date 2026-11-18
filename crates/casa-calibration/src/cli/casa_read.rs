@@ -112,6 +112,7 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
     let measurement_set = task.path("vis")?;
     let min_snr = min_snr(task)?;
     let (model_source, smodel) = model(task, &measurement_set)?;
+    let reference = task.required_text("refant")?;
     Ok(SolveGainTaskRequest {
         append: task.flag("append")?,
         selection: selection(task)?,
@@ -121,7 +122,11 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
         solve_interval: solint(task)?,
         preaverage_seconds: task.number("preavg")?,
         combine: combine(task)?,
-        refant: refant(task)?,
+        refant: if reference.is_empty() {
+            RefAntSelector::Unspecified
+        } else {
+            refant(&reference)?
+        },
         prior_calibration_tables: chain(task, Chain::Solve)?,
         parang: task.flag("parang")?,
         model_source,
@@ -168,7 +173,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         append: task.flag("append")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("caltable")?),
-        refant: refant(task)?,
+        refant: refant(&task.required_text("refant")?)?,
         prior_calibration_tables: chain(task, Chain::Solve)?,
         parang: task.flag("parang")?,
         combine: BandpassSolveCombine {
@@ -653,13 +658,12 @@ fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
 /// CASA's `refant`: one antenna, by name or id. CASA's ranked lists, and
 /// its default `''`, a solve with no reference antenna, are not
 /// implemented yet.
-fn refant(task: &TaskInvocation<'_>) -> Result<RefAntSelector, TaskFailure> {
-    let text = task.required_text("refant")?;
+fn refant(text: &str) -> Result<RefAntSelector, TaskFailure> {
     if text.trim().is_empty() {
-        return Err(not_yet("refant", &text));
+        return Err(not_yet("refant", text));
     }
     if text.contains(',') {
-        return Err(not_yet("refant", &text));
+        return Err(not_yet("refant", text));
     }
     Ok(parse_refant_selector(text.trim()))
 }

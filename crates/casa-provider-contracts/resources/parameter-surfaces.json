@@ -14861,7 +14861,7 @@
           "concept": {"id": "parameter.refant", "semantic_revision": 1},
           "order": 15,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "always"},
+          "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--refant"], "metavar": "ANTENNA"},

@@ -415,6 +415,7 @@ pub(crate) fn resolve_refant(
     selector: &RefAntSelector,
 ) -> Result<i32, GainSolveError> {
     match selector {
+        RefAntSelector::Unspecified => Ok(-1),
         RefAntSelector::AntennaId(id) => Ok(*id),
         RefAntSelector::AntennaName(name) => {
             let antenna = ms
