@@ -11,7 +11,6 @@
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::column_def::{ColumnDef, ColumnKind};
 use casa_ms::derived::columns::DerivedColumns;
-use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::{self, SubtableId};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
@@ -108,8 +107,7 @@ fn main() {
     println!("Added {} rows at UT hours: {:?}\n", hours.len(), hours);
 
     // ---- Create engine and derived columns ----
-    let engine = MsCalEngine::new(&ms).expect("create engine");
-    let derived = DerivedColumns::new(ms.main_table(), engine);
+    let derived = DerivedColumns::from_measurement_set(&ms).expect("create derived columns");
 
     println!("Observatory position: antenna 0 (VLA)");
     println!(

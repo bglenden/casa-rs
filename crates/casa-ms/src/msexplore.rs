@@ -3701,7 +3701,11 @@ fn build_generic_visibility_scatter(
             .any(MsAxis::uses_derived_geometry)
         || (needs_spectral_coordinates && requested_freqframe.is_some())
     {
-        Some(MsCalEngine::new(ms).map_err(|error| error.to_string())?)
+        Some(
+            MsCalEngine::new(ms)
+                .and_then(|engine| engine.with_field_ephemerides(ms))
+                .map_err(|error| error.to_string())?,
+        )
     } else {
         None
     };
@@ -4519,7 +4523,11 @@ fn build_generic_visibility_scatter_with_averaging(
             .any(MsAxis::uses_derived_geometry)
         || (needs_spectral_coordinates && requested_freqframe.is_some())
     {
-        Some(MsCalEngine::new(ms).map_err(|error| error.to_string())?)
+        Some(
+            MsCalEngine::new(ms)
+                .and_then(|engine| engine.with_field_ephemerides(ms))
+                .map_err(|error| error.to_string())?,
+        )
     } else {
         None
     };

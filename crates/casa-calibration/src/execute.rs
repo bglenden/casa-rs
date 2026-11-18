@@ -4135,6 +4135,7 @@ fn geometry_engine_for_plan(
     }
     let ms_path = display_ms_path(ms);
     MsCalEngine::new(ms)
+        .and_then(|engine| engine.with_field_ephemerides(ms))
         .map(Arc::new)
         .map(Some)
         .map_err(|source| ApplyExecutionError::MutateMeasurementSet {

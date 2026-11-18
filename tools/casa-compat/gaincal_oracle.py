@@ -1387,7 +1387,7 @@ def separate_arrays(root, source, native):
     return results
 
 
-def ephemeris_parallactic_angle(root, source, native):
+def ephemeris_observation(root, source):
     from casaconfig import config
     from casatools import ms
 
@@ -1417,6 +1417,11 @@ def ephemeris_parallactic_angle(root, source, native):
         assert tool.addephemeris(0, str(ephemeris), 'Uranus', [0])
     finally:
         tool.done()
+    return vis, ephemeris
+
+
+def ephemeris_parallactic_angle(root, source, native):
+    vis, ephemeris = ephemeris_observation(root, source)
     case = root/'uranus-parallactic-angle'
     case.mkdir()
     errors = gain_and_apply(case, vis, native, 'G', 'int', calmode='ap', field='0', spw='0',
