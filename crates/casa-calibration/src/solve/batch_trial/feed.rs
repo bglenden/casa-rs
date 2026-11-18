@@ -71,7 +71,8 @@ fn observe(
     let options = SolveGroupOptions {
         gain_type: request.gain_type,
         model_source: request.model_source,
-        stokes_i: request.smodel[0],
+        point_stokes: request.smodel,
+        rotate_model: false,
         solve_interval: request.solve_interval,
         combine: request.combine,
         channelized: false,
@@ -110,6 +111,7 @@ fn observe(
                     flags,
                     weights: weights.slice(s![sample, .., ..]).reversed_axes(),
                     model: None,
+                    point_model: None,
                 },
                 &codes,
                 &channels,
@@ -158,6 +160,7 @@ fn unsolved(refant: i32) -> SolvedGains {
         rows: Vec::new(),
         refant_id: refant,
         attempted_spw_ids: BTreeSet::new(),
+        channel_selections: Default::default(),
         selected_data: crate::SelectedData::default(),
         solve_stats: crate::SolveStats::default(),
     }

@@ -85,6 +85,7 @@ pub mod write_session;
 pub(crate) mod test_helpers;
 
 pub use builder::{MeasurementSetBuilder, MsSchemas};
+pub use casa_measures_data::PlanetaryEphemeris;
 pub use casa_return::{
     FLAGDATA_SUMMARY_NAME, flagdata_empty_record, flagdata_summary_record, flagmanager_list_record,
 };

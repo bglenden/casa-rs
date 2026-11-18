@@ -3,11 +3,11 @@
 //!
 //! This module intentionally implements only a narrow, testable slice:
 //!
-//! - `gaintype=G|T`
+//! - `gaintype=G|T|K|KCROSS`
 //! - `calmode='p|a|ap'`
 //! - `solint='inf'|'int'|<seconds>`
 //! - explicit reference antenna
-//! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`) or `MODEL_DATA`
+//! - point-source Stokes sky model (`smodel=[I,Q,U,V]`) or `MODEL_DATA`
 //!
 //! The acceptance contract is downstream behavior: the resulting caltable
 //! should be CASA-compatible on disk and should yield corrected visibilities
@@ -15,17 +15,19 @@
 
 #[cfg(test)]
 mod batch_trial;
+mod delay;
 pub(crate) mod grouping;
 pub(crate) mod kernel;
+mod model;
 mod trace;
 pub(crate) mod writer;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
+use casa_ms::{ChannelSelection, MsError};
 use casa_tables::{Table, TableError};
 use casa_types::{Complex32, ScalarValue};
 use schemars::JsonSchema;
@@ -36,7 +38,7 @@ use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
 use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder};
 use crate::{ApplyExecutionError, ApplyPlanError};
-use grouping::{SolveGroupOptions, build_solve_groups, validate_smodel, validate_solve_interval};
+use grouping::{SolveGroupOptions, build_solve_groups};
 use kernel::solve_group;
 use writer::write_gain_caltable;
 
@@ -47,6 +49,11 @@ pub enum GainType {
     G,
     /// Polarization-collapsed scalar complex gains.
     T,
+    /// Per-receptor delay in nanoseconds.
+    K,
+    /// Shared cross-hand delay in nanoseconds.
+    #[serde(rename = "KCROSS")]
+    KCross,
 }
 
 impl GainType {
@@ -54,6 +61,8 @@ impl GainType {
         match self {
             Self::G => "G Jones",
             Self::T => "T Jones",
+            Self::K => "K Jones",
+            Self::KCross => "Kcross Jones",
         }
     }
 
@@ -61,9 +70,13 @@ impl GainType {
     /// for both for T.
     pub(crate) fn polarizations(self) -> usize {
         match self {
-            Self::G => 2,
+            Self::G | Self::K | Self::KCross => 2,
             Self::T => 1,
         }
+    }
+
+    fn is_delay(self) -> bool {
+        matches!(self, Self::K | Self::KCross)
     }
 }
 
@@ -106,17 +119,28 @@ impl GainSolveRobustness {
 /// Visibility model source used by the gain solver.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveModelSource {
-    /// Use the point-source Stokes-I model from `smodel`.
+    /// Use the point-source Stokes model from `smodel`.
     #[default]
     PointSource,
     /// Use per-sample visibilities from the MS `MODEL_DATA` column.
     ModelColumn,
+    /// Select the field’s virtual model, MODEL_DATA, or the unit point model.
+    FromMeasurementSet,
+}
+
+impl GainSolveModelSource {
+    /// A stored model or a polarized point must be rotated on the model
+    /// side of a diagonal Jones solve to respect the calibration order.
+    pub(crate) fn needs_model_rotation(self, stokes: [f32; 4]) -> bool {
+        self != Self::PointSource || stokes[1..].iter().any(|value| *value != 0.0)
+    }
 }
 
 /// Supported first-wave gain solution intervals.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveInterval {
     /// Solve one solution per `(observation, field, spw, scan)` group.
+    #[default]
     Infinite,
     /// Solve one solution per integration timestamp inside each scan.
     Integration,
@@ -124,13 +148,19 @@ pub enum GainSolveInterval {
     Seconds(f64),
 }
 
-/// Supported first-wave `gaincal` combine axes.
+/// Data axes omitted as boundaries when forming `gaincal` solution intervals.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GainSolveCombine {
     /// Extend solves across scan boundaries.
     pub scans: bool,
     /// Extend solves across field boundaries.
     pub fields: bool,
+    /// Extend solves across observation boundaries.
+    #[serde(default)]
+    pub observations: bool,
+    /// Solve jointly across selected spectral windows.
+    #[serde(default)]
+    pub spectral_windows: bool,
 }
 
 /// Reference antenna selector for solve requests.
@@ -250,12 +280,16 @@ pub enum GainSolveError {
         data_desc_ids: Vec<i32>,
     },
 
-    /// The solve requires a point-source Stokes-I model.
-    #[error("unsupported smodel {smodel:?}; only [I,0,0,0] is supported in this wave")]
+    /// The point-source Stokes vector is invalid for the solve.
+    #[error("unsupported smodel {smodel:?}")]
     UnsupportedSkyModel {
         /// Model vector passed by the caller.
         smodel: [f32; 4],
     },
+
+    /// A virtual model could not be decoded or evaluated.
+    #[error("cannot read virtual model: {0}")]
+    VirtualModel(String),
 
     /// The solve requested `MODEL_DATA`, but the MS does not contain it.
     #[error("gain solve model_source=ModelColumn requires a MODEL_DATA column")]
@@ -267,6 +301,10 @@ pub enum GainSolveError {
         /// Interval requested by the caller.
         solve_interval: GainSolveInterval,
     },
+
+    /// A selected delay spectrum cannot form a solution.
+    #[error("delay solve: {0}")]
+    Delay(String),
 
     /// The reference antenna could not be resolved.
     #[error("failed to resolve reference antenna {selector}: {reason}")]
@@ -378,6 +416,8 @@ pub(crate) struct SolvedGains {
     /// The spectral windows an interval reached a solve in, whether or not
     /// it succeeded ([`grouping::SolveAccumulator::attempted`]).
     pub(crate) attempted_spw_ids: BTreeSet<i32>,
+    /// The resolved channels used in each selected spectral window.
+    pub(crate) channel_selections: BTreeMap<i32, ChannelSelection>,
     /// The data the solve selected.
     pub(crate) selected_data: SelectedData,
     /// How far its intervals got.
@@ -390,23 +430,40 @@ pub(crate) fn solve_gain_rows(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
 ) -> Result<SolvedGains, GainSolveError> {
+    if request.gain_type.is_delay() {
+        return delay::solve(ms, request);
+    }
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
-        validate_smodel(request.smodel)?;
-    } else if !ms
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
+        validate_smodel(request.smodel, true)?;
+    } else if request.model_source == GainSolveModelSource::ModelColumn
+        && !ms
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
     {
         return Err(GainSolveError::MissingModelColumn);
     }
     validate_solve_interval(request.solve_interval)?;
+    // P Jones is later in CASA's Jones chain than G, so the rotation
+    // corrupts the MeasurementSet model or a polarized explicit point
+    // before a diagonal gain is fitted.
+    let rotate_model = request.parang
+        && request.gain_type == GainType::G
+        && request.model_source.needs_model_rotation(request.smodel);
+    let point_stokes = if request.model_source == GainSolveModelSource::PointSource {
+        request.smodel
+    } else {
+        [1.0, 0.0, 0.0, 0.0]
+    };
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
-        request.parang,
+        request.parang && !rotate_model,
+        true,
+        grouping::PriorCalibrationMode::Data,
     )?;
     let requested_preaverage = request.preaverage_seconds as f32;
     let preaverage = (requested_preaverage > f32::EPSILON && requested_preaverage.is_finite())
@@ -423,10 +480,12 @@ pub(crate) fn solve_gain_rows(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
+        &BTreeMap::new(),
         SolveGroupOptions {
             gain_type: request.gain_type,
             model_source: request.model_source,
-            stokes_i: request.smodel[0],
+            point_stokes,
+            rotate_model,
             solve_interval: request.solve_interval,
             combine: request.combine,
             // VbAvg applies this boundary to either source of the interval.
@@ -450,8 +509,6 @@ pub(crate) fn solve_gain_rows(
         spectral_window_ids(ms)?,
         &context.available_antennas,
     );
-    // Each solved interval's window and its rows in `solution_rows`.
-    let mut intervals = Vec::new();
     for ((base_key, bucket_key), mut group) in groups {
         if group.attempted {
             attempted_spw_ids.insert(group.spw_id);
@@ -485,9 +542,7 @@ pub(crate) fn solve_gain_rows(
             request,
             context.refant_id,
         );
-        let start = solution_rows.len();
         solution_rows.extend(group_rows);
-        intervals.push((spw_id, start..solution_rows.len()));
     }
     if context.refant_id >= 0 {
         let strict = matches!(
@@ -520,22 +575,29 @@ pub(crate) fn solve_gain_rows(
     if request.solve_mode != GainSolveMode::Phase && request.normalize_average_amplitude {
         normalize_gain_solution_amplitudes(&mut solution_rows, request.normalization_type);
     }
-    // The reference antenna each interval ended with, where it kept its
-    // solution: flex flags an interval it found none for.
-    for (spw_id, rows) in intervals {
-        let rows = &solution_rows[rows];
-        if let Some(refant) = rows
-            .iter()
-            .find(|row| row.antenna_id == row.refant_id && row.flags.iter().any(|flagged| !flagged))
+    let mut referenced = BTreeSet::new();
+    for row in &solution_rows {
+        if row.antenna_id == row.refant_id
+            && row.flags.iter().any(|flagged| !flagged)
+            && referenced.insert((row.spw_id, row.time_seconds.to_bits()))
         {
-            solve_stats.used_as_refant(spw_id, refant.antenna_id);
+            solve_stats.used_as_refant(row.spw_id, row.antenna_id);
         }
     }
     drop(kernel_phase);
+    let mut channel_selections = BTreeMap::new();
+    for row in &context.rows {
+        if let Some(channels) = &row.channel_selection {
+            channel_selections
+                .entry(row.data_spw_id)
+                .or_insert_with(|| channels.clone());
+        }
+    }
     Ok(SolvedGains {
         rows: solution_rows,
         refant_id: context.refant_id,
         attempted_spw_ids,
+        channel_selections,
         selected_data: context.selected_data,
         solve_stats: solve_stats.finish(),
     })
@@ -576,7 +638,7 @@ pub(crate) fn solve_closed_group(
         kernel::SolveGraphOptions {
             refant_id,
             min_baselines_per_antenna: request.min_baselines_per_antenna,
-            scalar_seed: None,
+            group_seed: None,
             correlation_dependent_flags: request.correlation_dependent_flags,
             defer_reference: true,
             robustness: request.robustness.enabled().then_some(&request.robustness),
@@ -586,7 +648,10 @@ pub(crate) fn solve_closed_group(
 
 /// The antennas other than `refant_id`, nearest it first: the alternates
 /// `SolvableVisJones::applyRefAnt` tries when the reference antenna is flagged.
-fn refant_distance_order(ms: &MeasurementSet, refant_id: i32) -> Result<Vec<i32>, GainSolveError> {
+pub(crate) fn refant_distance_order(
+    ms: &MeasurementSet,
+    refant_id: i32,
+) -> Result<Vec<i32>, GainSolveError> {
     let antenna = ms
         .antenna()
         .map_err(|source| GainSolveError::OpenMeasurementSet {
@@ -648,10 +713,12 @@ pub(crate) fn apply_reference_antenna(
     alternates: &[i32],
     strict: bool,
 ) {
-    let mut group_indices = BTreeMap::<(i32, u64, i32), Vec<usize>>::new();
+    // CASA `applyRefAnt` iterates by window and exact caltable time, even
+    // where separate solve intervals contributed rows at the same time.
+    let mut group_indices = BTreeMap::<_, Vec<_>>::new();
     for (index, row) in rows.iter().enumerate() {
         group_indices
-            .entry((row.spw_id, row.time_seconds.to_bits(), row.field_id))
+            .entry((row.spw_id, row.time_seconds.to_bits()))
             .or_default()
             .push(index);
     }
@@ -669,7 +736,7 @@ pub(crate) fn apply_reference_antenna(
 
     let mut previous = None::<Vec<usize>>;
     let mut last_spw = None::<i32>;
-    for ((spw_id, _, _), current) in group_indices {
+    for ((spw_id, _), current) in group_indices {
         if last_spw != Some(spw_id) {
             previous = None;
             last_spw = Some(spw_id);
@@ -723,24 +790,19 @@ fn find_flex_refant(
     previous: &[usize],
     receptors: usize,
 ) -> Option<(usize, usize)> {
-    let usable = |index: &usize, antenna_id: i32| {
-        let row = &rows[*index];
-        row.antenna_id == antenna_id && row.flags.iter().take(receptors).all(|flag| !*flag)
+    let usable = |indices: &[usize], antenna_id: i32| {
+        indices
+            .iter()
+            .copied()
+            .find(|&index| rows[index].antenna_id == antenna_id)
+            .filter(|&index| rows[index].flags.iter().take(receptors).all(|flag| !*flag))
     };
-    choices.iter().find_map(|&antenna_id| {
-        let current_index = current
-            .iter()
-            .copied()
-            .find(|index| usable(index, antenna_id))?;
-        let previous_index = previous
-            .iter()
-            .copied()
-            .find(|index| usable(index, antenna_id))?;
-        Some((current_index, previous_index))
-    })
+    choices
+        .iter()
+        .find_map(|&antenna_id| Some((usable(current, antenna_id)?, usable(previous, antenna_id)?)))
 }
 
-fn phase_only(gain: Complex32) -> Complex32 {
+pub(crate) fn phase_only(gain: Complex32) -> Complex32 {
     let norm = gain.norm();
     if norm > f32::EPSILON {
         gain / Complex32::new(norm, 0.0)
@@ -832,6 +894,26 @@ pub(crate) fn get_f64(table: &Table, row: usize, column: &str) -> Result<f64, Ga
             shape: vec![row],
         }),
     }
+}
+
+pub(crate) fn validate_solve_interval(
+    solve_interval: GainSolveInterval,
+) -> Result<(), GainSolveError> {
+    match solve_interval {
+        GainSolveInterval::Infinite | GainSolveInterval::Integration => Ok(()),
+        GainSolveInterval::Seconds(seconds) if seconds > 0.0 => Ok(()),
+        _ => Err(GainSolveError::UnsupportedSolveInterval { solve_interval }),
+    }
+}
+
+pub(crate) fn validate_smodel(smodel: [f32; 4], polarized: bool) -> Result<(), GainSolveError> {
+    if smodel[0] <= 0.0
+        || smodel.iter().any(|value| !value.is_finite())
+        || (!polarized && smodel[1..].iter().any(|value| *value != 0.0))
+    {
+        return Err(GainSolveError::UnsupportedSkyModel { smodel });
+    }
+    Ok(())
 }
 
 pub(crate) fn correlation_receptors(code: i32) -> Option<(usize, usize)> {

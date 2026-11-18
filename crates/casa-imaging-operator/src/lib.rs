@@ -81,7 +81,7 @@ pub use error::{DeviceFailure, OperatorError};
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent, PaddingFactor};
 pub use mosaic::{
     AiryDish, MOSAIC_OVERSAMPLING, MosaicBufferBand, MosaicPb, MosaicRules, MosaicScreens,
-    MosaicWindow, SimpleMosaicScreens, pair_plane,
+    MosaicWindow, SavedMosaicPlanes, SimpleMosaicScreens, pair_plane,
 };
 pub use native::{
     DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm, STENCIL,

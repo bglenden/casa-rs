@@ -124,6 +124,7 @@ mod error;
 mod flux;
 mod list;
 mod record;
+mod record_decode;
 mod sample;
 mod shape;
 mod spectrum;

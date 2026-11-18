@@ -199,15 +199,17 @@ pub(crate) fn append(
         let fields = columns
             .iter()
             .filter(|column| !undefined[index].contains(column.name()))
-            .map(|column| {
-                let value = row.get(column.name()).cloned().unwrap_or_else(|| {
-                    Value::Scalar(if column.name() == "ARRAY_ID" {
-                        ScalarValue::Int32(0)
-                    } else {
-                        ScalarValue::Float64(0.0)
-                    })
-                });
-                RecordField::new(column.name(), value)
+            .filter_map(|column| {
+                let value = row
+                    .get(column.name())
+                    .cloned()
+                    .or_else(|| match column.name() {
+                        "ARRAY_ID" => Some(Value::Scalar(ScalarValue::Int32(0))),
+                        "TIME_EXTRA_PREC" => Some(Value::Scalar(ScalarValue::Float64(0.0))),
+                        // A freshly solved delay row leaves WEIGHT undefined.
+                        _ => None,
+                    })?;
+                Some(RecordField::new(column.name(), value))
             })
             .collect();
         old.add_row(RecordValue::new(fields))

@@ -158,6 +158,36 @@ impl ModelPlaneGrids<'_> {
     pub const fn plane(&self) -> u32 {
         self.plane
     }
+
+    /// Fill a grid block from a persisted single-precision Fourier image.
+    /// The cells are already transformed and corrected, with x varying fastest.
+    ///
+    /// # Errors
+    /// The grid uses another precision, or the block does not match its layout.
+    pub fn load_f32_block(
+        &mut self,
+        polarization: usize,
+        term: usize,
+        source: &[Complex<f32>],
+    ) -> Result<(), OperatorError> {
+        let count = self.layout.block_cells();
+        if source.len() != count
+            || polarization >= self.layout.pols()
+            || term >= self.layout.terms()
+        {
+            return Err(OperatorError::ModelShape {
+                reason: "persisted model grid block does not match the operator",
+            });
+        }
+        let PlaneCells::F32(cells) = &mut self.cells else {
+            return Err(OperatorError::ModelShape {
+                reason: "persisted model grid requires single-precision cells",
+            });
+        };
+        let offset = (polarization * self.layout.terms() + term) * count;
+        cells[offset..offset + count].copy_from_slice(source);
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for ModelPlaneGrids<'_> {

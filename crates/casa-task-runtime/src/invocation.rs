@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn inactive_values_are_omitted_but_applycal_keeps_disabled_selectors_for_history() {
+    fn gaincal_and_applycal_keep_disabled_selectors_for_history() {
         for surface in ["gaincal", "applycal"] {
             let mut session =
                 ParameterSession::defaults(builtin_surface_bundle(surface).unwrap()).unwrap();
@@ -425,14 +425,9 @@ mod tests {
                 .unwrap();
             let values = request(&session).values;
             assert_eq!(values["selectdata"], serde_json::json!(false));
-            // CASA task_applycal retains disabled input arguments in HISTORY;
-            // its Rust task body applies the selection gate. Generic inactive
-            // bindings still remain absent from the provider request.
-            assert_eq!(
-                values.get("antenna"),
-                (surface == "applycal").then_some(&serde_json::json!("A0")),
-                "{surface}"
-            );
+            // CASA writes the supplied values into HISTORY. The native task
+            // applies the selection gate after the request is projected.
+            assert_eq!(values["antenna"], serde_json::json!("A0"), "{surface}");
         }
     }
 

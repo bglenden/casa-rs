@@ -76,6 +76,17 @@ pub(super) fn screen_pair(
             );
         }
     }
+    transform_pair(fft, screen, conv_size, &imaging, &weight)
+}
+
+/// Transform and quarter-crop the two scalar beam screens.
+pub(super) fn transform_pair(
+    fft: &mut PlaneFft<f64>,
+    screen: &mut [Complex64],
+    conv_size: usize,
+    imaging: &[Complex32],
+    weight: &[Complex32],
+) -> Result<PairLattices, OperatorError> {
     let lattice = conv_size / 4;
     let quarter = lattice * 3 / 2;
     let mut transform = |values: &[Complex32]| -> Result<Vec<Complex32>, OperatorError> {
@@ -93,8 +104,8 @@ pub(super) fn screen_pair(
         Ok(cropped)
     };
     Ok(PairLattices {
-        imaging: transform(&imaging)?,
-        weight: transform(&weight)?,
+        imaging: transform(imaging)?,
+        weight: transform(weight)?,
     })
 }
 

@@ -17,14 +17,14 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | Surface | CASA task | CASA's signature | CASA parameters | Shared | CASA's casa-rs lacks | Default only | casa-rs's CASA lacks | Defaults differ |
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
-| bandpass | bandpass | yes | 35 | 35 | 0 | 7 | 4 | 0 |
+| bandpass | bandpass | yes | 35 | 35 | 0 | 6 | 4 | 0 |
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 8 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
 | flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
-| gaincal | gaincal | yes | 38 | 38 | 0 | 5 | 4 | 0 |
+| gaincal | gaincal | yes | 38 | 38 | 0 | 3 | 4 | 0 |
 | gencal | gencal | yes | 14 | 14 | 0 | 8 | 4 | 0 |
 | imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 12 | 1 | 0 |
@@ -209,7 +209,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #979: `intent`, `uvrange`, `solint`, `corrdepflags`, `fillgaps`, `visnorm`, `maskcenter`
+- Accepted only at CASA's default until #979: `intent`, `uvrange`, `solint`, `corrdepflags`, `visnorm`, `maskcenter`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 35, in CASA's order: yes
 - Defaults that differ: none
@@ -424,7 +424,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #979: `intent`, `uvrange`, `splinetime`, `npointaver`, `phasewrap`
+- Accepted only at CASA's default until #979: `splinetime`, `npointaver`, `phasewrap`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 38, in CASA's order: yes
 - Defaults that differ: none

@@ -584,12 +584,12 @@ def gaincal(
     intent: str = '',
     selectdata: bool = True,
     timerange: str = '',
-    uvrange: str = '',
+    uvrange: str | int | float | list[str] = '',
     antenna: str = '',
     scan: str = '',
-    observation: str = '',
+    observation: str | int = '',
     msselect: str = '',
-    solint: str = 'inf',
+    solint: str | int | float = 'inf',
     combine: str = '',
     preavg: float = -1.0,
     refant: str = '',
@@ -625,7 +625,7 @@ def gaincal(
 
     CASA's ``gaincal``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #979:
-    ``intent``, ``uvrange``, ``splinetime``, ``npointaver``, ``phasewrap``.
+    ``splinetime``, ``npointaver``, ``phasewrap``.
     """
     return _call_casa(gaincal, locals())
 
@@ -637,10 +637,10 @@ def bandpass(
     intent: str = '',
     selectdata: bool = True,
     timerange: str = '',
-    uvrange: str = '',
+    uvrange: str | int | float | list[str] = '',
     antenna: str = '',
     scan: str = '',
-    observation: str = '',
+    observation: str | int = '',
     msselect: str = '',
     solint: str = 'inf',
     combine: str = 'scan',
@@ -675,8 +675,8 @@ def bandpass(
 
     CASA's ``bandpass``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #979:
-    ``intent``, ``uvrange``, ``solint``, ``corrdepflags``, ``fillgaps``,
-    ``visnorm``, ``maskcenter``.
+    ``intent``, ``uvrange``, ``solint``, ``corrdepflags``, ``visnorm``,
+    ``maskcenter``.
     """
     return _call_casa(bandpass, locals())
 

@@ -109,13 +109,23 @@ pub(super) fn weight_factors(
     else {
         return None;
     };
-    correlations
-        .iter()
-        .map(|&code| {
-            let (left, right) = correlation_receptors(code)?;
+    (0..correlations.len())
+        .map(|index| {
+            let (left, right) = receptors(correlations, index)?;
             Some(mean_power(first, left) * mean_power(second, right))
         })
         .collect()
+}
+
+pub(super) fn receptors(correlations: &[i32], index: usize) -> Option<(usize, usize)> {
+    let pair = correlation_receptors(correlations[index])?;
+    // CASA uses one scalar Jones term for single-correlation B apply,
+    // including a sole YY or LL product.
+    Some(if correlations.len() == 1 {
+        (0, 0)
+    } else {
+        pair
+    })
 }
 
 #[cfg(test)]

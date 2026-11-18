@@ -344,34 +344,23 @@ fn combined_fields_keep_casas_interval_boundaries() {
     assert_eq!(ints(entry(entry(&value, "solvestats"), "expected")), [2, 2]);
 }
 
-/// Two data descriptions on one window: CASA solves each apart, which
-/// casa-rs does not yet, so the solve is refused naming #979, whether the
-/// second repeats the first's correlations or holds the cross hands.
+/// Gaincal accepts either correlation layout on descriptions of the same
+/// window. Bandpass support is tracked on its own calibration ticket.
 #[test]
-fn data_descriptions_sharing_a_window_are_refused_naming_979() {
+fn gaincal_and_bandpass_accept_data_descriptions_sharing_a_window() {
     for cross_hands in [false, true] {
         let dir = TempDir::new().unwrap();
         let ms =
             common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
         share_window_zero(&ms, cross_hands);
-        for (surface, caltable) in [("gaincal", "g.gcal"), ("bandpass", "b.bcal")] {
-            let (output, reply) = json_run(
-                dir.path(),
-                surface,
-                json!({"vis": ms.to_str().unwrap(), "caltable": caltable, "refant": "0",
-                       "minblperant": 2, "smodel": [1, 0, 0, 0]}),
-            );
-            match reply {
-                Some(TaskReply::Failed { message, .. }) => assert!(
-                    message.contains("share spectral window 0") && message.contains("#979"),
-                    "{message}"
-                ),
-                other => panic!(
-                    "{surface} {cross_hands}: {other:?}\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            }
-        }
+        let parameters = |caltable| {
+            json!({"vis": ms.to_str().unwrap(), "caltable": caltable, "refant": "0",
+                   "minblperant": 2, "smodel": [1, 0, 0, 0]})
+        };
+        let value = returned(dir.path(), "gaincal", parameters("g.gcal"));
+        assert_eq!(ints(entry(entry(&value, "selectvis"), "spw")), [0]);
+        let value = returned(dir.path(), "bandpass", parameters("b.bcal"));
+        assert_eq!(ints(entry(entry(&value, "selectvis"), "spw")), [0]);
     }
 }
 
@@ -704,20 +693,18 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     let ms = ms.to_str().unwrap();
-    let solve = json!({"vis": ms, "caltable": "g.gcal", "refant": "0"});
+    let solve = json!({"vis": ms, "caltable": "g.gcal", "refant": "0", "bandtype": "BPOLY"});
     let with = |base: &Value, name: &str, value: Value| {
         let mut values = base.clone();
         values[name] = value;
         values
     };
-    for (surface, name, value) in [
-        ("gaincal", "uvrange", json!(">1klambda")),
-        ("gaincal", "intent", json!("*PHASE*")),
-        ("bandpass", "solint", json!("int")),
-        ("bandpass", "fillgaps", json!(2)),
-    ] {
-        refused_naming_979(dir.path(), surface, with(&solve, name, value), name);
-    }
+    refused_naming_979(
+        dir.path(),
+        "bandpass",
+        with(&solve, "solint", json!("inf,2ch")),
+        "solint",
+    );
     // Fluxscale's former fitorder/time/scan refusals are replaced by the
     // positive scientific check above now that those behaviors are implemented.
     // gencal reads infile only for the caltypes CASA's task XML shows it
@@ -766,12 +753,9 @@ fn a_sub_parameter_casa_ignores_takes_any_value() {
     }
 }
 
-/// CASA's empty `smodel` reads a field's virtual model (`setjy` with
-/// `usescratch=False`) before `MODEL_DATA`. casa-rs does not implement the
-/// virtual model yet, so a solve that would read one is refused, naming
-/// #979, rather than run against another model.
+/// A field with a virtual record and no matching entries uses the unit model.
 #[test]
-fn an_empty_smodel_is_refused_where_casa_would_read_a_virtual_model() {
+fn gaincal_and_bandpass_use_the_unit_model_for_an_empty_virtual_record() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     {
@@ -783,29 +767,37 @@ fn an_empty_smodel_is_refused_where_casa_would_read_a_virtual_model() {
         );
         keywords.upsert(
             "model_0",
-            casa_types::Value::Record(casa_types::RecordValue::default()),
+            casa_types::Value::Record(casa_types::RecordValue::new(vec![
+                casa_types::RecordField::new(
+                    "version",
+                    casa_types::Value::Scalar(casa_types::ScalarValue::Int32(2)),
+                ),
+            ])),
         );
         opened.save().expect("save");
     }
     let ms = ms.to_str().unwrap();
-    for (surface, caltable) in [("gaincal", "g.gcal"), ("bandpass", "b.bcal")] {
-        refused_naming_979(
-            dir.path(),
-            surface,
-            json!({"vis": ms, "caltable": caltable, "refant": "0"}),
-            "smodel",
-        );
-    }
-    // An explicit point model is CASA's too, whatever the MeasurementSet holds.
-    let (output, reply) = json_run(
+    refused_naming_979(
         dir.path(),
-        "gaincal",
-        json!({"vis": ms, "caltable": "p.gcal", "refant": "0", "minblperant": 2,
-               "smodel": [1, 0, 0, 0]}),
+        "bandpass",
+        json!({"vis": ms, "caltable": "legacy.bpoly", "refant": "0", "bandtype": "BPOLY"}),
+        "smodel",
     );
-    assert!(
-        matches!(reply, Some(TaskReply::Succeeded { .. })),
-        "{reply:?}\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    for surface in ["gaincal", "bandpass"] {
+        for (label, smodel) in [("virtual", json!([])), ("point", json!([1, 0, 0, 0]))] {
+            let caltable = format!("{surface}-{label}.cal");
+            let (output, reply) = json_run(
+                dir.path(),
+                surface,
+                json!({"vis": ms, "caltable": caltable, "refant": "0", "minblperant": 2,
+                       "minsnr": 0.0, "smodel": smodel}),
+            );
+            assert!(
+                matches!(reply, Some(TaskReply::Succeeded { .. })),
+                "{reply:?}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(dir.path().join(caltable).is_dir());
+        }
+    }
 }

@@ -252,8 +252,10 @@ pub(crate) fn trace_phase_solver_iteration(event: PhaseSolverTraceEvent<'_>) {
 
 fn base_key_json(key: &SolveBaseKey) -> serde_json::Value {
     json!({
+        "array_id": key.array_id,
         "field_id": key.field_id,
         "spw_id": key.spw_id,
+        "data_desc_id": key.data_desc_id,
         "observation_id": key.observation_id,
         "scan_number": key.scan_number,
     })
@@ -278,6 +280,8 @@ fn gain_type_name(gain_type: GainType) -> &'static str {
     match gain_type {
         GainType::G => "G",
         GainType::T => "T",
+        GainType::K => "K",
+        GainType::KCross => "KCROSS",
     }
 }
 
@@ -333,8 +337,10 @@ mod tests {
         TEST_TRACE_PATH.with(|path| *path.borrow_mut() = Some(trace_file.clone()));
 
         let base_key = SolveBaseKey {
+            array_id: 0,
             field_id: 3,
             spw_id: 4,
+            data_desc_id: 4,
             observation_id: 5,
             scan_number: 6,
         };
@@ -466,8 +472,10 @@ mod tests {
         assert_eq!(solve_mode_name(GainSolveMode::AmplitudePhase), "ap");
         assert_eq!(
             base_key_json(&SolveBaseKey {
+                array_id: 0,
                 field_id: 1,
                 spw_id: 2,
+                data_desc_id: 2,
                 observation_id: 3,
                 scan_number: 4,
             })["scan_number"],

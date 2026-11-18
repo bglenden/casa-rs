@@ -12,6 +12,12 @@ default = []
 slow-tests = []
 
 [dependencies]
+casa-components = { path = "../casa-components" }
+casa-coordinates = { path = "../casa-coordinates" }
+casa-images = { path = "../casa-images" }
+casa-fft = { path = "../casa-fft" }
+casa-imaging-model = { path = "../casa-imaging-model" }
+casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-ms = { path = "../casa-ms" }

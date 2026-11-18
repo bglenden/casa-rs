@@ -6473,6 +6473,21 @@ matches native corrected data, flags and weight/sigma columns. Missing joint
 contexts still use the ordinary unavailable-calibration rules. No tolerance
 is relaxed, and this correction is separate from same-input task matches.
 
+## Gaincal can crash while opening a tracked virtual image
+
+On Linux, CASA 6.7.6.14 saved a virtual GridFT image with
+`tclean(phasecenter='TRACKFIELD', savemodel='virtual')` on an MS with an
+attached Uranus ephemeris. Calling `gaincal` on that MS terminated Python
+with signal 11. CASA wrote a nonconstant prediction to `MODEL_DATA` when
+`savemodel='modelcolumn'` used the same image settings and visibilities.
+
+casa-rs reads the saved source, tracking epoch and image direction and
+evaluates the tracked prediction in the visibility buffer. The
+`gaincal_oracle.py --case ephemeris` fixture compares native gains and
+downstream application from the virtual image to CASA gains and
+application from its scratch prediction. It also covers a tracked mosaic,
+an external ephemeris table and moving-field parallactic angles. See #30.
+
 ## Empty or ragged nested sequences in quantity records crash or corrupt values
 
 - Date noted: 2026-11-18

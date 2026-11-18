@@ -8,7 +8,7 @@
 //! Supported in this wave:
 //!
 //! - chained complex `CPARAM` tables
-//! - narrow float `FPARAM` support for `K Jones` delay tables
+//! - float `FPARAM` support for `K Jones` and `Kcross Jones` delay tables
 //! - legacy `BPOLY` bandpass tables expanded onto the target SPW grid
 //! - diagonal `G` / `T`-style application to `RR/RL/LR/LL` and `XX/XY/YX/YY`
 //! - all six apply modes, including strict and flag-only application
@@ -66,9 +66,11 @@ mod initialization;
 use gain_validity::correcting_gain;
 mod bandpass;
 mod channels;
-mod parang;
+pub(crate) mod parang;
+mod solve_priors;
 mod weights;
 use channels::{DataChannelGrid, apply_row};
+pub(crate) use solve_priors::{PriorSolveBoundary, evaluate_solve_priors};
 
 const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
 const PERF_DIR_ENV: &str = "CASA_RS_CALIBRATION_PERF_DIR";
@@ -408,6 +410,8 @@ pub struct ApplyExecutionTimings {
 pub(crate) struct EvaluatedApplyRow {
     pub(crate) corrected_data: ArrayValue,
     pub(crate) flags: ArrayValue,
+    /// Forward diagonal gains for the sky model in a delay solve.
+    pub(crate) model_gains: Option<ArrayD<Complex32>>,
     /// `[correlation, channel]` factors the `calwt` tables scale weights by,
     /// when any table applies with `calwt`.
     pub(crate) weight_factors: Option<ArrayD<f32>>,
@@ -535,9 +539,10 @@ impl From<ApplyPlanError> for ApplyExecutionError {
 pub(crate) fn evaluate_apply_rows(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
+    share_input_flags: bool,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
     let mut rows = HashMap::new();
-    for_each_apply_row(ms, plan, |index, row| {
+    for_each_apply_row(ms, plan, false, share_input_flags, |index, row| {
         rows.insert(index, row);
     })?;
     Ok(rows)
@@ -548,6 +553,8 @@ pub(crate) fn evaluate_apply_rows(
 fn for_each_apply_row(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
+    forward_model: bool,
+    share_input_flags: bool,
     mut consume: impl FnMut(usize, EvaluatedApplyRow),
 ) -> Result<(), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
@@ -580,17 +587,20 @@ fn for_each_apply_row(
             .iter()
             .zip(&loaded_tables)
             .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
+    let columns: &[&str] = if forward_model {
+        &["FLAG"]
+    } else {
+        &[VisibilityDataColumn::Data.name(), "FLAG"]
+    };
     let mut main_rows = ms
         .main_table()
         .row_accessor()
-        .prepare(&[VisibilityDataColumn::Data.name(), "FLAG"])
+        .prepare(columns)
         .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
             path: ms_path.clone(),
             source: MsError::from(source),
         })?;
-    let data_index = main_rows
-        .column_index(VisibilityDataColumn::Data.name())
-        .expect("prepared apply reader includes DATA");
+    let data_index = main_rows.column_index(VisibilityDataColumn::Data.name());
     let flag_index = main_rows
         .column_index("FLAG")
         .expect("prepared apply reader includes FLAG");
@@ -608,18 +618,43 @@ fn for_each_apply_row(
                 source: MsError::from(source),
             }
         })?;
-        let data = main_rows.array_at(data_index).map_err(|source| {
+        let input_flags = main_rows.array_at(flag_index).map_err(|source| {
             ApplyExecutionError::MutateMeasurementSet {
                 path: ms_path.clone(),
                 source: MsError::from(source),
             }
         })?;
-        let original_flags = main_rows.array_at(flag_index).map_err(|source| {
-            ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
+        let shared;
+        let original_flags = if share_input_flags
+            && let ArrayValue::Bool(flags) = input_flags
+            && flags.ndim() == 2
+        {
+            let mut flags = flags.clone();
+            for mut channel in flags.axis_iter_mut(ndarray::Axis(1)) {
+                if channel.iter().any(|&flag| flag) {
+                    channel.fill(true);
+                }
             }
-        })?;
+            shared = ArrayValue::Bool(flags);
+            &shared
+        } else {
+            input_flags
+        };
+        let units;
+        let data = if let Some(index) = data_index {
+            main_rows.array_at(index).map_err(|source| {
+                ApplyExecutionError::MutateMeasurementSet {
+                    path: ms_path.clone(),
+                    source: MsError::from(source),
+                }
+            })?
+        } else {
+            units = ArrayValue::Complex32(ArrayD::from_elem(
+                IxDyn(original_flags.shape()).f(),
+                Complex32::new(1., 0.),
+            ));
+            &units
+        };
         if !availability::available(row, plan) {
             if plan.apply_mode == ApplyMode::Trial {
                 continue;
@@ -632,6 +667,7 @@ fn for_each_apply_row(
                 EvaluatedApplyRow {
                     corrected_data: data.clone(),
                     flags: ArrayValue::Bool(ArrayD::from_elem(shape.clone(), true)),
+                    model_gains: None,
                     weight_factors: Some(ArrayD::zeros(shape)),
                 },
             );
@@ -654,6 +690,7 @@ fn for_each_apply_row(
                 preserved_corrected_data: None,
                 preserved_weight_spectrum: None,
                 channel_grid: None,
+                forward_model,
             },
             plan,
             &loaded_tables,
@@ -665,6 +702,7 @@ fn for_each_apply_row(
             row.row_index,
             EvaluatedApplyRow {
                 corrected_data: result.corrected_data,
+                model_gains: None,
                 flags: result
                     .updated_flags
                     .unwrap_or_else(|| original_flags.clone()),
@@ -737,7 +775,7 @@ pub(crate) fn execute_apply_with_preparation_error(
         if plan.apply_mode == ApplyMode::Trial {
             // Calibrater::correct2 still runs the calibration operators in
             // trial mode, including their input/basis validation.
-            for_each_apply_row(&ms, &plan, |_, _| {})?;
+            for_each_apply_row(&ms, &plan, false, false, |_, _| {})?;
             return Ok(ApplyExecutionReport {
                 plan,
                 created_corrected_data_column: false,
@@ -834,7 +872,7 @@ pub fn execute_apply(
     let (plan, plan_timings) = plan_apply_with_timings(ms, request)?;
     let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
     if plan.apply_mode == ApplyMode::Trial {
-        for_each_apply_row(ms, &plan, |_, _| {})?;
+        for_each_apply_row(ms, &plan, false, false, |_, _| {})?;
         return Ok(ApplyExecutionReport {
             plan,
             created_corrected_data_column: false,
@@ -1428,6 +1466,7 @@ struct ExecutionRowInputs<'a> {
     preserved_corrected_data: Option<&'a ArrayValue>,
     preserved_weight_spectrum: Option<&'a ArrayValue>,
     channel_grid: Option<DataChannelGrid<'a>>,
+    forward_model: bool,
 }
 
 struct PrefetchedExecutionRowInputs {
@@ -1812,7 +1851,7 @@ fn calibration_lookup_key(
     }
 }
 
-struct ParallacticAngleState {
+pub(crate) struct ParallacticAngleState {
     engine: MsCalEngine,
     feed_rows: HashMap<(i32, i32), Vec<FeedAngleRow>>,
 }
@@ -1848,6 +1887,7 @@ fn apply_row_all_channels(
         original_weight_spectrum,
         has_weight_spectrum,
         channel_grid,
+        forward_model,
         ..
     } = inputs;
     let ArrayValue::Complex32(data) = data else {
@@ -2115,7 +2155,8 @@ fn apply_row_all_channels(
         };
 
         let materialize_started_at = compute_profile.as_ref().map(|_| Instant::now());
-        if !(calibrate_weights)
+        if !forward_model
+            && !calibrate_weights
             && let Some(pair) = build_fast_gain_pair(
                 table_index,
                 &ant1,
@@ -2167,8 +2208,10 @@ fn apply_row_all_channels(
             profile.row_dependent_materialized_pairs += 1;
         }
 
-        if let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) =
-            (ant1.as_ref(), ant2.as_ref())
+        if !forward_model
+            && !(is_bandpass && correlation_types.len() == 1)
+            && let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) =
+                (ant1.as_ref(), ant2.as_ref())
         {
             let scalar_weights =
                 !is_bandpass && first.channel_count == 1 && second.channel_count == 1;
@@ -2213,16 +2256,18 @@ fn apply_row_all_channels(
 
         let generic_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
         for corr_index in 0..data.shape()[0] {
-            let receptors =
-                correlation_receptors(correlation_types[corr_index]).ok_or_else(|| {
-                    ApplyExecutionError::UnsupportedCorrelationLayout {
-                        data_desc_id: row.data_desc_id,
-                        correlation_types: correlation_types
-                            .iter()
-                            .map(|code| stokes_name(*code).to_string())
-                            .collect(),
-                    }
-                })?;
+            let receptors = if is_bandpass {
+                bandpass::receptors(correlation_types, corr_index)
+            } else {
+                correlation_receptors(correlation_types[corr_index])
+            }
+            .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
+                data_desc_id: row.data_desc_id,
+                correlation_types: correlation_types
+                    .iter()
+                    .map(|code| stokes_name(*code).to_string())
+                    .collect(),
+            })?;
 
             for chan_index in 0..data.shape()[1] {
                 let gain1 = ant1.sample(
@@ -2242,8 +2287,13 @@ fn apply_row_all_channels(
                     &sampling_context,
                 )?;
 
-                let (value1, flag1) = correcting_gain(gain1.value, gain1.flagged);
-                let (value2, flag2) = correcting_gain(gain2.value, gain2.flagged);
+                let gain = if forward_model {
+                    gain_validity::forward_gain
+                } else {
+                    correcting_gain
+                };
+                let (value1, flag1) = gain(gain1.value, gain1.flagged);
+                let (value2, flag2) = gain(gain2.value, gain2.flagged);
                 if (flag1 || flag2)
                     && plan.apply_mode.writes_flags()
                     && !flags[[corr_index, chan_index]]
@@ -2252,8 +2302,12 @@ fn apply_row_all_channels(
                     newly_flagged_samples += 1;
                 }
 
-                let denom = value1 * value2.conj();
-                corrected[[corr_index, chan_index]] /= denom;
+                let factor = value1 * value2.conj();
+                if forward_model {
+                    corrected[[corr_index, chan_index]] *= factor;
+                } else {
+                    corrected[[corr_index, chan_index]] /= factor;
+                }
                 if calibrate_weights {
                     let factor = bandpass_weights.as_ref().map_or_else(
                         || value1.norm_sqr() * value2.norm_sqr(),
@@ -3032,6 +3086,7 @@ fn apply_row_prefetched(
             preserved_corrected_data: inputs.preserved_corrected_data.as_ref(),
             preserved_weight_spectrum: inputs.preserved_weight_spectrum.as_ref(),
             channel_grid: None,
+            forward_model: false,
         },
         plan,
         loaded_tables,
@@ -3207,7 +3262,7 @@ fn materialize_row_dependent_grid(
 }
 
 impl ParallacticAngleState {
-    fn feed_parallactic_angle(
+    pub(crate) fn feed_parallactic_angle(
         &self,
         time_seconds: f64,
         field_id: i32,
@@ -3273,8 +3328,8 @@ fn feed_row_distance(row: &FeedAngleRow, time_seconds: f64) -> f64 {
     (row.time_seconds - time_seconds).abs()
 }
 
-fn load_parallactic_angle_state(ms: &MeasurementSet) -> MsResult<ParallacticAngleState> {
-    let engine = MsCalEngine::new(ms)?;
+pub(crate) fn load_parallactic_angle_state(ms: &MeasurementSet) -> MsResult<ParallacticAngleState> {
+    let engine = MsCalEngine::new(ms)?.with_field_ephemerides(ms)?;
     let mut feed_rows = HashMap::<(i32, i32), Vec<FeedAngleRow>>::new();
     if let Ok(feed) = ms.feed() {
         for row_index in 0..feed.row_count() {
@@ -3377,7 +3432,7 @@ enum TimeParameterFamily {
 impl TimeParameterFamily {
     fn from_subtype(subtype: &str) -> Option<Self> {
         match subtype {
-            "K Jones" => Some(Self::Delay),
+            "K Jones" | "Kcross Jones" => Some(Self::Delay),
             "KAntPos Jones" => Some(Self::Antpos),
             "EGainCurve" => Some(Self::GainCurve),
             "TOpac" => Some(Self::Opacity),
@@ -4157,7 +4212,10 @@ fn load_parameters(
                 )?)
             }
             CalibrationParameterFamily::Float
-                if table_plan.summary.table_subtype.as_str() == "K Jones" =>
+                if matches!(
+                    table_plan.summary.table_subtype.as_str(),
+                    "K Jones" | "Kcross Jones"
+                ) =>
             {
                 let delays = table
                     .cell_accessor(row_index, COL_FPARAM)

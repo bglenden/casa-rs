@@ -439,12 +439,33 @@ impl MsCalEngine {
         let Some((ephemeris, offset)) = self.field_series(field_id)? else {
             return Ok(Cow::Borrowed(self.field_dir(field_id)?));
         };
-        let sample = crate::ephemeris::evaluate(ephemeris, self.ephemeris_mjd_tdb(time_mjd_sec)?)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        let direction = self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)?;
+        let direction = self.field_body_direction(time_mjd_sec, ephemeris)?;
         Ok(Cow::Owned(
             casa_types::measures::ephemeris::offset_true_angle(&direction, offset)?,
         ))
+    }
+
+    /// Topocentric J2000 direction of the target a FIELD tracks, before
+    /// applying the observing offset in `PHASE_DIR`.
+    pub fn tracked_body_direction_j2000(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+    ) -> MsResult<MDirection> {
+        let (ephemeris, _) = self.field_series(field_id)?.ok_or_else(|| {
+            MsError::InvalidInput(format!("FIELD_ID {field_id} has no attached ephemeris"))
+        })?;
+        self.field_body_direction(time_mjd_sec, ephemeris)
+    }
+
+    fn field_body_direction(
+        &self,
+        time_mjd_sec: f64,
+        ephemeris: &FieldEphemeris,
+    ) -> MsResult<MDirection> {
+        let sample = crate::ephemeris::evaluate(ephemeris, self.ephemeris_mjd_tdb(time_mjd_sec)?)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)
     }
 
     /// casacore's `MSFieldColumns::phaseDirMeas(field_id)` asked at no time,

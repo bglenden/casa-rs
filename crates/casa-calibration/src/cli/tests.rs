@@ -411,6 +411,7 @@ fn gain_solve() -> SolveGainTaskRequest {
         combine: GainSolveCombine {
             scans: true,
             fields: true,
+            ..GainSolveCombine::default()
         },
         refant: RefAntSelector::AntennaName("VA15".into()),
         prior_calibration_tables: vec![prior],
@@ -527,6 +528,10 @@ fn calibrate_bandpass_solve_reads_every_parameter_it_emits() {
     assert_eq!(
         request("calibrate", &args).expect("calibrate"),
         CalibrationTaskRequest::SolveBandpass(SolveBandpassTaskRequest {
+            model_source: GainSolveModelSource::PointSource,
+            solve_interval: GainSolveInterval::Infinite,
+            frequency_interval: None,
+            correlation_dependent_flags: false,
             append: false,
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection::new(),
@@ -537,6 +542,7 @@ fn calibrate_bandpass_solve_reads_every_parameter_it_emits() {
             combine: BandpassSolveCombine {
                 scans: true,
                 fields: true,
+                ..BandpassSolveCombine::default()
             },
             band_type: BandpassType::BPoly,
             normalize_average_amplitude: true,
@@ -994,6 +1000,7 @@ fn render_stats_and_solver_outputs_include_grouped_details() {
         solution_row_count: 8,
         channel_count: 64,
         selected_data: Default::default(),
+        selection_failed: false,
         solve_stats: Default::default(),
     });
     assert!(bandpass_text.contains("Bandpass Solve Report: bandpass.bcal"));

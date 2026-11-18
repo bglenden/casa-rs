@@ -137,7 +137,9 @@ impl<'a> IntervalStages<'a> {
                 group
                     .channel_graphs
                     .iter()
-                    .flat_map(|graphs| graphs[polarization].antennas())
+                    .flat_map(|graphs| graphs[polarization].stats.keys())
+                    .filter(|(first, second)| first != second)
+                    .map(|&(first, _)| first)
                     .collect()
             })
             .collect();

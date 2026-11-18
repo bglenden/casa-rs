@@ -28,6 +28,21 @@ pub fn solve_record(
     solved: &Path,
     stats: &SolveStats,
 ) -> CasaValue {
+    calibration_solve_record(applied, Some(selected), Some((solved, stats)))
+}
+
+pub(crate) fn skipped_solve_record(
+    applied: &[ApplyCalibrationTableSpec],
+    selected: Option<&SelectedData>,
+) -> CasaValue {
+    calibration_solve_record(applied, selected, None)
+}
+
+fn calibration_solve_record(
+    applied: &[ApplyCalibrationTableSpec],
+    selected: Option<&SelectedData>,
+    solved: Option<(&Path, &SolveStats)>,
+) -> CasaValue {
     let mut apply_tables = applied
         .iter()
         .map(|spec| spec.path.display().to_string())
@@ -35,10 +50,9 @@ pub fn solve_record(
     apply_tables.sort();
     apply_tables.dedup();
     let ids = |ids: &[i32]| CasaValue::int64_vector(ids.iter().map(|&id| i64::from(id)));
-    CasaValue::dict([
-        ("apply_tables", CasaValue::str_vector(apply_tables)),
-        (
-            "selectvis",
+    let selection = selected.map_or_else(
+        || CasaValue::dict(std::iter::empty::<(&str, CasaValue)>()),
+        |selected| {
             CasaValue::dict([
                 ("antennas", ids(&selected.antennas)),
                 ("field", ids(&selected.fields)),
@@ -46,14 +60,21 @@ pub fn solve_record(
                 ("observation", ids(&selected.observations)),
                 ("scan", ids(&selected.scans)),
                 ("spw", ids(&selected.spectral_windows)),
-            ]),
-        ),
+            ])
+        },
+    );
+    let mut result = vec![
+        ("apply_tables", CasaValue::str_vector(apply_tables)),
+        ("selectvis", selection),
         (
             "solve_tables",
-            CasaValue::str_vector([solved.display().to_string()]),
+            CasaValue::str_vector(solved.map(|(path, _)| path.display().to_string())),
         ),
-        ("solvestats", solvestats(stats)),
-    ])
+    ];
+    if let Some((_, stats)) = solved {
+        result.push(("solvestats", solvestats(stats)));
+    }
+    CasaValue::dict(result)
 }
 
 /// CASA's `solvestats`: the counts summed over the windows, then each

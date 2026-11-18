@@ -63,6 +63,8 @@ pub(crate) struct RobustSample {
     pub(crate) correlation: usize,
     pub(crate) visibility: Complex32,
     pub(crate) weight: f32,
+    /// Fraction of the averaged sample represented by a nonzero model.
+    pub(crate) model: f32,
     pub(crate) in_first_buffer: bool,
 }
 
@@ -93,12 +95,10 @@ impl SolveGraph {
         self.weights.get(&baseline).copied().unwrap_or_default()
     }
 
-    /// The baselines with positive weight between antennas of `antennas`.
+    /// The baselines between antennas that meet the solve constraints.
     fn restricted_to(&self, antennas: &BTreeSet<i32>) -> Self {
         let keep = |&(antenna1, antenna2): &(i32, i32)| {
-            antennas.contains(&antenna1)
-                && antennas.contains(&antenna2)
-                && self.weight((antenna1, antenna2)) > f32::EPSILON
+            antennas.contains(&antenna1) && antennas.contains(&antenna2)
         };
         Self {
             edges: self
@@ -167,11 +167,21 @@ pub(crate) struct SolvedGraphs {
     pub(crate) receptors: Vec<SolvedReceptor>,
 }
 
+pub(crate) enum SolveStart<'a> {
+    Guess,
+    BandpassGuess {
+        scalar: bool,
+        independent_input_flags: bool,
+    },
+    PreviousChannel(Option<&'a SolvedGraphs>),
+    LegacyChannel(&'a SolvedGraphs),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SolveGraphOptions<'a> {
     pub(crate) refant_id: i32,
     pub(crate) min_baselines_per_antenna: usize,
-    pub(crate) scalar_seed: Option<&'a SolveAccumulator>,
+    pub(crate) group_seed: Option<&'a SolveAccumulator>,
     pub(crate) correlation_dependent_flags: bool,
     pub(crate) defer_reference: bool,
     pub(crate) robustness: Option<&'a GainSolveRobustness>,
@@ -217,18 +227,18 @@ pub(crate) fn solve_group(
     options: SolveGraphOptions<'_>,
 ) -> Option<Vec<SolutionRow>> {
     let refant_id = options.refant_id;
-    let scan_number = *group.scan_numbers.iter().next().unwrap_or(&0);
+    let scan_number = group.scan_number();
     let graphs = group.channel_graphs.first()?;
     let solved = solve_graphs(
         graphs,
         gain_type,
         solve_mode,
         SolveGraphOptions {
-            scalar_seed: (gain_type == GainType::T).then_some(&group),
+            group_seed: Some(&group),
             defer_reference: true,
             ..options
         },
-        None,
+        SolveStart::Guess,
     )?;
 
     let mut antenna_ids = available_antennas.clone();
@@ -237,7 +247,7 @@ pub(crate) fn solve_group(
         antenna_ids.insert(refant_id);
     }
     let receptors = match gain_type {
-        GainType::G => &solved.receptors[..],
+        GainType::G | GainType::K | GainType::KCross => &solved.receptors[..],
         GainType::T => &solved.receptors[..1],
     };
     Some(
@@ -297,14 +307,14 @@ pub(crate) fn solve_group(
 /// after [`MAX_ITERATIONS`]. CASA also fails a solve whose chi-square is
 /// exactly zero; here an exact fit is a solution (`docs/CASA (C++) bugs.md`).
 ///
-/// `start`, when given, seeds the antennas it solved in place of the first
-/// guess, as CASA's B solve starts each channel from the one solved before.
+/// CASA's B solve starts each channel from its predecessor's parameters.
+/// Constraint failures leave unity for the affected antennas.
 pub(crate) fn solve_graphs(
     graphs: &[SolveGraph],
     gain_type: GainType,
     solve_mode: GainSolveMode,
     options: SolveGraphOptions<'_>,
-    start: Option<&SolvedGraphs>,
+    start: SolveStart<'_>,
 ) -> Option<SolvedGraphs> {
     let constrained = baseline_constrained_antennas(graphs, options.min_baselines_per_antenna);
     let refant_id = if constrained.contains(&options.refant_id) {
@@ -330,7 +340,50 @@ pub(crate) fn solve_graphs(
             }
         })
         .collect::<Vec<_>>();
-    let mut first = if let Some(seed) = options.scalar_seed
+    if solved_antennas.iter().all(BTreeSet::is_empty) {
+        return None;
+    }
+    let bandpass_guess = if let SolveStart::BandpassGuess {
+        scalar,
+        independent_input_flags,
+    } = start
+    {
+        Some(bandpass_first_guess(
+            &active,
+            &constrained,
+            &solved_antennas,
+            refant_id,
+            scalar,
+            independent_input_flags,
+        ))
+    } else {
+        None
+    };
+    let mut first = if let Some(guess) = &bandpass_guess {
+        guess
+            .iter()
+            .zip(&solved_antennas)
+            .map(|(gains, antennas)| antennas.iter().map(|&id| (id, gains[&id])).collect())
+            .collect()
+    } else if let SolveStart::PreviousChannel(previous) = start {
+        solved_antennas
+            .iter()
+            .enumerate()
+            .map(|(index, antennas)| {
+                let fit = previous.and_then(|previous| previous.receptors.get(index));
+                antennas
+                    .iter()
+                    .map(|&antenna| {
+                        let gain = fit
+                            .and_then(|fit| fit.gains.get(&antenna))
+                            .map_or(Complex64::new(1.0, 0.0), |gain| complex32_to_64(*gain));
+                        (antenna, gain)
+                    })
+                    .collect()
+            })
+            .collect()
+    } else if gain_type == GainType::T
+        && let Some(seed) = options.group_seed
         && let Some(guess) =
             seed.scalar_initial_gains(&solved_antennas[0], options.refant_id, solve_mode)
     {
@@ -343,11 +396,26 @@ pub(crate) fn solve_graphs(
             .min_by_key(|antenna| (*antenna != options.refant_id, *antenna))
             .unwrap_or(refant_id);
         first_guess(&first_graphs, &solved_antennas, gain_type, first_reference)
+    } else if let Some(seed) = options
+        .group_seed
+        .and_then(|group| group.first_g_graphs.as_ref())
+    {
+        let first_reference = seed
+            .iter()
+            .flat_map(SolveGraph::antennas)
+            .min_by_key(|antenna| (*antenna != options.refant_id, *antenna))
+            .unwrap_or(refant_id);
+        first_guess(
+            seed.as_slice(),
+            &solved_antennas,
+            gain_type,
+            first_reference,
+        )
     } else {
         first_guess(&active, &solved_antennas, gain_type, refant_id)
     };
-    if let Some(start) = start {
-        for (guess, receptor) in first.iter_mut().zip(&start.receptors) {
+    if let SolveStart::LegacyChannel(previous) = start {
+        for (guess, receptor) in first.iter_mut().zip(&previous.receptors) {
             for (antenna_id, value) in guess.iter_mut() {
                 if receptor.solved.contains(antenna_id) {
                     *value = complex32_to_64(receptor.gains[antenna_id]);
@@ -392,10 +460,92 @@ pub(crate) fn solve_graphs(
         })
         .collect::<Vec<_>>();
     apply_group_reduced_chi_square(&mut receptors);
+    if let SolveStart::PreviousChannel(Some(previous)) = start {
+        // A constrained antenna with one unmeasured receptor keeps that
+        // receptor's parameter. CASA flags it when its Hessian is zero.
+        for (receptor, prior) in receptors.iter_mut().zip(&previous.receptors) {
+            for &antenna in &constrained {
+                if let Some(&gain) = prior.gains.get(&antenna) {
+                    receptor.gains.entry(antenna).or_insert(gain);
+                }
+            }
+        }
+    }
+    if let Some(guess) = bandpass_guess {
+        for (receptor, initial) in receptors.iter_mut().zip(guess) {
+            for (antenna, gain) in initial {
+                receptor
+                    .gains
+                    .entry(antenna)
+                    .or_insert_with(|| complex64_to_32(gain));
+            }
+        }
+    }
     Some(SolvedGraphs {
         refant_id,
         receptors,
     })
+}
+
+fn bandpass_first_guess(
+    graphs: &[SolveGraph],
+    constrained: &BTreeSet<i32>,
+    solved_antennas: &[BTreeSet<i32>],
+    requested: i32,
+    scalar: bool,
+    independent_input_flags: bool,
+) -> Vec<HashMap<i32, Complex64>> {
+    if scalar {
+        let mut seed = first_guess(&graphs[..1], &solved_antennas[..1], GainType::G, requested);
+        seed.push(
+            constrained
+                .iter()
+                .map(|&antenna| (antenna, Complex64::new(0.0, 0.0)))
+                .collect(),
+        );
+        return seed;
+    }
+    if solved_antennas.iter().all(|ants| ants == constrained) {
+        return first_guess(graphs, solved_antennas, GainType::G, requested);
+    }
+    // GJones::guessPar shares the phase reference and mean scale across
+    // hands. With correlation-dependent flagging a surviving hand can seed it.
+    let joint = graphs
+        .iter()
+        .flat_map(|graph| graph.weights.keys().copied())
+        .filter(|&pair| {
+            independent_input_flags || graphs.iter().all(|graph| graph.weight(pair) > 0.0)
+        })
+        .collect::<BTreeSet<_>>();
+    let joined_antennas = joint
+        .iter()
+        .flat_map(|&(a, b)| [a, b])
+        .collect::<BTreeSet<_>>();
+    let Some(guess_ref) = joined_antennas
+        .get(&requested)
+        .or_else(|| joined_antennas.first())
+    else {
+        return graphs
+            .iter()
+            .map(|_| {
+                constrained
+                    .iter()
+                    .map(|&antenna| (antenna, Complex64::new(0.3, 0.0)))
+                    .collect()
+            })
+            .collect();
+    };
+    let mut joined = graphs.to_vec();
+    for graph in &mut joined {
+        graph.edges.retain(|pair, _| joint.contains(pair));
+        graph.weights.retain(|pair, _| joint.contains(pair));
+    }
+    first_guess(
+        &joined,
+        &vec![constrained.clone(); graphs.len()],
+        GainType::G,
+        *guess_ref,
+    )
 }
 
 /// The antennas that keep at least `min_baselines_per_antenna` baselines
@@ -408,8 +558,8 @@ pub(crate) fn baseline_constrained_antennas(
 ) -> BTreeSet<i32> {
     let baselines = graphs
         .iter()
-        .flat_map(|graph| graph.weights.iter())
-        .filter(|((antenna1, antenna2), weight)| antenna1 < antenna2 && **weight > f32::EPSILON)
+        .flat_map(|graph| graph.stats.iter())
+        .filter(|((antenna1, antenna2), stats)| antenna1 < antenna2 && stats.collapsed_count > 0)
         .map(|(baseline, _)| *baseline)
         .collect::<BTreeSet<_>>();
     let mut active = baselines
@@ -469,7 +619,7 @@ fn first_guess(
                         amplitude_sum += amplitude;
                         amplitude_count += 1;
                         let guess = match gain_type {
-                            GainType::G => mean.conj(),
+                            GainType::G | GainType::K | GainType::KCross => mean.conj(),
                             GainType::T => mean.conj() / amplitude,
                         };
                         (antenna_id, guess)
@@ -828,9 +978,6 @@ fn chi_square_complex64(graph: &SolveGraph, gains: &HashMap<i32, Complex64>) -> 
             continue;
         }
         let weight = f64::from(graph.weight((antenna1, antenna2)));
-        if weight <= f64::EPSILON {
-            continue;
-        }
         let gain1 = gains
             .get(&antenna1)
             .copied()
@@ -1057,7 +1204,7 @@ mod tests {
         SolveGraphOptions {
             refant_id: 0,
             min_baselines_per_antenna,
-            scalar_seed: None,
+            group_seed: None,
             correlation_dependent_flags: false,
             defer_reference: false,
             robustness: None,
@@ -1092,7 +1239,7 @@ mod tests {
             GainType::T,
             GainSolveMode::Phase,
             options(0),
-            None,
+            SolveStart::Guess,
         )
         .expect("solve phase graph");
         let receptor = &solved.receptors[0];
@@ -1120,7 +1267,7 @@ mod tests {
             GainType::G,
             GainSolveMode::AmplitudePhase,
             options(0),
-            None,
+            SolveStart::Guess,
         )
         .expect("solve amplitude-phase graph");
         solved.receptors[0]
@@ -1193,7 +1340,7 @@ mod tests {
                 GainType::T,
                 GainSolveMode::Phase,
                 options(2),
-                None
+                SolveStart::Guess
             )
             .is_none()
         );
@@ -1203,7 +1350,7 @@ mod tests {
                 GainType::T,
                 GainSolveMode::Phase,
                 options(1),
-                None
+                SolveStart::Guess
             )
             .is_some()
         );
@@ -1227,7 +1374,7 @@ mod tests {
             GainType::T,
             GainSolveMode::Phase,
             options(2),
-            None,
+            SolveStart::Guess,
         )
         .expect("antennas 1-3 solve");
         assert_eq!(solved.refant_id, 1);

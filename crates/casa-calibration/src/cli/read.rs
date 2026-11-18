@@ -160,6 +160,10 @@ fn solve_bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest,
         normalize_average_amplitude: task.flag("solnorm")?,
         amplitude_degree: count(task, "degamp")?,
         phase_degree: count(task, "degphase")?,
+        model_source: GainSolveModelSource::PointSource,
+        solve_interval: GainSolveInterval::Infinite,
+        frequency_interval: None,
+        correlation_dependent_flags: false,
         smodel: parsed(task, "smodel", parse_stokes_smodel)?,
         // The native bandpass solves every antenna with a baseline and
         // keeps every solution, as it always has.
@@ -328,6 +332,8 @@ fn parse_gain_type(value: &str) -> Result<GainType, String> {
     match value {
         "g" | "G" => Ok(GainType::G),
         "t" | "T" => Ok(GainType::T),
+        "k" | "K" => Ok(GainType::K),
+        "kcross" | "KCROSS" => Ok(GainType::KCross),
         other => Err(format!("unsupported gain_type {other:?}; expected g or t")),
     }
 }

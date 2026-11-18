@@ -27,11 +27,12 @@ use casa_types::quanta::{Quantity, Unit};
 
 use super::read::{count, parse_gainfield_value, parse_interp_value, parse_refant_selector};
 use crate::{
-    ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassSolveCombine,
-    BandpassSolveCuts, BandpassType, CalibrationTaskRequest, ExecuteApplyTaskRequest,
-    FluxScaleRequest, GainNormalization, GainSolveCombine, GainSolveInterval, GainSolveMode,
-    GainSolveModelSource, GainType, GencalTaskRequest, GencalType, RefAntSelector,
-    SolveBandpassTaskRequest, SolveGainTaskRequest, load_apply_specs_from_callib,
+    ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassFrequencyInterval,
+    BandpassSolveCombine, BandpassSolveCuts, BandpassType, CalibrationTaskRequest,
+    ExecuteApplyTaskRequest, FluxScaleRequest, GainNormalization, GainSolveCombine,
+    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalTaskRequest,
+    GencalType, RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest,
+    load_apply_specs_from_callib,
 };
 
 /// The request a CASA-named surface makes.
@@ -63,42 +64,9 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
         let (tables, error) = traditional_chain(task, Chain::Apply)?;
         (tables, None, error)
     };
-    let mut selection = selection(task)?;
-    selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
-    selection.uvrange = uv_selector_text(task.value("uvrange"));
-    // calibrater.selectvis converts these variants with toCasaString, which
-    // removes one outer bracket pair even when the input was a string.
-    for selector in [
-        &mut selection.field,
-        &mut selection.spw,
-        &mut selection.intent,
-        &mut selection.timerange,
-        &mut selection.uvrange,
-        &mut selection.antenna,
-        &mut selection.scan,
-        &mut selection.observation,
-    ] {
-        if let Some(text) = selector
-            && let Some(inner) = text
-                .strip_prefix('[')
-                .and_then(|text| text.strip_suffix(']'))
-        {
-            *selector = (!inner.is_empty()).then(|| inner.to_string());
-        }
-    }
-    // CASA accepts these parameters even when disabled, retaining their input
-    // values for HISTORY while passing empty selectors to calibrater.selectvis.
-    if !task.flag("selectdata")? {
-        selection.timerange = None;
-        selection.uvrange = None;
-        selection.antenna = None;
-        selection.scan = None;
-        selection.observation = None;
-        selection.msselect = None;
-    }
     Ok(ExecuteApplyTaskRequest {
         measurement_set: task.path("vis")?,
-        selection,
+        selection: selection(task)?,
         calibration_tables,
         callibrary_error,
         argument_error,
@@ -111,7 +79,7 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
 fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure> {
     let measurement_set = task.path("vis")?;
     let min_snr = min_snr(task)?;
-    let (model_source, smodel) = model(task, &measurement_set)?;
+    let (model_source, smodel) = model(task, &measurement_set, true)?;
     let reference = task.required_text("refant")?;
     let strict = match task.required_text("refantmode")?.as_str() {
         "flex" => false,
@@ -155,15 +123,19 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
 
 fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskFailure> {
     let measurement_set = task.path("vis")?;
-    let (model_source, smodel) = model(task, &measurement_set)?;
-    if matches!(model_source, GainSolveModelSource::ModelColumn) {
-        return Err(not_yet("smodel", "[] with a MODEL_DATA column"));
-    }
     let band_type = match task.required_text("bandtype")?.as_str() {
         "B" => BandpassType::B,
         "BPOLY" => BandpassType::BPoly,
         other => return Err(unknown("bandtype", other, "'B' or 'BPOLY'")),
     };
+    let (model_source, smodel) = model(task, &measurement_set, band_type == BandpassType::B)?;
+    let supplied_interval = selector_text(task.value("solint")).unwrap_or_default();
+    let (time_interval, frequency_interval) = supplied_interval
+        .split_once(',')
+        .unwrap_or((&supplied_interval, ""));
+    if matches!(model_source, GainSolveModelSource::ModelColumn) {
+        return Err(not_yet("smodel", "[] with a MODEL_DATA column"));
+    }
     let combine = combine(task)?;
     // CASA reads maskedge only for BPOLY.
     let mask_edge_percent = match band_type {
@@ -183,21 +155,33 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         append: task.flag("append")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("caltable")?),
-        refant: refant(&task.required_text("refant")?)?,
+        refant: bandpass_refant(&task.required_text("refant")?, band_type)?,
         prior_calibration_tables: chain(task, Chain::Solve)?,
         parang: task.flag("parang")?,
         combine: BandpassSolveCombine {
             scans: combine.scans,
             fields: combine.fields,
+            observations: combine.observations,
+            spectral_windows: combine.spectral_windows,
         },
         band_type,
         normalize_average_amplitude: task.flag("solnorm")?,
         amplitude_degree: count(task, "degamp")?,
         phase_degree: count(task, "degphase")?,
+        model_source,
+        solve_interval: parse_time_solint(time_interval)?,
+        frequency_interval: parse_frequency_solint(frequency_interval)?,
+        correlation_dependent_flags: task.flag("corrdepflags")?,
         smodel,
         cuts: Some(BandpassSolveCuts {
             min_baselines_per_antenna: count(task, "minblperant")?,
             min_snr: min_snr(task)?,
+            fill_gaps: match band_type {
+                BandpassType::B => {
+                    usize::try_from(task.integer("fillgaps")?.max(0)).unwrap_or(usize::MAX)
+                }
+                BandpassType::BPoly => 0,
+            },
             mask_edge_percent,
         }),
         measurement_set,
@@ -317,31 +301,71 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
 /// CASA's selection: `field`, `spw` and `intent` always; the others are inactive,
 /// and so unset, while `selectdata` is not.
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
+    let full = task.surface() != "bandpass" || task.required_text("bandtype")? == "B";
     let text = |name: &str| {
         task.text(name).map(|value| {
-            if task.surface() == "applycal" {
+            if full {
                 value.filter(|text| !text.is_empty())
             } else {
                 value
             }
         })
     };
-    Ok(MsSelection {
+    let mut selection = MsSelection {
         selectdata: true,
         field: text("field")?,
         spw: text("spw")?,
         antenna: text("antenna")?,
         scan: text("scan")?,
-        observation: if task.surface() == "applycal" {
-            selector_text(task.value("observation"))
-        } else {
-            text("observation")?
-        },
+        observation: selector_text(task.value("observation")),
         array: text("array")?,
         timerange: text("timerange")?,
         msselect: text("msselect")?,
         ..MsSelection::default()
-    })
+    };
+    if full {
+        selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
+        selection.uvrange = uv_selector_text(task.value("uvrange"));
+        // calibrater.selectvis converts these variants with toCasaString, which
+        // removes one outer bracket pair even when the input was a string.
+        for selector in [
+            &mut selection.field,
+            &mut selection.spw,
+            &mut selection.intent,
+            &mut selection.timerange,
+            &mut selection.uvrange,
+            &mut selection.antenna,
+            &mut selection.scan,
+            &mut selection.observation,
+        ] {
+            if let Some(text) = selector
+                && let Some(inner) = text
+                    .strip_prefix('[')
+                    .and_then(|text| text.strip_suffix(']'))
+            {
+                *selector = (!inner.is_empty()).then(|| inner.to_string());
+            }
+        }
+    }
+    // CASA accepts these parameters even when disabled, retaining their input
+    // values for HISTORY while passing empty selectors to calibrater.selectvis.
+    if !task.flag("selectdata")? {
+        selection.timerange = None;
+        selection.uvrange = None;
+        selection.antenna = None;
+        selection.scan = None;
+        selection.observation = None;
+        selection.msselect = None;
+    }
+    if full && matches!(task.surface(), "gaincal" | "bandpass") {
+        // The public task always adds this predicate, including when the
+        // optional selectors are disabled.
+        selection.msselect = Some(match selection.msselect {
+            Some(predicate) => format!("({predicate}) && ANTENNA1!=ANTENNA2"),
+            None => "ANTENNA1!=ANTENNA2".into(),
+        });
+    }
+    Ok(selection)
 }
 
 fn selector_text(value: Option<&ParameterValue>) -> Option<String> {
@@ -516,20 +540,28 @@ fn window_map(map: &[i64]) -> Result<Vec<i32>, TaskFailure> {
         .collect()
 }
 
-/// The sky model of a solve: CASA's empty `smodel` is the `MODEL_DATA`
-/// column where the MeasurementSet has one and a 1 Jy point source where it
-/// does not; `[I, Q, U, V]` is a point source, and a shorter list, `[I]` to
-/// `[I, Q, U]`, is too, its missing Stokes zero (probed with CASA 6.7.6.14,
-/// whose `gaincal` aborts on more than four). CASA reads a field's virtual
-/// model (`setjy` with `usescratch=False`) before `MODEL_DATA`; casa-rs
-/// does not implement it yet, so an empty `smodel` on a MeasurementSet
-/// that holds one is refused.
+/// Parse the point-source Stokes vector, with omitted Stokes set to zero.
+/// Gaincal and channelized bandpass resolve an empty vector from the MS.
 fn model(
     task: &TaskInvocation<'_>,
     measurement_set: &Path,
+    use_stored_models: bool,
 ) -> Result<(GainSolveModelSource, [f32; 4]), TaskFailure> {
     let smodel = task.numbers("smodel")?;
     match smodel.as_slice() {
+        [] if use_stored_models => {
+            std::fs::metadata(measurement_set).map_err(|error| {
+                TaskFailure::validation(format!(
+                    "open MeasurementSet {}: {error}",
+                    measurement_set.display()
+                ))
+                .at("vis")
+            })?;
+            Ok((
+                GainSolveModelSource::FromMeasurementSet,
+                [1.0, 0.0, 0.0, 0.0],
+            ))
+        }
         [] => {
             let ms = MeasurementSet::open(measurement_set).map_err(|error| {
                 TaskFailure::validation(format!(
@@ -561,10 +593,14 @@ fn model(
                 )
                 .at("smodel"));
             }
-            if polarized.iter().any(|stokes| *stokes != 0.0) {
+            if !use_stored_models && polarized.iter().any(|stokes| *stokes != 0.0) {
                 return Err(not_yet("smodel", &format!("{smodel:?}")));
             }
-            Ok((GainSolveModelSource::PointSource, [i as f32, 0.0, 0.0, 0.0]))
+            let mut stokes = [0.0; 4];
+            for (value, input) in stokes.iter_mut().zip(smodel) {
+                *value = input as f32;
+            }
+            Ok((GainSolveModelSource::PointSource, stokes))
         }
         _ => Err(TaskFailure::validation(format!(
             "smodel takes [I, Q, U, V], or fewer with the rest zero, or [] for the MODEL_DATA \
@@ -598,6 +634,8 @@ fn gaintype(task: &TaskInvocation<'_>) -> Result<GainType, TaskFailure> {
     match task.required_text("gaintype")?.as_str() {
         "G" => Ok(GainType::G),
         "T" => Ok(GainType::T),
+        "K" => Ok(GainType::K),
+        "KCROSS" => Ok(GainType::KCross),
         other => Err(not_yet("gaintype", other)),
     }
 }
@@ -639,13 +677,17 @@ fn robust_gain_solve(task: &TaskInvocation<'_>) -> Result<crate::GainSolveRobust
 /// text, or text that contains `inf`, in any case, is one solution per
 /// scan; text that contains `int`, one per integration; anything else is a
 /// time, in seconds when it has no unit. A time of zero is CASA's `inf`,
-/// and a negative one its `int`. Channel intervals (`'inf,2ch'`) are not
-/// implemented yet.
+/// and a negative one its `int`. G and T have a single gain per spectral
+/// window, so CASA ignores the frequency interval after a comma.
 fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
-    let text = task.text("solint")?.unwrap_or_default();
-    if text.contains(',') {
-        return Err(not_yet("solint", &text));
-    }
+    let supplied = selector_text(task.value("solint")).unwrap_or_default();
+    let time = supplied
+        .split_once(',')
+        .map_or(supplied.as_str(), |(time, _)| time);
+    parse_time_solint(time)
+}
+
+fn parse_time_solint(text: &str) -> Result<GainSolveInterval, TaskFailure> {
     let upper = text.to_ascii_uppercase();
     if upper.is_empty() || upper.contains("INF") {
         return Ok(GainSolveInterval::Infinite);
@@ -653,7 +695,7 @@ fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
     if upper.contains("INT") {
         return Ok(GainSolveInterval::Integration);
     }
-    let invalid = || unknown("solint", &text, "'inf', 'int' or a time such as '60s'");
+    let invalid = || unknown("solint", text, "'inf', 'int' or a time such as '60s'");
     let quantity = text.parse::<Quantity>().map_err(|_| invalid())?;
     let seconds = if quantity.unit().name().is_empty() {
         quantity.value()
@@ -673,26 +715,72 @@ fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
     })
 }
 
+fn parse_frequency_solint(text: &str) -> Result<Option<BandpassFrequencyInterval>, TaskFailure> {
+    let upper = text.trim().to_ascii_uppercase();
+    if upper.is_empty() || upper.contains("NONE") {
+        return Ok(None);
+    }
+    let invalid = || {
+        unknown(
+            "solint",
+            text,
+            "'none', a channel count, or a bandwidth such as '3MHz'",
+        )
+    };
+    let channels = |count: f64| {
+        if !count.is_finite() {
+            return Err(invalid());
+        }
+        Ok((count > 1.0).then_some(BandpassFrequencyInterval::Channels(count)))
+    };
+    if let Some((count, _)) = upper.split_once("CH") {
+        return channels(count.trim().parse::<f64>().map_err(|_| invalid())?);
+    }
+    let quantity = text.trim().parse::<Quantity>().map_err(|_| invalid())?;
+    if quantity.unit().name().is_empty() {
+        return channels(quantity.value());
+    }
+    let hertz = Unit::new("Hz").map_err(|_| invalid())?;
+    let value = quantity.get_value_in(&hertz).map_err(|_| invalid())?;
+    if !value.is_finite() {
+        return Err(invalid());
+    }
+    Ok((value > 0.0).then_some(BandpassFrequencyInterval::Hertz(value)))
+}
+
 /// The axes CASA's `combine` names, found as `SolvableVisCal` finds them:
 /// by the axis name anywhere in the text, in any case (`'Scan,Field'` and
-/// `'scan field'` both combine scans and fields). `'scan'` and `'field'`
-/// are implemented; `'spw'` and `'obs'` are not yet.
+/// `'scan field'` both combine scans and fields).
 fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
     let text = task.required_text("combine")?;
     let upper = text.to_ascii_uppercase();
-    if upper.contains("SPW") || upper.contains("OBS") {
+    let spectral_windows = upper.contains("SPW");
+    let observations = upper.contains("OBS");
+    if (spectral_windows || observations)
+        && task.surface() == "bandpass"
+        && task.required_text("bandtype")? == "BPOLY"
+    {
         return Err(not_yet("combine", &text));
     }
     Ok(GainSolveCombine {
         scans: upper.contains("SCAN"),
         fields: upper.contains("FIELD"),
+        observations,
+        spectral_windows,
     })
 }
 
-/// CASA's `refant`: one antenna, by name or id. CASA's ranked lists, and
-/// its default `''`, a solve with no reference antenna, are not
-/// implemented yet.
-fn refant(text: &str) -> Result<RefAntSelector, TaskFailure> {
+fn bandpass_refant(text: &str, band_type: BandpassType) -> Result<RefAntSelector, TaskFailure> {
+    if band_type == BandpassType::B {
+        return Ok(if text.trim().is_empty() {
+            RefAntSelector::Unspecified
+        } else {
+            RefAntSelector::Expression {
+                selection: text.trim().to_string(),
+                strict: false,
+            }
+        });
+    }
     if text.trim().is_empty() {
         return Err(not_yet("refant", text));
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical calibration solve session boundary.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use casa_ms::{
@@ -17,8 +17,8 @@ use crate::bandpass::{
 use crate::execute::EvaluatedApplyRow;
 use crate::selected_data::SelectedData;
 use crate::solve::grouping::{
-    SelectedSolveRow, all_antenna_ids, collect_selected_rows, load_preapplied_rows,
-    refuse_shared_spectral_windows, resolve_refants,
+    PriorCalibrationMode, SelectedSolveRow, all_antenna_ids, collect_selected_rows,
+    load_preapplied_rows, resolve_refants,
 };
 use crate::solve::{GainSolveError, GainSolveReport, GainSolveRequest, RefAntSelector, solve_gain};
 
@@ -161,12 +161,18 @@ pub(crate) fn prepare_calibration_solve(
     refant: &RefAntSelector,
     prior_calibration_tables: &[ApplyCalibrationTableSpec],
     parang: bool,
+    full_selection: bool,
+    prior_mode: PriorCalibrationMode,
 ) -> Result<CalibrationSolveContext, GainSolveError> {
     let refants = resolve_refants(measurement_set, refant)?;
     let refant_id = refants.first().copied().unwrap_or(-1);
     let available_antennas = all_antenna_ids(measurement_set)?;
-    let rows = collect_selected_rows(measurement_set, selection)?;
-    refuse_shared_spectral_windows(&rows)?;
+    let rows = collect_selected_rows(measurement_set, selection, full_selection)?;
+    if !full_selection {
+        // The legacy bandpass setup still addresses a description by its
+        // window. Gaincal can solve descriptions separately.
+        refuse_shared_spectral_windows(&rows)?;
+    }
     Ok(CalibrationSolveContext {
         refant_id,
         refant_alternates: refants.into_iter().skip(1).collect(),
@@ -178,8 +184,28 @@ pub(crate) fn prepare_calibration_solve(
             selection,
             prior_calibration_tables,
             parang,
+            prior_mode,
         )?,
     })
+}
+
+pub(crate) fn refuse_shared_spectral_windows(
+    rows: &[SelectedSolveRow],
+) -> Result<(), GainSolveError> {
+    let mut descriptions = BTreeMap::<i32, BTreeSet<i32>>::new();
+    for row in rows {
+        descriptions
+            .entry(row.data_spw_id)
+            .or_default()
+            .insert(row.data_desc_id);
+    }
+    match descriptions.into_iter().find(|(_, ids)| ids.len() > 1) {
+        Some((spw_id, ids)) => Err(GainSolveError::SharedSpectralWindow {
+            spw_id,
+            data_desc_ids: ids.into_iter().collect(),
+        }),
+        None => Ok(()),
+    }
 }
 
 pub(crate) fn resolve_calibration_selection(
@@ -189,7 +215,7 @@ pub(crate) fn resolve_calibration_selection(
     measurement_set.resolve_selection(selection, calibration_selection_budget()?)
 }
 
-pub(crate) fn resolve_apply_selection(
+pub(crate) fn resolve_casa_calibration_selection(
     measurement_set: &MeasurementSet,
     selection: &MsSelection,
 ) -> Result<ResolvedMsSelection, MsSelectionError> {

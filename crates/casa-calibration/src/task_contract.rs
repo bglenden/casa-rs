@@ -16,11 +16,12 @@ use serde::{Deserialize, Serialize};
 use crate::managed_output::CalibrationTaskResult;
 use crate::{
     ApplyCalibrationTableSpec, ApplyExecutionOptions, ApplyMode, ApplyPlanRequest,
-    BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest, BandpassType,
-    CalibrationDataset, CalibrationSolveRequest, CalibrationSolveResult, CalibrationStatsAxis,
-    CalibrationStatsRequest, FluxScaleRequest, GainNormalization, GainSolveCombine,
-    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest, GainType,
-    GencalRequest, RefAntSelector, calibration_stats, plan_apply_from_path, summarize_tables,
+    BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest,
+    BandpassType, CalibrationDataset, CalibrationSolveRequest, CalibrationSolveResult,
+    CalibrationStatsAxis, CalibrationStatsRequest, FluxScaleRequest, GainNormalization,
+    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
+    GainType, GencalRequest, RefAntSelector, calibration_stats, plan_apply_from_path,
+    summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -349,6 +350,18 @@ pub struct SolveBandpassTaskRequest {
     /// Requested phase polynomial degree for `BPOLY`.
     #[serde(default = "default_polynomial_degree")]
     pub phase_degree: usize,
+    /// Source of the visibility model.
+    #[serde(default)]
+    pub model_source: GainSolveModelSource,
+    /// Time interval used to group channelized solutions.
+    #[serde(default)]
+    pub solve_interval: GainSolveInterval,
+    /// Optional frequency interval used to group selected channels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_interval: Option<BandpassFrequencyInterval>,
+    /// Keep independent flags on each correlation during the solve.
+    #[serde(default)]
+    pub correlation_dependent_flags: bool,
     /// Point-source Stokes model.
     #[serde(default = "default_smodel")]
     pub smodel: [f32; 4],
@@ -486,6 +499,10 @@ impl CalibrationTaskRequest {
                     normalize_average_amplitude: request.normalize_average_amplitude,
                     amplitude_degree: request.amplitude_degree,
                     phase_degree: request.phase_degree,
+                    model_source: request.model_source,
+                    solve_interval: request.solve_interval,
+                    frequency_interval: request.frequency_interval,
+                    correlation_dependent_flags: request.correlation_dependent_flags,
                     smodel: request.smodel,
                     cuts: request.cuts,
                 }),

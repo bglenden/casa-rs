@@ -3,6 +3,7 @@
 
 use ndarray::Array2;
 
+use super::bpoly::fit_bpoly_row;
 use super::*;
 use crate::solve::grouping::{SolveSampleRow, SolveSamples};
 
@@ -14,7 +15,8 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
     let options = SolveGroupOptions {
         gain_type: GainType::G,
         model_source: GainSolveModelSource::PointSource,
-        stokes_i: 1.0,
+        point_stokes: [1.0, 0.0, 0.0, 0.0],
+        rotate_model: false,
         solve_interval: GainSolveInterval::Infinite,
         combine: GainSolveCombine::default(),
         channelized: true,
@@ -48,6 +50,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
                 flags: flags.view(),
                 weights: weights.view(),
                 model: None,
+                point_model: None,
             };
             group
                 .observe_samples(&row, &samples, &[5, 8], &[0], &options)
@@ -65,8 +68,9 @@ fn solved_antennas(group: &SolveAccumulator, cuts: BandpassSolveCuts) -> BTreeSe
         &BTreeSet::from([0, 1, 2, 3]),
         0,
         BandpassSolveCombine::default(),
-        false,
         Some(cuts),
+        BandpassType::B,
+        (false, false),
     );
     rows.iter()
         .filter(|row| !row.flags[0])
@@ -96,12 +100,12 @@ fn channel_solves_apply_casas_baseline_and_snr_cuts() {
         SolveGraphOptions {
             refant_id: 0,
             min_baselines_per_antenna: 3,
-            scalar_seed: None,
+            group_seed: None,
             correlation_dependent_flags: false,
             defer_reference: false,
             robustness: None,
         },
-        None,
+        SolveStart::Guess,
     )
     .expect("solve");
     let snr = &solved.receptors[0].snr;
@@ -151,11 +155,14 @@ fn solution(wild: &[usize], flagged: &[usize]) -> (BandpassSolutionRow, Vec<f64>
         field_id: 0,
         spw_id: 0,
         antenna_id: 1,
+        refant_id: 0,
         scan_number: 1,
         observation_id: 0,
         channel_count: CHANNELS,
         gains,
         flags,
+        param_errors: vec![0.; 2 * CHANNELS],
+        snrs: vec![0.; 2 * CHANNELS],
     };
     (row, frequencies)
 }

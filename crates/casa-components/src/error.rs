@@ -14,6 +14,9 @@ use thiserror::Error;
 /// is one CASA accepts too.
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum ComponentError {
+    /// An invalid field in a serialized CASA component record.
+    #[error("invalid CASA component record field {0:?}")]
+    Record(String),
     /// A shape name that matches none of CASA's (`ComponentType::shape`).
     #[error("unknown component shape {0:?}")]
     UnknownShape(String),

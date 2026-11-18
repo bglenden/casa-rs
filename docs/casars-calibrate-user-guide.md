@@ -83,20 +83,28 @@ CASA calibration library instead. `--applymode trial` reports the apply plan
 without changing the MeasurementSet. `calibrate --mode apply` keeps casa-rs's
 own `--gaintables` with `;`-separated per-table lists.
 
-CASA's empty `smodel` solves against the `MODEL_DATA` column where the
-MeasurementSet has one and a 1 Jy point source where it does not; `bandpass`
-does not solve against `MODEL_DATA` yet, so give it a point source. CASA
-reads a field's virtual model (`setjy` with `usescratch=False`) before
-`MODEL_DATA`; casa-rs does not yet, so an empty `smodel` on a
-MeasurementSet that holds one is refused. A CASA
-parameter casa-rs does not implement yet is taken only at its default, and a
-CASA value it does not implement yet (such as `gaintype='K'`) is refused;
-both refusals name [#979](https://github.com/bglenden/casa-rs/issues/979).
+With an empty `smodel`, `gaincal` and channelized `bandpass` (`bandtype='B'`)
+look for the selected field's virtual model, then its `MODEL_DATA` column,
+and fall back to a 1 Jy point source. Supply a point source for `BPOLY`
+when the selected data has a stored model. A CASA parameter casa-rs does
+not implement yet is taken only at its default, and a
+CASA value such as `gaintype='GSPLINE'` is refused until implemented. These
+errors name [#979](https://github.com/bglenden/casa-rs/issues/979).
 `docs/reference/casa-compatibility.md` lists them.
+
+Channelized bandpass can average selected channels before solving. Use
+`solint='inf,4ch'` for four channels per solution or `solint='25s,3MHz'`
+to set a 25-second time interval and a 3 MHz frequency interval.
 
 Use `calibrate gaincal --template` to see every parameter with its default,
 and `--save-params FILE` to keep a run's resolved profile for reuse with
 `--params FILE`.
+
+Use `gaintype='K'` to solve antenna delays or `gaintype='KCROSS'` to solve
+the shared cross-hand delay. Supply a reference antenna and select at least
+two frequency channels. KCROSS needs four correlations. The output stores
+delays in nanoseconds as `FPARAM` and can be supplied to `applycal` or to a
+subsequent solve as a prior calibration table.
 
 ## Python
 

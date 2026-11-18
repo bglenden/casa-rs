@@ -1,67 +1,203 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selected B-table channelization, including CASA's persisted width defects.
-use super::{BandpassSolutionRow, BandpassSolveError, BandpassSolveRequest};
+use super::{BandpassFrequencyInterval, BandpassSolutionRow, BandpassSolveError};
+use crate::solve::grouping::SelectedSolveRow;
+use casa_ms::{ChannelSelection, ms::MeasurementSet};
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, ScalarValue, Value};
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
+
+pub(super) fn bin_widths(
+    ms: &MeasurementSet,
+    rows: &[SelectedSolveRow],
+    interval: Option<BandpassFrequencyInterval>,
+) -> Result<BTreeMap<i32, usize>, BandpassSolveError> {
+    match interval {
+        Some(BandpassFrequencyInterval::Channels(count)) if count > 1.0 => Ok(rows
+            .iter()
+            .map(|row| (row.data_spw_id, count as usize))
+            .collect()),
+        Some(BandpassFrequencyInterval::Hertz(hertz)) => bandwidth_bin_widths(ms, hertz),
+        _ => Ok(BTreeMap::new()),
+    }
+}
+
+fn bandwidth_bin_widths(
+    ms: &MeasurementSet,
+    hertz: f64,
+) -> Result<BTreeMap<i32, usize>, BandpassSolveError> {
+    let fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
+    let window = ms
+        .spectral_window()
+        .map_err(|error| fail(error.to_string()))?;
+    let mut widths = BTreeMap::new();
+    for spw in 0..window.row_count() {
+        let channels = window
+            .chan_width(spw)
+            .map_err(|error| fail(error.to_string()))?;
+        let width = channels
+            .first()
+            .filter(|width| width.is_finite() && **width != 0.0)
+            .ok_or_else(|| fail(format!("SPW {spw} has no valid first channel width")))?;
+        widths.insert(spw as i32, (hertz / width.abs()).floor().max(1.0) as usize);
+    }
+    // Once the layer is installed, even windows with a width of one use
+    // the frequency averager's scalar weights for the time centroid.
+    if widths.values().all(|&width| width == 1) {
+        widths.clear();
+    }
+    Ok(widths)
+}
 
 pub(super) fn write(
     path: &Path,
-    request: &BandpassSolveRequest,
     rows: &[BandpassSolutionRow],
+    channel_bin_widths: &BTreeMap<i32, usize>,
+    selected_rows: &[SelectedSolveRow],
+    combine_windows: bool,
 ) -> Result<(), BandpassSolveError> {
-    let fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
-    let mut table = Table::open(TableOptions::new(path)).map_err(|e| fail(e.to_string()))?;
+    let mut table = Table::open(TableOptions::new(path)).map_err(metadata_error)?;
+    let selections = selected_rows
+        .iter()
+        .map(|row| (row.data_spw_id, row.channel_selection.as_ref()))
+        .collect::<BTreeMap<_, _>>();
+    let grid = |table: &Table, spw| {
+        select_grid(
+            table,
+            spw as usize,
+            selections.get(&spw).copied().flatten(),
+            channel_bin_widths.get(&spw).copied().unwrap_or(1),
+        )
+    };
+    let aggregate = if combine_windows && selections.len() > 1 {
+        let mut selected = selections.keys().copied();
+        let reference = selected.next().expect("nonempty windows");
+        let mut combined = grid(&table, reference)?;
+        let frequency_offset = combined.frequencies[0];
+        let width_scale = combined.widths[0];
+        for index in 0..combined.frequencies.len() {
+            let width = combined.widths[index] / width_scale;
+            combined.frequencies[index] = (combined.frequencies[index] - frequency_offset) * width;
+            combined.effective_bandwidths[index] = width;
+            combined.widths[index] = width * width;
+        }
+        for spw in selected {
+            combined.accumulate(&grid(&table, spw)?, frequency_offset, width_scale)?;
+        }
+        for index in 0..combined.frequencies.len() {
+            let bandwidth = combined.effective_bandwidths[index];
+            if !bandwidth.is_finite() || bandwidth <= 0.0 {
+                return Err(metadata_error(
+                    "Cannot combine windows with invalid channel widths",
+                ));
+            }
+            combined.frequencies[index] =
+                combined.frequencies[index] / bandwidth + frequency_offset;
+            combined.widths[index] = combined.widths[index] / bandwidth * width_scale;
+            combined.effective_bandwidths[index] *= width_scale;
+        }
+        Some((reference, combined))
+    } else {
+        None
+    };
     for row in 0..table.row_count() {
-        let present = rows.iter().any(|r| r.spw_id == row as i32);
+        let spw = row as i32;
+        let present = rows.iter().any(|r| r.spw_id == spw);
         table
             .cell_accessor_mut(row, "FLAG_ROW")
             .and_then(|mut c| c.set(Value::Scalar(ScalarValue::Bool(!present))))
-            .map_err(|e| fail(e.to_string()))?;
-        if !present {
-            continue;
+            .map_err(metadata_error)?;
+        if let Some((reference, combined)) = &aggregate {
+            if *reference == spw {
+                combined.write(&mut table, row)?;
+            }
+        } else if present {
+            grid(&table, spw)?.write(&mut table, row)?;
         }
-        let array = |column| -> Result<Vec<f64>, BandpassSolveError> {
-            let ArrayValue::Float64(values) = table
-                .cell_accessor(row, column)
-                .and_then(|c| c.array())
-                .map_err(|e| fail(e.to_string()))?
-            else {
-                return Err(fail(format!("SPW {row} {column} is not Float64")));
-            };
-            Ok(values.iter().copied().collect())
+    }
+    table.save(TableOptions::new(path)).map_err(metadata_error)
+}
+
+struct ChannelGrid {
+    frequencies: Vec<f64>,
+    widths: Vec<f64>,
+    effective_bandwidths: Vec<f64>,
+}
+
+fn select_grid(
+    table: &Table,
+    row: usize,
+    selection: Option<&ChannelSelection>,
+    bin_width: usize,
+) -> Result<ChannelGrid, BandpassSolveError> {
+    let array = |column| -> Result<Vec<f64>, BandpassSolveError> {
+        let ArrayValue::Float64(values) = table
+            .cell_accessor(row, column)
+            .and_then(|c| c.array())
+            .map_err(metadata_error)?
+        else {
+            return Err(metadata_error(format!("SPW {row} {column} is not Float64")));
         };
-        let frequencies = array("CHAN_FREQ")?;
-        let widths = array("CHAN_WIDTH")?;
-        let selection = request.selection.channel_selection_for_spw(row as i32);
-        let channels =
-            crate::solve::grouping::selected_channels(selection.as_ref(), frequencies.len())?;
-        let mut selected_frequencies = Vec::new();
-        let mut selected_widths = Vec::new();
-        for channel in channels {
-            selected_frequencies.push(frequencies[channel]);
-            selected_widths.push(
-                widths
-                    .get(channel)
-                    .ok_or_else(|| fail("SPW channel width shape mismatch".to_string()))?
-                    .abs(),
-            );
+        Ok(values.iter().copied().collect())
+    };
+    let frequencies = array("CHAN_FREQ")?;
+    let widths = array("CHAN_WIDTH")?;
+    if frequencies.len() != widths.len() {
+        return Err(metadata_error("SPW channel width shape mismatch"));
+    }
+    let channels = crate::solve::grouping::selected_channels(selection, frequencies.len())?;
+    let bins = channels.chunks(bin_width);
+    let frequencies = bins
+        .clone()
+        .map(|bin| bin.iter().map(|&channel| frequencies[channel]).sum::<f64>() / bin.len() as f64)
+        .collect();
+    let widths = bins
+        .map(|bin| bin.iter().map(|&channel| widths[channel].abs()).sum())
+        .collect::<Vec<_>>();
+    Ok(ChannelGrid {
+        frequencies,
+        effective_bandwidths: widths.clone(),
+        widths,
+    })
+}
+
+impl ChannelGrid {
+    fn accumulate(
+        &mut self,
+        other: &Self,
+        frequency_offset: f64,
+        width_scale: f64,
+    ) -> Result<(), BandpassSolveError> {
+        if self.frequencies.len() != other.frequencies.len() {
+            return Err(metadata_error(
+                "Cannot combine spectral windows with different channel counts",
+            ));
         }
-        let count = selected_frequencies.len();
-        let total: f64 = selected_frequencies.iter().sum();
+        for index in 0..self.frequencies.len() {
+            let width = other.widths[index] / width_scale;
+            self.frequencies[index] += (other.frequencies[index] - frequency_offset) * width;
+            self.widths[index] += width * width;
+            self.effective_bandwidths[index] += width;
+        }
+        Ok(())
+    }
+
+    fn write(&self, table: &mut Table, row: usize) -> Result<(), BandpassSolveError> {
+        let count = self.frequencies.len();
+        let total: f64 = self.frequencies.iter().sum();
         // SolvableVisCal::setCTFrequencies aliases resolution to frequency
         // and sums frequencies as bandwidth. CASA requires exact agreement
         // when appending; these fields are not used to apply the solutions.
         for (column, values) in [
-            ("CHAN_FREQ", selected_frequencies.clone()),
-            ("RESOLUTION", selected_frequencies),
-            ("CHAN_WIDTH", selected_widths.clone()),
-            ("EFFECTIVE_BW", selected_widths),
+            ("CHAN_FREQ", &self.frequencies),
+            ("RESOLUTION", &self.frequencies),
+            ("CHAN_WIDTH", &self.widths),
+            ("EFFECTIVE_BW", &self.effective_bandwidths),
         ] {
             table
                 .cell_accessor_mut(row, column)
-                .and_then(|mut c| c.set(Value::Array(ArrayValue::from_f64_vec(values))))
-                .map_err(|e| fail(e.to_string()))?;
+                .and_then(|mut c| c.set(Value::Array(ArrayValue::from_f64_vec(values.clone()))))
+                .map_err(metadata_error)?;
         }
         for (column, value) in [
             ("NUM_CHAN", Value::Scalar(ScalarValue::Int32(count as i32))),
@@ -73,10 +209,14 @@ pub(super) fn write(
             table
                 .cell_accessor_mut(row, column)
                 .and_then(|mut c| c.set(value))
-                .map_err(|e| fail(e.to_string()))?;
+                .map_err(metadata_error)?;
         }
+        Ok(())
     }
-    table
-        .save(TableOptions::new(path))
-        .map_err(|e| fail(e.to_string()))
+}
+
+fn metadata_error(error: impl std::fmt::Display) -> BandpassSolveError {
+    BandpassSolveError::UnsupportedConfiguration {
+        reason: error.to_string(),
+    }
 }

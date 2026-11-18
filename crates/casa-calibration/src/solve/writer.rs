@@ -13,9 +13,9 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::{GainSolveError, GainSolveReport, GainSolveRequest};
 use crate::constants::{
-    COL_ANTENNA1, COL_ANTENNA2, COL_ARRAY_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_INTERVAL,
-    COL_OBSERVATION_ID, COL_PARAMERR, COL_SCAN_NUMBER, COL_SNR, COL_SPECTRAL_WINDOW_ID, COL_TIME,
-    COL_TIME_EXTRA_PREC, COL_WEIGHT,
+    COL_ANTENNA1, COL_ANTENNA2, COL_ARRAY_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_FPARAM,
+    COL_INTERVAL, COL_OBSERVATION_ID, COL_PARAMERR, COL_SCAN_NUMBER, COL_SNR,
+    COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_TIME_EXTRA_PREC, COL_WEIGHT,
 };
 use crate::solve::SolvedGains;
 use crate::solve::grouping::selected_channels;
@@ -49,7 +49,13 @@ pub(crate) fn write_gain_caltable_named(
     if rows.is_empty() {
         return Ok(gain_report(request, solved));
     }
-    let schema = TableSchema::new(vec![
+    let delay = request.gain_type.is_delay();
+    let (parameter_column, parameter_type) = if delay {
+        (COL_FPARAM, casa_types::PrimitiveType::Float32)
+    } else {
+        (COL_CPARAM, casa_types::PrimitiveType::Complex32)
+    };
+    let mut columns = vec![
         ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
         ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
         ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casa_types::PrimitiveType::Int32),
@@ -58,31 +64,49 @@ pub(crate) fn write_gain_caltable_named(
         ColumnSchema::scalar(COL_INTERVAL, casa_types::PrimitiveType::Float64),
         ColumnSchema::scalar(COL_SCAN_NUMBER, casa_types::PrimitiveType::Int32),
         ColumnSchema::scalar(COL_OBSERVATION_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ARRAY_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casa_types::PrimitiveType::Float64),
-        ColumnSchema::array_variable(COL_CPARAM, casa_types::PrimitiveType::Complex32, Some(2)),
+    ];
+    if !delay {
+        columns.extend([
+            ColumnSchema::scalar(COL_ARRAY_ID, casa_types::PrimitiveType::Int32),
+            ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casa_types::PrimitiveType::Float64),
+        ]);
+    }
+    columns.extend([
+        ColumnSchema::array_variable(parameter_column, parameter_type, Some(2)),
         ColumnSchema::array_variable(COL_PARAMERR, casa_types::PrimitiveType::Float32, Some(2)),
         ColumnSchema::array_variable(COL_FLAG, casa_types::PrimitiveType::Bool, Some(2)),
         ColumnSchema::array_variable(COL_SNR, casa_types::PrimitiveType::Float32, Some(2)),
         ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
-    ])
-    .expect("valid gain caltable schema");
+    ]);
+    let schema = TableSchema::new(columns).expect("valid gain caltable schema");
     let mut writer = CalibrationTableWriter::with_mode(
         ms,
         CalibrationTableDescriptor {
             output: &request.output_table,
             schema,
             subtype: request.gain_type.vis_cal(),
-            parameter_type: Some("Complex"),
+            parameter_type: Some(if delay { "Float" } else { "Complex" }),
             measurement_set_name,
             include_polarization_basis: true,
-            time_extra_precision_column: Some(COL_TIME_EXTRA_PREC),
+            time_extra_precision_column: (!delay).then_some(COL_TIME_EXTRA_PREC),
         },
         mode,
     )?;
 
     for row in rows {
-        writer.append(RecordValue::new(vec![
+        let shape = IxDyn(&[row.gains.len(), 1]).f();
+        let parameters = if delay {
+            ArrayValue::Float32(
+                ArrayD::from_shape_vec(shape, row.gains.iter().map(|gain| gain.re).collect())
+                    .expect("delay vector should reshape to receptor x channel"),
+            )
+        } else {
+            ArrayValue::Complex32(
+                ArrayD::from_shape_vec(shape, row.gains.clone())
+                    .expect("gain vector should reshape to receptor x channel"),
+            )
+        };
+        let mut fields = vec![
             RecordField::new(
                 COL_TIME,
                 Value::Scalar(ScalarValue::Float64(row.time_seconds)),
@@ -113,18 +137,7 @@ pub(crate) fn write_gain_caltable_named(
                 COL_OBSERVATION_ID,
                 Value::Scalar(ScalarValue::Int32(row.observation_id)),
             ),
-            RecordField::new(COL_ARRAY_ID, Value::Scalar(ScalarValue::Int32(0))),
-            RecordField::new(
-                COL_TIME_EXTRA_PREC,
-                Value::Scalar(ScalarValue::Float64(0.0)),
-            ),
-            RecordField::new(
-                COL_CPARAM,
-                Value::Array(ArrayValue::Complex32(
-                    ArrayD::from_shape_vec(IxDyn(&[row.gains.len(), 1]).f(), row.gains.clone())
-                        .expect("gain vector should reshape to receptor x channel"),
-                )),
-            ),
+            RecordField::new(parameter_column, Value::Array(parameters)),
             RecordField::new(
                 COL_PARAMERR,
                 Value::Array(ArrayValue::Float32(
@@ -149,14 +162,25 @@ pub(crate) fn write_gain_caltable_named(
                         .expect("snr vector should reshape to receptor x channel"),
                 )),
             ),
-            RecordField::new(
+        ];
+        if !delay {
+            fields.push(RecordField::new(
+                COL_ARRAY_ID,
+                Value::Scalar(ScalarValue::Int32(0)),
+            ));
+            fields.push(RecordField::new(
+                COL_TIME_EXTRA_PREC,
+                Value::Scalar(ScalarValue::Float64(0.0)),
+            ));
+            fields.push(RecordField::new(
                 COL_WEIGHT,
                 Value::Array(ArrayValue::Float32(
                     ArrayD::from_shape_vec(IxDyn(&[row.gains.len(), 1]).f(), row.weights.clone())
                         .expect("weight vector should reshape to receptor x channel"),
                 )),
-            ),
-        ]))?;
+            ));
+        }
+        writer.append(RecordValue::new(fields))?;
     }
 
     writer.copy_subtables(&[
@@ -165,7 +189,12 @@ pub(crate) fn write_gain_caltable_named(
         (SubtableId::Field, "FIELD"),
         (SubtableId::History, "HISTORY"),
     ])?;
-    write_gain_spectral_window_subtable(ms, writer.output_path(), request, solved)?;
+    write_gain_spectral_window_subtable(
+        ms,
+        writer.output_path(),
+        solved,
+        request.combine.spectral_windows,
+    )?;
     writer.save_main()?;
 
     Ok(gain_report(request, solved))
@@ -194,8 +223,8 @@ fn gain_report(request: &GainSolveRequest, solved: &SolvedGains) -> GainSolveRep
 fn write_gain_spectral_window_subtable(
     ms: &MeasurementSet,
     output_root: &Path,
-    request: &GainSolveRequest,
     solved: &SolvedGains,
+    combine_spectral_windows: bool,
 ) -> Result<(), GainSolveError> {
     let destination = output_root.join("SPECTRAL_WINDOW");
     let failed = |source| GainSolveError::CopySubtable {
@@ -208,6 +237,15 @@ fn write_gain_spectral_window_subtable(
         .save(TableOptions::new(&destination))
         .map_err(failed)?;
     let mut table = Table::open(TableOptions::new(&destination)).map_err(failed)?;
+    let combined_window =
+        if combine_spectral_windows && solved.selected_data.spectral_windows.len() > 1 {
+            Some((
+                solved.selected_data.spectral_windows[0],
+                combined_window_metadata(&table, solved)?,
+            ))
+        } else {
+            None
+        };
 
     let with_rows = solved
         .rows
@@ -237,27 +275,28 @@ fn write_gain_spectral_window_subtable(
                 shape: vec![frequencies.len(), widths.len()],
             });
         }
-        let collapsed = if attempted {
-            let selection = request.selection.channel_selection_for_spw(row as i32);
-            let channels = selected_channels(selection.as_ref(), frequencies.len())?;
-            let window =
-                CollapsedWindow::solved(&frequencies, &widths, channels).ok_or_else(|| {
-                    GainSolveError::UnsupportedParameterShape {
-                        path: format!(
-                            "SPECTRAL_WINDOW row {row}, of which the solve selects no channel"
-                        ),
-                        shape: vec![frequencies.len()],
-                    }
-                })?;
-            Some(window)
-        } else {
-            CollapsedWindow::unsolved(
-                &frequencies,
-                &widths,
-                &get_f64_array(&table, row, "EFFECTIVE_BW")?,
-                &get_f64_array(&table, row, "RESOLUTION")?,
-            )
-        };
+        let collapsed =
+            match combined_window {
+                Some((reference, window)) if spw_id == Some(reference) => Some(window),
+                None if attempted => {
+                    let selection = solved.channel_selections.get(&(row as i32));
+                    let channels = selected_channels(selection, frequencies.len())?;
+                    let window = CollapsedWindow::solved(&frequencies, &widths, channels)
+                        .ok_or_else(|| GainSolveError::UnsupportedParameterShape {
+                            path: format!(
+                                "SPECTRAL_WINDOW row {row}, of which the solve selects no channel"
+                            ),
+                            shape: vec![frequencies.len()],
+                        })?;
+                    Some(window)
+                }
+                _ => CollapsedWindow::unsolved(
+                    &frequencies,
+                    &widths,
+                    &get_f64_array(&table, row, "EFFECTIVE_BW")?,
+                    &get_f64_array(&table, row, "RESOLUTION")?,
+                ),
+            };
         let mut cells = vec![("FLAG_ROW", Value::Scalar(ScalarValue::Bool(!has_rows)))];
         if let Some(window) = collapsed {
             cells.extend([
@@ -290,6 +329,39 @@ fn write_gain_spectral_window_subtable(
         .map_err(failed)?;
 
     Ok(())
+}
+
+fn combined_window_metadata(
+    table: &Table,
+    solved: &SolvedGains,
+) -> Result<CollapsedWindow, GainSolveError> {
+    let mut weighted_width = 0.0;
+    let mut weighted_frequency = 0.0;
+    let mut bandwidth = 0.0;
+    for &spw_id in &solved.selected_data.spectral_windows {
+        let row = spw_id as usize;
+        let frequencies = get_f64_array(table, row, "CHAN_FREQ")?;
+        let widths = get_f64_array(table, row, "CHAN_WIDTH")?;
+        let channels =
+            selected_channels(solved.channel_selections.get(&spw_id), frequencies.len())?;
+        let window = CollapsedWindow::solved(&frequencies, &widths, channels).ok_or_else(|| {
+            GainSolveError::UnsupportedParameterShape {
+                path: format!("SPECTRAL_WINDOW row {row} in a combined solve"),
+                shape: vec![frequencies.len(), widths.len()],
+            }
+        })?;
+        weighted_frequency += window.frequency * window.effective_bw;
+        weighted_width += window.width * window.effective_bw;
+        bandwidth += window.effective_bw;
+    }
+    let frequency = weighted_frequency / bandwidth;
+    Ok(CollapsedWindow {
+        frequency,
+        width: weighted_width / bandwidth,
+        effective_bw: bandwidth,
+        resolution: frequency,
+        total_bandwidth: Some(frequency),
+    })
 }
 
 /// The one channel of a window's row in a G or T gain table: what CASA's
