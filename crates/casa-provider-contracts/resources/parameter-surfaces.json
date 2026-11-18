@@ -14882,8 +14882,7 @@
             "provider": {"field": "refantmode"},
             "python": {"name": "refantmode"},
             "presentation": {"label": "Reference Antenna Mode", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979}
+          }
         },
         {
           "name": "minblperant",

@@ -248,6 +248,7 @@ fn gaincal_reads_casas_values() {
         "preavg": 12.5,
         "combine": "scan,field",
         "refant": "VA15",
+        "refantmode": "strict",
         "minblperant": 2,
         "minsnr": 2.5,
         "solnorm": true,
@@ -278,7 +279,10 @@ fn gaincal_reads_casas_values() {
                 scans: true,
                 fields: true,
             },
-            refant: RefAntSelector::AntennaName("VA15".into()),
+            refant: RefAntSelector::Expression {
+                selection: "VA15".into(),
+                strict: true,
+            },
             prior_calibration_tables: vec![prior],
             parang: true,
             model_source: GainSolveModelSource::PointSource,
@@ -307,7 +311,6 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         ("combine", json!("scan,obs")),
         ("combine", json!("Scan,SPW")),
         ("solint", json!("inf,2ch")),
-        ("refant", json!("A0,A1")),
         ("smodel", json!([1, 0.1, 0, 0])),
     ] {
         let mut values = base.clone();

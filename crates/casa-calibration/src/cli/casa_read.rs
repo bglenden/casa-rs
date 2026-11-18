@@ -113,6 +113,11 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
     let min_snr = min_snr(task)?;
     let (model_source, smodel) = model(task, &measurement_set)?;
     let reference = task.required_text("refant")?;
+    let strict = match task.required_text("refantmode")?.as_str() {
+        "flex" => false,
+        "strict" => true,
+        other => return Err(unknown("refantmode", other, "'flex' or 'strict'")),
+    };
     Ok(SolveGainTaskRequest {
         append: task.flag("append")?,
         selection: selection(task)?,
@@ -125,7 +130,10 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
         refant: if reference.is_empty() {
             RefAntSelector::Unspecified
         } else {
-            refant(&reference)?
+            RefAntSelector::Expression {
+                selection: reference,
+                strict,
+            }
         },
         prior_calibration_tables: chain(task, Chain::Solve)?,
         parang: task.flag("parang")?,

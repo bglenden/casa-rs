@@ -206,16 +206,21 @@ pub fn resolve_antenna_selector(
     if text.is_empty() {
         return Ok(BaselineSelection::unconstrained(antennas.len()));
     }
+    let clauses = antenna_clauses(antennas, text)?;
+    Ok(BaselineSelection {
+        antenna_count: antennas.len(),
+        pairs: Some(evaluate(&clauses, antennas.len())),
+    })
+}
+
+fn antenna_clauses(antennas: &[AntennaRow<'_>], text: &str) -> MsResult<Vec<Clause>> {
     let index = AntennaIndex::new(antennas);
     let parsed = grammar::parse(&index, text)
         .map_err(|(abort, reports)| failure(text, &reports, Some(abort)))?;
     if !parsed.reports.is_empty() {
         return Err(failure(text, &parsed.reports, None));
     }
-    Ok(BaselineSelection {
-        antenna_count: antennas.len(),
-        pairs: Some(evaluate(&parsed.clauses, antennas.len())),
-    })
+    Ok(parsed.clauses)
 }
 
 impl MeasurementSet {
@@ -230,11 +235,50 @@ impl MeasurementSet {
     /// An unreadable ANTENNA table, or any refusal of
     /// [`resolve_antenna_selector`].
     pub fn resolve_antenna_selector(&self, text: &str) -> MsResult<BaselineSelection> {
+        if text.is_empty() {
+            return Ok(BaselineSelection::unconstrained(
+                self.antenna()?.row_count(),
+            ));
+        }
+        self.with_antenna_rows(|rows| resolve_antenna_selector(rows, text))
+    }
+
+    /// Resolve the ordered ANTENNA1 IDs of a CASA reference-antenna expression.
+    /// CASA's calibrater uses `MSSelection::getAntenna1List`, preserving
+    /// priority order and removing negative IDs from negated clauses.
+    /// An empty expression specifies no reference antenna.
+    ///
+    /// # Errors
+    /// Returns the same parse or ANTENNA subtable errors as the baseline selector.
+    pub fn resolve_reference_antennas(&self, text: &str) -> MsResult<Vec<usize>> {
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.with_antenna_rows(|rows| {
+            let mut seen = vec![false; rows.len()];
+            let mut antennas = Vec::new();
+            for clause in antenna_clauses(rows, text)? {
+                let ids = match clause.term {
+                    Term::Cross(ids) | Term::AutoOnly(ids) | Term::Pair { first: ids, .. } => ids,
+                    Term::Ordered(_) => continue,
+                };
+                for id in ids {
+                    if (!clause.negate || id == 0) && !seen[id] {
+                        seen[id] = true;
+                        antennas.push(id);
+                    }
+                }
+            }
+            Ok(antennas)
+        })
+    }
+
+    fn with_antenna_rows<T>(
+        &self,
+        resolve: impl FnOnce(&[AntennaRow<'_>]) -> MsResult<T>,
+    ) -> MsResult<T> {
         let antenna = self.antenna()?;
         let count = antenna.row_count();
-        if text.is_empty() {
-            return Ok(BaselineSelection::unconstrained(count));
-        }
         let mut columns = Vec::with_capacity(count);
         for row in 0..count {
             columns.push((
@@ -251,7 +295,7 @@ impl MeasurementSet {
                 position_m: *position_m,
             })
             .collect();
-        resolve_antenna_selector(&rows, text)
+        resolve(&rows)
     }
 }
 

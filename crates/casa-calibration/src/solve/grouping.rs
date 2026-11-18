@@ -410,13 +410,20 @@ pub(crate) fn all_antenna_ids(ms: &MeasurementSet) -> Result<BTreeSet<i32>, Gain
         .collect())
 }
 
-pub(crate) fn resolve_refant(
+pub(crate) fn resolve_refants(
     ms: &MeasurementSet,
     selector: &RefAntSelector,
-) -> Result<i32, GainSolveError> {
+) -> Result<Vec<i32>, GainSolveError> {
     match selector {
-        RefAntSelector::Unspecified => Ok(-1),
-        RefAntSelector::AntennaId(id) => Ok(*id),
+        RefAntSelector::Unspecified => Ok(Vec::new()),
+        RefAntSelector::AntennaId(id) => Ok(vec![*id]),
+        RefAntSelector::Expression { selection, .. } => ms
+            .resolve_reference_antennas(selection)
+            .map(|ids| ids.into_iter().map(|id| id as i32).collect())
+            .map_err(|error| GainSolveError::ResolveRefAnt {
+                selector: selection.clone(),
+                reason: error.to_string(),
+            }),
         RefAntSelector::AntennaName(name) => {
             let antenna = ms
                 .antenna()
@@ -433,7 +440,7 @@ pub(crate) fn resolve_refant(
                     })?
                     == *name
                 {
-                    return Ok(row as i32);
+                    return Ok(vec![row as i32]);
                 }
             }
             Err(GainSolveError::ResolveRefAnt {

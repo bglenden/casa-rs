@@ -154,11 +154,49 @@ def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normty
     return errors
 
 
+def ranked_references(root, source, native):
+    results = {}
+    for name, selector, reference in [
+        ('name-order', 'A3,A1', 3), ('id-order', '1,3', 1),
+        ('pattern', 'A[13]', 1), ('clause-order', 'A3;A1', 3),
+        ('first-side', 'A2&A3', 2), ('negated-zero', '!A0', 0),
+    ]:
+        case = root/name
+        case.mkdir()
+        results[name] = gain_and_apply(case, source, native, 'G', 'inf', calmode='ap', refant=selector)
+        expected = contents(case/'ap-G-inf-mean-norm0-casa.cal')
+        np.testing.assert_array_equal(expected['ANTENNA2'], reference)
+
+    dropout = root/'reference-dropout.ms'
+    copy_ms(source, dropout)
+    t = table()
+    t.open(str(dropout), nomodify=False)
+    try:
+        a, b = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+        fields = t.getcol('FIELD_ID')
+        flags = t.getcol('FLAG')
+        flags[..., ((a==0)|(b==0)) & (fields==1)] = True
+        t.putcol('FLAG', flags)
+    finally:
+        t.close()
+    for mode, reference in [('flex', 3), ('strict', -1)]:
+        case = root/mode
+        case.mkdir()
+        results[mode] = gain_and_apply(case, dropout, native, 'G', 'inf', calmode='ap',
+                                       refant='A0,A3,A1', refantmode=mode, minblperant=3)
+        expected = contents(case/'ap-G-inf-mean-norm0-casa.cal')
+        previous = expected['FIELD_ID'] == 0
+        np.testing.assert_array_equal(expected['ANTENNA2'][previous], 0)
+        np.testing.assert_array_equal(expected['ANTENNA2'][~previous], reference)
+        assert bool(np.all(expected['FLAG'][..., ~previous])) == (mode == 'strict')
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'amplitude', 'median', 'preavg', 'refant'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -202,6 +240,8 @@ def main():
         for gain in ['G', 'T']:
             expected = contents(root/f'ap-{gain}-inf-mean-norm0-casa.cal')
             np.testing.assert_array_equal(expected['ANTENNA2'], -1)
+    elif args.case == 'ranked-refant':
+        results = ranked_references(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

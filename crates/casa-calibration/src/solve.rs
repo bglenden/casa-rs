@@ -127,6 +127,13 @@ pub enum RefAntSelector {
     AntennaId(i32),
     /// Exact ANTENNA.NAME match.
     AntennaName(String),
+    /// CASA selection in preference order with an optional strict reference.
+    Expression {
+        /// CASA's antenna selector and priority list.
+        selection: String,
+        /// Flag an interval if the first preferred antenna cannot reference it.
+        strict: bool,
+    },
 }
 
 /// Request for a limited `gaincal` solve.
@@ -460,26 +467,30 @@ pub(crate) fn solve_gain_rows(
         intervals.push((spw_id, start..solution_rows.len()));
     }
     if context.refant_id >= 0 {
-        apply_flex_refant(
-            &mut solution_rows,
-            context.refant_id,
-            &refant_distance_order(ms, context.refant_id)?,
+        let strict = matches!(
+            request.refant,
+            RefAntSelector::Expression { strict: true, .. }
         );
+        let mut alternates = context.refant_alternates.clone();
+        if !strict {
+            let last_preferred = alternates.last().copied().unwrap_or(context.refant_id);
+            let mut nearby = refant_distance_order(ms, last_preferred)?;
+            nearby.retain(|id| *id != context.refant_id && !alternates.contains(id));
+            alternates.extend(nearby);
+        }
+        apply_reference_antenna(&mut solution_rows, context.refant_id, &alternates, strict);
     }
     // CASA enforces amplitudes on the final gains after referencing and
     // before normalizing across all intervals (`globalPostSolveTinker`).
-    if request.solve_mode == GainSolveMode::Amplitude {
+    if request.solve_mode != GainSolveMode::AmplitudePhase {
         for row in &mut solution_rows {
             for (gain, flagged) in row.gains.iter_mut().zip(&row.flags) {
-                let amplitude = gain.norm();
-                *gain = Complex32::new(
-                    if *flagged || amplitude == 0.0 {
-                        1.0
-                    } else {
-                        amplitude
-                    },
-                    0.0,
-                );
+                if *flagged {
+                    *gain = Complex32::new(1.0, 0.0);
+                } else if request.solve_mode == GainSolveMode::Amplitude {
+                    let amplitude = gain.norm();
+                    *gain = Complex32::new(if amplitude == 0.0 { 1.0 } else { amplitude }, 0.0);
+                }
             }
         }
     }
@@ -602,10 +613,11 @@ pub(crate) fn nearest_first(positions: &[[f64; 3]], refant_id: i32) -> Vec<i32> 
 /// every antenna, so an alternate is held at constant phase. An interval
 /// with no such antenna is flagged entirely and leaves the last referred
 /// interval in place for the next.
-pub(crate) fn apply_flex_refant(
+pub(crate) fn apply_reference_antenna(
     rows: &mut [kernel::SolutionRow],
     preferred_refant_id: i32,
     alternates: &[i32],
+    strict: bool,
 ) {
     let mut group_indices = BTreeMap::<(i32, u64, i32), Vec<usize>>::new();
     for (index, row) in rows.iter().enumerate() {
@@ -636,15 +648,13 @@ pub(crate) fn apply_flex_refant(
         }
         let receptors = receptor_counts[&spw_id];
         let previous_indices = previous.as_ref().unwrap_or(&current);
+        let candidates = if strict { &choices[..1] } else { &choices[..] };
         let Some((current_ref_index, previous_ref_index)) =
-            find_flex_refant(rows, &choices, &current, previous_indices, receptors)
+            find_flex_refant(rows, candidates, &current, previous_indices, receptors)
         else {
             for index in &current {
                 rows[*index].flags.iter_mut().for_each(|flag| *flag = true);
-                rows[*index]
-                    .gains
-                    .iter_mut()
-                    .for_each(|gain| *gain = Complex32::new(1.0, 0.0));
+                rows[*index].refant_id = -1;
             }
             continue;
         };
@@ -670,11 +680,6 @@ pub(crate) fn apply_flex_refant(
             for (gain, phasor) in rows[*index].gains.iter_mut().zip(ref_phasor.iter()) {
                 if phasor.norm() > f32::EPSILON {
                     *gain /= *phasor;
-                }
-            }
-            for (gain, flag) in rows[*index].gains.iter_mut().zip(rows[*index].flags.iter()) {
-                if *flag {
-                    *gain = Complex32::new(1.0, 0.0);
                 }
             }
             rows[*index].refant_id = current_refant;
