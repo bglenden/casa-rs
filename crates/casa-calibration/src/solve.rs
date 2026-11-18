@@ -78,6 +78,16 @@ pub enum GainSolveMode {
     AmplitudePhase,
 }
 
+/// Statistic used by `gaincal` to normalize a window's solution power.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum GainNormalization {
+    /// Arithmetic mean of the unflagged squared amplitudes.
+    #[default]
+    Mean,
+    /// Median of the unflagged squared amplitudes.
+    Median,
+}
+
 /// Visibility model source used by the gain solver.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveModelSource {
@@ -140,8 +150,10 @@ pub struct GainSolveRequest {
     pub parang: bool,
     /// Visibility model source.
     pub model_source: GainSolveModelSource,
-    /// Whether to normalize average solution amplitudes to unity.
+    /// Whether to normalize the solution power to unity.
     pub normalize_average_amplitude: bool,
+    /// Statistic used when normalization is enabled.
+    pub normalization_type: GainNormalization,
     /// Minimum solution SNR required to keep a solved parameter unflagged.
     pub min_snr: f32,
     /// Minimum unflagged baselines per antenna required before solving.
@@ -454,7 +466,7 @@ pub(crate) fn solve_gain_rows(
         }
     }
     if request.solve_mode != GainSolveMode::Phase && request.normalize_average_amplitude {
-        normalize_gain_solution_amplitudes(&mut solution_rows);
+        normalize_gain_solution_amplitudes(&mut solution_rows, request.normalization_type);
     }
     // The reference antenna each interval ended with, where it kept its
     // solution: flex flags an interval it found none for.
@@ -686,31 +698,44 @@ fn phase_only(gain: Complex32) -> Complex32 {
     }
 }
 
-/// Divide every gain of each window by the root mean power of the window's
+/// Divide every gain of each window by the root mean or median power of the window's
 /// unflagged solutions, taken over all its intervals, antennas and
 /// receptors together, as CASA's `solnorm` does
 /// (`SolvableVisJones::normalize`, `SolvableVisCal::calcPowerNorm`). A
 /// window with one unflagged solution or none stays, as `normSolnArray`
 /// normalizes only more than one.
-fn normalize_gain_solution_amplitudes(rows: &mut [kernel::SolutionRow]) {
-    let mut power = BTreeMap::<i32, (f64, usize)>::new();
+fn normalize_gain_solution_amplitudes(rows: &mut [kernel::SolutionRow], method: GainNormalization) {
+    let mut power = BTreeMap::<i32, (f64, usize, Vec<f32>)>::new();
     for row in rows.iter() {
-        let (sum, count) = power.entry(row.spw_id).or_default();
+        let (sum, count, samples) = power.entry(row.spw_id).or_default();
         for (gain, flagged) in row.gains.iter().zip(&row.flags) {
             if !flagged {
-                *sum += f64::from(gain.norm_sqr());
+                let power = gain.norm_sqr();
+                match method {
+                    GainNormalization::Mean => *sum += f64::from(power),
+                    GainNormalization::Median => samples.push(power),
+                }
                 *count += 1;
             }
         }
     }
+    let factors: BTreeMap<_, _> = power
+        .into_iter()
+        .filter_map(|(spw, (sum, count, mut samples))| {
+            if count <= 1 {
+                return None;
+            }
+            let factor = match method {
+                GainNormalization::Mean => (sum / count as f64).sqrt() as f32,
+                GainNormalization::Median => grouping::median_with_even_mean(&mut samples).sqrt(),
+            };
+            (factor.is_finite() && factor > 0.0).then_some((spw, factor))
+        })
+        .collect();
     for row in rows.iter_mut() {
-        let Some(&(sum, count)) = power.get(&row.spw_id) else {
+        let Some(&factor) = factors.get(&row.spw_id) else {
             continue;
         };
-        let factor = (sum / count.max(1) as f64).sqrt() as f32;
-        if count <= 1 || !(factor.is_finite() && factor > 0.0) {
-            continue;
-        }
         for gain in &mut row.gains {
             *gain /= Complex32::new(factor, 0.0);
         }
@@ -826,7 +851,7 @@ mod solnorm_tests {
             // One unflagged solution is not normalized (normSolnArray).
             row(2, 0.0, [4.0, 5.0], [false, true]),
         ];
-        normalize_gain_solution_amplitudes(&mut rows);
+        normalize_gain_solution_amplitudes(&mut rows, GainNormalization::Mean);
         let factor = ((1.0_f32 + 9.0 + 4.0 + 9.0 + 9.0) / 5.0).sqrt();
         let amplitudes = |row: &kernel::SolutionRow| -> Vec<f32> {
             row.gains.iter().map(|gain| gain.norm()).collect()

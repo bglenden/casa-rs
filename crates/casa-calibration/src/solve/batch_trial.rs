@@ -60,6 +60,7 @@ fn gain_request(output_table: PathBuf) -> GainSolveRequest {
         parang: false,
         model_source: GainSolveModelSource::PointSource,
         normalize_average_amplitude: false,
+        normalization_type: Default::default(),
         min_snr: 3.0,
         min_baselines_per_antenna: 4,
         smodel: [1.0, 0.0, 0.0, 0.0],

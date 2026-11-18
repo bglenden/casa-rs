@@ -281,6 +281,7 @@ fn gaincal_reads_casas_values() {
             parang: true,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: true,
+            normalization_type: Default::default(),
             min_snr: 2.5,
             min_baselines_per_antenna: 2,
             smodel: [2.5, 0.0, 0.0, 0.0],

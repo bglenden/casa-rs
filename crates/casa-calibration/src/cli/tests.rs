@@ -417,6 +417,7 @@ fn gain_solve() -> SolveGainTaskRequest {
         parang: false,
         model_source: GainSolveModelSource::ModelColumn,
         normalize_average_amplitude: true,
+        normalization_type: Default::default(),
         min_snr: 2.5,
         min_baselines_per_antenna: 2,
         smodel: [2.5, 0.1, 0.0, -0.2],

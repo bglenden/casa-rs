@@ -316,6 +316,7 @@ mod tests {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
+            normalization_type: Default::default(),
             min_snr: 0.0,
             min_baselines_per_antenna: 1,
             smodel: [1.0, 0.0, 0.0, 0.0],

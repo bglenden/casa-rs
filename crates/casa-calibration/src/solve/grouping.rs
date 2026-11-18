@@ -1194,7 +1194,7 @@ fn unsupported_shape(column: &str, value: &ArrayValue) -> GainSolveError {
 /// The median, the mean of the middle two for an even count, as casacore's
 /// `partialMedians(..., takeEvenMean=True)` that CASA uses for a row's
 /// channel-independent weight.
-fn median_with_even_mean(values: &mut [f32]) -> f32 {
+pub(super) fn median_with_even_mean(values: &mut [f32]) -> f32 {
     if values.is_empty() {
         return 0.0;
     }

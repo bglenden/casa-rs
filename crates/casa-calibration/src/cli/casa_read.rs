@@ -29,9 +29,9 @@ use super::read::{count, parse_gainfield_value, parse_interp_value, parse_refant
 use crate::{
     ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassSolveCombine,
     BandpassSolveCuts, BandpassType, CalibrationTaskRequest, ExecuteApplyTaskRequest,
-    FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainType, GencalTaskRequest, GencalType, RefAntSelector, SolveBandpassTaskRequest,
-    SolveGainTaskRequest, load_apply_specs_from_callib,
+    FluxScaleRequest, GainNormalization, GainSolveCombine, GainSolveInterval, GainSolveMode,
+    GainSolveModelSource, GainType, GencalTaskRequest, GencalType, RefAntSelector,
+    SolveBandpassTaskRequest, SolveGainTaskRequest, load_apply_specs_from_callib,
 };
 
 /// The request a CASA-named surface makes.
@@ -125,6 +125,11 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
         parang: task.flag("parang")?,
         model_source,
         normalize_average_amplitude: task.flag("solnorm")?,
+        normalization_type: match task.required_text("normtype")?.as_str() {
+            "mean" => GainNormalization::Mean,
+            "median" => GainNormalization::Median,
+            other => return Err(unknown("normtype", other, "'mean' or 'median'")),
+        },
         min_snr,
         min_baselines_per_antenna: count(task, "minblperant")?,
         smodel,

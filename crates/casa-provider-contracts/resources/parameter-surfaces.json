@@ -14941,8 +14941,7 @@
             "python": {"name": "normtype"},
             "presentation": {"label": "Normalization Type", "group": "Solve", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "A gain solve's normtype chooses how solnorm averages the solutions, distinct from the imager's normalization."},
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "solnorm", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "A gain solve's normtype chooses how solnorm averages the solutions, distinct from the imager's normalization."}
         },
         {
           "name": "gaintype",

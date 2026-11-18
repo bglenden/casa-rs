@@ -103,9 +103,10 @@ def amplitude_data(root, source):
     return path
 
 
-def amplitude_only(root, source, native, gaintype, solint, solnorm):
-    label = f'amplitude-{gaintype}-{solint}-norm{int(solnorm)}'
-    options = dict(gaintype=gaintype, calmode='a', solint=solint, solnorm=solnorm)
+def amplitude_only(root, source, native, gaintype, solint, solnorm, normtype='mean'):
+    label = f'amplitude-{gaintype}-{solint}-{normtype}-norm{int(solnorm)}'
+    options = dict(gaintype=gaintype, calmode='a', solint=solint, solnorm=solnorm,
+                   normtype=normtype)
     solutions, corrected = [], []
     for engine, module in [('casa', casa), ('native', native)]:
         case = f'{label}-{engine}'
@@ -140,7 +141,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'amplitude'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'amplitude', 'median'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -156,6 +157,17 @@ def main():
         source = amplitude_data(root, source)
         results = {f'{gain}-{interval}-norm{int(norm)}': amplitude_only(root, source, native, gain, interval, norm)
                    for gain in ['G', 'T'] for interval, norm in [('int', False), ('inf', False), ('inf', True)]}
+    elif args.case == 'median':
+        source = amplitude_data(root, source)
+        results = {f'{gain}-norm{int(norm)}': amplitude_only(root, source, native, gain, 'inf', norm, 'median')
+                   for gain in ['G', 'T'] for norm in [True, False]}
+        for gain in ['G', 'T']:
+            baseline = contents(root/f'amplitude-{gain}-inf-median-norm0-casa.cal')
+            normalized = contents(root/f'amplitude-{gain}-inf-median-norm1-casa.cal')
+            power = np.abs(baseline['CPARAM'][~baseline['FLAG']])**2
+            assert abs(np.median(power)-np.mean(power)) > 0.01
+            np.testing.assert_allclose(normalized['CPARAM'], baseline['CPARAM']/np.sqrt(np.median(power)),
+                                       rtol=1e-6, atol=0.)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

@@ -136,6 +136,7 @@ fn solve_gain(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFai
         parang: task.flag("parang")?,
         model_source: parsed(task, "gain_model_source", parse_gain_solve_model_source)?,
         normalize_average_amplitude: task.flag("solnorm")?,
+        normalization_type: Default::default(),
         min_snr,
         min_baselines_per_antenna: count(task, "minblperant")?,
         smodel: parsed(task, "smodel", parse_stokes_smodel)?,

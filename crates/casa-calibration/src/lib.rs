@@ -108,8 +108,8 @@ pub use simulated::{
     simulated_table_bytes, write_simulated_jones_table, write_simulated_noise_table,
 };
 pub use solve::{
-    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveReport, GainSolveRequest, GainType, RefAntSelector,
+    GainNormalization, GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode,
+    GainSolveModelSource, GainSolveReport, GainSolveRequest, GainType, RefAntSelector,
 };
 pub use solve_stats::{AntennaSolveStats, SolveCounts, SolveStats, WindowSolveStats};
 pub use stats::{
