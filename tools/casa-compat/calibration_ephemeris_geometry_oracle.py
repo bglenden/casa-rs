@@ -40,6 +40,8 @@ def snapshot_angles(root, dataset, epochs):
         for stamp in epochs:
             epoch = measure.epoch('UTC', {'value': float(stamp), 'unit': 's'})
             reference = metadata.phasecenter(0, epoch)
+            if reference['refer'] == 'ICRS':
+                reference = measure.measure(reference, 'J2000')
             assert reference['refer'] == 'J2000'
             centre = np.array([[reference['m0']['value']], [reference['m1']['value']]])
             assert tb.open(str(snapshot/'FIELD'), nomodify=False)
@@ -149,6 +151,12 @@ def main():
         tb.putcell('MOUNT', 0, 'EQUATORIAL')
     finally:
         tb.close()
+    ephemeris = next((equatorial/'FIELD').glob('EPHEM*.tab'))
+    assert tb.open(str(ephemeris), nomodify=False)
+    try:
+        tb.putkeyword('posrefsys', 'ICRF/ICRS')
+    finally:
+        tb.close()
     results, derived = {}, {}
     for mount, dataset in [('alt-az', moving), ('equatorial', equatorial)]:
         case = root/mount
@@ -160,6 +168,7 @@ def main():
         results[mount] = diagnostic_series(case, tasks, dataset, epochs, angles)
     (root/'derived.json').write_text(json.dumps(derived, indent=2)+'\n')
     results['moving-opacity'] = opacity(root, moving, tasks, 'moving-opacity')
+    results['icrs-opacity'] = opacity(root, equatorial, tasks, 'icrs-opacity')
     results['fixed-opacity'] = opacity(root, fixed, tasks, 'fixed-opacity')
     solve = root/'moving-parallactic-gain'
     solve.mkdir()

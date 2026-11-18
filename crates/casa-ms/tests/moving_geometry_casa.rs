@@ -35,6 +35,8 @@ fn moving_columns_match_casa_at_each_selected_epoch() {
         let field = main.column_accessor("FIELD_ID").unwrap();
         let first = main.column_accessor("ANTENNA1").unwrap();
         let second = main.column_accessor("ANTENNA2").unwrap();
+        let mut largest_angle = 0.0_f64;
+        let mut largest_uvw = 0.0_f64;
         for (epoch, expected) in case.epochs {
             let row = (0..main.row_count())
                 .find(|&row| {
@@ -55,6 +57,7 @@ fn moving_columns_match_casa_at_each_selected_epoch() {
                 .enumerate()
             {
                 let error = (actual - expected[index] + PI).rem_euclid(TAU) - PI;
+                largest_angle = largest_angle.max(error.abs());
                 assert!(
                     error.abs() < 2e-6,
                     "{mount} angle {index} at {epoch}: {error:.7e} rad"
@@ -68,10 +71,14 @@ fn moving_columns_match_casa_at_each_selected_epoch() {
                 .sum::<f64>();
             let scale = expected[8..].iter().map(|value| value.powi(2)).sum::<f64>();
             let error = (error / scale).sqrt();
+            largest_uvw = largest_uvw.max(error);
             assert!(
                 error < 1e-3,
                 "{mount} UVW at {epoch}: {error:.7e} normalized RMS"
             );
         }
+        println!(
+            "{mount}: largest angle error {largest_angle:.7e} rad, largest UVW normalized RMS {largest_uvw:.7e}"
+        );
     }
 }
