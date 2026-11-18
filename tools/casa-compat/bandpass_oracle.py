@@ -56,13 +56,13 @@ def gapped_data(source, target):
 
 
 def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,),
-            solint='inf', interval_count=None, parang=False):
+            solint='inf', interval_count=None, parang=False, minsnr=0.):
     products, corrected, returns = [], [], []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
         copy_ms(source, ms)
         result = engine.bandpass(str(ms), str(output), field='0', refant='A0',
-                                 smodel=list(s_model), minsnr=0., solnorm=normalize,
+                                 smodel=list(s_model), minsnr=minsnr, solnorm=normalize,
                                  fillgaps=fillgaps, solint=solint, parang=parang)
         if interval_count is not None:
             np.testing.assert_array_equal(result['solvestats']['expected'], [interval_count]*2)
@@ -83,6 +83,9 @@ def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s
         assert np.all(expected['PARAMERR'][~expected['FLAG']] > 0.)
     else:
         np.testing.assert_array_equal(np.flatnonzero(actual['FLAG'].all(axis=(0, 2))), remaining_flags)
+    if minsnr > 0.:
+        assert np.any(expected['FLAG']) and np.any(~expected['FLAG'])
+        assert np.any(abs(expected['CPARAM'][expected['FLAG']] - 1.) > .1)
     errors = {key: relative_rms(actual[key], expected[key]) for key in ('CPARAM', 'PARAMERR', 'SNR')}
     expected_ms, actual_ms = corrected
     for column in ('FLAG', 'FLAG_ROW'):
@@ -128,6 +131,21 @@ def model_cases(root, source, native):
     folder.mkdir()
     results[folder.name] = compare(folder, linear, native, False, s_model=(1.1, .24, .19, .15),
                                    parang=True)
+    cross_weighted = root/'cross-weighted.ms'
+    copy_ms(linear, cross_weighted)
+    casa.clearcal(str(cross_weighted), addmodel=True)
+    tool.open(str(cross_weighted), nomodify=False)
+    try:
+        model = tool.getcol('MODEL_DATA')
+        time = tool.getcol('TIME')
+        cross_amplitude = .15 + 1.2*(time-time.min())/np.ptp(time)
+        model[1:3] = cross_amplitude
+        tool.putcol('MODEL_DATA', model)
+    finally:
+        tool.close()
+    folder = root/'cross-weighted'
+    folder.mkdir()
+    results[folder.name] = compare(folder, cross_weighted, native, False, s_model=())
     return results
 
 
@@ -156,6 +174,9 @@ def main():
         folder = root/f'fill-{gaps}'
         folder.mkdir()
         results[folder.name] = compare(folder, gapped, native, False, gaps, flags)
+    cutoff = root/'snr-cutoff'
+    cutoff.mkdir()
+    results[cutoff.name] = compare(cutoff, source, native, False, minsnr=165.)
     results.update(model_cases(root, source, native))
     for interval, count in [('int', 6), ('25s', 3), ('inf,none', 1)]:
         folder = root/f"interval-{interval.replace(',', '-')}"

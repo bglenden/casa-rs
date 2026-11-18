@@ -1000,14 +1000,14 @@ impl SolveAccumulator {
             if !parallel_hand && matches!(options.gain_type, GainType::G | GainType::K) {
                 // CASA can use cross-hand weights for the averaged baseline's
                 // time even though only parallel hands enter these solves.
-                if !delay && (options.rotate_model || !options.channelized) {
+                if !delay {
                     row_weight += samples::centroid_weight(
                         samples,
                         corr_index,
                         channels,
                         shared_flags.as_deref(),
                         point,
-                        false,
+                        options.channelized,
                     );
                 }
                 continue;

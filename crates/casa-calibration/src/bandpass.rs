@@ -553,14 +553,13 @@ fn solve_bandpass_group(
                         .as_ref()
                         .and_then(|solved| solved.receptors.get(receptor_index));
                     let snr = receptor.and_then(|fit| fit.snr.get(&antenna_id)).copied();
-                    let solution = receptor.and_then(|fit| {
-                        let above_min_snr =
-                            cuts.is_none_or(|cuts| snr.is_some_and(|snr| snr > cuts.min_snr));
-                        (fit.solved.contains(&antenna_id) && above_min_snr)
-                            .then(|| fit.gains[&antenna_id])
-                    });
+                    let solution = receptor
+                        .filter(|fit| fit.solved.contains(&antenna_id))
+                        .map(|fit| fit.gains[&antenna_id]);
+                    let above_min_snr =
+                        cuts.is_none_or(|cuts| snr.is_some_and(|snr| snr > cuts.min_snr));
                     gains.push(solution.unwrap_or(Complex32::new(1.0, 0.0)));
-                    flags.push(solution.is_none());
+                    flags.push(solution.is_none() || !above_min_snr);
                     let estimates = estimates.and_then(|fit| fit.receptors.get(receptor_index));
                     param_errors.push(
                         estimates
