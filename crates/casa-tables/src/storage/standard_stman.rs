@@ -1377,9 +1377,15 @@ pub(crate) fn save_ssm_file_scalar_columns_sparse_rows_in_place(
     }
     if changed_rows.is_empty()
         || sparse_columns.iter().all(Option::is_none)
-        || col_descs.iter().any(|column| {
-            column.is_array || column.is_record() || column.data_type == CasacoreDataType::TpString
-        })
+        || col_descs
+            .iter()
+            .zip(sparse_columns)
+            .any(|(column, patches)| {
+                patches.is_some()
+                    && (column.is_array
+                        || column.is_record()
+                        || column.data_type == CasacoreDataType::TpString)
+            })
     {
         return Ok(false);
     }

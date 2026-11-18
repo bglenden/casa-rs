@@ -35,13 +35,18 @@
 //! - `CompressComplex` in `casacore/tables/DataMan/CompressComplex.h`
 
 use casa_types::{ArrayValue, Complex32, Complex64, RecordField, RecordValue, ScalarValue, Value};
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{ArrayD, Axis, IxDyn, Slice};
+use std::ops::Range;
 
 use super::StorageError;
 use super::table_control::PlainColumnEntry;
 use super::virtual_engine::{VirtualColumnEngine, VirtualContext};
 
 // -- Keyword name constants --------------------------------------------------
+
+// CASA persists the base engine's source column as Name. Older casa-rs
+// tables used StoredColumnName for the same link.
+const KW_MAPPED_SOURCE: &str = "_BaseMappedArrayEngine_Name";
 
 // CompressFloat keywords.
 const KW_CF_STORED_COL: &str = "_BaseMappedArrayEngine_StoredColumnName";
@@ -58,6 +63,7 @@ const KW_CC_OFFSET: &str = "_CompressComplex_Offset";
 const KW_CC_SCALE_NAME: &str = "_CompressComplex_ScaleName";
 const KW_CC_OFFSET_NAME: &str = "_CompressComplex_OffsetName";
 const KW_CC_FIXED: &str = "_CompressComplex_Fixed";
+const KW_CC_AUTO_SCALE: &str = "_CompressComplex_AutoScale";
 const KW_CC_TYPE: &str = "_CompressComplex_Type";
 
 /// NaN sentinel for CompressFloat (Short -32768).
@@ -95,7 +101,8 @@ impl VirtualColumnEngine for CompressFloatEngine {
             let kw = &col_desc.keywords;
             let target_type = col_desc.require_primitive_type()?;
 
-            let stored_col_name = get_string_keyword(kw, KW_CF_STORED_COL, col_name)?;
+            let stored_col_name = get_string_keyword(kw, KW_MAPPED_SOURCE, col_name)
+                .or_else(|_| get_string_keyword(kw, KW_CF_STORED_COL, col_name))?;
 
             // Scale/offset configuration.
             let fixed = get_bool_keyword(kw, KW_CF_FIXED).unwrap_or(true);
@@ -198,6 +205,286 @@ pub(crate) enum CompressComplexVariant {
     SingleDish,
 }
 
+/// The physical columns and scale policy used for a stored complex array.
+#[derive(Debug, Clone)]
+pub struct ComplexCompression {
+    /// The physical Int32 array column.
+    pub stored: String,
+    /// The origin of scale and offset for each array cell.
+    pub scale: ComplexScale,
+    variant: CompressComplexVariant,
+    casa_layout: bool,
+}
+
+/// Fixed or per-row scale and offset for a CASA complex array.
+#[derive(Debug, Clone)]
+pub enum ComplexScale {
+    /// One scale and offset held in the column keywords.
+    Fixed {
+        /// Scale of one integer step.
+        scale: f32,
+        /// Floating-point value of a zero integer.
+        offset: f32,
+    },
+    /// Scalar columns hold scale and offset for each row.
+    PerRow {
+        /// Scale column name.
+        scale: String,
+        /// Offset column name.
+        offset: String,
+        /// Whether writes choose a new scale when needed.
+        automatic: bool,
+    },
+}
+
+impl ComplexCompression {
+    pub(crate) fn read(
+        keywords: &RecordValue,
+        column: &str,
+        manager: &str,
+    ) -> Result<Self, StorageError> {
+        let stored = get_string_keyword(keywords, KW_MAPPED_SOURCE, column)
+            .or_else(|_| get_string_keyword(keywords, KW_CC_STORED_COL, column))?;
+        let scale = if get_bool_keyword(keywords, KW_CC_FIXED).unwrap_or(true) {
+            ComplexScale::Fixed {
+                scale: get_f32_keyword(keywords, KW_CC_SCALE).unwrap_or(1.0),
+                offset: get_f32_keyword(keywords, KW_CC_OFFSET).unwrap_or(0.0),
+            }
+        } else {
+            ComplexScale::PerRow {
+                scale: get_string_keyword(keywords, KW_CC_SCALE_NAME, column)?,
+                offset: get_string_keyword(keywords, KW_CC_OFFSET_NAME, column)?,
+                automatic: get_bool_keyword(keywords, KW_CC_AUTO_SCALE).unwrap_or(false),
+            }
+        };
+        let variant = if manager == "CompressComplexSD" {
+            CompressComplexVariant::SingleDish
+        } else {
+            CompressComplexVariant::Standard
+        };
+        Ok(Self {
+            stored,
+            scale,
+            variant,
+            casa_layout: keywords.get(KW_MAPPED_SOURCE).is_some(),
+        })
+    }
+
+    pub(crate) fn decode_cell(
+        &self,
+        value: ArrayValue,
+        scale: f32,
+        offset: f32,
+        target_type: casa_types::PrimitiveType,
+    ) -> Result<ArrayValue, StorageError> {
+        if self.casa_layout
+            && let ArrayValue::Int32(array) = &value
+        {
+            return Ok(decode_casa_complex(
+                array,
+                self.variant,
+                scale,
+                offset,
+                target_type,
+            ));
+        }
+        let value = Value::Array(value);
+        let decoded = match self.variant {
+            CompressComplexVariant::Standard => {
+                decompress_complex(&value, scale.into(), offset.into(), target_type)
+            }
+            CompressComplexVariant::SingleDish => {
+                decompress_complex_sd(&value, scale.into(), offset.into(), target_type)
+            }
+        }?;
+        match decoded {
+            Value::Array(array) => Ok(array),
+            _ => Err(StorageError::FormatMismatch(
+                "compressed array decoded as a scalar".into(),
+            )),
+        }
+    }
+
+    /// Whether a write may change the per-row scale and offset columns.
+    pub fn is_automatic(&self) -> bool {
+        matches!(
+            self.scale,
+            ComplexScale::PerRow {
+                automatic: true,
+                ..
+            }
+        )
+    }
+
+    /// Verify that writes would use the same on-disk codec as reads.
+    pub fn check_writable(&self) -> Result<(), crate::TableError> {
+        if self.casa_layout {
+            return Ok(());
+        }
+        Err(crate::TableError::Storage(
+            "legacy compressed complex columns are read-only".into(),
+        ))
+    }
+
+    /// Pack a complete visibility cell, or replace its selected channels.
+    /// For a partial write, `values` holds the updated full cell and `packed`
+    /// holds its previous encoding. An unchanged scale preserves every
+    /// packed sample outside the selected channels.
+    pub fn encode_visibility_cell(
+        &self,
+        values: &ArrayD<Complex32>,
+        packed: Option<ArrayD<i32>>,
+        previous: (f32, f32),
+        channels: Option<Range<usize>>,
+    ) -> Result<(ArrayD<i32>, (f32, f32)), crate::TableError> {
+        self.check_writable()?;
+        if values.ndim() != 2
+            || channels
+                .as_ref()
+                .is_some_and(|range| range.start > range.end || range.end > values.shape()[1])
+        {
+            return Err(crate::TableError::Storage(
+                "invalid compressed visibility channel slice".into(),
+            ));
+        }
+        let ranges = channels.filter(|range| range.start != 0 || range.end != values.shape()[1]);
+        let Some(channels) = ranges else {
+            let scale = if self.is_automatic() {
+                scale_offset(self.range(values.iter()))
+            } else {
+                previous
+            };
+            return Ok((values.mapv(|value| self.pack_value(value, scale)), scale));
+        };
+        let mut packed = packed
+            .filter(|encoded| encoded.shape() == values.shape())
+            .ok_or_else(|| {
+                crate::TableError::Storage(
+                    "a partial compressed write needs the original cell".into(),
+                )
+            })?;
+        let slice = values.slice_axis(Axis(1), Slice::from(channels.clone()));
+        let bounds = self.range(slice.iter());
+        let (scale, offset) = previous;
+        let lower = offset - scale * 65_534.0 / 2.0;
+        let upper = offset + scale * 65_534.0 / 2.0;
+        if self.is_automatic() && scale == 0.0 {
+            if bounds.is_none() {
+                return Ok((packed, previous));
+            }
+            let scale = scale_offset(bounds);
+            packed.fill(i32::MIN);
+            packed
+                .slice_axis_mut(Axis(1), Slice::from(channels))
+                .assign(&slice.mapv(|value| self.pack_value(value, scale)));
+            return Ok((packed, scale));
+        }
+        if let Some((min, max)) =
+            bounds.filter(|&(min, max)| self.is_automatic() && (min < lower || max > upper))
+        {
+            let scale = scale_offset(Some((lower.min(min), upper.max(max))));
+            return Ok((values.mapv(|value| self.pack_value(value, scale)), scale));
+        }
+        packed
+            .slice_axis_mut(Axis(1), Slice::from(channels))
+            .assign(&slice.mapv(|value| self.pack_value(value, previous)));
+        Ok((packed, previous))
+    }
+
+    fn range<'a>(&self, values: impl Iterator<Item = &'a Complex32>) -> Option<(f32, f32)> {
+        values
+            .filter(|value| value.re.is_finite() && value.im.is_finite())
+            .map(|value| {
+                let imag = if matches!(self.variant, CompressComplexVariant::SingleDish)
+                    && value.im == 0.0
+                {
+                    value.re
+                } else {
+                    value.im
+                };
+                (value.re.min(imag), value.re.max(imag))
+            })
+            .reduce(|(min, max), (other_min, other_max)| (min.min(other_min), max.max(other_max)))
+    }
+
+    fn pack_value(&self, value: Complex32, (scale, offset): (f32, f32)) -> i32 {
+        if !value.re.is_finite() || !value.im.is_finite() {
+            return i32::MIN;
+        }
+        let real = quantize(value.re, offset, scale, -32_767, 32_767);
+        match self.variant {
+            CompressComplexVariant::Standard => {
+                real * 65_536 + quantize(value.im, offset, scale, -32_767, 32_767)
+            }
+            CompressComplexVariant::SingleDish if value.im == 0.0 => {
+                quantize(
+                    value.re,
+                    offset,
+                    scale / 32_768.0,
+                    -(1 << 30),
+                    (1 << 30) - 1,
+                ) << 1
+            }
+            CompressComplexVariant::SingleDish => {
+                real * 65_536 + 2 * quantize(value.im, offset, scale * 2.0, -16_384, 16_383) + 1
+            }
+        }
+    }
+}
+
+fn decode_casa_complex(
+    stored: &ArrayD<i32>,
+    variant: CompressComplexVariant,
+    scale: f32,
+    offset: f32,
+    target_type: casa_types::PrimitiveType,
+) -> ArrayValue {
+    let decoded = stored.mapv(|packed| {
+        if matches!(variant, CompressComplexVariant::SingleDish) && packed & 1 == 0 {
+            return Complex32::new((packed >> 1) as f32 * (scale / 32_768.0) + offset, 0.0);
+        }
+        let mut real = packed / 65_536;
+        if real == -32_768 {
+            return Complex32::new(f32::NAN, f32::NAN);
+        }
+        let mut imag = packed - real * 65_536;
+        if imag < -32_768 {
+            real -= 1;
+            imag += 65_536;
+        } else if imag >= 32_768 {
+            real += 1;
+            imag -= 65_536;
+        }
+        let imag = match variant {
+            CompressComplexVariant::Standard => imag as f32 * scale + offset,
+            CompressComplexVariant::SingleDish => (imag >> 1) as f32 * (scale * 2.0) + offset,
+        };
+        Complex32::new(real as f32 * scale + offset, imag)
+    });
+    match target_type {
+        casa_types::PrimitiveType::Complex64 => ArrayValue::Complex64(
+            decoded.mapv(|value| Complex64::new(value.re.into(), value.im.into())),
+        ),
+        _ => ArrayValue::Complex32(decoded),
+    }
+}
+
+fn scale_offset(bounds: Option<(f32, f32)>) -> (f32, f32) {
+    let Some((min, max)) = bounds else {
+        return (0.0, 0.0);
+    };
+    let scale = if min == max {
+        1.0
+    } else {
+        (max - min) / 65_534.0
+    };
+    (scale, (min + max) / 2.0)
+}
+
+fn quantize(value: f32, offset: f32, scale: f32, lower: i32, upper: i32) -> i32 {
+    (((value - offset) / scale).round() as i32).clamp(lower, upper)
+}
+
 /// Virtual column engine for lossy Complex→Int compression.
 ///
 /// # CompressComplex transform
@@ -246,7 +533,8 @@ impl VirtualColumnEngine for CompressComplexEngine {
             let kw = &col_desc.keywords;
             let target_type = col_desc.require_primitive_type()?;
 
-            let stored_col_name = get_string_keyword(kw, KW_CC_STORED_COL, col_name)?;
+            let stored_col_name = get_string_keyword(kw, KW_MAPPED_SOURCE, col_name)
+                .or_else(|_| get_string_keyword(kw, KW_CC_STORED_COL, col_name))?;
 
             let fixed = get_bool_keyword(kw, KW_CC_FIXED).unwrap_or(true);
             let base_scale = get_f32_keyword(kw, KW_CC_SCALE).unwrap_or(1.0) as f64;
@@ -276,6 +564,17 @@ impl VirtualColumnEngine for CompressComplexEngine {
 
                 let stored_value = ctx.rows[row_idx].get(&stored_col_name);
                 let virtual_value = match stored_value {
+                    Some(Value::Array(ArrayValue::Int32(array)))
+                        if kw.get(KW_MAPPED_SOURCE).is_some() =>
+                    {
+                        Value::Array(decode_casa_complex(
+                            array,
+                            self.variant,
+                            scale as f32,
+                            offset as f32,
+                            target_type,
+                        ))
+                    }
                     Some(v) => match self.variant {
                         CompressComplexVariant::Standard => {
                             decompress_complex(v, scale, offset, target_type)?
@@ -946,6 +1245,24 @@ mod tests {
                 assert!((c.im - 5.0).abs() < 1e-6, "im={}", c.im);
             }
             other => panic!("expected Complex64, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn refuses_writing_the_legacy_complex_layout() {
+        let keywords = RecordValue::new(vec![RecordField::new(
+            KW_CC_STORED_COL.to_owned(),
+            Value::Scalar(ScalarValue::String("STORED".to_owned())),
+        )]);
+        for variant in ["CompressComplex", "CompressComplexSD"] {
+            let codec = ComplexCompression::read(&keywords, "DATA", variant).unwrap();
+            let values = ndarray::Array::from_elem(IxDyn(&[1, 1]), Complex32::new(1.0, -1.0));
+            assert!(codec.check_writable().is_err());
+            assert!(
+                codec
+                    .encode_visibility_cell(&values, None, (1.0, 0.0), None)
+                    .is_err()
+            );
         }
     }
 

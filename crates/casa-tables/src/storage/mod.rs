@@ -82,6 +82,7 @@ pub(crate) use self::table_control::{
     RefTableDatContents, TableDatContents, TableDatResult, read_table_dat_dispatch,
 };
 pub(crate) use self::tiled_stman::TiledReadMetadata;
+use self::virtual_compress::{ComplexCompression, ComplexScale};
 use self::virtual_engine::{VirtualContext, is_virtual_engine, lookup_engine};
 
 use self::table_control::{write_concat_table_dat, write_ref_table_dat, write_table_dat};
@@ -743,6 +744,22 @@ impl StorageManager for CompositeStorage {
 
         Ok(())
     }
+}
+
+fn column_is_virtual(table_dat: &TableDatContents, column: &str) -> bool {
+    let Some(binding) = table_dat
+        .column_set
+        .columns
+        .iter()
+        .find(|entry| entry.original_name == column)
+    else {
+        return false;
+    };
+    table_dat
+        .column_set
+        .data_managers
+        .iter()
+        .any(|manager| manager.seq_nr == binding.dm_seq_nr && is_virtual_engine(&manager.type_name))
 }
 
 impl CompositeStorage {
@@ -1420,11 +1437,9 @@ impl CompositeStorage {
         selected_rows: &[usize],
         row_hint: Option<u64>,
     ) -> Result<RequiredScalarColumnSnapshot, StorageError> {
-        if table_dat
-            .column_set
-            .data_managers
+        if columns
             .iter()
-            .any(|dm| is_virtual_engine(&dm.type_name))
+            .any(|column| column_is_virtual(table_dat, column))
         {
             let scalar_columns = columns
                 .iter()
@@ -1523,11 +1538,9 @@ impl CompositeStorage {
         selected_rows: &[usize],
         destinations: &mut [RequiredScalarColumnDestination<'_>],
     ) -> Result<(), StorageError> {
-        if table_dat
-            .column_set
-            .data_managers
+        if destinations
             .iter()
-            .any(|dm| is_virtual_engine(&dm.type_name))
+            .any(|destination| column_is_virtual(table_dat, destination.column()))
         {
             return Err(StorageError::FormatMismatch(
                 "required scalar reusable fills do not support virtual columns".to_string(),
@@ -2221,12 +2234,7 @@ impl CompositeStorage {
         column: &str,
         row_hint: Option<u64>,
     ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
-        if table_dat
-            .column_set
-            .data_managers
-            .iter()
-            .any(|dm| is_virtual_engine(&dm.type_name))
-        {
+        if column_is_virtual(table_dat, column) {
             let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
             return scalar_column_from_snapshot(&snapshot, column);
         }
@@ -2350,12 +2358,20 @@ impl CompositeStorage {
             .max(table_dat.column_set.nrrow)
             .max(row_hint.unwrap_or(0)) as usize;
 
-        if table_dat
-            .column_set
-            .data_managers
-            .iter()
-            .any(|dm| is_virtual_engine(&dm.type_name))
-        {
+        if requested_columns.map_or_else(
+            || {
+                table_dat
+                    .column_set
+                    .data_managers
+                    .iter()
+                    .any(|dm| is_virtual_engine(&dm.type_name))
+            },
+            |columns| {
+                columns
+                    .iter()
+                    .any(|column| column_is_virtual(table_dat, column))
+            },
+        ) {
             let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
             let mut scalar_columns = scalar_columns_from_snapshot(&snapshot);
             if let Some(requested) = requested_columns {
@@ -2479,11 +2495,9 @@ impl CompositeStorage {
             .max(table_dat.column_set.nrrow)
             .max(row_hint.unwrap_or(0)) as usize;
 
-        if table_dat
-            .column_set
-            .data_managers
+        if requested_columns
             .iter()
-            .any(|dm| is_virtual_engine(&dm.type_name))
+            .any(|column| column_is_virtual(table_dat, column))
         {
             let scalar_columns = self.load_plain_scalar_columns_filtered(
                 table_path,
@@ -2668,12 +2682,7 @@ impl CompositeStorage {
             )));
         }
 
-        if table_dat
-            .column_set
-            .data_managers
-            .iter()
-            .any(|dm| is_virtual_engine(&dm.type_name))
-        {
+        if column_is_virtual(table_dat, column) {
             let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
             let values = scalar_column_from_snapshot(&snapshot, column)?;
             return Ok(select_scalar_rows(&values, selected_rows));
@@ -2794,12 +2803,7 @@ impl CompositeStorage {
             )));
         }
 
-        if table_dat
-            .column_set
-            .data_managers
-            .iter()
-            .any(|dm| is_virtual_engine(&dm.type_name))
-        {
+        if column_is_virtual(table_dat, column) {
             let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
             return array_column_from_snapshot(&snapshot, column);
         }
@@ -2934,17 +2938,7 @@ impl CompositeStorage {
         }
         // A virtual column, or a layout its data manager cannot read row by
         // row, is read as a whole column.
-        let values = if table_dat
-            .column_set
-            .data_managers
-            .iter()
-            .any(|dm| is_virtual_engine(&dm.type_name))
-        {
-            let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
-            array_column_from_snapshot(&snapshot, column)?
-        } else {
-            self.load_plain_array_column(table_path, table_dat, column, row_hint)?
-        };
+        let values = self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
         Ok(select_array_rows(&values, selected_rows))
     }
 
@@ -2976,15 +2970,6 @@ impl CompositeStorage {
             )));
         }
 
-        if table_dat
-            .column_set
-            .data_managers
-            .iter()
-            .any(|dm| is_virtual_engine(&dm.type_name))
-        {
-            return Ok(None);
-        }
-
         let dm_seq_nr = table_dat
             .column_set
             .columns
@@ -3006,6 +2991,20 @@ impl CompositeStorage {
                     "array column '{column}' missing data manager {dm_seq_nr}"
                 ))
             })?;
+        if matches!(
+            dm.type_name.as_str(),
+            "CompressComplex" | "CompressComplexSD"
+        ) {
+            let compression = ComplexCompression::read(&col_desc.keywords, column, &dm.type_name)?;
+            let cells = self.load_compressed_complex_cells(
+                table_path,
+                table_dat,
+                &compression,
+                col_desc.require_primitive_type()?,
+                selected_rows,
+            )?;
+            return Ok(Some(cells));
+        }
         let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
         let bound_cols: Vec<(usize, &_)> = table_dat
             .column_set
@@ -3065,6 +3064,56 @@ impl CompositeStorage {
             }
             _ => Ok(None),
         }
+    }
+
+    fn load_compressed_complex_cells(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        compression: &ComplexCompression,
+        target_type: casa_types::PrimitiveType,
+        rows: &[usize],
+    ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+        if column_is_virtual(table_dat, &compression.stored) {
+            return Err(StorageError::FormatMismatch(
+                "compressed storage must be a physical column".into(),
+            ));
+        }
+        let cells = self.load_plain_array_column_rows(
+            table_path,
+            table_dat,
+            &compression.stored,
+            rows,
+            None,
+        )?;
+        let (scales, offsets) = match &compression.scale {
+            ComplexScale::Fixed { scale, offset } => {
+                (vec![*scale; rows.len()], vec![*offset; rows.len()])
+            }
+            ComplexScale::PerRow { scale, offset, .. } => {
+                let read = |column: &str| -> Result<Vec<f32>, StorageError> {
+                    self.load_plain_scalar_column_rows(table_path, table_dat, column, rows, None)?
+                        .into_iter()
+                        .map(|value| match value {
+                            Some(ScalarValue::Float32(value)) => Ok(value),
+                            _ => Err(StorageError::FormatMismatch(format!(
+                                "compressed scale column {column:?} is not Float32"
+                            ))),
+                        })
+                        .collect()
+                };
+                (read(scale)?, read(offset)?)
+            }
+        };
+        cells
+            .into_iter()
+            .zip(scales)
+            .zip(offsets)
+            .map(|((cell, scale), offset)| {
+                cell.map(|value| compression.decode_cell(value, scale, offset, target_type))
+                    .transpose()
+            })
+            .collect()
     }
 
     pub(crate) fn array_column_tile_bytes(

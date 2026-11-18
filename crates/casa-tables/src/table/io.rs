@@ -585,9 +585,13 @@ impl Table {
                 "partial in-place save requires a plain disk-backed table".to_string(),
             ));
         }
-        if !self.virtual_columns.is_empty() || !self.virtual_bindings.is_empty() {
+        if changed_columns
+            .iter()
+            .any(|name| self.virtual_columns.contains(*name))
+            || !self.virtual_bindings.is_empty()
+        {
             return Err(TableError::Storage(
-                "partial in-place save does not support virtual columns".to_string(),
+                "partial in-place save takes physical column values".to_string(),
             ));
         }
 
@@ -1069,7 +1073,10 @@ impl Table {
                 "cloning a tiled column in place requires a plain disk-backed table".to_string(),
             ));
         }
-        if !self.virtual_columns.is_empty() || !self.virtual_bindings.is_empty() {
+        if self.virtual_columns.contains(source_column)
+            || self.virtual_columns.contains(target_column)
+            || !self.virtual_bindings.is_empty()
+        {
             return Err(TableError::Storage(
                 "cloning a tiled column in place does not support virtual columns".to_string(),
             ));
@@ -1259,7 +1266,7 @@ impl Table {
                 "adding a tiled column in place requires a plain disk-backed table".to_string(),
             ));
         }
-        if !self.virtual_columns.is_empty() || !self.virtual_bindings.is_empty() {
+        if self.virtual_columns.contains(column) || !self.virtual_bindings.is_empty() {
             return Err(TableError::Storage(
                 "adding a tiled column in place does not support virtual columns".to_string(),
             ));
@@ -2166,12 +2173,12 @@ fn collect_sparse_scalar_group_values_from_current_cells(
 ) -> Result<Option<SparseScalarColumns>, TableError> {
     let mut columns = Vec::with_capacity(col_descs.len());
     for col_desc in col_descs {
-        if col_desc.is_array || col_desc.is_record() {
-            return Ok(None);
-        }
         if !changed_columns.contains(col_desc.col_name.as_str()) {
             columns.push(None);
             continue;
+        }
+        if col_desc.is_array || col_desc.is_record() {
+            return Ok(None);
         }
         let Some(pending_values) = table.inner.pending_scalar_cells(&col_desc.col_name) else {
             return Ok(None);

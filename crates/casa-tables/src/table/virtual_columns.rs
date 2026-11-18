@@ -2,6 +2,33 @@
 use super::*;
 
 impl Table {
+    /// Read the physical backing of a persisted CASA CompressComplex column.
+    #[doc(hidden)]
+    pub fn complex_compression(
+        &self,
+        column: &str,
+    ) -> Result<Option<crate::ComplexCompression>, TableError> {
+        let manager = self.data_manager_info().iter().find(|manager| {
+            matches!(
+                manager.dm_type.as_str(),
+                "CompressComplex" | "CompressComplexSD"
+            ) && manager.columns.iter().any(|name| name == column)
+        });
+        let Some(manager) = manager else {
+            return Ok(None);
+        };
+        let keywords = self.column_keywords(column).ok_or_else(|| {
+            TableError::Storage(format!(
+                "compressed column {column:?} has no storage keywords"
+            ))
+        })?;
+        crate::ComplexCompression::read(keywords, column, &manager.dm_type)
+            .map(Some)
+            .map_err(TableError::from)
+    }
+}
+
+impl Table {
     // -------------------------------------------------------------------
     // Virtual column API
     // -------------------------------------------------------------------
