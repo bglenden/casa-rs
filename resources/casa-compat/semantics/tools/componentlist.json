@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "componentlist",
  "casa_version": "6.7.6.14",
- "audit_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963",
+ "audit_revision": "57d7ac8e55f8c90be077d4b53a104fd13eecd961",
  "methods": {
   "add": {
    "status": "Implemented",
@@ -10,7 +10,8 @@
    "evidence": [
     "signature",
     "record-import-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "addcomponent": {
@@ -41,17 +42,19 @@
     "casa-values",
     "table-fixtures",
     "casa-on-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "concatenate": {
    "status": "Implemented",
-   "scope": "Appends selected rows from a component table or list record, preserving record units and reference offsets. Follows CASA’s empty-list, invalid-index and partial-import behavior.",
+   "scope": "Appends selected rows from a component table or list record, preserving record units and reference offsets. Follows CASA\u2019s empty-list, invalid-index and partial-import behavior.",
    "evidence": [
     "signature",
     "record-import-casa",
     "record-offset-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "convertfluxpol": {
@@ -111,7 +114,8 @@
    "evidence": [
     "signature",
     "selection-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "done": {
@@ -121,7 +125,8 @@
     "signature",
     "casa-values",
     "casa-on-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "edit": {
@@ -137,12 +142,13 @@
   },
   "fromrecord": {
    "status": "Implemented",
-   "scope": "Imports a list record, releases and writes an attached previous list, and preserves CASA’s decoded prefix on failure. Handles defaults, spectral models and nested reference offsets.",
+   "scope": "Imports a list record, releases and writes an attached previous list, and preserves CASA\u2019s decoded prefix on failure. Handles defaults, spectral models and nested reference offsets.",
    "evidence": [
     "signature",
     "record-import-casa",
     "record-offset-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "getcomponent": {
@@ -242,7 +248,8 @@
     "signature",
     "keyword-reads-casa",
     "keyword-cache-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "getlabel": {
@@ -313,7 +320,8 @@
     "signature",
     "casa-values",
     "casa-on-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "haskeyword": {
@@ -324,7 +332,8 @@
     "signature",
     "keyword-reads-casa",
     "keyword-cache-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "indices": {
@@ -394,7 +403,8 @@
     "signature",
     "keyword-writes-casa",
     "keyword-cache-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "recover": {
@@ -403,7 +413,8 @@
    "evidence": [
     "signature",
     "removal-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "remove": {
@@ -412,7 +423,8 @@
    "evidence": [
     "signature",
     "removal-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "rename": {
@@ -424,7 +436,8 @@
     "table-fixtures",
     "casa-on-casa",
     "rename-empty-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "replace": {
@@ -452,7 +465,8 @@
    "evidence": [
     "signature",
     "selection-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "selected": {
@@ -461,7 +475,8 @@
    "evidence": [
     "signature",
     "selection-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "setflux": {
@@ -552,7 +567,8 @@
    "evidence": [
     "signature",
     "setstokesspectrum-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "shapetype": {
@@ -581,7 +597,8 @@
    "evidence": [
     "signature",
     "sort-summary-casa",
-    "full-cl-release"
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "spectrumtype": {
@@ -596,7 +613,7 @@
   },
   "summarize": {
    "status": "Implemented",
-   "scope": "Logs CASA’s component summary with flux, spectrum, position, sizes, errors and limb exponent. Uses casacore precisionForValueErrorPairs and roundDouble formatting and matches invalid-index errors.",
+   "scope": "Logs CASA\u2019s component summary with flux, spectrum, position, sizes, errors and limb exponent. Uses casacore precisionForValueErrorPairs and roundDouble formatting and matches invalid-index errors.",
    "evidence": [
     "signature",
     "sort-summary-casa",
@@ -730,7 +747,7 @@
   },
   {
    "id": "invalid-gaussian-record-abort",
-   "inputs": "Gaussian record imports with non-positive axes, minor greater than major, or position angle outside ±360 degrees.",
+   "inputs": "Gaussian record imports with non-positive axes, minor greater than major, or position angle outside \u00b1360 degrees.",
    "casa": "Aborts the process from GaussianShape constructor assertions.",
    "ours": "Raises a catchable RuntimeError before appending.",
    "rationale": "Correct a CASA process abort under the standing crash-correction rule.",
@@ -1371,16 +1388,33 @@
   "full-cl-release": {
    "kind": "CASA comparisons and release benchmark",
    "state": "passed",
-   "result": "All 61 methods are represented by 65 same-runtime cases; every release median is faster than CASA, minimum 1.12x. Consolidated affected Python batch passes 1069 tests; native/C++/CASA gates and unchanged persisted bytes pass.",
+   "result": "All 61 methods are represented by 65 same-runtime cases; every repaired release median is faster than CASA, minimum 1.055x. All affected Python cases pass across the 1087-pass batch and 28-pass stale-expectation repair verification; explicit CASA raw-offset interoperability and native/C++/CASA gates pass.",
    "scope": "Complete componentlist outcome; measures remains in #1252.",
    "links": [
     "tools/simulation/componentlist_benchmark.py",
     "crates/casars-python/python/tests/test_componentlist_upstream.py"
    ],
    "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
-   "revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963",
-   "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963",
+   "revision": "57d7ac8e55f8c90be077d4b53a104fd13eecd961",
+   "source_revision": "57d7ac8e55f8c90be077d4b53a104fd13eecd961",
    "command": "CASAPY componentlist_benchmark.py --backend casa|casars --repeat 1000 --samples 7 (release native build); focused native, C++ and Python gates in receipt",
+   "receipt": "resources/casa-compat/evidence/cl-equivalence-20261118.json"
+  },
+  "review-regressions-casa": {
+   "kind": "CASA-recorded values and native regressions",
+   "state": "passed",
+   "result": "Seven consolidated-review findings repaired; 19 Python cases fail before/pass after, literal-degree native decoding fails before/passes after, and CASA reads all four raw-offset spectral cases.",
+   "scope": "Component imports, sorting/selection, offsets and table lifecycle/keyword-lock publication.",
+   "links": [
+    "tools/simulation/componentlist_review_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_review.json",
+    "crates/casars-python/python/tests/test_componentlist_review.py",
+    "crates/casa-types/src/measures/record.rs"
+   ],
+   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+   "revision": "57d7ac8e55f8c90be077d4b53a104fd13eecd961",
+   "source_revision": "57d7ac8e55f8c90be077d4b53a104fd13eecd961",
+   "command": "Focused Rust/Python/CASA commands and results in receipt",
    "receipt": "resources/casa-compat/evidence/cl-equivalence-20261118.json"
   }
  }
