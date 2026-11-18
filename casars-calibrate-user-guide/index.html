@@ -883,11 +883,11 @@ map per table: <code>--spwmap '[[0, 0], []]'</code>. <code>--docallib --callib F
 CASA calibration library instead. <code>--applymode trial</code> reports the apply plan
 without changing the MeasurementSet. <code>calibrate --mode apply</code> keeps casa-rs's
 own <code>--gaintables</code> with <code>;</code>-separated per-table lists.</p>
-<p>With an empty <code>smodel</code>, <code>gaincal</code> looks for the selected field's virtual
-model, then its <code>MODEL_DATA</code> column, and falls back to a 1 Jy point source.
-For <code>bandpass</code>, supply a point source when the selected data has a stored
-model. A CASA parameter casa-rs does not implement yet is taken only at its
-default, and a
+<p>With an empty <code>smodel</code>, <code>gaincal</code> and channelized <code>bandpass</code> (<code>bandtype='B'</code>)
+look for the selected field's virtual model, then its <code>MODEL_DATA</code> column,
+and fall back to a 1 Jy point source. Supply a point source for <code>BPOLY</code>
+when the selected data has a stored model. A CASA parameter casa-rs does
+not implement yet is taken only at its default, and a
 CASA value such as <code>gaintype='GSPLINE'</code> is refused until implemented. These
 errors name <a href="https://github.com/bglenden/casa-rs/issues/979">#979</a>.
 <code>docs/reference/casa-compatibility.md</code> lists them.</p>
