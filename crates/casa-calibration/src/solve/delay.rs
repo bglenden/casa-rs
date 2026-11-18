@@ -70,6 +70,7 @@ pub(super) fn solve(
                 || context.preapplied_rows.is_some(),
             robust_seed: false,
             channelized: true,
+            polynomial_bandpass: false,
         },
     )?;
     if groups.is_empty() {

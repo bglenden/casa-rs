@@ -147,10 +147,7 @@ fn select_grid(
     }
     let channels = crate::solve::grouping::selected_channels(selection, frequencies.len())?;
     let bins = channels.chunks(bin_width);
-    let frequencies = bins
-        .clone()
-        .map(|bin| bin.iter().map(|&channel| frequencies[channel]).sum::<f64>() / bin.len() as f64)
-        .collect();
+    let frequencies = average_frequencies(&frequencies, &channels, bin_width);
     let widths = bins
         .map(|bin| bin.iter().map(|&channel| widths[channel].abs()).sum())
         .collect::<Vec<_>>();
@@ -159,6 +156,17 @@ fn select_grid(
         effective_bandwidths: widths.clone(),
         widths,
     })
+}
+
+pub(super) fn average_frequencies(
+    frequencies: &[f64],
+    channels: &[usize],
+    bin_width: usize,
+) -> Vec<f64> {
+    channels
+        .chunks(bin_width)
+        .map(|bin| bin.iter().map(|&channel| frequencies[channel]).sum::<f64>() / bin.len() as f64)
+        .collect()
 }
 
 impl ChannelGrid {

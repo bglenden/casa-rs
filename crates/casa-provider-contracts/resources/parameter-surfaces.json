@@ -15354,8 +15354,7 @@
             "provider": {"field": "intent", "adapter": "identity"},
             "python": {"name": "intent"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
+          }
         },
         {
           "name": "selectdata",
@@ -15398,8 +15397,7 @@
             "provider": {"field": "uvrange", "adapter": "identity"},
             "python": {"name": "uvrange", "type_hint": "str | int | float | list[str]"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}, {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}]}}
+          }
         },
         {
           "name": "antenna",
@@ -15459,7 +15457,7 @@
         },
         {
           "name": "solint",
-          "concept": {"id": "parameter.solint", "semantic_revision": 1},
+          "concept": {"id": "parameter.solint", "semantic_revision": 2},
           "order": 12,
           "default": {"kind": "literal", "value": {"kind": "string", "value": "inf"}},
           "required_when": {"kind": "never"},
@@ -15467,10 +15465,9 @@
           "projections": {
             "cli": {"flags": ["--solint"], "metavar": "INTERVAL"},
             "provider": {"field": "solint"},
-            "python": {"name": "solint"},
+            "python": {"name": "solint", "type_hint": "str | int | float"},
             "presentation": {"label": "Solution Interval", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
+          }
         },
         {
           "name": "combine",
@@ -15491,7 +15488,7 @@
           "concept": {"id": "parameter.refant", "semantic_revision": 1},
           "order": 14,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}},
+          "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--refant"], "metavar": "ANTENNA"},
@@ -15502,7 +15499,7 @@
         },
         {
           "name": "minblperant",
-          "concept": {"id": "parameter.minblperant", "semantic_revision": 1},
+          "concept": {"id": "parameter.minblperant", "semantic_revision": 2},
           "order": 15,
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 4}},
           "required_when": {"kind": "never"},
@@ -15512,7 +15509,8 @@
             "provider": {"field": "minblperant"},
             "python": {"name": "minblperant"},
             "presentation": {"label": "Minimum Baselines per Antenna", "group": "Solve", "advanced": true}
-          }
+          },
+          "reviewed_homonym": {"review_id": "#31", "reason": "CASA bandpass accepts negative values to disable the cut, and BPOLY ignores the cut."}
         },
         {
           "name": "minsnr",
@@ -15583,8 +15581,7 @@
             "provider": {"field": "corrdepflags"},
             "python": {"name": "corrdepflags"},
             "presentation": {"label": "Correlation-dependent Flags", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
+          }
         },
         {
           "name": "append",
@@ -15654,8 +15651,7 @@
             "provider": {"field": "visnorm"},
             "python": {"name": "visnorm"},
             "presentation": {"label": "Normalize Visibilities", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
+          }
         },
         {
           "name": "maskcenter",
@@ -15669,8 +15665,7 @@
             "provider": {"field": "maskcenter"},
             "python": {"name": "maskcenter"},
             "presentation": {"label": "Mask Center", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
+          }
         },
         {
           "name": "maskedge",

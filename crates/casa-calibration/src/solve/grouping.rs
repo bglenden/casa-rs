@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selection, bucketing, and accumulation for `gaincal` and `bandpass`.
 
+mod inputs;
+pub(crate) mod polynomial;
 mod samples;
 mod time;
 mod weights;
@@ -13,7 +15,7 @@ use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_types::{ArrayValue, Complex32};
-use ndarray::{ArrayD, ArrayView2, IxDyn, ShapeBuilder};
+use ndarray::{ArrayD, ArrayView2};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
@@ -26,6 +28,8 @@ use crate::execute::{
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
 use crate::solve::kernel::{RobustSample, SolveGraph};
+pub(crate) use inputs::SolveInputBatch;
+use inputs::{input_cell, read_input_batch};
 use samples::{
     SolveAccumulationKey, SolveEdgeAccumulation, SolveRowInputs, SolveRowLayout, SolveRowLayouts,
     two_dimensional,
@@ -103,6 +107,7 @@ pub(crate) fn build_solve_groups(
         options.solve_interval,
         options.combine,
         include_autocorrelations,
+        options.polynomial_bandpass,
     );
     let seed_buffers = if needs_first_buffer
         || options.combine.observations
@@ -120,7 +125,11 @@ pub(crate) fn build_solve_groups(
     models.phase_times =
         weights::chunk_phase_times(&ordered, options.combine, models.dynamic_fields());
     let mut layouts = SolveRowLayouts::new(ms, options.rotate_model, &models, channel_bin_widths)?;
-    let spectral_weights = SpectralWeights::new(ms, &ordered, options.combine)?;
+    let spectral_weights = if options.polynomial_bandpass {
+        SpectralWeights::default()
+    } else {
+        SpectralWeights::new(ms, &ordered, options.combine)?
+    };
     let pipelined = overlap_inputs(ordered.len());
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
         eprintln!("calibration_workers {}", if pipelined { 2 } else { 1 });
@@ -147,6 +156,7 @@ pub(crate) fn build_solve_groups(
                 .iter()
                 .map(|row| spectral_weights.contains(row))
                 .collect(),
+            options.polynomial_bandpass && !channel_bin_widths.is_empty(),
         )
     };
     let mut consume = |batch: &[BucketedRow<'_>], inputs: SolveInputBatch| {
@@ -222,164 +232,6 @@ fn overlap_inputs(rows: usize) -> bool {
         .filter(|n| *n > 0)
         .unwrap_or(available);
     rows > 256 && available.min(requested) >= 2
-}
-
-/// Array payloads live for one batch, without filling the table's row cache.
-pub(crate) struct SolveInputBatch {
-    columns: Vec<(&'static str, Vec<Option<ArrayValue>>)>,
-    spectral_weights: Vec<bool>,
-}
-
-/// Read selected arrays together so headers and tiles are shared by a batch;
-/// release the payloads after accumulation instead of retaining the whole MS.
-fn read_input_batch(
-    ms: &MeasurementSet,
-    rows: &[usize],
-    (read_visibilities, read_model_flags): (bool, bool),
-    read_model_column: bool,
-    spectral_weights: Vec<bool>,
-) -> Result<SolveInputBatch, GainSolveError> {
-    let schema = ms.main_table().schema();
-    let mut columns = Vec::new();
-    if spectral_weights.contains(&true) {
-        columns.push("SIGMA_SPECTRUM");
-    }
-    if spectral_weights.contains(&false) {
-        columns.push("SIGMA");
-    }
-    if read_visibilities {
-        columns.push("DATA");
-    }
-    if read_visibilities || read_model_flags {
-        columns.push("FLAG");
-    }
-    if read_model_column {
-        columns.push("MODEL_DATA");
-    }
-    let mut inputs = SolveInputBatch {
-        columns: Vec::with_capacity(columns.len()),
-        spectral_weights,
-    };
-    for column in columns {
-        let values = ms
-            .main_table()
-            .column_accessor(column)
-            .and_then(|accessor| {
-                read_column_inputs(
-                    &accessor,
-                    column,
-                    schema
-                        .and_then(|s| s.column(column))
-                        .and_then(|c| c.data_type()),
-                    rows,
-                )
-            })
-            .map_err(|source| ms_read_error(ms, source))?;
-        inputs.columns.push((column, values));
-    }
-    Ok(inputs)
-}
-
-/// Homogeneous cells use the typed selected reader, avoiding reconstruction
-/// of complete tiled cubes. Mixed shapes and pending edits use the ordinary
-/// owned-cell reader, preserving their existing validation and semantics.
-fn read_column_inputs(
-    column: &casa_tables::TableColumn<'_>,
-    name: &str,
-    kind: Option<casa_types::PrimitiveType>,
-    rows: &[usize],
-) -> Result<Vec<Option<ArrayValue>>, casa_tables::TableError> {
-    if name != "SIGMA"
-        && let Ok(shapes) = column.array_shapes_uncached(rows)
-        && let Some(Some(shape)) = shapes.first()
-        && shape.len() == 2
-        && shape.iter().all(|n| *n > 0)
-        && shapes.iter().all(|other| other.as_ref() == Some(shape))
-    {
-        use casa_tables::SelectedArray2DCellsMut;
-        use casa_types::PrimitiveType;
-        let values = match kind {
-            Some(PrimitiveType::Complex32) => read_row_packed(
-                column,
-                rows,
-                shape[1],
-                |values| SelectedArray2DCellsMut::RowChannelComplex32(values),
-                ArrayValue::Complex32,
-            )?,
-            Some(PrimitiveType::Bool) => read_row_packed(
-                column,
-                rows,
-                shape[1],
-                |values| SelectedArray2DCellsMut::RowChannelBool(values),
-                ArrayValue::Bool,
-            )?,
-            Some(PrimitiveType::Float32) => read_row_packed(
-                column,
-                rows,
-                shape[1],
-                |values| SelectedArray2DCellsMut::RowChannelFloat32(values),
-                ArrayValue::Float32,
-            )?,
-            _ => None,
-        };
-        if let Some(values) = values {
-            return Ok(values);
-        }
-    }
-    column.array_cells_owned_uncached(rows)
-}
-
-/// Request contiguous row cells directly, avoiding a channel/row transpose.
-fn read_row_packed<T: Clone>(
-    column: &casa_tables::TableColumn<'_>,
-    rows: &[usize],
-    channels: usize,
-    destination: for<'a> fn(&'a mut Vec<T>) -> casa_tables::SelectedArray2DCellsMut<'a>,
-    wrap: fn(ArrayD<T>) -> ArrayValue,
-) -> Result<Option<Vec<Option<ArrayValue>>>, casa_tables::TableError> {
-    let mut values = Vec::new();
-    let Some(shape) = column.fill_array_cells_2d_channel_range_typed_uncached(
-        rows,
-        0,
-        channels,
-        destination(&mut values),
-    )?
-    else {
-        return Ok(None);
-    };
-    let shape = [shape.axis0_count, shape.channel_count];
-    let capacity = shape[0].checked_mul(shape[1]).ok_or_else(|| {
-        casa_tables::TableError::Storage("solve input cell size overflows".to_string())
-    })?;
-    values
-        .chunks_exact(capacity)
-        .map(|row| {
-            ArrayD::from_shape_vec(IxDyn(&shape).f(), row.to_vec())
-                .map(|array| Some(wrap(array)))
-                .map_err(|e| casa_tables::TableError::Storage(e.to_string()))
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(Some)
-}
-
-fn input_cell<'a>(
-    ms: &'a MeasurementSet,
-    row: usize,
-    inputs: (&'a SolveInputBatch, usize),
-    column: &str,
-) -> Result<&'a ArrayValue, GainSolveError> {
-    if let Some((_, values)) = inputs.0.columns.iter().find(|(name, _)| *name == column) {
-        return values[inputs.1].as_ref().ok_or_else(|| {
-            ms_read_error(
-                ms,
-                casa_tables::TableError::ColumnNotFound {
-                    row_index: row,
-                    column: column.to_string(),
-                },
-            )
-        });
-    }
-    main_cell(ms, row, column)
 }
 
 fn ms_read_error(ms: &MeasurementSet, source: casa_tables::TableError) -> GainSolveError {
@@ -563,6 +415,8 @@ pub(crate) struct SolveGroupOptions {
     /// Solve each data channel apart (`bandpass`) rather than the selected
     /// channels together (`gaincal`).
     pub(crate) channelized: bool,
+    /// BPOLY uses the old visibility iterator and scalar row weights.
+    pub(crate) polynomial_bandpass: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -630,6 +484,8 @@ struct SelectedChannels<'a> {
     indices: &'a [usize],
     all_channels: bool,
     bin_width: Option<usize>,
+    excluded: &'a [bool],
+    bin_weights: Option<ArrayView2<'a, f32>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -671,6 +527,7 @@ pub(crate) struct SolveAccumulator {
     pub(crate) solution_channels: usize,
     /// A single parallel hand in channelized G solves occupies parameter zero.
     pub(crate) scalar_bandpass: bool,
+    pub(crate) polynomial: Option<polynomial::PolynomialAccumulation>,
     /// `[solution channel][receptor]`, filled by [`Self::finalize_for_solve`].
     pub(crate) channel_graphs: Vec<Vec<SolveGraph>>,
     /// The solution's TIME, set by [`Self::finalize_for_solve`].
@@ -768,6 +625,7 @@ impl SolveAccumulator {
             unique_time_bits: BTreeSet::new(),
             solution_channels: 1,
             scalar_bandpass: false,
+            polynomial: None,
             channel_graphs: Vec::new(),
             solution_time: 0.0,
             attempted: false,
@@ -807,14 +665,12 @@ impl SolveAccumulator {
                 channel_count: 0,
                 selection: None,
                 channels: vec![],
+                excluded: vec![],
                 all_channels: false,
             }),
         };
         if layout.channel_count != channel_count || layout.selection != row.channel_selection {
-            layout.channels = selected_channels(row.channel_selection.as_ref(), channel_count)?;
-            layout.all_channels = layout.channels.iter().copied().eq(0..channel_count);
-            layout.channel_count = channel_count;
-            layout.selection.clone_from(&row.channel_selection);
+            layout.select_channels(row, channel_count, options.polynomial_bandpass)?;
         }
         let raw_flags = if preapplied_row.is_some() && layouts.models.uses_fourier(row.field_id) {
             match input_cell(ms, row.row_index, batch, "FLAG")? {
@@ -872,6 +728,13 @@ impl SolveAccumulator {
             samples.model = Some(two_dimensional(predicted));
         }
         samples.point_model = rotated.as_deref();
+        let bin_weights = match batch.0.polynomial_bin_weights(batch.1) {
+            Some(ArrayValue::Float32(weights)) if weights.shape() == inputs.data.shape() => {
+                Some(two_dimensional(weights))
+            }
+            Some(other) => return Err(unsupported_shape("WEIGHT_SPECTRUM", other)),
+            None => None,
+        };
         self.observe_selected_samples(
             &SolveSampleRow::of(row),
             &samples,
@@ -880,6 +743,8 @@ impl SolveAccumulator {
                 indices: &layout.channels,
                 all_channels: layout.all_channels,
                 bin_width: layouts.channel_bin_widths.get(&row.data_spw_id).copied(),
+                excluded: &layout.excluded,
+                bin_weights,
             },
             options,
         )
@@ -906,6 +771,8 @@ impl SolveAccumulator {
                 indices: channels,
                 all_channels: channels.iter().copied().eq(0..samples.data.ncols()),
                 bin_width: None,
+                excluded: &[],
+                bin_weights: None,
             },
             options,
         )
@@ -919,6 +786,19 @@ impl SolveAccumulator {
         channels: SelectedChannels<'_>,
         options: &SolveGroupOptions,
     ) -> Result<(), GainSolveError> {
+        if options.polynomial_bandpass {
+            self.observe_metadata(row);
+            self.polynomial
+                .get_or_insert_with(Default::default)
+                .observe(
+                    row,
+                    samples,
+                    correlation_types,
+                    channels,
+                    options.point_stokes,
+                );
+            return Ok(());
+        }
         if options.channelized {
             let channel_count = channels
                 .indices

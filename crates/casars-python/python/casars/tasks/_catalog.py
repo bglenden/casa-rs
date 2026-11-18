@@ -642,7 +642,7 @@ def bandpass(
     scan: str = '',
     observation: str | int = '',
     msselect: str = '',
-    solint: str = 'inf',
+    solint: str | int | float = 'inf',
     combine: str = 'scan',
     refant: str = '',
     minblperant: int = 4,
@@ -674,9 +674,6 @@ def bandpass(
     """Solve bandpass calibration for a MeasurementSet.
 
     CASA's ``bandpass``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #979:
-    ``intent``, ``uvrange``, ``solint``, ``corrdepflags``, ``visnorm``,
-    ``maskcenter``.
     """
     return _call_casa(bandpass, locals())
 

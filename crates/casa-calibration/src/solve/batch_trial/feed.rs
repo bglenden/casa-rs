@@ -76,6 +76,7 @@ fn observe(
         solve_interval: request.solve_interval,
         combine: request.combine,
         channelized: false,
+        polynomial_bandpass: false,
         preaverage_max_span: None,
         robust_seed: false,
         correlation_dependent_flags: false,

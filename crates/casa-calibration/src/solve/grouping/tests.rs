@@ -146,10 +146,16 @@ fn combined_intervals_start_at_the_earliest_row_whatever_the_field_order() {
         .map(|(index, (field, scan, time))| row(index, field, scan, 0, time))
         .collect::<Vec<_>>();
     let buckets = |combine| {
-        bucketed_rows(&rows, GainSolveInterval::Seconds(20.0), combine, false)
-            .into_iter()
-            .map(|(row, base, bucket)| (row.time_seconds, base.field_id, bucket))
-            .collect::<Vec<_>>()
+        bucketed_rows(
+            &rows,
+            GainSolveInterval::Seconds(20.0),
+            combine,
+            false,
+            false,
+        )
+        .into_iter()
+        .map(|(row, base, bucket)| (row.time_seconds, base.field_id, bucket))
+        .collect::<Vec<_>>()
     };
     let combined = buckets(GainSolveCombine {
         scans: true,

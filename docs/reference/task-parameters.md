@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 625
+- Concepts: 626
 - Surfaces: 31 (31 task, 0 session)
 - Surface bindings: 896
 
@@ -716,10 +716,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
 | <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
 | <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
-| <code>solint</code> | <code>parameter.solint@r1</code> | <code>string</code> | <code>"inf"</code>; optional | Solve | Gain solution interval such as inf, int, or 30s |
+| <code>solint</code> | <code>parameter.solint@r2</code> | <code>variant</code> | <code>"inf"</code>; optional | Solve | Gain solution interval specified as inf, int, a time such as 30s, or seconds as a number. |
 | <code>combine</code> | <code>setsolve.combine@r1</code> | <code>string</code> | <code>"scan"</code>; optional | Solve | Data axes a solution interval spans: 'scan', 'field', 'spw', 'obs', comma-separated; empty for none. |
-| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; required when bandtype="BPOLY" | Solve | Reference antenna name or id for solve workflows |
-| <code>minblperant</code> | <code>parameter.minblperant@r1</code> | <code>integer</code> | <code>4</code>; optional | Solve | Minimum unflagged baselines an antenna needs to be solved for |
+| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; optional | Solve | Reference antenna name or id for solve workflows |
+| <code>minblperant</code> | <code>parameter.minblperant@r2</code> | <code>integer</code> | <code>4</code>; optional | Solve | Minimum unflagged baselines an antenna needs to be solved for |
 | <code>minsnr</code> | <code>setsolve.minsnr@r1</code> | <code>float</code> | <code>3.0</code>; optional | Solve | Solutions below this SNR are flagged. |
 | <code>solnorm</code> | <code>parameter.solnorm@r1</code> | <code>bool</code> | <code>false</code>; optional | Solve | Normalize solved amplitudes to unity average amplitude |
 | <code>bandtype</code> | <code>setsolve.bandtype@r1</code> | <code>choice (2 values)</code> | <code>"B"</code>; optional | Solve | Bandpass solution type: channelized 'B' or polynomial 'BPOLY'. |

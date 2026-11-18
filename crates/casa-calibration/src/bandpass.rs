@@ -95,6 +95,15 @@ pub struct BandpassSolveCuts {
     /// The percentage of a window's channels at each edge a `BPOLY` fit
     /// leaves out (`maskedge`).
     pub mask_edge_percent: f32,
+    /// The number of central channels excluded from a polynomial fit.
+    #[serde(default)]
+    pub mask_center_channels: usize,
+    /// Normalize each baseline's input spectrum by its weighted mean.
+    #[serde(default)]
+    pub normalize_visibilities: bool,
+    /// Whether the BPOLY amplitude and phase polynomials are omitted.
+    #[serde(default)]
+    pub omit_polynomial: [bool; 2],
 }
 
 impl BandpassSolveCuts {
@@ -105,6 +114,9 @@ impl BandpassSolveCuts {
         min_snr: 3.0,
         fill_gaps: 0,
         mask_edge_percent: 5.0,
+        mask_center_channels: 0,
+        normalize_visibilities: false,
+        omit_polynomial: [false; 2],
     };
 
     /// Whether `channel` of `channel_count` lies in the edges a `BPOLY` fit
@@ -115,6 +127,14 @@ impl BandpassSolveCuts {
         let fraction = (f64::from(self.mask_edge_percent) / 100.0) as f32;
         let (channel, count) = (channel as f32, channel_count as f32);
         channel < count * fraction || channel > count * (1.0 - fraction)
+    }
+
+    fn masks_polynomial_channel(&self, channel: usize, count: usize) -> bool {
+        let center_count = self.mask_center_channels.min(count) as i64;
+        let center_start = count as i64 / 2 - center_count / 2;
+        let center_end = center_start + center_count;
+        self.masks_edge_channel(channel, count)
+            || (center_start..center_end).contains(&(channel as i64))
     }
 }
 
@@ -310,7 +330,9 @@ pub(crate) fn solve_bandpass(
     mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
-    let rotate_model = request.parang && request.band_type == BandpassType::B;
+    let use_casa_solve = request.band_type == BandpassType::B || request.cuts.is_some();
+    let polynomial_bandpass = request.band_type == BandpassType::BPoly && request.cuts.is_some();
+    let rotate_model = request.parang && use_casa_solve;
     let input_phase = crate::timing::Phase::start("bandpass_select_read_average");
     let context = prepare_calibration_solve(
         ms,
@@ -318,29 +340,23 @@ pub(crate) fn solve_bandpass(
         &request.refant,
         &request.prior_calibration_tables,
         request.parang && !rotate_model,
-        request.band_type == BandpassType::B,
-        match request.band_type {
-            BandpassType::B => crate::solve::grouping::PriorCalibrationMode::Bandpass {
-                share_input_flags: !request.correlation_dependent_flags,
-            },
-            BandpassType::BPoly => crate::solve::grouping::PriorCalibrationMode::Data,
+        use_casa_solve,
+        if use_casa_solve {
+            crate::solve::grouping::PriorCalibrationMode::Bandpass {
+                share_input_flags: !request.correlation_dependent_flags && !polynomial_bandpass,
+            }
+        } else {
+            crate::solve::grouping::PriorCalibrationMode::Data
         },
     );
     let context = match context {
         Ok(context) => context,
         Err(crate::solve::GainSolveError::ResolveRefAnt { .. })
-            if request.band_type == BandpassType::B
-                && matches!(request.refant, RefAntSelector::Expression { .. }) =>
+            if use_casa_solve && matches!(request.refant, RefAntSelector::Expression { .. }) =>
         {
             return skipped_bandpass_report(ms, request);
         }
-        Err(
-            crate::solve::GainSolveError::EmptySelection
-            | crate::solve::GainSolveError::OpenMeasurementSet {
-                source: MsError::VersionError(_) | MsError::InvalidInput(_),
-                ..
-            },
-        ) if request.band_type == BandpassType::B => {
+        Err(error) if use_casa_solve && selection_rejected(&error) => {
             return skipped_bandpass_report(ms, request);
         }
         Err(error) => return Err(error.into()),
@@ -349,7 +365,7 @@ pub(crate) fn solve_bandpass(
     // Preapply already shared the input flags when requested. Flags
     // introduced by a prior remain on the affected correlations.
     let correlation_dependent_flags = request.correlation_dependent_flags
-        || (request.band_type == BandpassType::B && context.preapplied_rows.is_some());
+        || (use_casa_solve && context.preapplied_rows.is_some());
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -368,6 +384,7 @@ pub(crate) fn solve_bandpass(
                 spectral_windows: request.combine.spectral_windows,
             },
             channelized: true,
+            polynomial_bandpass,
             preaverage_max_span: match request.solve_interval {
                 GainSolveInterval::Seconds(seconds) => Some(f64::from(seconds as f32) * 0.999),
                 _ => None,
@@ -382,6 +399,19 @@ pub(crate) fn solve_bandpass(
     }
 
     drop(input_phase);
+    if request.band_type == BandpassType::BPoly
+        && let Some(cuts) = request.cuts
+    {
+        return bpoly::solve_polynomial(
+            ms,
+            request,
+            context,
+            groups.into_values(),
+            &channel_bin_widths,
+            cuts,
+            mode,
+        );
+    }
     let kernel_phase = crate::timing::Phase::start("bandpass_solve");
     let mut solution_rows = Vec::new();
     let mut solve_stats = SolveStatsBuilder::new(
@@ -542,13 +572,7 @@ fn skipped_bandpass_report(
     };
     let (selection_failed, context) = match select(&request.selection) {
         Ok(context) => (false, context),
-        Err(
-            crate::solve::GainSolveError::EmptySelection
-            | crate::solve::GainSolveError::OpenMeasurementSet {
-                source: MsError::VersionError(_) | MsError::InvalidInput(_),
-                ..
-            },
-        ) => (true, select(&MsSelection::default())?),
+        Err(error) if selection_rejected(&error) => (true, select(&MsSelection::default())?),
         Err(error) => return Err(error.into()),
     };
     Ok(BandpassSolveReport {
@@ -557,15 +581,33 @@ fn skipped_bandpass_report(
     })
 }
 
+fn selection_rejected(error: &crate::solve::GainSolveError) -> bool {
+    matches!(
+        error,
+        crate::solve::GainSolveError::EmptySelection
+            | crate::solve::GainSolveError::OpenMeasurementSet {
+                source: MsError::VersionError(_) | MsError::InvalidInput(_),
+                ..
+            }
+    )
+}
+
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
-    crate::solve::validate_smodel(request.smodel, request.band_type == BandpassType::B)?;
+    crate::solve::validate_smodel(
+        request.smodel,
+        request.band_type == BandpassType::B || request.cuts.is_some(),
+    )?;
     crate::solve::validate_solve_interval(request.solve_interval)?;
-    if request.band_type == BandpassType::BPoly && request.frequency_interval.is_some() {
+    if request.band_type == BandpassType::BPoly
+        && request.cuts.is_none()
+        && request.frequency_interval.is_some()
+    {
         return Err(BandpassSolveError::UnsupportedConfiguration {
             reason: "frequency intervals require bandtype='B'".to_string(),
         });
     }
     if request.band_type == BandpassType::BPoly
+        && request.cuts.is_none()
         && matches!(
             request.refant,
             RefAntSelector::Unspecified | RefAntSelector::Expression { .. }
@@ -576,6 +618,7 @@ fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), Bandp
         });
     }
     if matches!(request.band_type, BandpassType::BPoly)
+        && request.cuts.is_none()
         && (request.amplitude_degree > 31 || request.phase_degree > 31)
     {
         return Err(BandpassSolveError::UnsupportedConfiguration {

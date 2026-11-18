@@ -70,6 +70,7 @@ pub(super) fn bucketed_rows(
     solve_interval: GainSolveInterval,
     combine: GainSolveCombine,
     include_autocorrelations: bool,
+    legacy_intervals: bool,
 ) -> Vec<BucketedRow<'_>> {
     let mut keyed = rows
         .iter()
@@ -106,7 +107,7 @@ pub(super) fn bucketed_rows(
             .then(a.row_index.cmp(&b.row_index))
     });
 
-    let mut bucket_starts = BTreeMap::<SolveBaseKey, f64>::new();
+    let mut bucket_starts = BTreeMap::<SolveBaseKey, (f64, u64)>::new();
     keyed
         .into_iter()
         .map(|(row, base_key)| {
@@ -121,15 +122,29 @@ pub(super) fn bucketed_rows(
                     },
                 },
                 GainSolveInterval::Seconds(seconds) => {
-                    // MSIter2 starts its time grid 10 ms before the first
-                    // timestamp and receives solint as a Float.
-                    let start = *bucket_starts
-                        .entry(base_key)
-                        .or_insert(row.time_seconds - 0.01);
-                    let index = ((row.time_seconds - start) / f64::from(seconds as f32))
-                        .floor()
-                        .max(0.0);
-                    SolveBucketKey::Seconds(index as u64)
+                    let (start, number) = bucket_starts.entry(base_key).or_insert((
+                        if legacy_intervals {
+                            row.time_seconds
+                        } else {
+                            row.time_seconds - 0.01
+                        },
+                        0,
+                    ));
+                    let interval = f64::from(seconds as f32);
+                    let elapsed = row.time_seconds - *start;
+                    if legacy_intervals {
+                        // Old MSIter restarts its interval at the first row
+                        // after the previous interval's time limit.
+                        if elapsed >= interval {
+                            *start = row.time_seconds;
+                            *number += 1;
+                        }
+                        SolveBucketKey::Seconds(*number)
+                    } else {
+                        // MSIter2 uses a fixed grid whose origin is 10 ms
+                        // before the first timestamp.
+                        SolveBucketKey::Seconds((elapsed / interval).floor().max(0.0) as u64)
+                    }
                 }
             };
             (row, base_key, bucket_key)
