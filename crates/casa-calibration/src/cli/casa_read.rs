@@ -134,6 +134,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         .split_once(',')
         .unwrap_or((&supplied_interval, ""));
     let combine = combine(task)?;
+    let degrees = [task.integer("degamp")?, task.integer("degphase")?];
     // CASA reads maskedge only for BPOLY.
     let mask_edge_percent = match band_type {
         BandpassType::B => BandpassSolveCuts::CASA_DEFAULTS.mask_edge_percent,
@@ -154,8 +155,8 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         },
         band_type,
         normalize_average_amplitude: task.flag("solnorm")?,
-        amplitude_degree: count(task, "degamp")?,
-        phase_degree: count(task, "degphase")?,
+        amplitude_degree: degrees[0].max(0) as usize,
+        phase_degree: degrees[1].max(0) as usize,
         model_source,
         solve_interval: parse_time_solint(time_interval)?,
         frequency_interval: parse_frequency_solint(frequency_interval)?,
@@ -177,6 +178,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
                 0
             },
             normalize_visibilities: band_type == BandpassType::BPoly && task.flag("visnorm")?,
+            omit_polynomial: degrees.map(|degree| degree == -1),
         }),
         measurement_set,
     })

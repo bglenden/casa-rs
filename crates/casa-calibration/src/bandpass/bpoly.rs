@@ -93,14 +93,21 @@ pub(super) fn solve_polynomial(
         if frequencies.is_empty() {
             continue;
         }
-        let rows = fit::fit_interval(
+        let rows = match fit::fit_interval(
             &group,
             &frequencies,
             &context.available_antennas,
             context.refant_id,
             request,
             cuts,
-        )?;
+        ) {
+            Ok(rows) => rows,
+            Err(error @ BandpassSolveError::FitPolynomial { .. }) => {
+                tracing::warn!("{error}");
+                break;
+            }
+            Err(error) => return Err(error),
+        };
         if !rows.is_empty() {
             channel_count = frequencies
                 .values()

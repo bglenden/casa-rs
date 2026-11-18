@@ -449,6 +449,7 @@ fn bandpass_reads_casas_values() {
             mask_edge_percent: 10.0,
             mask_center_channels: 0,
             normalize_visibilities: false,
+            omit_polynomial: [false; 2],
         })
     );
     // CASA's bandpass combines scans by default, and cuts as CASA does.

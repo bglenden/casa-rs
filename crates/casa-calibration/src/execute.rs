@@ -4487,7 +4487,7 @@ fn sample_bpoly_row(
         row_index,
         COL_POLY_COEFF_PHASE,
     )?;
-    if amp_receptor_count != phase_receptor_count {
+    if amp_coeff_count > 0 && phase_coeff_count > 0 && amp_receptor_count != phase_receptor_count {
         return Err(ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason: format!(
@@ -4495,7 +4495,11 @@ fn sample_bpoly_row(
             ),
         });
     }
-    let receptor_count = amp_receptor_count.max(1);
+    let receptor_count = if amp_coeff_count == 0 {
+        phase_receptor_count
+    } else {
+        amp_receptor_count
+    };
     let amp_coefficients = split_bpoly_coefficients(
         amp_values,
         receptor_count,
@@ -4599,6 +4603,9 @@ fn split_bpoly_coefficients(
                 coefficients.len()
             ),
         });
+    }
+    if coefficients_per_receptor == 0 {
+        return Ok(vec![Vec::new(); receptor_count]);
     }
     Ok(coefficients
         .chunks(coefficients_per_receptor)

@@ -2240,14 +2240,14 @@
       "base_constraints": [
         {
           "kind": "number_range",
-          "min": 0.0
+          "min": -1.0
         }
       ],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Polynomial degree of a BPOLY bandpass's amplitude",
-        "details": "Read only when bandtype is bpoly, as CASA's bandpass degamp.",
+        "details": "Read only when bandtype is bpoly, as CASA's bandpass degamp. Use -1 to omit the polynomial.",
         "examples": [
           "3"
         ]
@@ -2267,14 +2267,14 @@
       "base_constraints": [
         {
           "kind": "number_range",
-          "min": 0.0
+          "min": -1.0
         }
       ],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Polynomial degree of a BPOLY bandpass's phase",
-        "details": "Read only when bandtype is bpoly, as CASA's bandpass degphase.",
+        "details": "Read only when bandtype is bpoly, as CASA's bandpass degphase. Use -1 to omit the polynomial.",
         "examples": [
           "3"
         ]

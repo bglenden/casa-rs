@@ -2,7 +2,6 @@
 //! Fit antenna polynomials to weighted baseline spectra.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::f64::consts::{PI, TAU};
 
 use casa_numerics::invert_symmetric_positive_definite;
 use casa_types::Complex32;
@@ -33,7 +32,14 @@ pub(super) fn fit_interval(
         spw_id: group.spw_id,
         reason: reason.to_string(),
     };
-    let [amp_count, phase_count] = [request.amplitude_degree + 1, request.phase_degree + 1];
+    let degrees = [request.amplitude_degree, request.phase_degree];
+    let [amp_count, phase_count] = std::array::from_fn(|index| {
+        if cuts.omit_polynomial[index] {
+            0
+        } else {
+            degrees[index] + 1
+        }
+    });
     let count = amp_count.max(phase_count);
     let grid = FrequencyGrid::new(frequencies)
         .ok_or_else(|| error("at least two distinct channel frequencies are required"))?;
@@ -118,13 +124,13 @@ pub(super) fn fit_interval(
             .ok_or_else(|| error("amplitude polynomial fit is singular"))?;
         let phases = fit_coefficients(samples, &basis, &active, phase_count, phase_reference)
             .ok_or_else(|| error("phase polynomial fit is singular"))?;
-        for (&index, amplitude) in active.iter().zip(amplitudes.chunks(amp_count)) {
+        for (&index, amplitude) in active.iter().zip(amplitudes.chunks(amp_count.max(1))) {
             rows[index].amp_coefficients[receptor].copy_from_slice(amplitude);
         }
         for (&index, phase) in active
             .iter()
             .filter(|&&index| Some(index) != phase_reference)
-            .zip(phases.chunks(phase_count))
+            .zip(phases.chunks(phase_count.max(1)))
         {
             rows[index].phase_coefficients[receptor].copy_from_slice(phase);
         }
@@ -258,31 +264,30 @@ fn fit_coefficients(
     if size == 0 {
         return Some(Vec::new());
     }
+    let phase = phase_reference.is_some();
+    let signs = [1.0, if phase { -1.0 } else { 1.0 }];
+    let samples = samples
+        .iter()
+        .map(|sample| FitSample {
+            basis: &bases[sample.channel][..count],
+            terms: sample
+                .antennas
+                .map(|antenna| columns.get(&antenna).copied()),
+            weight: sample.weight,
+            observed: if phase {
+                sample.visibility.arg()
+            } else {
+                sample.visibility.norm().ln()
+            },
+        })
+        .collect::<Vec<_>>();
     let mut normal = vec![0.0; size * size];
-    let mut right = vec![0.0; size];
-    let mut phase_history = BTreeMap::new();
-    for sample in samples {
-        let basis = &bases[sample.channel][..count];
-        let signs = [1.0, if phase_reference.is_some() { -1.0 } else { 1.0 }];
-        let terms = sample
-            .antennas
-            .into_iter()
-            .zip(signs)
-            .filter_map(|(antenna, sign)| columns.get(&antenna).map(|&offset| (offset, sign)));
-        let target = if phase_reference.is_some() {
-            let phase = sample.visibility.arg();
-            let previous = phase_history.entry(sample.antennas).or_insert(phase);
-            *previous += (phase - *previous + PI).rem_euclid(TAU) - PI;
-            *previous
-        } else {
-            sample.visibility.norm().ln()
-        };
-        for (left, left_sign) in terms.clone() {
-            for (i, &x) in basis.iter().enumerate() {
+    for sample in &samples {
+        for (left, left_sign) in sample.terms(signs) {
+            for (i, &x) in sample.basis.iter().enumerate() {
                 let weighted = sample.weight * left_sign * x;
-                right[left + i] += weighted * target;
-                for (column, sign) in terms.clone() {
-                    for (j, &y) in basis.iter().enumerate() {
+                for (column, sign) in sample.terms(signs) {
+                    for (j, &y) in sample.basis.iter().enumerate() {
                         normal[(left + i) * size + column + j] += weighted * sign * y;
                     }
                 }
@@ -290,7 +295,57 @@ fn fit_coefficients(
         }
     }
     let inverse = invert_symmetric_positive_definite(&normal, size)?;
-    Some(inverse.chunks(size).map(|row| dot(row, &right)).collect())
+    let mut coefficients = vec![0.0; size];
+    let mut right = vec![0.0; size];
+    // CLIC POLYANT starts phase coefficients at zero and uses the sine
+    // of the baseline residual. Its normal matrix is constant across steps.
+    for _ in 0..if phase { 100 } else { 1 } {
+        right.fill(0.0);
+        for sample in &samples {
+            let residual = if phase {
+                let predicted = sample
+                    .terms(signs)
+                    .map(|(offset, sign)| {
+                        sign * dot(&coefficients[offset..offset + count], sample.basis)
+                    })
+                    .sum::<f64>();
+                (sample.observed - predicted).sin()
+            } else {
+                sample.observed
+            };
+            for (offset, sign) in sample.terms(signs) {
+                for (index, &basis) in sample.basis.iter().enumerate() {
+                    right[offset + index] += sign * sample.weight * basis * residual;
+                }
+            }
+        }
+        let mut update_norm = 0.0;
+        for (coefficient, row) in coefficients.iter_mut().zip(inverse.chunks(size)) {
+            let update = dot(row, &right);
+            *coefficient += update;
+            update_norm += update * update;
+        }
+        if update_norm <= 1e-14 {
+            break;
+        }
+    }
+    Some(coefficients)
+}
+
+struct FitSample<'a> {
+    basis: &'a [f64],
+    terms: [Option<usize>; 2],
+    weight: f64,
+    observed: f64,
+}
+
+impl FitSample<'_> {
+    fn terms(&self, signs: [f64; 2]) -> impl Iterator<Item = (usize, f64)> {
+        self.terms
+            .into_iter()
+            .zip(signs)
+            .filter_map(|(offset, sign)| offset.map(|offset| (offset, sign)))
+    }
 }
 
 fn normalize_output(
@@ -312,8 +367,12 @@ fn normalize_output(
         }
     }
     if count > 0 {
-        amplitude[0] -= 2.0 * (total_amplitude / f64::from(count)).ln();
-        phase[0] -= 2.0 * phasor.arg();
+        if let Some(offset) = amplitude.first_mut() {
+            *offset -= 2.0 * (total_amplitude / f64::from(count)).ln();
+        }
+        if let Some(offset) = phase.first_mut() {
+            *offset -= 2.0 * phasor.arg();
+        }
     }
 }
 

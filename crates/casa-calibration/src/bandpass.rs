@@ -101,6 +101,9 @@ pub struct BandpassSolveCuts {
     /// Normalize each baseline's input spectrum by its weighted mean.
     #[serde(default)]
     pub normalize_visibilities: bool,
+    /// Whether the BPOLY amplitude and phase polynomials are omitted.
+    #[serde(default)]
+    pub omit_polynomial: [bool; 2],
 }
 
 impl BandpassSolveCuts {
@@ -113,6 +116,7 @@ impl BandpassSolveCuts {
         mask_edge_percent: 5.0,
         mask_center_channels: 0,
         normalize_visibilities: false,
+        omit_polynomial: [false; 2],
     };
 
     /// Whether `channel` of `channel_count` lies in the edges a `BPOLY` fit
@@ -352,13 +356,7 @@ pub(crate) fn solve_bandpass(
         {
             return skipped_bandpass_report(ms, request);
         }
-        Err(
-            crate::solve::GainSolveError::EmptySelection
-            | crate::solve::GainSolveError::OpenMeasurementSet {
-                source: MsError::VersionError(_) | MsError::InvalidInput(_),
-                ..
-            },
-        ) if use_casa_solve => {
+        Err(error) if use_casa_solve && selection_rejected(&error) => {
             return skipped_bandpass_report(ms, request);
         }
         Err(error) => return Err(error.into()),
@@ -574,19 +572,24 @@ fn skipped_bandpass_report(
     };
     let (selection_failed, context) = match select(&request.selection) {
         Ok(context) => (false, context),
-        Err(
-            crate::solve::GainSolveError::EmptySelection
-            | crate::solve::GainSolveError::OpenMeasurementSet {
-                source: MsError::VersionError(_) | MsError::InvalidInput(_),
-                ..
-            },
-        ) => (true, select(&MsSelection::default())?),
+        Err(error) if selection_rejected(&error) => (true, select(&MsSelection::default())?),
         Err(error) => return Err(error.into()),
     };
     Ok(BandpassSolveReport {
         selection_failed,
         ..empty_report(request, -1, context.selected_data, SolveStats::default())
     })
+}
+
+fn selection_rejected(error: &crate::solve::GainSolveError) -> bool {
+    matches!(
+        error,
+        crate::solve::GainSolveError::EmptySelection
+            | crate::solve::GainSolveError::OpenMeasurementSet {
+                source: MsError::VersionError(_) | MsError::InvalidInput(_),
+                ..
+            }
+    )
 }
 
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
