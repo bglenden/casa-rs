@@ -32,7 +32,7 @@ use crate::constants::{
 use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
 use crate::solve::grouping::{SolveAccumulator, SolveGroupOptions, build_solve_groups};
-use crate::solve::kernel::{SolveGraphOptions, SolvedGraphs, solve_graphs};
+use crate::solve::kernel::{SolveGraphOptions, SolveStart, SolvedGraphs, solve_graphs};
 use crate::solve::spectral_window_ids;
 use crate::solve::{
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType,
@@ -528,9 +528,13 @@ fn solve_bandpass_group(
                 defer_reference: band_type == BandpassType::B,
                 robustness: None,
             },
-            start.as_ref(),
+            if channel + 1 == channel_count {
+                SolveStart::Guess
+            } else {
+                SolveStart::PreviousChannel(start.as_ref())
+            },
         );
-        if solved.is_some() {
+        if solved.is_some() || band_type == BandpassType::B {
             start.clone_from(&solved);
         }
         solved_channels[channel] = solved;

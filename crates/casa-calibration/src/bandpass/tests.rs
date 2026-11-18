@@ -104,7 +104,7 @@ fn channel_solves_apply_casas_baseline_and_snr_cuts() {
             defer_reference: false,
             robustness: None,
         },
-        None,
+        SolveStart::Guess,
     )
     .expect("solve");
     let snr = &solved.receptors[0].snr;

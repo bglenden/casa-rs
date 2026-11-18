@@ -141,6 +141,33 @@ def frequency_cases(root, source, native):
         folder.mkdir()
         results[label] = compare(folder, dataset, native, False, solint=interval,
                                  interval_count=count, spw=spw, bins=bins)
+    weighted = root/'binned-weights.ms'
+    gapped_data(source, weighted)
+    casa.clearcal(str(weighted), addmodel=True)
+    tool.open(str(weighted), nomodify=False)
+    try:
+        shape = tool.getcol('DATA').shape
+        for column in ('WEIGHT_SPECTRUM', 'SIGMA_SPECTRUM'):
+            if column in tool.colnames():
+                tool.removecols(column)
+            description = tool.getcoldesc('DATA')
+            description.update(valueType='float', dataManagerType='StandardStMan',
+                               dataManagerGroup='StandardStMan', option=0)
+            description.pop('shape', None)
+            tool.addcols({column: description})
+        sigmas = np.broadcast_to(.5 + np.arange(shape[1])[None, :, None]/10
+                                + (np.arange(shape[2]) % 7)[None, None, :]/15, shape)
+        tool.putcol('SIGMA_SPECTRUM', sigmas.astype(np.float32))
+        tool.putcol('WEIGHT_SPECTRUM', np.ones(shape, dtype=np.float32))
+        model = tool.getcol('MODEL_DATA')
+        model[:, 4, ::2] = 0.
+        tool.putcol('MODEL_DATA', model)
+    finally:
+        tool.close()
+    folder = root/'bins-weights-and-model'
+    folder.mkdir()
+    results[folder.name] = compare(folder, weighted, native, False, remaining_flags=[3], s_model=(),
+                                   solint='inf,2ch', spw='0', bins=cases[0][4])
     return results
 
 
