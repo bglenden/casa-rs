@@ -3,7 +3,7 @@
 
 use casa_ms::{ChannelSelection, MeasurementSet};
 use casa_types::Complex32;
-use ndarray::{ArrayD, ArrayView2, Axis, Ix2, IxDyn};
+use ndarray::{ArrayD, ArrayView2, Axis, Ix2, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -186,6 +186,26 @@ pub(super) fn point_visibility([i, q, u, v]: [f32; 4], code: i32, first_code: i3
     }
 }
 
+pub(super) fn corrupt_model(
+    gains: &ArrayD<Complex32>,
+    model: Option<&ArrayD<Complex32>>,
+    rotated_point: Option<&[Complex32]>,
+    correlations: &[i32],
+    stokes: [f32; 4],
+) -> ArrayD<Complex32> {
+    ArrayD::from_shape_fn(gains.raw_dim().f(), |index| {
+        let correlation = index[0];
+        let visibility = if let Some(model) = model {
+            model[&index]
+        } else if let Some(point) = rotated_point {
+            point[correlation]
+        } else {
+            point_visibility(stokes, correlations[correlation], correlations[0])
+        };
+        gains[index] * visibility
+    })
+}
+
 pub(super) fn rotate_model(
     ms: &MeasurementSet,
     row: &SelectedSolveRow,
@@ -234,26 +254,31 @@ pub(super) fn centroid_weight(
     channels: &[usize],
     shared_flags: Option<&[bool]>,
     point: Complex32,
+    channelized: bool,
 ) -> f64 {
-    channels
-        .iter()
-        .map(|&channel| {
-            let flagged = shared_flags.map_or_else(
-                || samples.flags[[correlation, channel]],
-                |flags| flags[channel],
-            );
-            if flagged {
-                0.0
-            } else {
-                let model = samples
-                    .model
-                    .map_or(point, |model| model[[correlation, channel]]);
-                let power = model.norm_sqr();
-                let scale = if power == 0.0 { 1.0 } else { power };
-                f64::from(samples.weights[[correlation, channel]] * scale)
-            }
-        })
-        .sum()
+    let weights = channels.iter().map(|&channel| {
+        let flagged = shared_flags.map_or_else(
+            || samples.flags[[correlation, channel]],
+            |flags| flags[channel],
+        );
+        if flagged {
+            0.0
+        } else {
+            let model = samples
+                .model
+                .map_or(point, |model| model[[correlation, channel]]);
+            let power = model.norm_sqr();
+            let scale = if power == 0.0 { 1.0 } else { power };
+            samples.weights[[correlation, channel]] * scale
+        }
+    });
+    if channelized {
+        // VisEquation::divideCorrByModel replaces each scalar row weight
+        // by the median of the channel weights after model normalization.
+        f64::from(median_with_even_mean(&mut weights.collect::<Vec<_>>()))
+    } else {
+        weights.map(f64::from).sum()
+    }
 }
 
 /// CASA's correlation-independent flags are shared by every receptor.

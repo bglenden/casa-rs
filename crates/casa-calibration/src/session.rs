@@ -17,7 +17,8 @@ use crate::bandpass::{
 use crate::execute::EvaluatedApplyRow;
 use crate::selected_data::SelectedData;
 use crate::solve::grouping::{
-    SelectedSolveRow, all_antenna_ids, collect_selected_rows, load_preapplied_rows, resolve_refants,
+    PriorCalibrationMode, SelectedSolveRow, all_antenna_ids, collect_selected_rows,
+    load_preapplied_rows, resolve_refants,
 };
 use crate::solve::{GainSolveError, GainSolveReport, GainSolveRequest, RefAntSelector, solve_gain};
 
@@ -161,6 +162,7 @@ pub(crate) fn prepare_calibration_solve(
     prior_calibration_tables: &[ApplyCalibrationTableSpec],
     parang: bool,
     full_selection: bool,
+    prior_mode: PriorCalibrationMode,
 ) -> Result<CalibrationSolveContext, GainSolveError> {
     let refants = resolve_refants(measurement_set, refant)?;
     let refant_id = refants.first().copied().unwrap_or(-1);
@@ -182,6 +184,7 @@ pub(crate) fn prepare_calibration_solve(
             selection,
             prior_calibration_tables,
             parang,
+            prior_mode,
         )?,
     })
 }

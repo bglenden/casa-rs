@@ -3,7 +3,7 @@
 //!
 //! This module intentionally implements only a narrow, testable slice:
 //!
-//! - `gaintype=G|T`
+//! - `gaintype=G|T|K|KCROSS`
 //! - `calmode='p|a|ap'`
 //! - `solint='inf'|'int'|<seconds>`
 //! - explicit reference antenna
@@ -15,6 +15,7 @@
 
 #[cfg(test)]
 mod batch_trial;
+mod delay;
 pub(crate) mod grouping;
 pub(crate) mod kernel;
 mod model;
@@ -48,6 +49,11 @@ pub enum GainType {
     G,
     /// Polarization-collapsed scalar complex gains.
     T,
+    /// Per-receptor delay in nanoseconds.
+    K,
+    /// Shared cross-hand delay in nanoseconds.
+    #[serde(rename = "KCROSS")]
+    KCross,
 }
 
 impl GainType {
@@ -55,6 +61,8 @@ impl GainType {
         match self {
             Self::G => "G Jones",
             Self::T => "T Jones",
+            Self::K => "K Jones",
+            Self::KCross => "Kcross Jones",
         }
     }
 
@@ -62,9 +70,13 @@ impl GainType {
     /// for both for T.
     pub(crate) fn polarizations(self) -> usize {
         match self {
-            Self::G => 2,
+            Self::G | Self::K | Self::KCross => 2,
             Self::T => 1,
         }
+    }
+
+    fn is_delay(self) -> bool {
+        matches!(self, Self::K | Self::KCross)
     }
 }
 
@@ -281,6 +293,10 @@ pub enum GainSolveError {
         solve_interval: GainSolveInterval,
     },
 
+    /// A selected delay spectrum cannot form a solution.
+    #[error("delay solve: {0}")]
+    Delay(String),
+
     /// The reference antenna could not be resolved.
     #[error("failed to resolve reference antenna {selector}: {reason}")]
     ResolveRefAnt {
@@ -405,6 +421,9 @@ pub(crate) fn solve_gain_rows(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
 ) -> Result<SolvedGains, GainSolveError> {
+    if request.gain_type.is_delay() {
+        return delay::solve(ms, request);
+    }
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel, true)?;
     } else if request.model_source == GainSolveModelSource::ModelColumn
@@ -436,6 +455,7 @@ pub(crate) fn solve_gain_rows(
         &request.prior_calibration_tables,
         request.parang && !rotate_model,
         true,
+        grouping::PriorCalibrationMode::Data,
     )?;
     let requested_preaverage = request.preaverage_seconds as f32;
     let preaverage = (requested_preaverage > f32::EPSILON && requested_preaverage.is_finite())
