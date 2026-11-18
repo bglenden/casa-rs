@@ -2716,6 +2716,17 @@
         "speedup": 1.0268160666960844
       }
     },
-    "reuse": "59 non-I/O cases retain their exact unchanged implementation and use the complete 57d7ac8e55 benchmark above. CASA baseline and benchmark timing loops are unchanged. Type, binding and clippy evidence is retained for the unchanged componentlist/type/binding implementation; CI checks the incoming main changes."
+    "reuse": "59 non-I/O cases retain their exact unchanged implementation and use the complete 57d7ac8e55 benchmark above. CASA baseline and benchmark timing loops are unchanged. Type, binding and clippy evidence is retained for the unchanged componentlist/type/binding implementation; CI checks the incoming main changes.",
+    "generated_consistency": {
+      "reason": "The main merge left imstat generated task references/wrappers stale against the incoming parameter contract; docs-check proved the inconsistency.",
+      "commands": [
+        "python3 scripts/generate-parameter-reference.py",
+        "python3 scripts/generate-python-parameter-wrappers.py",
+        "just docs-check",
+        "target-1252/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_generated_parameter_wrappers.py crates/casars-python/python/tests/test_parameters.py"
+      ],
+      "result": "..............................                                           [100%]\n30 passed in 0.23s",
+      "scope": "Regenerated files only; no task contract or componentlist runtime change."
+    }
   }
 }

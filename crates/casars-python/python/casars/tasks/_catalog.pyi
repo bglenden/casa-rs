@@ -345,7 +345,7 @@ def imstat(
     append: bool = ...,
     algorithm: str = ...,
     fence: float = ...,
-    center: Literal['mean', 'median', 'zero'] = ...,
+    center: str = ...,
     lside: bool = ...,
     zscore: float = ...,
     maxiter: int = ...,

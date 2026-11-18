@@ -372,7 +372,7 @@ def imstat(
     append: bool = True,
     algorithm: str = 'classic',
     fence: float = -1.0,
-    center: Literal['mean', 'median', 'zero'] = 'mean',
+    center: str = 'mean',
     lside: bool = True,
     zscore: float = -1.0,
     maxiter: int = -1,
@@ -383,9 +383,7 @@ def imstat(
 
     CASA's ``imstat``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #977:
-    ``axes``, ``stokes``, ``listit``, ``verbose``, ``mask``, ``stretch``,
-    ``logfile``, ``append``, ``algorithm``, ``fence``, ``center``,
-    ``lside``, ``zscore``, ``maxiter``, ``clmethod``, ``niter``.
+    ``listit``, ``verbose``, ``mask``, ``stretch``, ``logfile``, ``append``.
     """
     return _call_casa(imstat, locals())
 

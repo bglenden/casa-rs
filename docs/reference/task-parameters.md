@@ -443,7 +443,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>append</code> | <code>parameter.append@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Append to logfile. |
 | <code>algorithm</code> | <code>imstat.algorithm@r1</code> | <code>string</code> | <code>"classic"</code>; optional | Statistics | Statistics algorithm: biweight, chauvenet, classic, fit-half or hinges-fences, minimum match, in any case. |
 | <code>fence</code> | <code>parameter.fence@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Statistics | Outlier fence. |
-| <code>center</code> | <code>parameter.center@r2</code> | <code>choice (3 values)</code> | <code>"mean"</code>; optional | Statistics | Center of the fit-half statistics algorithm: mean, median or zero. |
+| <code>center</code> | <code>parameter.center@r3</code> | <code>string</code> | <code>"mean"</code>; optional | Statistics | Center of the fit-half statistics algorithm: mean, median or zero, by minimum match of three letters for the mean and median and one for zero. |
 | <code>lside</code> | <code>parameter.lside@r1</code> | <code>bool</code> | <code>true</code>; optional | Statistics | Use left side for fit-half. |
 | <code>zscore</code> | <code>parameter.zscore@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Statistics | Z-score cutoff. |
 | <code>maxiter</code> | <code>parameter.maxiter@r1</code> | <code>integer</code> | <code>-1</code>; optional | Statistics | Maximum iterations. |
