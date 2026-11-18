@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA component-list keyword reads from the attached casacore table.
 
-use std::path::Path;
+mod cache;
+pub(super) use cache::{Shared, attach};
+pub(crate) use cache::{clear_locks, flush_pending};
 
-use casa_tables::{Table, TableOptions, TableWriteLock};
+use std::path::Path;
+use std::sync::{Arc, PoisonError};
+
+use casa_tables::{Table, TableOptions};
 use casa_types::{RecordValue, Value};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -11,9 +16,7 @@ use pyo3::types::{PyBytes, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertError, ConvertResult};
-use crate::tools::table::{
-    ComponentKeywordValue, component_keyword_published, define_component_keyword, values,
-};
+use crate::tools::table::{ComponentKeywordValue, define_component_keyword, values};
 
 /// CASA defaults an omitted name to `metadata` and accepts UTF-8 bytes.
 pub(super) fn argument(py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
@@ -50,36 +53,51 @@ fn open(path: &Path) -> ConvertResult<Table> {
 }
 
 /// `hasKeyword` tests the literal top-level field name, even when it has dots.
-pub(super) fn has(path: &Path, name: &str) -> ConvertResult<CasaValue> {
-    let table = open(path)?;
-    Ok(CasaValue::Bool(table.keywords().get(name).is_some()))
+pub(super) fn has(shared: &Arc<Shared>, name: &str) -> ConvertResult<CasaValue> {
+    cache::flush_except(shared)?;
+    let mut cache = shared.cache.lock().unwrap_or_else(PoisonError::into_inner);
+    cache.read(&shared.path, |table| {
+        Ok(CasaValue::Bool(table.keywords().get(name).is_some()))
+    })
 }
 
 /// `getKeyword` resolves dotted names through records as TableProxy does.
-pub(super) fn get(path: &Path, name: &str) -> ConvertResult<CasaValue> {
-    let table = open(path)?;
-    let value = lookup(table.keywords(), name)?;
-    Ok(values::value(value, path))
+pub(super) fn get(shared: &Arc<Shared>, name: &str) -> ConvertResult<CasaValue> {
+    cache::flush_except(shared)?;
+    let mut cache = shared.cache.lock().unwrap_or_else(PoisonError::into_inner);
+    cache.read(&shared.path, |table| {
+        Ok(values::value(lookup(table.keywords(), name)?, &shared.path))
+    })
 }
 
-/// Write only table metadata, reading the latest generation under the lock.
-pub(super) fn put(path: &Path, name: &str, value: ComponentKeywordValue) -> ConvertResult<()> {
-    let table_error = |error: casa_tables::TableError| ConvertError::runtime(error.to_string());
-    let mut lock = TableWriteLock::acquire_to_reread(path, 0).map_err(table_error)?;
-    let mut table = Table::open_metadata_only(TableOptions::new(path)).map_err(table_error)?;
-    let mut keywords = table.keywords().clone();
-    let target = target_name(&keywords, name)?;
-    define_component_keyword(&mut keywords, target, value)?;
-    *table.keywords_mut() = keywords;
-    // Announce even a partially completed metadata write on release.
-    lock.record_write();
-    let saved = table
-        .save_metadata_only(TableOptions::new(path))
-        .map_err(table_error);
-    let released = lock.release().map_err(table_error);
-    // The table may have changed even if saving or publishing failed.
-    component_keyword_published(path);
-    saved.and(released)
+/// Keep dirty keywords in the attached table under its write lock. CASA
+/// likewise writes these at release rather than rewriting every put.
+pub(super) fn put(
+    shared: &Arc<Shared>,
+    name: &str,
+    value: ComponentKeywordValue,
+) -> ConvertResult<()> {
+    cache::flush_except(shared)?;
+    let mut cache = shared.cache.lock().unwrap_or_else(PoisonError::into_inner);
+    cache.begin_write()?;
+    let mut next = cache.table.keywords().clone();
+    let result = target_name(&next, name)
+        .and_then(|target| define_component_keyword(&mut next, target, value));
+    if result.is_ok() {
+        *cache.table.keywords_mut() = next;
+    }
+    if result.is_err() {
+        cache.flush(&shared.path)?;
+    }
+    result
+}
+
+pub(super) fn release(shared: &Arc<Shared>) -> ConvertResult<()> {
+    shared
+        .cache
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .flush(&shared.path)
 }
 
 /// TableProxy uses a generated name for each empty-name write. A dotted

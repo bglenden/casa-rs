@@ -64,6 +64,13 @@ use write::InfoUpdate;
 /// A table keyword value prepared while Python's GIL is held.
 pub(crate) struct ComponentKeywordValue(Incoming);
 
+/// Per-table metadata notification shared by Python table and component tools.
+pub(crate) fn component_keyword_epoch(
+    path: &std::path::Path,
+) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+    registry::keyword_epoch(path)
+}
+
 /// Notify already-open table tools of a component-list metadata write.
 pub(crate) fn component_keyword_published(path: &std::path::Path) {
     registry::keyword_published(path);
@@ -897,7 +904,11 @@ impl PyTableTool {
     /// Give up the locks an automatic locking mode keeps.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn clearlocks(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |state, _| state.clearlocks())
+        self.call(py, |state, _| {
+            super::componentlist::clear_keyword_locks()
+                .map_err(|e| Fail::Runtime(e.to_string()))?;
+            state.clearlocks()
+        })
     }
 
     /// Copy rows into another table, given by name.

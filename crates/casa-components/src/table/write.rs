@@ -3,7 +3,7 @@
 //! new table is staged and published complete, and an existing one is
 //! rewritten in place under its write lock (ADR-0008).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -32,11 +32,12 @@ use crate::list::ComponentList;
 pub(crate) fn write_component_list(
     list: &ComponentList,
     path: &Path,
+    spectral_records: &BTreeMap<usize, RecordValue>,
 ) -> Result<(), ComponentListError> {
     if path.exists() {
         return Err(ComponentListError::Exists(path.to_path_buf()));
     }
-    let staging = staged(list, path)?;
+    let staging = staged(list, path, spectral_records)?;
     publish(&staging, path)
 }
 
@@ -49,9 +50,10 @@ pub(crate) fn write_component_list(
 pub(crate) fn rewrite_component_list(
     list: &ComponentList,
     path: &Path,
+    spectral_records: &BTreeMap<usize, RecordValue>,
 ) -> Result<(), ComponentListError> {
     if !path.exists() {
-        return write_component_list(list, path);
+        return write_component_list(list, path, spectral_records);
     }
     let table_error = |source| ComponentListError::Table {
         path: path.to_path_buf(),
@@ -59,7 +61,7 @@ pub(crate) fn rewrite_component_list(
     };
     // Built first, so that a component CASA could not write is refused
     // before the table is locked or touched.
-    let mut table = build_table(list, path)?;
+    let mut table = build_table(list, path, spectral_records)?;
     let mut lock = lock_existing(path).map_err(table_error)?;
     // Read the current keyword record only after acquiring the write lock:
     // another writer may have updated it since this list was opened. CASA's
@@ -85,8 +87,12 @@ fn lock_existing(path: &Path) -> Result<TableWriteLock, TableError> {
 }
 
 /// `list` built and saved as a table in a staging directory beside `path`.
-fn staged(list: &ComponentList, path: &Path) -> Result<PathBuf, ComponentListError> {
-    let table = build_table(list, path)?;
+fn staged(
+    list: &ComponentList,
+    path: &Path,
+    spectral_records: &BTreeMap<usize, RecordValue>,
+) -> Result<PathBuf, ComponentListError> {
+    let table = build_table(list, path, spectral_records)?;
     let staging = prepare_staging(path)?;
     let saved = save(&table, &staging, has_limb_darkened_disk(list));
     if let Err(source) = saved {
@@ -108,7 +114,11 @@ fn has_limb_darkened_disk(list: &ComponentList) -> bool {
 
 /// The in-memory table: `createTable`'s description, keywords and table
 /// info, and one row per component as `writeTable` fills it.
-fn build_table(list: &ComponentList, path: &Path) -> Result<Table, ComponentListError> {
+fn build_table(
+    list: &ComponentList,
+    path: &Path,
+    spectral_records: &BTreeMap<usize, RecordValue>,
+) -> Result<Table, ComponentListError> {
     let table_error = |source| ComponentListError::Table {
         path: path.to_path_buf(),
         source,
@@ -125,13 +135,16 @@ fn build_table(list: &ComponentList, path: &Path) -> Result<Table, ComponentList
     });
     write_measure_keywords(&mut table).map_err(table_error)?;
     for (index, component) in list.iter().enumerate() {
-        let row = component_row(component, optional_parameters).map_err(|source| {
+        let mut row = component_row(component, optional_parameters).map_err(|source| {
             ComponentListError::Unwritable {
                 path: path.to_path_buf(),
                 index,
                 source,
             }
         })?;
+        if let Some(record) = spectral_records.get(&index) {
+            row.upsert(SPECTRAL_RECORD, Value::Record(record.clone()));
+        }
         table.add_row(row).map_err(table_error)?;
     }
     Ok(table)

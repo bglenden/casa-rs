@@ -323,3 +323,39 @@ pub fn tos(value: &Quantity, precision: i64) -> String {
 #[cfg(test)]
 #[path = "casacore_tests.rs"]
 mod tests;
+
+/// The speed of light, m/s (casacore's `QC::c`).
+const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
+/// Planck's constant, J s, as casacore's `QC::h` gives it (the 1986 CODATA
+/// value).
+const PLANCK_J_S: f64 = 6.626_075_5e-34;
+
+/// Convert a frequency, period, angular rate, wavelength, wavenumber, energy
+/// or momentum to Hz using casacore’s `MVFrequency::makeF` conventions.
+pub fn frequency_hz(quantity: &Quantity) -> Option<f64> {
+    let unit = quantity.unit().val();
+    let (value, factor) = (quantity.value(), unit.factor);
+    let basis = UnitDim::basis;
+    let time = basis(Dimension::Time);
+    let length = basis(Dimension::Length);
+    let energy = basis(Dimension::Mass) * length * length / time / time;
+    let momentum = basis(Dimension::Mass) * length;
+    let dim = unit.dim;
+    if dim == time {
+        Some(1.0 / factor / value)
+    } else if dim == UnitDim::NODIM / time {
+        Some(value * factor)
+    } else if dim == basis(Dimension::Angle) / time {
+        Some(value * (factor / std::f64::consts::PI / 2.0))
+    } else if dim == length {
+        Some(SPEED_OF_LIGHT_M_S / factor / value)
+    } else if dim == UnitDim::NODIM / length {
+        Some(value * (SPEED_OF_LIGHT_M_S * factor / std::f64::consts::PI / 2.0))
+    } else if dim == energy {
+        Some(value * (factor / PLANCK_J_S))
+    } else if dim == momentum {
+        Some(value * (factor * SPEED_OF_LIGHT_M_S / PLANCK_J_S))
+    } else {
+        None
+    }
+}

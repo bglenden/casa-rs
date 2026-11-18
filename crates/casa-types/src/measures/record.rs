@@ -53,6 +53,8 @@ fn quantity_record(value: f64, unit: &str) -> RecordValue {
 fn extract_quantity_value(rec: &RecordValue) -> Result<f64, MeasureError> {
     match rec.get("value") {
         Some(Value::Scalar(ScalarValue::Float64(v))) => Ok(*v),
+        Some(Value::Scalar(ScalarValue::Float32(v))) => Ok(f64::from(*v)),
+        Some(Value::Scalar(ScalarValue::Int32(v))) => Ok(f64::from(*v)),
         _ => Err(MeasureError::InvalidRecord {
             reason: "quantity sub-record missing 'value' field".to_owned(),
         }),
@@ -175,9 +177,9 @@ pub fn position_from_record(rec: &RecordValue) -> Result<MPosition, MeasureError
     let refer: PositionRef = refer_str.parse()?;
 
     let m0 = extract_sub_record(rec, "m0")?;
-    let lon = extract_quantity_value(m0)?;
+    let lon = angular_quantity(m0)?;
     let m1 = extract_sub_record(rec, "m1")?;
-    let lat = extract_quantity_value(m1)?;
+    let lat = angular_quantity(m1)?;
     let m2 = extract_sub_record(rec, "m2")?;
     let radius = extract_quantity_value(m2)?;
 
@@ -226,7 +228,9 @@ pub fn direction_to_record(dir: &MDirection) -> RecordValue {
     ])
 }
 
-/// Deserializes an [`MDirection`] from a [`RecordValue`] in C++ `MeasureHolder` format.
+/// Deserialize a direction, resolving units and recursively adding any offset
+/// in its parent frame. Frame-dependent offset conversions require a frame and
+/// return an error here rather than dropping the offset.
 pub fn direction_from_record(rec: &RecordValue) -> Result<MDirection, MeasureError> {
     let type_str = extract_string(rec, "type")?;
     if type_str != "direction" {
@@ -239,11 +243,26 @@ pub fn direction_from_record(rec: &RecordValue) -> Result<MDirection, MeasureErr
     let refer: DirectionRef = refer_str.parse()?;
 
     let m0 = extract_sub_record(rec, "m0")?;
-    let lon = extract_quantity_value(m0)?;
+    let lon = angular_quantity(m0)?;
     let m1 = extract_sub_record(rec, "m1")?;
-    let lat = extract_quantity_value(m1)?;
+    let lat = angular_quantity(m1)?;
 
-    Ok(MDirection::from_angles(lon, lat, refer))
+    let direction = MDirection::from_angles(lon, lat, refer);
+    if let Some(offset) = rec.get("offset") {
+        let Value::Record(offset) = offset else {
+            return Err(MeasureError::InvalidRecord {
+                reason: "direction offset must be a record".into(),
+            });
+        };
+        let offset = direction_from_record(offset)?.convert_to(refer, &super::MeasFrame::new())?;
+        let a = direction.cosines();
+        let b = offset.cosines();
+        return Ok(MDirection::from_cosines(
+            std::array::from_fn(|i| a[i] + b[i]),
+            refer,
+        ));
+    }
+    Ok(direction)
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +286,8 @@ pub fn frequency_to_record(freq: &MFrequency) -> RecordValue {
     ])
 }
 
-/// Deserializes an [`MFrequency`] from a [`RecordValue`] in C++ `MeasureHolder` format.
+/// Deserialize a frequency-like quantity and recursively add any offset in
+/// its parent frame. Conversions requiring an unavailable frame return an error.
 pub fn frequency_from_record(rec: &RecordValue) -> Result<MFrequency, MeasureError> {
     let type_str = extract_string(rec, "type")?;
     if type_str != "frequency" {
@@ -280,8 +300,21 @@ pub fn frequency_from_record(rec: &RecordValue) -> Result<MFrequency, MeasureErr
     let refer: FrequencyRef = refer_str.parse()?;
 
     let m0 = extract_sub_record(rec, "m0")?;
-    let hz = extract_quantity_value(m0)?;
-
+    let mut hz = crate::quanta::casacore::frequency_hz(&scalar_quantity(m0)?).ok_or_else(|| {
+        MeasureError::InvalidRecord {
+            reason: "frequency quantity has incompatible units".into(),
+        }
+    })?;
+    if let Some(offset) = rec.get("offset") {
+        let Value::Record(offset) = offset else {
+            return Err(MeasureError::InvalidRecord {
+                reason: "frequency offset must be a record".into(),
+            });
+        };
+        hz += frequency_from_record(offset)?
+            .convert_to(refer, &super::MeasFrame::new())?
+            .hz();
+    }
     Ok(MFrequency::new(hz, refer))
 }
 
@@ -363,8 +396,51 @@ pub fn radial_velocity_from_record(rec: &RecordValue) -> Result<MRadialVelocity,
     Ok(MRadialVelocity::new(ms, refer))
 }
 
+fn scalar_quantity(record: &RecordValue) -> Result<crate::quanta::Quantity, MeasureError> {
+    crate::quanta::Quantity::new(
+        extract_quantity_value(record)?,
+        &extract_string(record, "unit")?,
+    )
+    .map_err(|error| MeasureError::InvalidRecord {
+        reason: error.to_string(),
+    })
+}
+
+fn angular_quantity(record: &RecordValue) -> Result<f64, MeasureError> {
+    scalar_quantity(record)?
+        .get_value_in(&crate::quanta::Unit::new("rad").expect("rad"))
+        .map_err(|error| MeasureError::InvalidRecord {
+            reason: error.to_string(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn direction_record_converts_literal_degrees_and_offsets() {
+        use super::*;
+        let literal = |lon, lat| {
+            RecordValue::new(vec![
+                RecordField::new(
+                    "type",
+                    Value::Scalar(ScalarValue::String("direction".into())),
+                ),
+                RecordField::new("refer", Value::Scalar(ScalarValue::String("J2000".into()))),
+                RecordField::new("m0", Value::Record(quantity_record(lon, "deg"))),
+                RecordField::new("m1", Value::Record(quantity_record(lat, "deg"))),
+            ])
+        };
+        let mut record = literal(10.0, 20.0);
+        let direction = direction_from_record(&record).unwrap();
+        assert!((direction.longitude_rad() - 10_f64.to_radians()).abs() < 1e-14);
+        assert!((direction.latitude_rad() - 20_f64.to_radians()).abs() < 1e-14);
+        record.push(RecordField::new("offset", Value::Record(literal(1.0, 2.0))));
+        let direction = direction_from_record(&record).unwrap();
+        // CASA 6.7.6.14: normalize the sum of the two unit vectors.
+        assert!((direction.longitude_rad() - 0.09357013859716576).abs() < 1e-14);
+        assert!((direction.latitude_rad() - 0.19256478004309824).abs() < 1e-14);
+    }
     use super::*;
 
     #[test]

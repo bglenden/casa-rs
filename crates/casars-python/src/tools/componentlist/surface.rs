@@ -14,7 +14,7 @@ use crate::tools::surface::{
 use CasaDefault::{Bool, Empty, EmptyRecord, Floats, Int, Ints, Required, Text};
 use Kind as K;
 use Returns as R;
-use Status::{Implemented as Yes, NotYetImplemented as No};
+use Status::Implemented as Yes;
 
 const WHICH: Parameter = param("which", K::Int, Required);
 const WHICH_ALL: Parameter = param("which", K::Ints, Ints(&[-1]));
@@ -36,7 +36,7 @@ const METHODS: &[Method] = &[
             param("iknow", K::Bool, Bool(true)),
         ],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "addcomponent",
@@ -136,7 +136,7 @@ const METHODS: &[Method] = &[
         "fromrecord",
         &[param("record", K::Record, EmptyRecord)],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "getcomponent",
@@ -367,10 +367,15 @@ const METHODS: &[Method] = &[
         "sort",
         &[param("criteria", K::Text, Text("Flux")), LOG],
         R::Bool,
-        No,
+        Yes,
     ),
     of_one("spectrumtype", R::Text, Yes),
-    method("summarize", &[param("which", K::Int, Int(-1))], R::Bool, No),
+    method(
+        "summarize",
+        &[param("which", K::Int, Int(-1))],
+        R::Bool,
+        Yes,
+    ),
     method("torecord", &[], R::Record, Yes),
 ];
 

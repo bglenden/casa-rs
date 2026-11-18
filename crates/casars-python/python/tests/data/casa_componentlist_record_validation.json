@@ -1,0 +1,1770 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "name": "validation_0_shape.majoraxis",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "value": 0,
+            "unit": "arcsec"
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "crash": {
+        "returncode": -6,
+        "diagnostic": "libc++abi: terminating due to uncaught exception of type casacore::AipsError: (/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/components/ComponentModels/GaussianShape.cc : 101) Failed Assertion: ok()"
+      }
+    },
+    {
+      "name": "validation_1_shape.majoraxis",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "value": -1.0,
+            "unit": "arcsec"
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "crash": {
+        "returncode": -6,
+        "diagnostic": "libc++abi: terminating due to uncaught exception of type casacore::AipsError: (/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/components/ComponentModels/GaussianShape.cc : 101) Failed Assertion: ok()"
+      }
+    },
+    {
+      "name": "validation_2_shape.minoraxis",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "value": 9.0,
+            "unit": "arcsec"
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "crash": {
+        "returncode": -6,
+        "diagnostic": "libc++abi: terminating due to uncaught exception of type casacore::AipsError: (/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/components/ComponentModels/GaussianShape.cc : 101) Failed Assertion: ok()"
+      }
+    },
+    {
+      "name": "validation_3_shape.majoraxiserror",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "value": -1.0,
+            "unit": "arcsec"
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "2026-11-18 19:52:03\tSEVERE\tTwoSidedShape::setErrors(...)\tThe errors must be non-negative angular quantities."
+      }
+    },
+    {
+      "name": "validation_4_shape.positionangle",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "value": 500.0,
+            "unit": "deg"
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "crash": {
+        "returncode": -6,
+        "diagnostic": "libc++abi: terminating due to uncaught exception of type casacore::AipsError: (/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/components/ComponentModels/GaussianShape.cc : 101) Failed Assertion: ok()"
+      }
+    },
+    {
+      "name": "validation_5_shape.direction.error",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": 3,
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'error' field must be a record\nProblem parsing the 'shape' field\n"
+      }
+    },
+    {
+      "name": "validation_6_shape.direction.error.longitude",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "value": -1.0,
+                "unit": "arcsec"
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: The errors must be non-negative angular quantities.\n... thrown by void casa::ComponentShape::setRefDirectionError(const Quantum<Double> &, const Quantum<Double> &) at File: /Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/components/ComponentModels/ComponentShape.cc, line: 123"
+      }
+    },
+    {
+      "name": "validation_7_shape.direction.error.longitude",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "value": 1,
+                "unit": "arcsec"
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "arcsec",
+                "value": 1.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "validation_8_shape.direction.type",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "frequency"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Illegal quantity in MeasureHolder::fromRecord\nCould not parse the reference direction\nProblem parsing the 'shape' field\n"
+      }
+    },
+    {
+      "name": "validation_9_spectrum.frequency",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {},
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Illegal Measure record in MeasureHolder::fromRecord\nCould not parse the reference frequency\n"
+      }
+    },
+    {
+      "name": "validation_10_spectrum.frequency.m0",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {},
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Illegal Quantum record in QuantumHolder::fromRecord\nCould not parse the reference frequency\n"
+      }
+    },
+    {
+      "name": "validation_11_spectrum.frequency.m0",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "value": 1.0,
+              "unit": "m"
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 0.29979245800000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "validation_12_spectrum.frequency.type",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "direction"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Illegal quantity in MeasureHolder::fromRecord\nCould not parse the reference frequency\n"
+      }
+    },
+    {
+      "name": "validation_13_flux.unit",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "invalidFluxUnit",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'invalidFluxUnit'"
+      }
+    },
+    {
+      "name": "validation_14_shape.majoraxis",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": "1invalidAngleUnit",
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error in QuantumHolder::fromString with input string \"1invalidAngleUnit\": Illegal input units or format\nProblem parsing the 'majoraxis' string\nShape not changed\nProblem parsing the 'shape' field\n"
+      }
+    },
+    {
+      "name": "validation_15_label",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": [
+          "one"
+        ],
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'label' field must be a string"
+      }
+    },
+    {
+      "name": "validation_16_optionalParameters",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        },
+        "optionalParameters": [
+          1
+        ]
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'optionalParameters' field must be a Double Array"
+      }
+    },
+    {
+      "name": "validation_17_optionalParameters",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        },
+        "optionalParameters": [
+          1.0
+        ]
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "optionalParameters": [
+          1.0
+        ],
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    }
+  ]
+}

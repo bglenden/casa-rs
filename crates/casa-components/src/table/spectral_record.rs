@@ -193,6 +193,12 @@ pub(crate) fn apply_spectral_record(
                     tabular.stokes_flux().to_vec(),
                 )?,
             };
+            if let (Some(max), Some(min)) = (
+                record.get("maxFreq").and_then(scalar_real),
+                record.get("minFreq").and_then(scalar_real),
+            ) {
+                tabular.set_record_range_hz(max, min);
+            }
         }
         SpectralKind::PowerLogPolynomial(polynomial) => {
             let Some(coefficients) = record.get("coeffs").and_then(real_array) else {

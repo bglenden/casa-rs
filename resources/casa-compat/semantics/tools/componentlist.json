@@ -2,15 +2,16 @@
  "schema_version": 1,
  "tool": "componentlist",
  "casa_version": "6.7.6.14",
- "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "audit_revision": "69aa2b7091d025b82edc539b51a17535e075ae0e",
  "methods": {
   "add": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Imports one CASA component record with typed defaults, diagnostics, scalar/complex flux, shapes including limb-darkened disks, spectral models and reference offsets. Invalid Gaussian constructor inputs raise safely instead of aborting CASA.",
    "evidence": [
     "signature",
-    "refusals"
+    "record-import-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "addcomponent": {
@@ -19,16 +20,18 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "asciitocomponentlist": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Matches CASA's placeholder: validates arguments, warns and returns zero without reading a file, creating a table or changing the list. Cyclic records are handled safely.",
    "evidence": [
     "signature",
-    "ascii-placeholder-casa"
+    "ascii-placeholder-casa",
+    "full-cl-release"
    ]
   },
   "close": {
@@ -38,25 +41,30 @@
     "signature",
     "casa-values",
     "table-fixtures",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "concatenate": {
-   "status": "Partial",
-   "issue": 1053,
-   "scope": "Appends selected components from readable component-list tables, preserving the destination and requested rows. Record input is not yet implemented. Corrects CASA wrong-row and failed-index mutations.",
+   "status": "Implemented",
+   "scope": "Appends selected rows from a component table or list record, preserving record units and reference offsets. Follows CASA\u2019s empty-list, invalid-index and partial-import behavior.",
    "evidence": [
     "signature",
-    "concatenate-casa"
+    "record-import-casa",
+    "record-offset-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "convertfluxpol": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Converts complex flux values between Stokes, linear and circular bases for one or all components, preserving units and stored error values. As in CASA, warns that unchanged nonzero errors may not describe the new basis. Rejects empty-list and failed-index cases before unsafe mutation.",
    "evidence": [
     "signature",
-    "convertfluxpol-casa"
+    "convertfluxpol-casa",
+    "full-cl-release"
    ]
   },
   "convertfluxunit": {
@@ -64,34 +72,40 @@
    "scope": "Converts one or all component fluxes and errors to conforming Jy units, retaining complex values. Rejects nonconforming sources atomically and raises instead of crashing on an empty list.",
    "evidence": [
     "signature",
-    "convertfluxunit-casa"
+    "convertfluxunit-casa",
+    "full-cl-release"
    ]
   },
   "convertfrequnit": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Changes one component spectrum record frequency unit, preserving its physical reference frequency, frame and independent error. Table reopen resets the record unit to GHz. Non-frequency targets are rejected before mutation.",
    "evidence": [
     "signature",
-    "convertfrequnit-casa"
+    "convertfrequnit-casa",
+    "full-cl-release"
    ]
   },
   "convertrefdir": {
-   "status": "Partial",
-   "issue": 1053,
-   "scope": "Converts one component direction using the shared measure model and preserves direction errors, selection and table metadata. Unsupported B1950_VLA, BMEAN, BTRUE and planetary or comet references are refused; conversions requiring a frame fail without CASA's epoch or position.",
+   "status": "Implemented",
+   "scope": "Converts the full CASA reference-label inventory and resolves input offsets, preserving direction errors and table metadata. Planetary/comet inputs needing an absent epoch or comet frame fail as CASA does; target dynamical labels use the J2000 value as CASA does.",
    "evidence": [
     "signature",
-    "convertrefdir-casa"
+    "convertrefdir-casa",
+    "direction-models-casa",
+    "record-offset-casa",
+    "full-cl-release"
    ]
   },
   "convertshape": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Matches CASA's placeholder: validates arguments, warns and returns False without changing shape units.",
    "evidence": [
     "signature",
-    "convertshape-casa"
+    "convertshape-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "deselect": {
@@ -99,7 +113,9 @@
    "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176).",
    "evidence": [
     "signature",
-    "selection-casa"
+    "selection-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "done": {
@@ -108,25 +124,31 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "edit": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Matches CASA's placeholder: validates arguments, warns and returns False without editing components.",
    "evidence": [
     "signature",
-    "edit-casa"
+    "edit-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "fromrecord": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Imports a list record, releases and writes an attached previous list, and preserves CASA\u2019s decoded prefix on failure. Handles defaults, spectral models and nested reference offsets.",
    "evidence": [
     "signature",
-    "refusals"
+    "record-import-casa",
+    "record-offset-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "getcomponent": {
@@ -135,7 +157,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "getfluxerror": {
@@ -143,7 +166,8 @@
    "scope": "Returns the real parts of the four stored component flux errors, with CASA index handling.",
    "evidence": [
     "signature",
-    "fluxerror-casa"
+    "fluxerror-casa",
+    "full-cl-release"
    ]
   },
   "getfluxpol": {
@@ -151,7 +175,9 @@
    "scope": "Matches CASA 6.7.6.14's unimplemented placeholder: warns and returns an empty string; the component polarization is not exposed.",
    "evidence": [
     "signature",
-    "fluxpol-placeholder-casa"
+    "fluxpol-placeholder-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "getfluxunit": {
@@ -160,7 +186,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "getfluxvalue": {
@@ -169,7 +196,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "getfreq": {
@@ -177,7 +205,9 @@
    "scope": "Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.",
    "evidence": [
     "signature",
-    "frequency-placeholders-casa"
+    "frequency-placeholders-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "getfreqframe": {
@@ -185,7 +215,9 @@
    "scope": "Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.",
    "evidence": [
     "signature",
-    "frequency-placeholders-casa"
+    "frequency-placeholders-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "getfrequnit": {
@@ -193,7 +225,9 @@
    "scope": "Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.",
    "evidence": [
     "signature",
-    "frequency-placeholders-casa"
+    "frequency-placeholders-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "getfreqvalue": {
@@ -201,16 +235,21 @@
    "scope": "Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.",
    "evidence": [
     "signature",
-    "frequency-placeholders-casa"
+    "frequency-placeholders-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "getkeyword": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Reads a table keyword from the attached component list, including dotted paths through nested records; preserves CASA scalar and array result types.",
    "evidence": [
     "signature",
-    "keyword-reads-casa"
+    "keyword-reads-casa",
+    "keyword-cache-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "getlabel": {
@@ -219,7 +258,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "getrefdir": {
@@ -228,7 +268,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "getrefdirdec": {
@@ -237,7 +278,9 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "getrefdirframe": {
@@ -246,7 +289,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "getrefdirra": {
@@ -255,7 +299,9 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "getshape": {
@@ -263,7 +309,8 @@
    "scope": "Returns CASA shape axes and errors, preserving supplied axis units in memory and table units after reopening; point shapes return an empty record.",
    "evidence": [
     "signature",
-    "getshape-casa"
+    "getshape-casa",
+    "full-cl-release"
    ]
   },
   "getspectrum": {
@@ -272,16 +319,21 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "haskeyword": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Tests whether the attached component list has a literal top-level table keyword; dotted names are not traversed.",
    "evidence": [
     "signature",
-    "keyword-reads-casa"
+    "keyword-reads-casa",
+    "keyword-cache-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "indices": {
@@ -289,7 +341,9 @@
    "scope": "Matches CASA's placeholder: warns and returns an empty int64 array.",
    "evidence": [
     "signature",
-    "indices-casa"
+    "indices-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "iscomponentlist": {
@@ -297,7 +351,9 @@
    "scope": "CASA placeholder logs a warning and returns False; cyclic arguments are handled safely.",
    "evidence": [
     "signature",
-    "iscomponentlist-casa"
+    "iscomponentlist-casa",
+    "logging-retention",
+    "full-cl-release"
    ]
   },
   "isphysical": {
@@ -305,7 +361,8 @@
    "scope": "Checks selected components using CASA Stokes physicality; an explicit empty index list returns true, and selecting all on an empty list raises an owner-approved error rather than exiting.",
    "evidence": [
     "signature",
-    "isphysical-casa"
+    "isphysical-casa",
+    "full-cl-release"
    ]
   },
   "length": {
@@ -314,7 +371,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "open": {
@@ -324,7 +382,8 @@
     "signature",
     "casa-values",
     "table-fixtures",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "purge": {
@@ -332,16 +391,20 @@
    "scope": "Discards the recovery bin and returns CASA's false result.",
    "evidence": [
     "signature",
-    "removal-casa"
+    "removal-casa",
+    "full-cl-release"
    ]
   },
   "putkeyword": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Writes typed table keywords immediately, including dotted paths through existing records and read-only reopen; preserves other table data and published concurrent writes. Oversized integer values are preserved or refused instead of silently truncated.",
    "evidence": [
     "signature",
-    "keyword-writes-casa"
+    "keyword-writes-casa",
+    "keyword-cache-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "recover": {
@@ -349,7 +412,9 @@
    "scope": "Appends removed components in reverse removal order, preserving their values and in-memory shape units; returns CASA's false result.",
    "evidence": [
     "signature",
-    "removal-casa"
+    "removal-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "remove": {
@@ -357,26 +422,32 @@
    "scope": "Removes validated component indices and keeps a recovery bin; repeated indices remove once to preserve other components, and remove-all on an empty list raises instead of crashing.",
    "evidence": [
     "signature",
-    "removal-casa"
+    "removal-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "rename": {
    "status": "Implemented",
-   "scope": "Names the table the list is written to, writing at once.",
+   "scope": "Names or moves the attached component table. An empty name resolves to the current directory and raises already-exists, as CASA does.",
    "evidence": [
     "signature",
     "casa-values",
     "table-fixtures",
-    "casa-on-casa"
+    "casa-on-casa",
+    "rename-empty-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "replace": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Matches CASA's placeholder: validates arguments, warns and returns False without replacing components. Cyclic records are safe; cyclic or non-finite index inputs raise instead of crashing.",
    "evidence": [
     "signature",
-    "replace-casa"
+    "replace-casa",
+    "full-cl-release"
    ]
   },
   "sample": {
@@ -384,7 +455,8 @@
    "scope": "Matches CASA's placeholder: warns and returns an empty float64 array without numerical sampling. Cyclic arguments return safely rather than crashing.",
    "evidence": [
     "signature",
-    "sample-casa"
+    "sample-casa",
+    "full-cl-release"
    ]
   },
   "select": {
@@ -392,7 +464,9 @@
    "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176).",
    "evidence": [
     "signature",
-    "selection-casa"
+    "selection-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "selected": {
@@ -400,35 +474,40 @@
    "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176).",
    "evidence": [
     "signature",
-    "selection-casa"
+    "selection-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "setflux": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Sets scalar or four-component Stokes flux and errors for one or all components, including NumPy arrays in column-major order. Preserves finite double precision and a singleton error; rejects non-finite values, nonzero imaginary parts, and unsafe index conversions before mutation.",
    "evidence": [
     "signature",
-    "setflux-casa"
+    "setflux-casa",
+    "full-cl-release"
    ]
   },
   "setfreq": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Changes one component reference frequency and record unit while preserving its frame and independent frequency error. Non-frequency units are rejected before mutation.",
    "evidence": [
     "signature",
-    "setfreq-casa"
+    "setfreq-casa",
+    "full-cl-release"
    ]
   },
   "setfreqframe": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Relabels one component frequency in any of the nine physical frames or Undefined without converting the value; accepts CASA frame prefixes and preserves the record unit and error.",
    "evidence": [
     "signature",
     "setfreqframe-casa",
-    "undefined-frequency-casa"
+    "undefined-frequency-casa",
+    "full-cl-release"
    ]
   },
   "setlabel": {
@@ -436,52 +515,60 @@
    "scope": "Replaces one component label and preserves the change on writable table release; read-only changes remain in memory. Rejects invalid UTF-8 byte strings to avoid an unreadable label.",
    "evidence": [
     "signature",
-    "setlabel-casa"
+    "setlabel-casa",
+    "full-cl-release"
    ]
   },
   "setrefdir": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Sets one or all component direction coordinates while preserving each reference frame and other component and table values. Rejects non-finite coordinates, cyclic records, empty-list all-indices and failed index conversions before unsafe mutation.",
    "evidence": [
     "signature",
-    "setrefdir-casa"
+    "setrefdir-casa",
+    "full-cl-release"
    ]
   },
   "setrefdirframe": {
-   "status": "Partial",
-   "issue": 1053,
-   "scope": "Relabels one component reference direction without converting its coordinates; accepts CASA frame prefixes and preserves component values and table metadata. Recognized frames absent from the shared direction model (B1950_VLA, BMEAN, BTRUE and planetary or comet references) raise NotImplementedError. Invalid names are rejected before mutation.",
+   "status": "Implemented",
+   "scope": "Relabels the complete CASA direction-reference inventory without converting coordinates, clearing the reference offset as CASA does. Accepts unique frame prefixes and preserves other component/table state.",
    "evidence": [
     "signature",
-    "setrefdirframe-casa"
+    "setrefdirframe-casa",
+    "direction-models-casa",
+    "record-offset-casa",
+    "full-cl-release"
    ]
   },
   "setshape": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Sets Point, Gaussian or Disk shapes and angular errors while preserving the reference direction and its errors. Retains supplied shape units in memory and CASA table units after reopening. Rejects non-finite values and cyclic or failed argument conversions before unsafe mutation; unsupported names and limb-darkened disks return false as in CASA.",
    "evidence": [
     "signature",
-    "setshape-casa"
+    "setshape-casa",
+    "full-cl-release"
    ]
   },
   "setspectrum": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Replaces one component spectrum with a constant, spectral index, power-log polynomial or tabular model while retaining its reference frequency and frequency error. Tabulations must use the reference frame or REST; invalid, non-finite and cyclic arguments and failed conversions are rejected before unsafe mutation.",
    "evidence": [
     "signature",
-    "setspectrum-casa"
+    "setspectrum-casa",
+    "full-cl-release"
    ]
   },
   "setstokesspectrum": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Sets constant, spectral-index or four-Stokes tabular spectra and CASA's reference-frequency and frame semantics. Returns false for unsupported names and the CASA polynomial refusal. Preserves frequency errors and existing components on failed or unsafe conversions; tabulations require matching reference frame or REST.",
    "evidence": [
     "signature",
-    "setstokesspectrum-casa"
+    "setstokesspectrum-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "shapetype": {
@@ -490,25 +577,28 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "simulate": {
    "status": "Implemented",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Appends the requested number of CASA default point components while preserving existing components, selection and table metadata. Nonpositive counts append nothing. Counts above the signed loop range are rejected before mutation.",
    "evidence": [
     "signature",
-    "simulate-casa"
+    "simulate-casa",
+    "full-cl-release"
    ]
   },
   "sort": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Orders Flux by descending absolute Stokes I, Position by ascending distance from (0,0), or Polarization by descending polarized fraction; remaps units and offsets while leaving selected indices unchanged.",
    "evidence": [
     "signature",
-    "refusals"
+    "sort-summary-casa",
+    "full-cl-release",
+    "review-regressions-casa"
    ]
   },
   "spectrumtype": {
@@ -517,16 +607,18 @@
    "evidence": [
     "signature",
     "casa-values",
-    "casa-on-casa"
+    "casa-on-casa",
+    "full-cl-release"
    ]
   },
   "summarize": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Logs CASA\u2019s component summary with flux, spectrum, position, sizes, errors and limb exponent. Uses casacore precisionForValueErrorPairs and roundDouble formatting and matches invalid-index errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "sort-summary-casa",
+    "upstream-tests-casa",
+    "full-cl-release"
    ]
   },
   "torecord": {
@@ -536,7 +628,8 @@
     "signature",
     "casa-values",
     "casa-on-casa",
-    "record-shape-units-casa"
+    "record-shape-units-casa",
+    "full-cl-release"
    ]
   }
  },
@@ -637,6 +730,34 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Owner approved correcting CASA crashes as a class on 2026-11-05; see docs/simulation/owner-decisions-20261105.md."
+  },
+  {
+   "id": "missing-flux-polarisation-default",
+   "inputs": "cl.add(record) omits flux.polarisation and flux.error.",
+   "casa": "Warns that the default is Stokes but writes Unknown.",
+   "ours": "Uses the announced Stokes default.",
+   "rationale": "Correct the contradiction of the stated default and valid component intent.",
+   "impact": "Imported components remain usable and serializable with Stokes flux.",
+   "evidence": [
+    "record-import-casa",
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing AGENTS.md CASA-deviations rule: correct crashes and contradictions of documentation or evident intent."
+  },
+  {
+   "id": "invalid-gaussian-record-abort",
+   "inputs": "Gaussian record imports with non-positive axes, minor greater than major, or position angle outside \u00b1360 degrees.",
+   "casa": "Aborts the process from GaussianShape constructor assertions.",
+   "ours": "Raises a catchable RuntimeError before appending.",
+   "rationale": "Correct a CASA process abort under the standing crash-correction rule.",
+   "impact": "The existing list and Python session remain available.",
+   "evidence": [
+    "record-import-casa",
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing AGENTS.md CASA-deviations rule: correct crashes and contradictions of documentation or evident intent."
   }
  ],
  "evidence": {
@@ -1162,6 +1283,139 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "fc0f6d90156354fbd8cdc29d222c6ff67390f32e"
+  },
+  "record-import-casa": {
+   "kind": "CASA-recorded values and native regression tests",
+   "state": "measured",
+   "result": "Record defaults, numeric kinds, diagnostics, partial fromrecord mutation, all spectral kinds, required fields, invalid Gaussian geometry and selected record concatenation.",
+   "scope": "componentlist CASA 6.7.6-14 equivalence",
+   "links": [
+    "tools/simulation/componentlist_records_oracle.py",
+    "tools/simulation/componentlist_record_spectra_oracle.py",
+    "tools/simulation/componentlist_record_validation_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_records.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_record_spectra.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_record_validation.json",
+    "crates/casars-python/python/tests/test_componentlist_records.py"
+   ],
+   "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963"
+  },
+  "record-offset-casa": {
+   "kind": "CASA-recorded values and native regression tests",
+   "state": "measured",
+   "result": "Sixteen CASA cases check direction/frequency offset retention, setters/conversions, rename and table materialization; native lifecycle tests cover sorting, removal/recovery and record concatenation.",
+   "scope": "componentlist CASA 6.7.6-14 equivalence",
+   "links": [
+    "tools/simulation/componentlist_offsets_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_offsets.json",
+    "crates/casars-python/python/tests/test_componentlist_offsets.py"
+   ],
+   "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963"
+  },
+  "sort-summary-casa": {
+   "kind": "CASA-recorded values and native regression tests",
+   "state": "measured",
+   "result": "CASA orderings and diagnostics plus six exact visible summaries, including limb disks and a roundDouble precision boundary.",
+   "scope": "componentlist CASA 6.7.6-14 equivalence",
+   "links": [
+    "tools/simulation/componentlist_sort_oracle.py",
+    "tools/simulation/componentlist_summary_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_sort.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_summaries.json",
+    "crates/casars-python/python/tests/test_componentlist_sort_summary.py"
+   ],
+   "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963"
+  },
+  "direction-models-casa": {
+   "kind": "CASA-recorded values and native regression tests",
+   "state": "measured",
+   "result": "CASA reference labels, no-frame conversions and CASA-written dynamical-label tables; C++ interop reads all eleven dynamical labels written natively.",
+   "scope": "componentlist CASA 6.7.6-14 equivalence",
+   "links": [
+    "tools/simulation/componentlist_direction_models_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_direction_models.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_direction_models.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_direction_models.py",
+    "crates/casa-components/tests/casacore_cpp_interop.rs"
+   ],
+   "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963"
+  },
+  "upstream-tests-casa": {
+   "kind": "CASA-recorded values and native regression tests",
+   "state": "measured",
+   "result": "All four CASA 6.7.6.14 upstream componentlist tests (summarize, getfluxerror, power-log polynomial and keyword interface) pass in CASA and natively.",
+   "scope": "componentlist CASA 6.7.6-14 equivalence",
+   "links": [
+    "crates/casars-python/python/tests/test_componentlist_upstream.py"
+   ],
+   "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963"
+  },
+  "rename-empty-casa": {
+   "kind": "CASA-recorded values and native regression tests",
+   "state": "measured",
+   "result": "CASA resolves the empty Path to the current directory; virtual and attached lists raise already-exists while preserving data and keywords.",
+   "scope": "componentlist CASA 6.7.6-14 equivalence",
+   "links": [
+    "tools/simulation/componentlist_rename_empty_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_rename_empty.json",
+    "crates/casars-python/python/tests/test_componentlist_records.py"
+   ],
+   "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963"
+  },
+  "keyword-cache-casa": {
+   "kind": "CASA-recorded values and native regression tests",
+   "state": "measured",
+   "result": "CASA retains clean read locks, blocks external writers until close or clearlocks, and reloads after a published change. Native concurrency tests retain the restored-timestamp regression after explicit relinquishment; in-process metadata epochs refresh shared readers.",
+   "scope": "componentlist CASA 6.7.6-14 equivalence",
+   "links": [
+    "crates/casars-python/python/tests/test_componentlist_putkeyword.py",
+    "tools/simulation/componentlist_keyword_locks_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_keyword_locks.json"
+   ],
+   "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963"
+  },
+  "logging-retention": {
+   "kind": "Native regression and CASA timing comparison",
+   "state": "measured",
+   "result": "Retained Python logger objects preserve dynamic levels and nested reentrant warning handlers; removes repeated import/getLogger work from CASA-compatible placeholders.",
+   "scope": "Tool logging, including all componentlist placeholders.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_componentlist.py",
+    "crates/casars-python/src/tools/mod.rs"
+   ],
+   "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963"
+  },
+  "full-cl-release": {
+   "kind": "CASA comparisons and release benchmark",
+   "state": "passed",
+   "result": "All 61 methods are represented by 65 same-runtime cases. The repaired full release benchmark is 65/65 faster than CASA. After merging main, all six affected I/O cases remain faster (minimum 1.027x); 59 unchanged non-I/O cases reuse the full benchmark. The merged affected Python batch passes 1088 tests (six optional CASA-import skips); C++ and CASA persistence gates pass.",
+   "scope": "Complete componentlist outcome; measures remains in #1252.",
+   "links": [
+    "tools/simulation/componentlist_benchmark.py",
+    "crates/casars-python/python/tests/test_componentlist_upstream.py"
+   ],
+   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+   "revision": "69aa2b7091d025b82edc539b51a17535e075ae0e",
+   "source_revision": "69aa2b7091d025b82edc539b51a17535e075ae0e",
+   "command": "CASAPY componentlist_benchmark.py --backend casa|casars --repeat 1000 --samples 7 (release native build); focused native, C++ and Python gates in receipt",
+   "receipt": "resources/casa-compat/evidence/cl-equivalence-20261118.json"
+  },
+  "review-regressions-casa": {
+   "kind": "CASA-recorded values and native regressions",
+   "state": "passed",
+   "result": "Seven consolidated-review findings repaired; 19 Python cases fail before/pass after, literal-degree native decoding fails before/passes after, and CASA reads all four raw-offset spectral cases.",
+   "scope": "Component imports, sorting/selection, offsets and table lifecycle/keyword-lock publication.",
+   "links": [
+    "tools/simulation/componentlist_review_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_review.json",
+    "crates/casars-python/python/tests/test_componentlist_review.py",
+    "crates/casa-types/src/measures/record.rs"
+   ],
+   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+   "revision": "57d7ac8e55f8c90be077d4b53a104fd13eecd961",
+   "source_revision": "57d7ac8e55f8c90be077d4b53a104fd13eecd961",
+   "command": "Focused Rust/Python/CASA commands and results in receipt",
+   "receipt": "resources/casa-compat/evidence/cl-equivalence-20261118.json"
   }
  }
 }
