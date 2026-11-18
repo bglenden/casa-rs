@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 import math
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +36,7 @@ IMPLEMENTED = {
     'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'constants', 'convert',
     'convertdop', 'convertfreq', 'cos',
     'define', 'div', 'done', 'exp', 'fits', 'floor', 'formxxx', 'getformat', 'getunit', 'getvalue', 'setformat',
-    'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg', 'norm', 'pow', 'quantity',
+    'isangle', 'isquantity', 'log', 'log10', 'map', 'maprec', 'mul', 'neg', 'norm', 'pow', 'quantity',
     'sin', 'splitdate', 'sqrt', 'sub', 'tan', 'time', 'toangle', 'tos',
     'totime', 'type', 'unit', 'eq', 'ne', 'lt', 'le', 'gt', 'ge',
 }
@@ -376,11 +378,184 @@ def test_casa_exceptions_raise_runtime_error(call: Any, message: str) -> None:
     assert str(raised.value) == message
 
 
-@pytest.mark.parametrize("method", sorted(NOT_YET_IMPLEMENTED))
-def test_unimplemented_methods_raise_not_implemented(method: str) -> None:
-    required = [entry for entry in CASA["methods"][method] if entry["default"] is None]
-    with pytest.raises(NotImplementedError, match=rf"^quanta\.{method} is not yet implemented in casa-rs \(#1053\)$"):
-        getattr(quanta(), method)(*["x" for _ in required])
+def test_map_and_maprec_match_casa() -> None:
+    assert not NOT_YET_IMPLEMENTED
+    fixture = Path(__file__).parent / "data" / "casa_quanta_map.json"
+    qa = quanta()
+    for method in (qa.map, qa.maprec):
+        for bad in (None, 123, [1]):
+            with pytest.raises(TypeError, match=r"^argument _v must be a string$"):
+                method(bad)
+    # Run in a fresh subprocess so the process-wide User map is untouched by
+    # other tests' qa.define / qa.fits calls.
+    program = r'''
+import json, sys
+from casars.tools import quanta
+probe = json.load(open(sys.argv[1]))
+qa = quanta()
+assert qa.map() == probe["map_all"]
+assert qa.maprec() == probe["maprec_all"]
+for key, arg in [
+    ("map_all", "all"),
+    ("map_all", b"all"),
+    ("map_all", "a"),
+    ("map_constants", "constants"),
+    ("map_constants", "Constants"),
+    ("map_constants", "const"),
+    ("map_constants", "Const"),
+    ("map_prefix", "Prefix"),
+    ("map_prefix", "pre"),
+    ("map_si", "SI"),
+    ("map_si", "si"),
+    ("map_custom", "Custom"),
+    ("map_custom", "cust"),
+    ("map_custom", "c"),
+    ("map_user", "User"),
+    ("map_user", "u"),
+    ("map_bogus", "bogus"),
+    ("map_bogus", ""),
+]:
+    assert qa.map(arg) == probe[key], (key, arg)
+for key, arg in [
+    ("maprec_all", "all"),
+    ("maprec_all", b"all"),
+    ("maprec_all", "a"),
+    ("maprec_prefix", "Prefix"),
+    ("maprec_prefix", "pre"),
+    ("maprec_si", "SI"),
+    ("maprec_si", "si"),
+    ("maprec_custom", "Custom"),
+    ("maprec_custom", "cust"),
+    ("maprec_user", "User"),
+    ("maprec_user", "u"),
+    ("maprec_constants", "constants"),
+    ("maprec_bogus", "bogus"),
+]:
+    assert qa.maprec(arg) == probe[key], (key, arg)
+assert qa.define("jy_beam", "5Jy")
+user_rec = qa.maprec("user")
+assert user_rec["== User =="] == "== User ==== 2 ===="
+assert user_rec["User_jy_beam"] == "jy_beam   (User defined)               5e-26 kg.s-2"
+'''
+    result = subprocess.run([sys.executable, "-c", program, str(fixture)], text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_casa_tool_quanta_suite() -> None:
+    """Port of casatools' test_tool_quanta.py (quanta_convert_test and quanta_quantity_test)."""
+    qa = quanta()
+    # quanta_convert_test.test_exceptions
+    with pytest.raises(RuntimeError) as error:
+        qa.convert(v=qa.quantity("5kg"), outunit="bogus")
+    assert (
+        str(error.value)
+        == 'Error in QuantumHolder::fromString with input string "bogus": Illegal input units or format\n in converting quantity'
+    )
+    # quanta_convert_test.test_value_as_string & quanta_quantity_test.test_value_as_string
+    for ks in (True, False):
+        for code in (qa.quantity, qa.unit):
+            assert code("5kg", keepshape=ks) == {"value": 5.0, "unit": "kg"}
+            assert code("5kg", "pc", keepshape=ks) == {"value": 5.0, "unit": "kg"}
+    # quanta_convert_test.test_valid
+    assert qa.convert("5kg", "g") == {"value": 5000.0, "unit": "g"}
+    assert qa.convert(qa.quantity("5kg"), "g") == {"value": 5000.0, "unit": "g"}
+    vec = [5, 9.25, 8]
+    res = qa.convert(qa.quantity(vec, "kg"), "g")
+    assert res["unit"] == "g"
+    assert (res["value"] / 1000 == vec).all()
+    rng = np.random.default_rng(42)
+    arr4d = rng.random((5, 2, 8, 9))
+    res = qa.convert(qa.quantity(arr4d, "kg", keepshape=True), "g")
+    assert res["unit"] == "g"
+    assert np.isclose(res["value"] / 1000, arr4d).all()
+    assert qa.convert(5, "m") == {"unit": "m.m-1", "value": 5.0}
+    # quanta_quantity_test.test_exceptions
+    for code in (qa.quantity, qa.unit):
+        with pytest.raises(RuntimeError) as error:
+            code(v="blah")
+        assert (
+            str(error.value)
+            == 'Error in QuantumHolder::fromString with input string "blah": Illegal input units or format\n in converting quantity'
+        )
+        with pytest.raises(RuntimeError) as error:
+            code(v=5, unitname="zz")
+        assert str(error.value) == "Unit::check Illegal unit string 'zz'"
+    # quanta_quantity_test.test_scalar_value & test_vector_value
+    for ks in (True, False):
+        for code in (qa.quantity, qa.unit):
+            assert code(5, "kg", keepshape=ks) == {"value": 5.0, "unit": "kg"}
+            res = code([5, 8, 7.5], "kg", keepshape=ks)
+            assert res["unit"] == "kg"
+            assert (res["value"] == [5, 8, 7.5]).all()
+    # quanta_quantity_test.test_multidimensional_arra_value
+    arr2d = rng.random((4, 5))
+    for ks in (True, False):
+        for code in (qa.quantity, qa.unit):
+            res = code(arr2d, "kg", keepshape=ks)
+            assert res["unit"] == "kg"
+            expected = arr2d if ks else arr2d.ravel("F")
+            assert (res["value"] == expected).all()
+    # quanta_quantity_test.test_value_as_record
+    for v in (
+        {"unit": "arcsec", "value": 840},
+        {"unit": "arcsec", "value": [840.0, 840.0, 840.0, 840.0]},
+        {"unit": "arcsec", "value": [[840.0, 840.0, 840.0, 840.0]]},
+    ):
+        for ks in (True, False):
+            for code in (qa.quantity, qa.unit):
+                res = code(v, keepshape=ks)
+                assert res["unit"] == v["unit"]
+                assert (res["value"] == np.array(v["value"])).all()
+                assert np.shape(res["value"]) == np.shape(v["value"])
+
+
+def test_nested_list_and_tuple_quantity_records() -> None:
+    """Nested sequence quantity-record values and diagnostics (#1170)."""
+    qa = quanta()
+    rec_2d_float = {"unit": "m", "value": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]}
+    res = qa.quantity(rec_2d_float)
+    assert res["unit"] == "m"
+    assert res["value"].shape == (2, 3)
+    np.testing.assert_array_equal(res["value"], np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
+    conv = qa.convert(rec_2d_float, "cm")
+    assert conv["unit"] == "cm"
+    np.testing.assert_array_equal(conv["value"], np.array([[100.0, 200.0, 300.0], [400.0, 500.0, 600.0]]))
+    # Nested tuple and 3-D nested sequence preserve shape and values.
+    rec_2d_tuple = {"unit": "m", "value": ((1.0, 2.0), (3.0, 4.0))}
+    res_tuple = qa.quantity(rec_2d_tuple)
+    assert res_tuple["unit"] == "m" and res_tuple["value"].shape == (2, 2)
+    np.testing.assert_array_equal(res_tuple["value"], np.array([[1.0, 2.0], [3.0, 4.0]]))
+    rec_3d = {"unit": "m", "value": [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]}
+    res_3d = qa.quantity(rec_3d)
+    assert res_3d["unit"] == "m" and res_3d["value"].shape == (2, 2, 2)
+    np.testing.assert_array_equal(
+        res_3d["value"],
+        np.array([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]),
+    )
+    for method, args in ((qa.getvalue, (rec_2d_float,)), (qa.getunit, (rec_2d_float,)), (qa.add, (rec_2d_float, "1m"))):
+        with pytest.raises(RuntimeError, match="^Wrong QuantumHolder to convert asQuantumDouble$"):
+            method(*args)
+    # 1-element 2-D float list is a 2-D array for quantity/convert and a scalar for getvalue/getunit/add.
+    rec_1x1_float = {"unit": "m", "value": [[7.0]]}
+    res_1x1 = qa.quantity(rec_1x1_float)
+    assert res_1x1["unit"] == "m" and res_1x1["value"].shape == (1, 1)
+    np.testing.assert_array_equal(res_1x1["value"], np.array([[7.0]]))
+    np.testing.assert_array_equal(qa.getvalue(rec_1x1_float), np.array([7.0]))
+    assert qa.getunit(rec_1x1_float) == "m"
+    assert qa.add(rec_1x1_float, "1m") == {"unit": "m", "value": 8.0}
+    # 1-element 2-D integer list narrows to scalar float; multi-element integer list fails asQuantumDouble.
+    assert qa.quantity({"unit": "m", "value": [[7]]}) == {"unit": "m", "value": 7.0}
+    with pytest.raises(RuntimeError, match="^Wrong QuantumHolder to convert asQuantumDouble$"):
+        qa.quantity({"unit": "m", "value": [[1, 2], [3, 4]]})
+    with pytest.raises(RuntimeError, match="^Unit::check Illegal unit string 'bad'$"):
+        qa.quantity({"unit": "bad", "value": [[1, 2], [3, 4]]})
+    # Bool, string, empty, and ragged nested lists fail fromRecord.
+    for bad_val in ([[True]], [["bad"]], [[]], [[1.0, "bad"], [2.0]], [[1.0, 2.0], [3.0]]):
+        with pytest.raises(
+            RuntimeError,
+            match=r"^Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity$",
+        ):
+            qa.quantity({"unit": "m", "value": bad_val})
 
 
 @pytest.mark.parametrize(

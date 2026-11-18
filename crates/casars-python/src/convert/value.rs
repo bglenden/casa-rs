@@ -214,22 +214,10 @@ impl CasaValue {
                 .into_any()
                 .unbind(),
             Self::Text(text) => text.into_pyobject(py)?.into_any().unbind(),
-            Self::Floats { shape, values } => fortran_array(shape, values)?
-                .into_pyarray(py)
-                .into_any()
-                .unbind(),
-            Self::Complexes { shape, values } => fortran_array(shape, values)?
-                .into_pyarray(py)
-                .into_any()
-                .unbind(),
-            Self::Ints { shape, values } => fortran_array(shape, values)?
-                .into_pyarray(py)
-                .into_any()
-                .unbind(),
-            Self::Bools { shape, values } => fortran_array(shape, values)?
-                .into_pyarray(py)
-                .into_any()
-                .unbind(),
+            Self::Floats { shape, values } => into_fortran_pyarray(py, shape, values)?.unbind(),
+            Self::Complexes { shape, values } => into_fortran_pyarray(py, shape, values)?.unbind(),
+            Self::Ints { shape, values } => into_fortran_pyarray(py, shape, values)?.unbind(),
+            Self::Bools { shape, values } => into_fortran_pyarray(py, shape, values)?.unbind(),
             Self::Texts(texts) => {
                 let keywords = PyDict::new(py);
                 keywords.set_item("dtype", "str")?;
@@ -273,7 +261,24 @@ impl CasaValue {
     }
 }
 
+/// `values`, in Fortran order, as a NumPy array of `shape` without copying.
+fn into_fortran_pyarray<'py, T: numpy::Element>(
+    py: Python<'py>,
+    mut shape: Vec<usize>,
+    values: Vec<T>,
+) -> PyResult<Bound<'py, PyAny>> {
+    use numpy::PyArrayMethods;
+    let len = values.len();
+    let flat = values.into_pyarray(py);
+    if shape.len() == 1 && shape[0] == len {
+        return Ok(flat.into_any());
+    }
+    shape.reverse();
+    flat.reshape(shape)?.getattr("T")
+}
+
 /// `values`, in Fortran order, as an array of `shape`.
+#[allow(dead_code)]
 pub(crate) fn fortran_array<T>(shape: Vec<usize>, values: Vec<T>) -> PyResult<ArrayD<T>> {
     ArrayD::from_shape_vec(IxDyn(&shape).f(), values).map_err(|error| {
         pyo3::exceptions::PyRuntimeError::new_err(format!("array of shape {shape:?}: {error}"))

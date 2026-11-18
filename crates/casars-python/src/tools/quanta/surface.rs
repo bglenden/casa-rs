@@ -14,7 +14,7 @@ use crate::tools::surface::{
 use CasaDefault::{Bool, Empty, Float, Int, Required, Text, Texts};
 use Kind as K;
 use Returns as R;
-use Status::{Implemented as Yes, NotYetImplemented as No};
+use Status::Implemented as Yes;
 
 const V: [Parameter; 1] = [param("v", K::Quantity, Empty)];
 const V_A: [Parameter; 2] = [
@@ -133,8 +133,13 @@ const METHODS: &[Method] = &[
     unary("log", R::Record, Yes),
     unary("log10", R::Record, Yes),
     binary("lt", R::Bool, Yes),
-    method("map", &[param("v", K::Text, Text("all"))], R::Text, No),
-    method("maprec", &[param("v", K::Text, Text("all"))], R::Record, No),
+    method("map", &[param("v", K::Text, Text("all"))], R::Text, Yes),
+    method(
+        "maprec",
+        &[param("v", K::Text, Text("all"))],
+        R::Record,
+        Yes,
+    ),
     binary("mul", R::Record, Yes),
     binary("ne", R::Bool, Yes),
     unary("neg", R::Record, Yes),

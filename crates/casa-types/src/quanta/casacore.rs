@@ -243,7 +243,14 @@ pub fn mvangle_normalized(radians: f64, norm: f64) -> f64 {
 /// digits, in fixed or scientific notation as `%g` chooses, without
 /// trailing zeros (`3.14159`, `6.37358e+06`, `58849`).
 pub fn stream_double(value: f64) -> String {
-    const PRECISION: usize = 6;
+    stream_double_precision(value, 6)
+}
+
+/// `value` as a C++ `ostream` writes a `double` with `precision` significant
+/// digits (`std::setprecision(precision)`), in fixed or scientific notation
+/// as `%g` chooses, without trailing zeros.
+pub fn stream_double_precision(value: f64, precision: usize) -> String {
+    let precision = precision.max(1);
     if value == 0.0 {
         return if value.is_sign_negative() { "-0" } else { "0" }.to_string();
     }
@@ -256,7 +263,7 @@ pub fn stream_double(value: f64) -> String {
             "-inf".to_string()
         };
     }
-    let scientific = format!("{:.*e}", PRECISION - 1, value);
+    let scientific = format!("{:.*e}", precision - 1, value);
     let (mantissa, exponent) = scientific.split_once('e').expect("Rust writes an exponent");
     let exponent: i32 = exponent.parse().expect("Rust writes an integer exponent");
     let trim = |digits: &str| {
@@ -269,11 +276,11 @@ pub fn stream_double(value: f64) -> String {
             digits.to_string()
         }
     };
-    if exponent < -4 || exponent >= PRECISION as i32 {
+    if exponent < -4 || exponent >= precision as i32 {
         let sign = if exponent < 0 { '-' } else { '+' };
         format!("{}e{sign}{:02}", trim(mantissa), exponent.abs())
     } else {
-        let decimals = usize::try_from(PRECISION as i32 - 1 - exponent).unwrap_or(0);
+        let decimals = usize::try_from(precision as i32 - 1 - exponent).unwrap_or(0);
         trim(&format!("{value:.decimals$}"))
     }
 }
