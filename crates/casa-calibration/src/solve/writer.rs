@@ -165,7 +165,12 @@ pub(crate) fn write_gain_caltable_named(
         (SubtableId::Field, "FIELD"),
         (SubtableId::History, "HISTORY"),
     ])?;
-    write_gain_spectral_window_subtable(ms, writer.output_path(), solved)?;
+    write_gain_spectral_window_subtable(
+        ms,
+        writer.output_path(),
+        solved,
+        request.combine.spectral_windows,
+    )?;
     writer.save_main()?;
 
     Ok(gain_report(request, solved))
@@ -195,6 +200,7 @@ fn write_gain_spectral_window_subtable(
     ms: &MeasurementSet,
     output_root: &Path,
     solved: &SolvedGains,
+    combine_spectral_windows: bool,
 ) -> Result<(), GainSolveError> {
     let destination = output_root.join("SPECTRAL_WINDOW");
     let failed = |source| GainSolveError::CopySubtable {
@@ -207,6 +213,12 @@ fn write_gain_spectral_window_subtable(
         .save(TableOptions::new(&destination))
         .map_err(failed)?;
     let mut table = Table::open(TableOptions::new(&destination)).map_err(failed)?;
+    let combined_window =
+        if combine_spectral_windows && solved.selected_data.spectral_windows.len() > 1 {
+            Some(combined_window_frequency(&table, solved)?)
+        } else {
+            None
+        };
 
     let with_rows = solved
         .rows
@@ -236,27 +248,34 @@ fn write_gain_spectral_window_subtable(
                 shape: vec![frequencies.len(), widths.len()],
             });
         }
-        let collapsed = if attempted {
-            let selection = solved.channel_selections.get(&(row as i32));
-            let channels = selected_channels(selection, frequencies.len())?;
-            let window =
-                CollapsedWindow::solved(&frequencies, &widths, channels).ok_or_else(|| {
-                    GainSolveError::UnsupportedParameterShape {
+        let collapsed =
+            if attempted {
+                let selection = solved.channel_selections.get(&(row as i32));
+                let channels = selected_channels(selection, frequencies.len())?;
+                let mut window = CollapsedWindow::solved(&frequencies, &widths, channels)
+                    .ok_or_else(|| GainSolveError::UnsupportedParameterShape {
                         path: format!(
                             "SPECTRAL_WINDOW row {row}, of which the solve selects no channel"
                         ),
                         shape: vec![frequencies.len()],
-                    }
-                })?;
-            Some(window)
-        } else {
-            CollapsedWindow::unsolved(
-                &frequencies,
-                &widths,
-                &get_f64_array(&table, row, "EFFECTIVE_BW")?,
-                &get_f64_array(&table, row, "RESOLUTION")?,
-            )
-        };
+                    })?;
+                if let Some((frequency, effective_bw)) = combined_window {
+                    // The combined solution retains the reference window's width.
+                    // setCTFrequencies writes the centroid into these three fields.
+                    window.frequency = frequency;
+                    window.effective_bw = effective_bw;
+                    window.resolution = frequency;
+                    window.total_bandwidth = Some(frequency);
+                }
+                Some(window)
+            } else {
+                CollapsedWindow::unsolved(
+                    &frequencies,
+                    &widths,
+                    &get_f64_array(&table, row, "EFFECTIVE_BW")?,
+                    &get_f64_array(&table, row, "RESOLUTION")?,
+                )
+            };
         let mut cells = vec![("FLAG_ROW", Value::Scalar(ScalarValue::Bool(!has_rows)))];
         if let Some(window) = collapsed {
             cells.extend([
@@ -289,6 +308,30 @@ fn write_gain_spectral_window_subtable(
         .map_err(failed)?;
 
     Ok(())
+}
+
+fn combined_window_frequency(
+    table: &Table,
+    solved: &SolvedGains,
+) -> Result<(f64, f64), GainSolveError> {
+    let mut weighted_frequency = 0.0;
+    let mut bandwidth = 0.0;
+    for &spw_id in &solved.selected_data.spectral_windows {
+        let row = spw_id as usize;
+        let frequencies = get_f64_array(table, row, "CHAN_FREQ")?;
+        let widths = get_f64_array(table, row, "CHAN_WIDTH")?;
+        let channels =
+            selected_channels(solved.channel_selections.get(&spw_id), frequencies.len())?;
+        let window = CollapsedWindow::solved(&frequencies, &widths, channels).ok_or_else(|| {
+            GainSolveError::UnsupportedParameterShape {
+                path: format!("SPECTRAL_WINDOW row {row} in a combined solve"),
+                shape: vec![frequencies.len(), widths.len()],
+            }
+        })?;
+        weighted_frequency += window.frequency * window.effective_bw;
+        bandwidth += window.effective_bw;
+    }
+    Ok((weighted_frequency / bandwidth, bandwidth))
 }
 
 /// The one channel of a window's row in a G or T gain table: what CASA's

@@ -4,9 +4,17 @@
 use std::collections::BTreeMap;
 
 use super::{
-    AveragedBaseline, BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow,
-    SolveBaseKey, SolveBucketKey,
+    BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow, SolveBaseKey,
+    SolveBucketKey,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct AveragedBaseline {
+    pub(super) antennas: (i32, i32),
+    pub(super) field_id: i32,
+    pub(super) data_desc_id: i32,
+    pub(super) start_bits: u64,
+}
 
 /// Each selected row of `rows`, in solve order, with the group and
 /// interval it is solved in.
@@ -79,6 +87,7 @@ pub(super) fn bucketed_rows(
 #[derive(Debug, Clone, Copy)]
 pub(super) struct FirstTBuffer {
     pub(super) field: i32,
+    pub(super) data_desc_id: i32,
     pub(super) time: f64,
     pub(super) max_span: Option<f64>,
     pub(super) skipped_baseline: (i32, i32),
@@ -87,6 +96,7 @@ pub(super) struct FirstTBuffer {
 impl FirstTBuffer {
     pub(super) fn contains(self, baseline: AveragedBaseline) -> bool {
         baseline.field_id == self.field
+            && baseline.data_desc_id == self.data_desc_id
             && self
                 .max_span
                 .is_none_or(|span| f64::from_bits(baseline.start_bits) - self.time <= span)
@@ -105,9 +115,17 @@ pub(super) fn first_t_buffers(
         let seed = first.entry((base, bucket)).or_insert(row);
         // BaselineIndex::configure uses the row order of the first input
         // buffer, including rows later ignored by the solver.
-        if (row.field_id, row.time_seconds, row.row_index)
-            < (seed.field_id, seed.time_seconds, seed.row_index)
-        {
+        if (
+            row.field_id,
+            row.time_seconds,
+            row.data_desc_id,
+            row.row_index,
+        ) < (
+            seed.field_id,
+            seed.time_seconds,
+            seed.data_desc_id,
+            seed.row_index,
+        ) {
             *seed = row;
         }
     }
@@ -118,6 +136,7 @@ pub(super) fn first_t_buffers(
                 key,
                 FirstTBuffer {
                     field: row.field_id,
+                    data_desc_id: row.data_desc_id,
                     time: row.time_seconds,
                     max_span,
                     skipped_baseline: (row.antenna1, row.antenna2),
