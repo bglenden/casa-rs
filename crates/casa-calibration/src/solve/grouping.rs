@@ -23,17 +23,8 @@ use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
 use crate::solve::kernel::{RobustSample, SolveGraph};
+use samples::SolveAccumulationKey;
 use time::{AveragedBaseline, FirstTBuffer, bucketed_rows, first_t_buffers};
-
-pub(crate) fn validate_solve_interval(
-    solve_interval: GainSolveInterval,
-) -> Result<(), GainSolveError> {
-    match solve_interval {
-        GainSolveInterval::Infinite | GainSolveInterval::Integration => Ok(()),
-        GainSolveInterval::Seconds(seconds) if seconds > 0.0 => Ok(()),
-        _ => Err(GainSolveError::UnsupportedSolveInterval { solve_interval }),
-    }
-}
 
 pub(crate) fn load_preapplied_rows(
     ms: &MeasurementSet,
@@ -663,12 +654,6 @@ struct SolveEdgeAccumulation {
     sample_count: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct SolveAccumulationKey {
-    baseline: AveragedBaseline,
-    correlation_index: usize,
-}
-
 /// A weighted mean of times.
 #[derive(Debug, Clone, Copy, Default)]
 struct WeightedTime {
@@ -883,12 +868,31 @@ impl SolveAccumulator {
                         .collect(),
                 });
             };
-            if no_weighted_data || receptors.0 != receptors.1 {
+            let parallel_hand = receptors.0 == receptors.1;
+            if no_weighted_data || (!parallel_hand && options.gain_type == GainType::G) {
                 continue;
             }
             let graph_index = match options.gain_type {
                 GainType::G => receptors.0,
                 GainType::T => 0,
+            };
+            let point = samples::point_visibility(
+                options.point_stokes,
+                correlation_type,
+                correlation_types[0],
+            );
+            let zero_model = options.gain_type == GainType::T
+                && samples::zero_model(samples, corr_index, channels, point);
+            let (samples, point) = if zero_model {
+                (
+                    SolveSamples {
+                        model: None,
+                        ..*samples
+                    },
+                    Complex32::new(1.0, 0.0),
+                )
+            } else {
+                (*samples, point)
             };
             // Look the baseline/correlation up once per row; channels are
             // dense indices, not independent hash keys for every sample.
@@ -896,6 +900,8 @@ impl SolveAccumulator {
                 .entry(SolveAccumulationKey {
                     baseline,
                     correlation_index: corr_index,
+                    parallel_hand,
+                    zero_model,
                 })
                 .or_insert_with(|| vec![SolveEdgeAccumulation::default(); solution_channels]);
             row_weight += samples::SampleAccumulation {
@@ -904,15 +910,11 @@ impl SolveAccumulator {
                 channelized: options.channelized,
             }
             .observe(
-                samples,
+                &samples,
                 corr_index,
                 shared_flags.as_deref(),
                 channels,
-                samples::point_visibility(
-                    options.point_stokes,
-                    correlation_type,
-                    correlation_types[0],
-                ),
+                point,
                 all_channels,
             );
         }
@@ -979,10 +981,11 @@ impl SolveAccumulator {
                         }
                         GainSolveMode::AmplitudePhase => (averaged, accumulation.weight),
                     };
+                    let fit_weight = if key.zero_model { 0.0 } else { weight };
                     self.channel_graphs[channel_index][receptor].accumulate(
                         key.baseline.antennas,
-                        weight,
-                        sample * Complex32::new(weight, 0.0),
+                        fit_weight,
+                        sample * fit_weight,
                         SolveEdgeStats {
                             weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
                             raw_weighted_sample_power: accumulation.weighted_sample_power,
@@ -998,6 +1001,7 @@ impl SolveAccumulator {
                                 correlation: key.correlation_index,
                                 visibility: sample,
                                 weight,
+                                zero_model: key.zero_model,
                                 in_first_buffer: self
                                     .first_t_buffer
                                     .is_some_and(|buffer| buffer.contains(key.baseline)),
@@ -1368,6 +1372,8 @@ mod tests {
                 SolveAccumulationKey {
                     baseline: unaveraged_baseline(baseline),
                     correlation_index: 0,
+                    parallel_hand: true,
+                    zero_model: false,
                 },
                 vec![SolveEdgeAccumulation {
                     weighted_sum: Complex32::new(weight, 0.0),

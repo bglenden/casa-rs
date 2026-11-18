@@ -63,6 +63,8 @@ pub(crate) struct RobustSample {
     pub(crate) correlation: usize,
     pub(crate) visibility: Complex32,
     pub(crate) weight: f32,
+    /// The sample contributes a residual independent of the gain fit.
+    pub(crate) zero_model: bool,
     pub(crate) in_first_buffer: bool,
 }
 
