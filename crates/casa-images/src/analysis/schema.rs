@@ -601,6 +601,10 @@ pub struct ImageStatisticsSummary {
     pub blc: Vec<usize>,
     /// Applied zero-based inclusive top-right corner.
     pub trc: Vec<usize>,
+    /// CASA-formatted world coordinates of the applied origin.
+    pub blcf: String,
+    /// CASA-formatted world coordinates of the applied top-right corner.
+    pub trcf: String,
     /// Number of selected pixels.
     pub npts: f64,
     /// Minimum selected value.
@@ -619,10 +623,22 @@ pub struct ImageStatisticsSummary {
     pub sigma: f64,
     /// Median selected value.
     pub median: f64,
+    /// Median absolute deviation from the median.
+    pub medabsdevmed: f64,
+    /// First quartile (25th percentile) of the selected values.
+    pub q1: f64,
+    /// Third quartile (75th percentile) of the selected values.
+    pub q3: f64,
+    /// Interquartile range `q3 − q1`.
+    pub quartile: f64,
     /// Minimum position relative to the original image.
     pub minpos: Option<Vec<usize>>,
+    /// CASA-formatted world coordinates of the minimum position.
+    pub minposf: Option<String>,
     /// Maximum position relative to the original image.
     pub maxpos: Option<Vec<usize>>,
+    /// CASA-formatted world coordinates of the maximum position.
+    pub maxposf: Option<String>,
     /// CASA-style flux density when beam and pixel area are available.
     pub flux: Option<f64>,
     /// Image units.

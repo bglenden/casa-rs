@@ -34,16 +34,22 @@ pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
     };
     let mut entries = vec![
         ("blc", pixels(&summary.blc)),
+        ("blcf", CasaValue::string(summary.blcf.clone())),
         ("max", statistic(summary.max)),
         ("mean", statistic(summary.mean)),
+        ("medabsdevmed", statistic(summary.medabsdevmed)),
         ("median", statistic(summary.median)),
         ("min", statistic(summary.min)),
         ("npts", statistic(summary.npts)),
+        ("q1", statistic(summary.q1)),
+        ("q3", statistic(summary.q3)),
+        ("quartile", statistic(summary.quartile)),
         ("rms", statistic(summary.rms)),
         ("sigma", statistic(summary.sigma)),
         ("sum", statistic(summary.sum)),
         ("sumsq", statistic(summary.sumsq)),
         ("trc", pixels(&summary.trc)),
+        ("trcf", CasaValue::string(summary.trcf.clone())),
     ];
     if let Some(flux) = summary.flux {
         entries.push(("flux", statistic(flux)));
@@ -51,9 +57,15 @@ pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
     if !empty {
         if let Some(position) = &summary.maxpos {
             entries.push(("maxpos", pixels(position)));
+            if let Some(text) = &summary.maxposf {
+                entries.push(("maxposf", CasaValue::string(text.clone())));
+            }
         }
         if let Some(position) = &summary.minpos {
             entries.push(("minpos", pixels(position)));
+            if let Some(text) = &summary.minposf {
+                entries.push(("minposf", CasaValue::string(text.clone())));
+            }
         }
     }
     sorted(entries)
@@ -409,6 +421,8 @@ mod tests {
             imagename: "ramp.im".into(),
             blc: vec![0, 0, 0, 0],
             trc: vec![15, 15, 0, 7],
+            blcf: "00:00:16.000, -00.04.00.000, I, 1.415e+09Hz".into(),
+            trcf: "23:59:48.000, +00.03.00.000, I, 1.415e+09Hz".into(),
             npts: 2048.0,
             min: 0.0,
             max: 20.47,
@@ -418,8 +432,14 @@ mod tests {
             rms: 4.0,
             sigma: 5.0,
             median: 6.0,
+            medabsdevmed: 7.0,
+            q1: 8.0,
+            q3: 9.0,
+            quartile: 1.0,
             minpos: Some(vec![0, 0, 0, 0]),
+            minposf: Some("00:00:16.000, -00.04.00.000, I, 1.415e+09Hz".into()),
             maxpos: Some(vec![15, 15, 0, 7]),
+            maxposf: Some("23:59:48.000, +00.03.00.000, I, 1.415e+09Hz".into()),
             flux: Some(1.5),
             units: "Jy/beam".into(),
         };
@@ -427,13 +447,37 @@ mod tests {
         assert_eq!(
             keys(&record),
             [
-                "blc", "flux", "max", "maxpos", "mean", "median", "min", "minpos", "npts", "rms",
-                "sigma", "sum", "sumsq", "trc"
+                "blc",
+                "blcf",
+                "flux",
+                "max",
+                "maxpos",
+                "maxposf",
+                "mean",
+                "medabsdevmed",
+                "median",
+                "min",
+                "minpos",
+                "minposf",
+                "npts",
+                "q1",
+                "q3",
+                "quartile",
+                "rms",
+                "sigma",
+                "sum",
+                "sumsq",
+                "trc",
+                "trcf"
             ]
         );
         let plain = record.to_plain_json();
         assert_eq!(plain["npts"], serde_json::json!([2048.0]));
         assert_eq!(plain["trc"], serde_json::json!([15, 15, 0, 7]));
+        assert_eq!(
+            plain["blcf"],
+            serde_json::json!("00:00:16.000, -00.04.00.000, I, 1.415e+09Hz")
+        );
         let unbeamed = ImageStatisticsSummary {
             flux: None,
             ..summary

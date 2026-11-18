@@ -1966,15 +1966,27 @@ where
     let max = scalar_stat(&stats, Statistic::Max)?;
     let (minpos, maxpos) = stats.get_min_max_pos()?;
     let flux = image_flux(image, sum, &selection);
+    let coordinates = image.coordinates();
+    let world_text = |position: &[usize]| -> Result<String, ImageError> {
+        let pixel: Vec<f64> = position.iter().map(|&value| value as f64).collect();
+        Ok(casa_coordinates::format_world_display(coordinates, &pixel)?)
+    };
+    let minpos = minpos.map(|pos| offset_pos(&selection.start, pos));
+    let maxpos = maxpos.map(|pos| offset_pos(&selection.start, pos));
+    let minposf = match &minpos {
+        Some(position) => Some(world_text(position)?),
+        None => None,
+    };
+    let maxposf = match &maxpos {
+        Some(position) => Some(world_text(position)?),
+        None => None,
+    };
+    let blcf = world_text(&selection.start)?;
+    let trc = trc_pixels(&selection.start, &selection.shape);
+    let trcf = world_text(&trc)?;
     Ok(ImageStatisticsSummary {
-        imagename: path.display().to_string(),
-        blc: selection.start.clone(),
-        trc: selection
-            .start
-            .iter()
-            .zip(&selection.shape)
-            .map(|(start, shape)| start + shape - 1)
-            .collect(),
+        blcf,
+        trcf,
         npts,
         min,
         max,
@@ -1984,11 +1996,29 @@ where
         rms: scalar_stat(&stats, Statistic::Rms)?,
         sigma: scalar_stat(&stats, Statistic::Sigma)?,
         median: scalar_stat(&stats, Statistic::Median)?,
-        minpos: minpos.map(|pos| offset_pos(&selection.start, pos)),
-        maxpos: maxpos.map(|pos| offset_pos(&selection.start, pos)),
+        medabsdevmed: scalar_stat(&stats, Statistic::MedAbsDevMed)?,
+        q1: scalar_stat(&stats, Statistic::Q1)?,
+        q3: scalar_stat(&stats, Statistic::Q3)?,
+        quartile: scalar_stat(&stats, Statistic::Quartile)?,
+        minposf,
+        maxposf,
+        minpos,
+        maxpos,
+        imagename: path.display().to_string(),
+        blc: selection.start.clone(),
+        trc,
         flux,
         units: image.units().to_string(),
     })
+}
+
+/// The inclusive top-right corner of a selection, as pixels.
+fn trc_pixels(start: &[usize], shape: &[usize]) -> Vec<usize> {
+    start
+        .iter()
+        .zip(shape)
+        .map(|(start, shape)| start + shape - 1)
+        .collect()
 }
 
 /// One statistic of the selection. With no valid pixel, a count or a sum

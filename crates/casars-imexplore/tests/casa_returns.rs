@@ -273,20 +273,7 @@ fn imstat_returns_casas_statistics_record() {
         "imstat",
         json!({"imagename": image, "box": "0,0,3,3"}),
     );
-    assert_casa_dict(
-        &value,
-        "imstat no beam",
-        &[
-            "blcf",
-            "maxposf",
-            "medabsdevmed",
-            "minposf",
-            "q1",
-            "q3",
-            "quartile",
-            "trcf",
-        ],
-    );
+    assert_casa_dict(&value, "imstat no beam", &[]);
 }
 
 /// `flux` is CASA's: integrated over the selected channels when there are
@@ -348,8 +335,24 @@ fn imstat_of_no_pixels_returns_empty_statistics() {
     assert_eq!(
         keys,
         [
-            "blc", "flux", "max", "mean", "median", "min", "npts", "rms", "sigma", "sum", "sumsq",
-            "trc"
+            "blc",
+            "blcf",
+            "flux",
+            "max",
+            "mean",
+            "medabsdevmed",
+            "median",
+            "min",
+            "npts",
+            "q1",
+            "q3",
+            "quartile",
+            "rms",
+            "sigma",
+            "sum",
+            "sumsq",
+            "trc",
+            "trcf"
         ]
     );
     for entry in entries {
@@ -360,6 +363,15 @@ fn imstat_of_no_pixels_returns_empty_statistics() {
                 data,
             } => assert!(shape == &[0] && data.is_empty(), "{:?}", entry.key),
             CasaValue::IntArray { .. } => {}
+            CasaValue::String { value } => match &entry.key {
+                CasaKey::String(key) if key == "blcf" => {
+                    assert_eq!(value, "00:00:08.000, -00.02.00.000, I, 1.415e+09Hz")
+                }
+                CasaKey::String(key) if key == "trcf" => {
+                    assert_eq!(value, "23:59:56.000, +00.01.00.000, I, 1.415e+09Hz")
+                }
+                other => panic!("unexpected string entry {other:?}"),
+            },
             other => panic!("{:?}: {other:?}", entry.key),
         }
     }
