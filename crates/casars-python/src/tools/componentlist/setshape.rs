@@ -87,7 +87,7 @@ pub(super) fn prepare(
     }
     if [major, minor, angle].iter().any(|value| !value.is_finite()) {
         return Err(ConvertError::runtime(
-            "non-finite component shape refused (#1053)",
+            "non-finite component shape refused (#1252)",
         ));
     }
     for (name, q) in ["majoraxiserror", "minoraxiserror", "positionangleerror"]
@@ -105,7 +105,7 @@ pub(super) fn prepare(
         .any(|value| !value.is_finite())
     {
         return Err(ConvertError::runtime(
-            "non-finite component shape error refused (#1053)",
+            "non-finite component shape error refused (#1252)",
         ));
     }
     if [major_error, minor_error, angle_error]
@@ -185,7 +185,7 @@ pub(super) fn optional_pending(value: &Bound<'_, PyAny>) -> PyResult<bool> {
             let identity = object.as_ptr() as usize;
             if !active.insert(identity) {
                 return Err(PyValueError::new_err(
-                    "cyclic component double-vector argument (CASA crash: #1053)",
+                    "cyclic component double-vector argument (CASA crash: #1252)",
                 ));
             }
             let items = object.try_iter()?.collect::<PyResult<Vec<_>>>()?;

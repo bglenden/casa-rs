@@ -51,7 +51,7 @@ impl PyComponentList {
         let name = name.split('\0').next().unwrap_or_default();
         let result = if let Some(name) = DIRECTION_CODES.resolve(name) {
             let frame = DirectionRef::from_str(name).map_err(|_| PyNotImplementedError::new_err(
-                format!("direction reference {name} is not supported by the shared measure model (#1053)"),
+                format!("direction reference {name} is not supported by the shared measure model (#1252)"),
             ))?;
             self.call(py, move |state, _| {
                 state.convertrefdir(which, frame).map(CasaValue::Bool)

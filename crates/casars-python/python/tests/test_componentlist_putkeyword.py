@@ -178,3 +178,67 @@ def test_putkeyword_result_schema_is_mutating_and_not_a_boolean():
     method = next(item for item in contract["methods"] if item["name"] == "putkeyword")
     assert method["mutating"] is True
     assert method["result_schema"] == {}
+
+
+def test_pending_keyword_keeps_write_lock_until_close(tmp_path):
+    """CASA leaves table.dat unchanged and excludes an external reader."""
+    path = fixture_path(tmp_path)
+    cl = componentlist()
+    assert cl.open(path, nomodify=True)
+    before = (Path(path) / "table.dat").read_bytes()
+    assert cl.putkeyword("pending", 42) is None
+    assert (Path(path) / "table.dat").read_bytes() == before
+    code = """
+import json, sys
+from casars.tools import table
+reader=table()
+assert reader.open(sys.argv[1], lockoptions={'option':'usernoread'})
+locked=reader.lock(write=False, nattempts=1)
+print(json.dumps({'locked': locked, 'value': reader.getkeyword('pending') if locked else None}))
+reader.close()
+"""
+    def probe():
+        result = subprocess.run([sys.executable, "-c", code, path], capture_output=True, text=True, check=True, timeout=20)
+        return json.loads(result.stdout)
+    assert probe() == {"locked": False, "value": None}
+    assert cl.done()
+    assert probe() == {"locked": True, "value": 42}
+
+
+def test_component_handles_see_each_others_pending_keywords(tmp_path):
+    path = fixture_path(tmp_path)
+    first, second = componentlist(), componentlist()
+    assert first.open(path, nomodify=True)
+    assert first.putkeyword("first", 11) is None
+    assert second.open(path, nomodify=True)
+    assert second.getkeyword("first") == 11
+    assert second.putkeyword("second", 22) is None
+    assert first.getkeyword("second") == 22
+    assert first.getkeyword("first") == 11
+    assert first.done()
+    assert second.done()
+
+
+def test_cached_reader_uses_publication_counter_not_file_timestamp(tmp_path):
+    """A valid new table generation can retain its old size and timestamp."""
+    import os
+    path = fixture_path(tmp_path)
+    cl = componentlist()
+    assert cl.open(path, nomodify=True)
+    assert cl.putkeyword("counter", 42) is None
+    assert cl.done()
+    assert cl.open(path, nomodify=True)
+    assert cl.getkeyword("counter") == 42
+    control = Path(path) / "table.dat"
+    before = control.stat()
+    code = """
+from casars.tools import table
+import sys
+t=table(); assert t.open(sys.argv[1], nomodify=False)
+assert t.putkeyword('counter',43); t.close()
+"""
+    subprocess.run([sys.executable, "-c", code, path], capture_output=True, text=True, check=True, timeout=20)
+    assert control.stat().st_size == before.st_size
+    os.utime(control, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert cl.getkeyword("counter") == 43
+    assert cl.done()

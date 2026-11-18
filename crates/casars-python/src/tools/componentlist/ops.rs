@@ -19,6 +19,10 @@
 //! - a list opened read-only (`nomodify=True`) is never written, though it
 //!   can be changed in memory.
 
+pub(super) mod offsets;
+mod records;
+mod sort;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -40,12 +44,12 @@ use crate::convert::{ConvertError, ConvertResult, Variant, casacore_unit, quanti
 use crate::tools::LogLine;
 
 /// The table a list is attached to.
-#[derive(Debug, Clone)]
 struct Attached {
     path: PathBuf,
     /// Whether releasing the list rewrites the table (`open` with
     /// `nomodify=False`, or `rename`).
     writable: bool,
+    keywords: Arc<super::keywords::Shared>,
 }
 
 /// The tool's state: the list, the table it is attached to, and the
@@ -55,8 +59,9 @@ pub(crate) struct State {
     list: ComponentList,
     selection: std::collections::BTreeSet<i64>,
     shape_units: BTreeMap<usize, [Unit; 6]>,
+    offsets: BTreeMap<usize, offsets::Offsets>,
     /// Removed components in request order; recovery appends them in reverse.
-    removed: Vec<(SkyComponent, Option<[Unit; 6]>)>,
+    removed: Vec<(SkyComponent, Option<[Unit; 6]>, Option<offsets::Offsets>)>,
     table: Option<Attached>,
     measures: Option<Arc<dyn MeasuresProvider>>,
 }
@@ -123,20 +128,38 @@ impl State {
             .ok()
             .and_then(|index| self.list.get_mut(index))
             .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        let direction = if let Some(offsets) = self.offsets.get(&(which as usize)) {
+            offsets
+                .resolve_direction(component)
+                .map_err(ConvertError::runtime)?
+        } else {
+            component.shape().reference_direction().clone()
+        };
         let shape = component.shape_mut();
-        let converted = shape
-            .reference_direction()
-            .convert_to(frame, &MeasFrame::new())
-            .map_err(|error| match error {
-                MeasureError::MissingFrameData { .. } => {
-                    ConvertError::runtime("Missing information in Frame specified for conversion")
-                }
-                MeasureError::NotYetImplemented { route } => ConvertError::runtime(format!(
-                    "direction conversion {route} is not implemented (#1053)"
-                )),
-                other => ConvertError::runtime(other.to_string()),
-            })?;
+        let source = direction.refer();
+        if source != frame && source.casacore_code() >= 32 {
+            return Err(ConvertError::runtime(if source == DirectionRef::COMET {
+                "No MeasFrame comet specified for conversion of Direction"
+            } else {
+                "No MeasFrame epoch specified for conversion of Direction"
+            }));
+        }
+        let converted =
+            direction
+                .convert_to(frame, &MeasFrame::new())
+                .map_err(|error| match error {
+                    MeasureError::MissingFrameData { .. } => ConvertError::runtime(
+                        "Missing information in Frame specified for conversion",
+                    ),
+                    MeasureError::NotYetImplemented { route } => ConvertError::runtime(format!(
+                        "direction conversion {route} is not implemented (#1252)"
+                    )),
+                    other => ConvertError::runtime(other.to_string()),
+                })?;
         shape.set_reference_direction(converted);
+        if let Some(offsets) = self.offsets.get_mut(&(which as usize)) {
+            offsets.clear_direction();
+        }
         Ok(true)
     }
 
@@ -144,7 +167,7 @@ impl State {
     pub(crate) fn simulate(&mut self, howmany: i64) -> ConvertResult<bool> {
         if howmany > i64::from(i32::MAX) {
             return Err(ConvertError::runtime(
-                "component count exceeds CASA's signed loop range (#1053)",
+                "component count exceeds CASA's signed loop range (#1252)",
             ));
         }
         let direction =
@@ -184,7 +207,7 @@ impl State {
                 })?;
                 if !index.is_finite() {
                     return Err(ConvertError::runtime(
-                        "non-finite spectral index refused (#1053)",
+                        "non-finite spectral index refused (#1252)",
                     ));
                 }
                 SpectralKind::SpectralIndex(SpectralIndex::new(index))
@@ -204,7 +227,7 @@ impl State {
                 };
                 if coefficients.iter().any(|value| !value.is_finite()) {
                     return Err(ConvertError::runtime(
-                        "non-finite spectrum coefficient refused (#1053)",
+                        "non-finite spectrum coefficient refused (#1252)",
                     ));
                 }
                 SpectralKind::PowerLogPolynomial(PowerLogPolynomial::new(coefficients))
@@ -228,7 +251,7 @@ impl State {
                 })?;
                 if request.frequencies.invalid || request.flux.invalid {
                     return Err(ConvertError::runtime(
-                        "unrepresentable tabular value refused (#1053)",
+                        "unrepresentable tabular value refused (#1252)",
                     ));
                 }
                 if request
@@ -239,7 +262,7 @@ impl State {
                     .any(|v| !v.is_finite())
                 {
                     return Err(ConvertError::runtime(
-                        "non-finite tabular spectrum refused (#1053)",
+                        "non-finite tabular spectrum refused (#1252)",
                     ));
                 }
                 let flux = request
@@ -325,6 +348,9 @@ impl State {
     /// Return a component record using the in-memory shape units.
     pub(crate) fn getcomponent(&self, which: i64) -> ConvertResult<CasaValue> {
         let mut result = record(self.checked(which)?.to_record())?;
+        if let Some(offsets) = self.offsets.get(&(which as usize)) {
+            offsets.decorate(&mut result);
+        }
         if !self.shape_units.contains_key(&(which as usize)) {
             return Ok(result);
         }
@@ -355,7 +381,7 @@ impl State {
         let indices = if which == -1 {
             if self.list.is_empty() {
                 return Err(ConvertError::runtime(
-                    "componentlist.setflux on an empty list would crash CASA (#1053)",
+                    "componentlist.setflux on an empty list would crash CASA (#1252)",
                 ));
             }
             (0..self.list.len()).collect::<Vec<_>>()
@@ -439,10 +465,10 @@ impl State {
     }
 
     /// The attached table, required by CASA's keyword methods.
-    pub(crate) fn keyword_table_path(&self) -> ConvertResult<&Path> {
+    pub(crate) fn keyword_table(&self) -> ConvertResult<&Arc<super::keywords::Shared>> {
         self.table
             .as_ref()
-            .map(|table| table.path.as_path())
+            .map(|table| &table.keywords)
             .ok_or_else(|| {
                 ConvertError::runtime("Exception: A table is not attached to this ComponentList.")
             })
@@ -467,17 +493,32 @@ impl State {
     ///
     /// The table could not be rewritten; the state is reset all the same.
     pub(crate) fn release(&mut self) -> Result<(), String> {
-        let list = std::mem::take(&mut self.list);
+        let mut list = std::mem::take(&mut self.list);
+        let resolved =
+            std::mem::take(&mut self.offsets)
+                .into_iter()
+                .try_for_each(|(index, offsets)| {
+                    offsets.resolve(list.get_mut(index).expect("offset component"))
+                });
+
         self.selection.clear();
         self.shape_units.clear();
         self.removed.clear();
-        match self.table.take() {
+        let attached = self.table.take();
+        if let Some(table) = &attached {
+            super::keywords::release(&table.keywords).map_err(|e| e.to_string())?;
+        }
+        match attached {
             Some(Attached {
                 path,
                 writable: true,
-            }) => list.rewrite_table(&path).map_err(|error| {
-                format!("componentlist could not write {}: {error}", path.display())
-            }),
+                ..
+            }) => {
+                resolved?;
+                list.rewrite_table(&path).map_err(|error| {
+                    format!("componentlist could not write {}: {error}", path.display())
+                })
+            }
             _ => Ok(()),
         }
     }
@@ -496,6 +537,7 @@ impl State {
             return Err(not_a_list());
         }
         let path = absolute(filename)?;
+        super::keywords::flush_pending()?;
         if !is_component_list(&path) {
             return Err(not_a_list());
         }
@@ -507,6 +549,7 @@ impl State {
             other => ConvertError::runtime(other.to_string()),
         })?;
         self.table = Some(Attached {
+            keywords: super::keywords::attach(&path)?,
             path,
             writable: !nomodify,
         });
@@ -515,28 +558,30 @@ impl State {
 
     /// `rename(filename)`.
     pub(crate) fn rename(&mut self, filename: &str) -> ConvertResult<bool> {
-        match &self.table {
-            None if filename.is_empty() => return Ok(true),
-            Some(_) if filename.is_empty() => {
-                return Err(ConvertError::runtime(
-                    "componentlist.rename('') of a list attached to a table (which CASA \
-                     deletes) is not yet implemented in casa-rs",
-                ));
-            }
+        if matches!(
+            self.table,
             Some(Attached {
-                writable: false, ..
-            }) => {
-                return Err(ConvertError::runtime(
-                    "Failed AlwaysAssert itsROFlag == false",
-                ));
-            }
-            _ => {}
+                writable: false,
+                ..
+            })
+        ) {
+            return Err(ConvertError::runtime(
+                "Failed AlwaysAssert itsROFlag == false",
+            ));
         }
         let path = absolute(filename)?;
         if path.exists() {
+            let name = if filename.is_empty() {
+                path.to_string_lossy().into_owned()
+            } else {
+                filename.to_owned()
+            };
             return Err(ConvertError::runtime(format!(
-                "Table {filename} already exists"
+                "Table {name} already exists"
             )));
+        }
+        if let Some(attached) = &self.table {
+            super::keywords::release(&attached.keywords)?;
         }
         match &self.table {
             Some(Attached { path: current, .. }) => {
@@ -548,11 +593,13 @@ impl State {
                 })?;
             }
             None => self
-                .list
+                .materialized()
+                .map_err(ConvertError::runtime)?
                 .write_table(&path)
                 .map_err(|error| ConvertError::runtime(error.to_string()))?,
         }
         self.table = Some(Attached {
+            keywords: super::keywords::attach(&path)?,
             path,
             writable: true,
         });
@@ -646,7 +693,7 @@ impl State {
         let requested: Vec<usize> = if indices == [-1] {
             if self.list.is_empty() {
                 return Err(ConvertError::runtime(
-                    "componentlist.remove on an empty list would crash CASA (#1053)",
+                    "componentlist.remove on an empty list would crash CASA (#1252)",
                 ));
             }
             (0..self.list.len()).collect()
@@ -668,6 +715,7 @@ impl State {
                 self.removed.push((
                     self.list.get(index).expect("validated index").clone(),
                     self.shape_units.get(&index).cloned(),
+                    self.offsets.get(&index).cloned(),
                 ));
             }
         }
@@ -690,6 +738,10 @@ impl State {
             .into_iter()
             .filter_map(|index| remap(index as usize).map(|new| new as i64))
             .collect();
+        self.offsets = std::mem::take(&mut self.offsets)
+            .into_iter()
+            .filter_map(|(index, value)| remap(index).map(|new| (new, value)))
+            .collect();
         self.shape_units = std::mem::take(&mut self.shape_units)
             .into_iter()
             .filter_map(|(index, units)| remap(index).map(|new| (new, units)))
@@ -699,7 +751,10 @@ impl State {
 
     /// Restore removed components in reverse removal order, without selecting them.
     pub(crate) fn recover(&mut self) -> bool {
-        while let Some((component, units)) = self.removed.pop() {
+        while let Some((component, units, offsets)) = self.removed.pop() {
+            if let Some(offsets) = offsets {
+                self.offsets.insert(self.list.len(), offsets);
+            }
             if let Some(units) = units {
                 self.shape_units.insert(self.list.len(), units);
             }
@@ -750,30 +805,11 @@ impl State {
             lines.push(LogLine::warning("componentlist is empty"));
             return Ok(CasaValue::empty_record());
         }
-        let mut result = record(self.list.to_record())?;
-        for &index in self.shape_units.keys() {
-            let CasaValue::Record(components) = &mut result else {
-                continue;
-            };
-            let Some((_, CasaValue::Record(component))) = components
-                .iter_mut()
-                .find(|(name, _)| name == &format!("component{index}"))
-            else {
-                continue;
-            };
-            let Some((_, CasaValue::Record(shape))) =
-                component.iter_mut().find(|(name, _)| name == "shape")
-            else {
-                continue;
-            };
-            if let CasaValue::Record(quantities) = self.getshape(index as i64)? {
-                for (name, quantity) in quantities {
-                    if let Some((_, value)) = shape.iter_mut().find(|(key, _)| key == &name) {
-                        *value = quantity;
-                    }
-                }
-            }
+        let mut fields = vec![("nelements".into(), CasaValue::Int(self.length()))];
+        for index in 0..self.length() {
+            fields.push((format!("component{index}"), self.getcomponent(index)?));
         }
+        let result = CasaValue::Record(fields);
         Ok(result)
     }
 
@@ -825,7 +861,7 @@ impl State {
         let (ra, dec) = (ra.get_si_value(), dec.get_si_value());
         if !ra.is_finite() || !dec.is_finite() {
             return Err(ConvertError::runtime(
-                "non-finite component direction refused (CASA writes NaN: #1053)",
+                "non-finite component direction refused (CASA writes NaN: #1252)",
             ));
         }
         if pending {
@@ -833,7 +869,7 @@ impl State {
         }
         if which == -1 && self.list.is_empty() {
             return Err(ConvertError::runtime(
-                "Cannot set directions of an empty list (CASA crashes: #1053)",
+                "Cannot set directions of an empty list (CASA crashes: #1252)",
             ));
         }
         if which < -1 || which >= self.length() {
@@ -875,6 +911,9 @@ impl State {
         let mut direction = shape.reference_direction().clone();
         direction.set_reference(frame);
         shape.set_reference_direction(direction);
+        if let Some(offsets) = self.offsets.get_mut(&(which as usize)) {
+            offsets.clear_direction();
+        }
         Ok(true)
     }
 
@@ -940,6 +979,9 @@ impl State {
         let spectrum = component.spectrum_mut();
         spectrum
             .set_reference_frequency(MFrequency::new(spectrum.reference_frequency().hz(), frame));
+        if let Some(offsets) = self.offsets.get_mut(&(which as usize)) {
+            offsets.clear_frequency();
+        }
         Ok(true)
     }
 
@@ -954,7 +996,7 @@ impl State {
         let indices = if which == -1 {
             if self.list.is_empty() {
                 return Err(ConvertError::runtime(
-                    "componentlist.convertfluxpol on an empty list would crash CASA (#1053)",
+                    "componentlist.convertfluxpol on an empty list would crash CASA (#1252)",
                 ));
             }
             (0..self.list.len()).collect::<Vec<_>>()
@@ -1014,7 +1056,7 @@ impl State {
         let indices = if which == -1 {
             if self.list.is_empty() {
                 return Err(ConvertError::runtime(
-                    "componentlist.convertfluxunit on an empty list would crash CASA (#1053)",
+                    "componentlist.convertfluxunit on an empty list would crash CASA (#1252)",
                 ));
             }
             (0..self.list.len()).collect::<Vec<_>>()
@@ -1102,6 +1144,18 @@ impl State {
     /// `getrefdir(which)`: the reference direction's `MeasureHolder` record.
     pub(crate) fn getrefdir(&self, which: i64) -> ConvertResult<CasaValue> {
         let shape = self.checked(which)?.shape().to_record();
+        if self.offsets.contains_key(&(which as usize)) {
+            let mut component = self.getcomponent(which)?;
+            if let CasaValue::Record(fields) = &mut component
+                && let Some((_, CasaValue::Record(fields))) =
+                    fields.iter_mut().find(|(k, _)| k == "shape")
+                && let Some((_, CasaValue::Record(fields))) =
+                    fields.iter_mut().find(|(k, _)| k == "direction")
+            {
+                fields.retain(|(key, _)| key != "error");
+                return Ok(CasaValue::Record(std::mem::take(fields)));
+            }
+        }
         match shape.get("direction") {
             Some(Value::Record(direction)) => Ok(CasaValue::from_record(&RecordValue::new(
                 direction

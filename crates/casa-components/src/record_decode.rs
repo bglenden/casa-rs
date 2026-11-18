@@ -36,6 +36,20 @@ impl ComponentList {
     }
 }
 
+impl SkyComponent {
+    /// Decode a complete CASA component record, including its flux basis,
+    /// shape and direction errors, spectrum, label and optional parameters.
+    ///
+    /// This reads the records produced by [`Self::to_record`]. Tool-specific
+    /// defaults and diagnostics belong to the calling tool.
+    ///
+    /// # Errors
+    /// Missing fields or values the component model cannot represent.
+    pub fn from_record(record: &RecordValue) -> Result<Self, ComponentError> {
+        component(record)
+    }
+}
+
 fn component(record: &RecordValue) -> Result<SkyComponent, ComponentError> {
     let flux = subrecord(record, "flux")?;
     let values = complex_values(flux.get("value")).ok_or_else(|| invalid("flux.value"))?;
@@ -110,7 +124,10 @@ fn spectrum(record: &RecordValue) -> Result<SpectralModel, ComponentError> {
     crate::table::apply_spectral_record(&mut kind, record)?;
     let mut model = SpectralModel::new(frequency, kind);
     let unit = string(subrecord(frequency_record, "m0")?, "unit")?;
-    model.set_frequency_unit(Unit::new(unit).map_err(|error| invalid(error.to_string()))?)?;
+    let unit = Unit::new(unit).map_err(|error| invalid(error.to_string()))?;
+    if unit.conformant(&Unit::new("Hz").expect("Hz")) {
+        model.set_frequency_unit(unit)?;
+    }
     Ok(model)
 }
 
@@ -132,6 +149,7 @@ fn quantity(record: &RecordValue) -> Result<Quantity, ComponentError> {
     let value = match record.get("value") {
         Some(Value::Scalar(ScalarValue::Float64(value))) => *value,
         Some(Value::Scalar(ScalarValue::Float32(value))) => f64::from(*value),
+        Some(Value::Scalar(ScalarValue::Int32(value))) => f64::from(*value),
         _ => return Err(invalid("quantity.value")),
     };
     Quantity::new(value, string(record, "unit")?).map_err(|error| invalid(error.to_string()))
@@ -159,4 +177,82 @@ fn complex_values(value: Option<&Value>) -> Option<[Complex64; 4]> {
 
 fn invalid(field: impl Into<String>) -> ComponentError {
     ComponentError::Record(field.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_types::measures::direction::{DirectionRef, MDirection};
+    use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+
+    #[test]
+    fn component_record_frequency_honors_its_unit() {
+        let mut model = SpectralModel::new(
+            MFrequency::new(1.5e9, FrequencyRef::LSRK),
+            SpectralKind::Constant,
+        );
+        model.set_frequency_unit(Unit::new("GHz").unwrap()).unwrap();
+        let original = SkyComponent::new(
+            Flux::stokes_jy(1.0, 0.0, 0.0, 0.0),
+            ComponentShape::point(MDirection::from_angles(0.0, 0.0, DirectionRef::J2000)),
+            model,
+        );
+        let decoded = SkyComponent::from_record(&original.to_record().unwrap()).unwrap();
+        assert_eq!(decoded.spectrum().reference_frequency().hz(), 1.5e9);
+    }
+
+    use casa_types::RecordField;
+
+    #[test]
+    fn resolves_component_record_offsets_like_casa_6_7_6_14() {
+        let component = SkyComponent::new(
+            Flux::stokes_jy(1.0, 0.0, 0.0, 0.0),
+            ComponentShape::point(MDirection::from_angles(
+                10_f64.to_radians(),
+                20_f64.to_radians(),
+                DirectionRef::J2000,
+            )),
+            SpectralModel::new(
+                MFrequency::new(1.4e9, FrequencyRef::LSRK),
+                SpectralKind::Constant,
+            ),
+        );
+        let mut record = component.to_record().unwrap();
+        let Value::Record(shape) = record.get_mut("shape").unwrap() else {
+            unreachable!()
+        };
+        let Value::Record(direction) = shape.get_mut("direction").unwrap() else {
+            unreachable!()
+        };
+        direction.push(RecordField::new(
+            "offset",
+            Value::Record(casa_types::measures::direction_to_record(
+                &MDirection::from_angles(
+                    1_f64.to_radians(),
+                    2_f64.to_radians(),
+                    DirectionRef::J2000,
+                ),
+            )),
+        ));
+        let Value::Record(spectrum) = record.get_mut("spectrum").unwrap() else {
+            unreachable!()
+        };
+        let Value::Record(frequency) = spectrum.get_mut("frequency").unwrap() else {
+            unreachable!()
+        };
+        frequency.push(RecordField::new(
+            "offset",
+            Value::Record(casa_types::measures::frequency_to_record(&MFrequency::new(
+                1e9,
+                FrequencyRef::LSRK,
+            ))),
+        ));
+        let decoded = SkyComponent::from_record(&record).unwrap();
+        // Independent CASA cl.add(record), rename/done/open values, preserved
+        // in the Python componentlist offset fixture.
+        let (longitude, latitude) = decoded.shape().reference_direction().as_angles();
+        assert!((longitude - 0.093_570_138_597_165_76).abs() < 1e-15);
+        assert!((latitude - 0.192_564_780_043_098_24).abs() < 1e-15);
+        assert_eq!(decoded.spectrum().reference_frequency().hz(), 2.4e9);
+    }
 }

@@ -58,7 +58,7 @@ def test_rejects_unsafe_indices_and_nonfinite_values():
     for kwargs in ({'index':[]},{'index':[float('nan')]},
                    {'type':'tabular','tabularfreqs':[1e9,2e9],'tabulari':[1,float('nan')],
                     'tabularq':[0,0],'tabularu':[0,0],'tabularv':[0,0]}):
-        with pytest.raises(RuntimeError,match='#1053'): c.setstokesspectrum(0,**kwargs)
+        with pytest.raises(RuntimeError,match='#1252'): c.setstokesspectrum(0,**kwargs)
         compare(snapshot(c),before)
     assert c.done()
 

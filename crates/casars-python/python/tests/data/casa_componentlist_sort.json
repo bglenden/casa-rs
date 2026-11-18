@@ -1,0 +1,189 @@
+{
+  "casatools": "6.7.6-14",
+  "entries": [
+    [
+      [
+        1,
+        0.5,
+        0,
+        0
+      ],
+      "J2000 20deg 0deg",
+      "first",
+      "4arcsec"
+    ],
+    [
+      [
+        -3,
+        0,
+        0,
+        0
+      ],
+      "J2000 0deg 0deg",
+      "negative",
+      "3arcmin"
+    ],
+    [
+      [
+        2,
+        1.5,
+        0,
+        0
+      ],
+      "J2000 10deg 0deg",
+      "polarized",
+      "2deg"
+    ],
+    [
+      [
+        0,
+        1,
+        0,
+        0
+      ],
+      "J2000 100deg 0deg",
+      "zero",
+      "1arcsec"
+    ]
+  ],
+  "cases": [
+    {
+      "criteria": "Flux",
+      "result": true,
+      "labels": [
+        "negative",
+        "polarized",
+        "first",
+        "zero"
+      ],
+      "selected": [
+        0,
+        2
+      ]
+    },
+    {
+      "criteria": "Position",
+      "result": true,
+      "labels": [
+        "negative",
+        "polarized",
+        "first",
+        "zero"
+      ],
+      "selected": [
+        0,
+        2
+      ]
+    },
+    {
+      "criteria": "Polarization",
+      "result": true,
+      "labels": [
+        "polarized",
+        "first",
+        "zero",
+        "negative"
+      ],
+      "selected": [
+        0,
+        2
+      ]
+    },
+    {
+      "criteria": "fLuX",
+      "result": true,
+      "labels": [
+        "negative",
+        "polarized",
+        "first",
+        "zero"
+      ],
+      "selected": [
+        0,
+        2
+      ]
+    },
+    {
+      "criteria": "flux\u0000ignored",
+      "result": true,
+      "labels": [
+        "negative",
+        "polarized",
+        "first",
+        "zero"
+      ],
+      "selected": [
+        0,
+        2
+      ]
+    },
+    {
+      "criteria": "bad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort\tBad sort criteria.\n2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort+\tAllowed values are: 'flux', 'position' & 'polarization'\n2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort+\tNo sorting done."
+      },
+      "labels": [
+        "first",
+        "negative",
+        "polarized",
+        "zero"
+      ],
+      "selected": [
+        0,
+        2
+      ]
+    },
+    {
+      "criteria": "f",
+      "error": {
+        "type": "RuntimeError",
+        "message": "2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort\tBad sort criteria.\n2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort+\tAllowed values are: 'flux', 'position' & 'polarization'\n2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort+\tNo sorting done."
+      },
+      "labels": [
+        "first",
+        "negative",
+        "polarized",
+        "zero"
+      ],
+      "selected": [
+        0,
+        2
+      ]
+    },
+    {
+      "criteria": "polarisation",
+      "error": {
+        "type": "RuntimeError",
+        "message": "2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort\tBad sort criteria.\n2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort+\tAllowed values are: 'flux', 'position' & 'polarization'\n2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort+\tNo sorting done."
+      },
+      "labels": [
+        "first",
+        "negative",
+        "polarized",
+        "zero"
+      ],
+      "selected": [
+        0,
+        2
+      ]
+    },
+    {
+      "criteria": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort\tBad sort criteria.\n2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort+\tAllowed values are: 'flux', 'position' & 'polarization'\n2026-11-18 18:56:12\tSEVERE\tcomponentlist::sort+\tNo sorting done."
+      },
+      "labels": [
+        "first",
+        "negative",
+        "polarized",
+        "zero"
+      ],
+      "selected": [
+        0,
+        2
+      ]
+    }
+  ]
+}

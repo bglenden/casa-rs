@@ -1,0 +1,4160 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "name": "empty",
+      "record": {},
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "normal",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "point",
+      "record": {
+        "shape": {
+          "type": "Point"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "frequency_current",
+      "record": {
+        "spectrum": {
+          "type": "Constant",
+          "frequency": "current"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "flux_int",
+      "record": {
+        "flux": 5
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'flux' field must be a record\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_text",
+      "record": {
+        "flux": "bad"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'flux' field must be a record\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_empty",
+      "record": {
+        "flux": {}
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Illegal Quantum record in QuantumHolder::fromRecord\nCould not parse the flux record\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_int",
+      "record": {
+        "shape": 5
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'shape' field must be a record"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_text",
+      "record": {
+        "shape": "bad"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'shape' field must be a record"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_empty",
+      "record": {
+        "shape": {}
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'shape' record does not have a 'type' field.\nCannot create a component with a 'Unknown' shape\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "spectrum_int",
+      "record": {
+        "spectrum": 5
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'spectrum' field must be a record"
+      },
+      "length": 0
+    },
+    {
+      "name": "spectrum_text",
+      "record": {
+        "spectrum": "bad"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'spectrum' field must be a record"
+      },
+      "length": 0
+    },
+    {
+      "name": "spectrum_empty",
+      "record": {
+        "spectrum": {}
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe record does not have a 'type' field.Cannot create a component with a 'Unknown' spectrum\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "label_int",
+      "record": {
+        "label": 5
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'label' field must be a string"
+      },
+      "length": 0
+    },
+    {
+      "name": "label_text",
+      "record": {
+        "label": "bad"
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "bad",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "label_empty",
+      "record": {
+        "label": {}
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'label' field must be a string"
+      },
+      "length": 0
+    },
+    {
+      "name": "optionalParameters_int",
+      "record": {
+        "optionalParameters": 5
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'optionalParameters' field must be a Double Array"
+      },
+      "length": 0
+    },
+    {
+      "name": "optionalParameters_text",
+      "record": {
+        "optionalParameters": "bad"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'optionalParameters' field must be a Double Array"
+      },
+      "length": 0
+    },
+    {
+      "name": "optionalParameters_empty",
+      "record": {
+        "optionalParameters": {}
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'optionalParameters' field must be a Double Array"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_missing_error",
+      "record": {
+        "flux": {
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "flux_missing_polarisation",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'error' field must be a complex vector with 4 elements\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_missing_unit",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Illegal Quantum record in QuantumHolder::fromRecord\nCould not parse the flux record\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_missing_value",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy"
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Illegal Quantum record in QuantumHolder::fromRecord\nCould not parse the flux record\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_missing_direction",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "shape_missing_majoraxis",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'majoraxis' field does not exist\nShape not changed\nProblem parsing the 'shape' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_missing_majoraxiserror",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'majoraxiserror' field does not exist\nShape errors not changed\nProblem parsing the 'shape' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_missing_minoraxis",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'minoraxis' field does not exist\nShape not changed\nProblem parsing the 'shape' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_missing_minoraxiserror",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'minoraxiserror' field does not exist\nShape errors not changed\nProblem parsing the 'shape' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_missing_positionangle",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'positionangle' field does not exist\nShape not changed\nProblem parsing the 'shape' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_missing_positionangleerror",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'positionangleerror' field does not exist\nShape errors not changed\nProblem parsing the 'shape' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_missing_type",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          }
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'shape' record does not have a 'type' field.\nCannot create a component with a 'Unknown' shape\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "spectrum_missing_frequency",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'frequency' field does not exist\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "spectrum_missing_type",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          }
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe record does not have a 'type' field.Cannot create a component with a 'Unknown' spectrum\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_type_0",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "bad"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Cannot create a component with a 'Unknown' shape\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_type_1",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": 1
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'type' field, in the shape record, must be a String\nCannot create a component with a 'Unknown' shape\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "spectrum_type_0",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "bad"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Cannot create a component with a 'Unknown' spectrum\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "spectrum_type_1",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": 1
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error \nThe 'type' field in the spectrum record,must be a StringCannot create a component with a 'Unknown' spectrum\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_polarisation_0",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "bad",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The polarisation type is not known.\nAllowed values are 'Stokes', 'Linear' & 'Circular'\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_polarisation_1",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": 1,
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'polarisation' field must be a record\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_unit_0",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "m",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The dimensions of the units must be same as the Jy\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_unit_1",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": 1,
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Illegal Quantum record in QuantumHolder::fromRecord\nCould not parse the flux record\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_value_0",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": []
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Illegal Quantum record in QuantumHolder::fromRecord\nCould not parse the flux record\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_value_1",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "flux_value_2",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            1,
+            2
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Must specify all 4 flux values\nif the polarisation representation is not Stokes\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_value_3",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Must specify all 4 flux values\nif the polarisation representation is not Stokes\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_error_0",
+      "record": {
+        "flux": {
+          "error": [
+            1
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'error' field must be a vector with 4 elements\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "flux_error_1",
+      "record": {
+        "flux": {
+          "error": [
+            1,
+            2
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'error' field must be a vector with 4 elements\nProblem parsing the 'flux' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_direction_0",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": "current",
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'direction' field must be a record\nProblem parsing the 'shape' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_direction_1",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": 1,
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'direction' field must be a record\nProblem parsing the 'shape' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "shape_direction_2",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {},
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Illegal Measure record in MeasureHolder::fromRecord\nCould not parse the reference direction\nProblem parsing the 'shape' field\n"
+      },
+      "length": 0
+    },
+    {
+      "name": "no_dir_error",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "limbdisk",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Limbdarkeneddisk"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        },
+        "optionalParameters": [
+          0.5
+        ]
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.20000000298023224
+          ]
+        },
+        "label": "gauss",
+        "optionalParameters": [
+          0.5
+        ],
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Limbdarkeneddisk"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "complex",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.2
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            3.0,
+            1.0,
+            0.5,
+            0.2
+          ]
+        },
+        "label": "gauss",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": "Gaussian"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    },
+    {
+      "name": "fromrecord_empty",
+      "record": {},
+      "result": true,
+      "length": 0,
+      "after": {}
+    },
+    {
+      "name": "fromrecord_zero",
+      "record": {
+        "nelements": 0
+      },
+      "result": true,
+      "length": 0,
+      "after": {}
+    },
+    {
+      "name": "fromrecord_missing",
+      "record": {
+        "nelements": 1
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "RecordInterface: field component0 is unknown"
+      },
+      "length": 0,
+      "after": {}
+    },
+    {
+      "name": "fromrecord_wrong_component",
+      "record": {
+        "nelements": 1,
+        "component0": 3
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "RecordRep::get_pointer - incorrect data type Record   used for field component0 with type Int     "
+      },
+      "length": 0,
+      "after": {}
+    },
+    {
+      "name": "fromrecord_no_count",
+      "record": {
+        "component0": {}
+      },
+      "result": true,
+      "length": 0,
+      "after": {}
+    },
+    {
+      "name": "fromrecord_default_component",
+      "record": {
+        "nelements": 1,
+        "component0": {}
+      },
+      "result": true,
+      "length": 1,
+      "after": {
+        "component0": {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        "nelements": 1
+      }
+    },
+    {
+      "name": "fromrecord_invalid_second",
+      "record": {
+        "nelements": 2,
+        "component0": {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              1.0,
+              0.5,
+              0.20000000298023224
+            ]
+          },
+          "label": "gauss",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "majoraxis": {
+              "unit": "arcsec",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcsec",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "type": "Gaussian"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4200000000000002
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        "component1": {
+          "shape": "bad"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error \nThe 'shape' field must be a record in converting from record"
+      },
+      "length": 1,
+      "after": {
+        "component0": {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              1.0,
+              0.5,
+              0.20000000298023224
+            ]
+          },
+          "label": "gauss",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "majoraxis": {
+              "unit": "arcsec",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcsec",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "type": "Gaussian"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4200000000000004
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        "nelements": 1
+      }
+    },
+    {
+      "name": "fromrecord_float_count",
+      "record": {
+        "nelements": 1.0,
+        "component0": {}
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "RecordInterface::asuInt - invalid data type"
+      },
+      "length": 0,
+      "after": {}
+    },
+    {
+      "name": "fromrecord_bool_count",
+      "record": {
+        "nelements": true,
+        "component0": {}
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "RecordInterface::asuInt - invalid data type"
+      },
+      "length": 0,
+      "after": {}
+    },
+    {
+      "name": "fromrecord_text_count",
+      "record": {
+        "nelements": "1",
+        "component0": {}
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "RecordInterface::asuInt - invalid data type"
+      },
+      "length": 0,
+      "after": {}
+    }
+  ]
+}

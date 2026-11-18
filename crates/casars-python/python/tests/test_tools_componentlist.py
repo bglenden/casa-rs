@@ -58,7 +58,7 @@ CASA = casa_signatures("componentlist")
 TOOL = json.loads((DATA / "casa_componentlist_tool.json").read_text(encoding="utf-8"))
 
 IMPLEMENTED = {
-    "addcomponent", "asciitocomponentlist", "close", "concatenate", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
+    "add", "fromrecord", "sort", "summarize", "addcomponent", "asciitocomponentlist", "close", "concatenate", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
     "getfluxerror", "getfluxpol", "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
     "indices", "getkeyword", "haskeyword", "getrefdir", "getrefdirra", "getrefdirdec", "getrefdirframe", "getshape", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
     "select", "deselect", "selected", "setlabel", "setflux", "setfreq", "setfreqframe", "setrefdir", "setrefdirframe", "setshape", "setspectrum", "setstokesspectrum", "simulate", "remove", "recover", "purge", "putkeyword", "sample", "convertfluxpol", "convertfluxunit", "convertfrequnit", "convertrefdir", "convertshape", "edit", "replace", "torecord", "isphysical", "iscomponentlist",
@@ -160,12 +160,6 @@ def test_the_bundle_describes_the_class() -> None:
         "componentlist",
         {"implemented": IMPLEMENTED, "not_yet_implemented": NOT_YET_IMPLEMENTED},
     )
-
-
-def test_methods_casa_rs_does_not_implement_yet_raise() -> None:
-    cl = componentlist()
-    with pytest.raises(NotImplementedError, match="componentlist.fromrecord"):
-        cl.fromrecord({})
 
 
 def untagged(value: Any) -> Any:

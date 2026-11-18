@@ -1,0 +1,2913 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "name": "index",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      }
+    },
+    {
+      "name": "index_missing_error",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      }
+    },
+    {
+      "name": "index_missing_index",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'spectrum' record must have an 'index' field\n"
+      }
+    },
+    {
+      "name": "index_missing_stokesindex",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "type": "Spectral Index"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      }
+    },
+    {
+      "name": "index_indexbad",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": "bad",
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'index' field must be a real number\n"
+      }
+    },
+    {
+      "name": "index_index[0.1, 0.2]",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": [
+            0.1,
+            0.2
+          ],
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'index' field must be a scalar\n"
+      }
+    },
+    {
+      "name": "index_errorbad",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": "bad",
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'error' field must be a real number\n"
+      }
+    },
+    {
+      "name": "index_error[0.1, 0.2]",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": [
+            0.1,
+            0.2
+          ],
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'error' field must be a scalar\n"
+      }
+    },
+    {
+      "name": "index_stokesindex[1.0, 2.0]",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            1.0,
+            2.0
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Stokes indices is not of length 1 or 4\n"
+      }
+    },
+    {
+      "name": "plp",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "coeffs": [
+            1.0,
+            2.0,
+            3.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Power Logarithmic Polynomial"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "coeffs": [
+            1.0,
+            2.0,
+            3.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Power Logarithmic Polynomial"
+        }
+      }
+    },
+    {
+      "name": "plp_missing_coeffs",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Power Logarithmic Polynomial"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The record must have an 'coeffs' field"
+      }
+    },
+    {
+      "name": "plp_missing_error",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "coeffs": [
+            1.0,
+            2.0,
+            3.0
+          ],
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Power Logarithmic Polynomial"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "coeffs": [
+            1.0,
+            2.0,
+            3.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Power Logarithmic Polynomial"
+        }
+      }
+    },
+    {
+      "name": "plp_coeffs2",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "coeffs": 2,
+          "error": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Power Logarithmic Polynomial"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'coeff' field must be an array of numbers"
+      }
+    },
+    {
+      "name": "plp_error2",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "coeffs": [
+            1.0,
+            2.0,
+            3.0
+          ],
+          "error": 2,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Power Logarithmic Polynomial"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'error' field must be an array of numbers"
+      }
+    },
+    {
+      "name": "plp_error[0.1]",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "coeffs": [
+            1.0,
+            2.0,
+            3.0
+          ],
+          "error": [
+            0.1
+          ],
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Power Logarithmic Polynomial"
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error Coefficient and error array lengths are not equal"
+      }
+    },
+    {
+      "name": "tabular",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "tabular_missing_freqRef",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'TabularSpectrum' record must have an 'freqRef' field\n"
+      }
+    },
+    {
+      "name": "tabular_missing_ival",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'TabularSpectrum' record must have an 'ival' field\n"
+      }
+    },
+    {
+      "name": "tabular_missing_maxFreq",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'TabularSpectrum' record must have a 'maxFreq' and a 'minFreq' field\n"
+      }
+    },
+    {
+      "name": "tabular_missing_minFreq",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'TabularSpectrum' record must have a 'maxFreq' and a 'minFreq' field\n"
+      }
+    },
+    {
+      "name": "tabular_missing_qval",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "tabular_missing_referenceFreq",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'TabularSpectrum' record must have an 'referenceFreq' field\n"
+      }
+    },
+    {
+      "name": "tabular_missing_tabFreqVal",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Converting Component from record failed with error The 'TabularSpectrum' record must have an 'tabFreqVal' field\n"
+      }
+    },
+    {
+      "name": "tabular_missing_uval",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "tabular_missing_vval",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "freqRef": {
+            "m0": {
+              "unit": "Hz",
+              "value": 0.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "ival": [
+            2.0,
+            4.0
+          ],
+          "maxFreq": 2000000000.0,
+          "minFreq": 1000000000.0,
+          "qval": [
+            0.0,
+            0.0
+          ],
+          "referenceFreq": 1420000000.0,
+          "tabFreqVal": [
+            1000000000.0,
+            2000000000.0
+          ],
+          "type": "Tabular Spectrum",
+          "uval": [
+            0.0,
+            0.0
+          ],
+          "vval": [
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "frequency_mhz",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "value": 1420,
+              "unit": "MHz"
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      }
+    },
+    {
+      "name": "direction_degrees",
+      "record": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "value": 10,
+              "unit": "deg"
+            },
+            "m1": {
+              "value": 20,
+              "unit": "deg"
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Stokes",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      }
+    },
+    {
+      "name": "missing_pol_no_error",
+      "record": {
+        "flux": {
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000002
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      },
+      "result": true,
+      "after": {
+        "flux": {
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "polarisation": "Unknown",
+          "unit": "Jy",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label": "",
+        "shape": {
+          "direction": {
+            "error": {
+              "latitude": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "longitude": {
+                "unit": "rad",
+                "value": 0.0
+              }
+            },
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "type": "Point"
+        },
+        "spectrum": {
+          "error": 0.0,
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4200000000000004
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "index": -0.7,
+          "stokesindex": [
+            -0.7
+          ],
+          "type": "Spectral Index"
+        }
+      }
+    }
+  ]
+}

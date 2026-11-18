@@ -52,13 +52,13 @@ pub(super) fn prepare(request: &Request) -> ConvertResult<Option<Plan>> {
         let value = quantity(&request.reference)?;
         let hz = casacore_unit("Hz").map_err(ConvertError::runtime)?;
         if !value.unit().conformant(&hz) || !value.get_si_value().is_finite() {
-            return Err(ConvertError::runtime("invalid frequency refused (#1053)"));
+            return Err(ConvertError::runtime("invalid frequency refused (#1252)"));
         }
         value.get_si_value()
     };
     if request.index.invalid || request.index.values.is_empty() {
         return Err(ConvertError::runtime(
-            "invalid or empty spectrum index refused (#1053)",
+            "invalid or empty spectrum index refused (#1252)",
         ));
     }
     if name == "POWER LOGARITHMIC POLYNOMIAL" {
@@ -73,7 +73,7 @@ pub(super) fn prepare(request: &Request) -> ConvertResult<Option<Plan>> {
         let indices = &request.index.values;
         if indices.iter().any(|value| !value.is_finite()) {
             return Err(ConvertError::runtime(
-                "non-finite spectrum index refused (#1053)",
+                "non-finite spectrum index refused (#1252)",
             ));
         }
         let index = SpectralIndex::new(indices[0]);
@@ -110,7 +110,7 @@ fn tabular(request: &Request) -> ConvertResult<Plan> {
     let frame = frame(&request.frame)?;
     if request.vectors.iter().any(|v| v.invalid) {
         return Err(ConvertError::runtime(
-            "unrepresentable tabular value refused (#1053)",
+            "unrepresentable tabular value refused (#1252)",
         ));
     }
     if request
@@ -120,7 +120,7 @@ fn tabular(request: &Request) -> ConvertResult<Plan> {
         .any(|value| !value.is_finite())
     {
         return Err(ConvertError::runtime(
-            "non-finite tabular spectrum refused (#1053)",
+            "non-finite tabular spectrum refused (#1252)",
         ));
     }
     let values = (0..freq.values.len())
