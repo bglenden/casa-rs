@@ -567,6 +567,63 @@ def solve_grouping(root, source, native):
                 expected = contents(case/f'{label}-casa.cal')
                 assert len(expected['TIME']) == 5*intervals, (name, expected['TIME'])
                 spectral_metadata(case, label)
+    results.update(grouping_edge_cases(root, source, native))
+    return results
+
+
+def grouping_edge_cases(root, source, native):
+    results = {}
+    for name in ['unequal-widths', 'later-first-spw', 'sparse-windows', 'simultaneous-windows']:
+        case = root/name
+        case.mkdir()
+        vis = case/'source.ms'
+        copy_ms(source, vis)
+        combine, interval, extra = 'spw', 'inf', {}
+        if name == 'unequal-widths':
+            extra['spw'] = '0:0~1,1:0~3'
+        else:
+            t = table()
+            t.open(str(vis), nomodify=False)
+            try:
+                times = t.getcol('TIME')
+                _, integration = np.unique(times, return_inverse=True)
+                if name == 'later-first-spw':
+                    spw = (1 - integration % 2).astype(np.int32)
+                    t.putcol('OBSERVATION_ID', spw)
+                    combine = 'obs,spw'
+                    extra['preavg'] = 20.
+                elif name == 'sparse-windows':
+                    spw = (times > np.median(times)).astype(np.int32)
+                    t.putcol('FIELD_ID', np.zeros_like(spw))
+                    t.putcol('OBSERVATION_ID', np.zeros_like(spw))
+                    t.putcol('SCAN_NUMBER', spw+1)
+                else:
+                    spw = (integration % 2).astype(np.int32)
+                    simultaneous = times.min() + 20 * (integration // 2)
+                    t.putcol('TIME', simultaneous)
+                    t.putcol('TIME_CENTROID', simultaneous)
+                    t.putcol('FIELD_ID', np.zeros_like(spw))
+                    t.putcol('OBSERVATION_ID', np.zeros_like(spw))
+                    t.putcol('INTERVAL', np.where(spw == 0, 10., 20.))
+                    t.putcol('EXPOSURE', np.where(spw == 0, 10., 20.))
+                    interval = 'int'
+                t.putcol('DATA_DESC_ID', spw)
+            finally:
+                t.close()
+        gain = 'T' if name == 'later-first-spw' else 'G'
+        results[name] = gain_and_apply(
+            case, vis, native, gain, interval, calmode='ap', field='0', combine=combine,
+            minblperant=3, sort_solutions=True,
+            apply_options=None if name == 'sparse-windows' else {'spwmap': [0, 0]}, **extra)
+        label = f'ap-{gain}-{interval}-mean-norm0' + ('-preavg20' if 'preavg' in extra else '')
+        expected = contents(case/f'{label}-casa.cal')
+        if name == 'sparse-windows':
+            np.testing.assert_array_equal(np.unique(expected['SPECTRAL_WINDOW_ID']), [0, 1])
+        if name == 'later-first-spw':
+            np.testing.assert_array_equal(expected['OBSERVATION_ID'], 0)
+        if name == 'simultaneous-windows':
+            assert len(expected['TIME']) == 5*len(np.unique(simultaneous))
+        spectral_metadata(case, label)
     return results
 
 

@@ -65,7 +65,11 @@ pub(super) fn bucketed_rows(
                 GainSolveInterval::Infinite => SolveBucketKey::Infinite,
                 GainSolveInterval::Integration => SolveBucketKey::Integration {
                     time_bits: row.time_seconds.to_bits(),
-                    interval_bits: row.interval_seconds.to_bits(),
+                    interval_bits: if combine.spectral_windows {
+                        0
+                    } else {
+                        row.interval_seconds.to_bits()
+                    },
                 },
                 GainSolveInterval::Seconds(seconds) => {
                     // MSIter2 starts its time grid 10 ms before the first
@@ -88,6 +92,8 @@ pub(super) fn bucketed_rows(
 pub(super) struct FirstTBuffer {
     pub(super) field: i32,
     pub(super) data_desc_id: i32,
+    pub(super) spw_id: i32,
+    pub(super) observation_id: i32,
     pub(super) time: f64,
     pub(super) max_span: Option<f64>,
     pub(super) skipped_baseline: (i32, i32),
@@ -117,13 +123,13 @@ pub(super) fn first_t_buffers(
         // buffer, including rows later ignored by the solver.
         if (
             row.field_id,
-            row.time_seconds,
             row.data_desc_id,
+            row.time_seconds,
             row.row_index,
         ) < (
             seed.field_id,
-            seed.time_seconds,
             seed.data_desc_id,
+            seed.time_seconds,
             seed.row_index,
         ) {
             *seed = row;
@@ -137,6 +143,8 @@ pub(super) fn first_t_buffers(
                 FirstTBuffer {
                     field: row.field_id,
                     data_desc_id: row.data_desc_id,
+                    spw_id: row.data_spw_id,
+                    observation_id: row.observation_id,
                     time: row.time_seconds,
                     max_span,
                     skipped_baseline: (row.antenna1, row.antenna2),
