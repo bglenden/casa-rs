@@ -328,6 +328,8 @@ fn parse_gain_type(value: &str) -> Result<GainType, String> {
     match value {
         "g" | "G" => Ok(GainType::G),
         "t" | "T" => Ok(GainType::T),
+        "k" | "K" => Ok(GainType::K),
+        "kcross" | "KCROSS" => Ok(GainType::KCross),
         other => Err(format!("unsupported gain_type {other:?}; expected g or t")),
     }
 }

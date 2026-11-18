@@ -280,6 +280,8 @@ fn gain_type_name(gain_type: GainType) -> &'static str {
     match gain_type {
         GainType::G => "G",
         GainType::T => "T",
+        GainType::K => "K",
+        GainType::KCross => "KCROSS",
     }
 }
 

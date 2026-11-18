@@ -141,7 +141,7 @@ impl CalibrationTableSummary {
     /// apply surface:
     ///
     /// - complex `CPARAM` antenna-based tables, or
-    /// - float `FPARAM` support for `K Jones` and the VLA prior families
+    /// - float `FPARAM` support for `K Jones`, `Kcross Jones` and the VLA prior families
     ///   `KAntPos Jones`, `EGainCurve`, and `TOpac`
     /// - legacy `BPOLY` bandpass tables
     ///
@@ -151,7 +151,10 @@ impl CalibrationTableSummary {
             && (matches!(
                 (&self.parameter_family, self.table_subtype.as_str()),
                 (CalibrationParameterFamily::Complex, _)
-                    | (CalibrationParameterFamily::Float, "K Jones")
+                    | (
+                        CalibrationParameterFamily::Float,
+                        "K Jones" | "Kcross Jones"
+                    )
                     | (CalibrationParameterFamily::Float, "KAntPos Jones")
                     | (CalibrationParameterFamily::Float, "EGainCurve")
                     | (CalibrationParameterFamily::Float, "TOpac")

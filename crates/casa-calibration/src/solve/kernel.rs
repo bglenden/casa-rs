@@ -237,7 +237,7 @@ pub(crate) fn solve_group(
         antenna_ids.insert(refant_id);
     }
     let receptors = match gain_type {
-        GainType::G => &solved.receptors[..],
+        GainType::G | GainType::K | GainType::KCross => &solved.receptors[..],
         GainType::T => &solved.receptors[..1],
     };
     Some(
@@ -488,7 +488,7 @@ fn first_guess(
                         amplitude_sum += amplitude;
                         amplitude_count += 1;
                         let guess = match gain_type {
-                            GainType::G => mean.conj(),
+                            GainType::G | GainType::K | GainType::KCross => mean.conj(),
                             GainType::T => mean.conj() / amplitude,
                         };
                         (antenna_id, guess)

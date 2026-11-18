@@ -621,6 +621,8 @@ fn gaintype(task: &TaskInvocation<'_>) -> Result<GainType, TaskFailure> {
     match task.required_text("gaintype")?.as_str() {
         "G" => Ok(GainType::G),
         "T" => Ok(GainType::T),
+        "K" => Ok(GainType::K),
+        "KCROSS" => Ok(GainType::KCross),
         other => Err(not_yet("gaintype", other)),
     }
 }

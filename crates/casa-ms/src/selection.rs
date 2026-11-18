@@ -818,10 +818,18 @@ impl CompiledMsSelection {
         }
         let resolve_spw_ns = resolve_spw_started_at.elapsed().as_nanos() as u64;
 
-        if sel.taql_exprs.is_empty() {
+        // gaincal supplies this predicate even when there is no user TaQL.
+        // It only needs two scalar columns, so keep the bounded scan path.
+        let exclude_autocorrelations = sel.taql_exprs == ["ANTENNA1!=ANTENNA2"];
+        if sel.taql_exprs.is_empty() || exclude_autocorrelations {
             let structured_started_at = Instant::now();
-            let rows =
-                apply_structured_selection(&sel, ms, &effective_ddids, structured_rows_per_block)?;
+            let rows = apply_structured_selection(
+                &sel,
+                ms,
+                &effective_ddids,
+                structured_rows_per_block,
+                exclude_autocorrelations,
+            )?;
             log_selection_profile(
                 "apply_structured",
                 apply_started_at.elapsed().as_nanos() as u64,
@@ -1185,6 +1193,7 @@ fn apply_structured_selection(
     ms: &MeasurementSet,
     effective_ddids: &[i32],
     rows_per_block: Option<usize>,
+    exclude_autocorrelations: bool,
 ) -> MsResult<Vec<usize>> {
     let setup_started_at = Instant::now();
     if sel.field_ids.as_ref().is_some_and(Vec::is_empty) {
@@ -1222,13 +1231,15 @@ fn apply_structured_selection(
     }
 
     let table = ms.main_table();
+    let needs_antennas =
+        exclude_autocorrelations || !antenna_ids.is_empty() || !baselines.is_empty();
     let column_request = StructuredSelectionColumnRequest {
         field: !field_ids.is_empty(),
         data_desc: !spw_ddids.is_empty()
             || !data_desc_ids.is_empty()
             || !uv_lambda_by_ddid.is_empty(),
-        antenna1: !antenna_ids.is_empty() || !baselines.is_empty(),
-        antenna2: !antenna_ids.is_empty() || !baselines.is_empty(),
+        antenna1: needs_antennas,
+        antenna2: needs_antennas,
         time: sel.time_range.is_some(),
         scan: !scan_numbers.is_empty(),
         state: !state_ids.is_empty(),
@@ -1251,6 +1262,12 @@ fn apply_structured_selection(
             load_columns_ns.saturating_add(load_columns_started_at.elapsed().as_nanos() as u64);
         let filter_rows_started_at = Instant::now();
         for (slot, row) in block_rows.into_iter().enumerate() {
+            if exclude_autocorrelations
+                && columns.antenna1.as_ref().expect("requested antennas")[slot]
+                    == columns.antenna2.as_ref().expect("requested antennas")[slot]
+            {
+                continue;
+            }
             if structured_row_matches(
                 slot,
                 sel,
@@ -1284,7 +1301,7 @@ fn apply_structured_selection(
             filter_rows_ns as f64 / 1_000_000_000.0,
             !field_ids.is_empty(),
             !spw_ddids.is_empty() || !data_desc_ids.is_empty(),
-            !antenna_ids.is_empty() || !baselines.is_empty(),
+            needs_antennas,
             sel.time_range.is_some(),
             !scan_numbers.is_empty(),
             !state_ids.is_empty(),

@@ -314,12 +314,7 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         values[name] = value;
         casa("gaincal", values)
     };
-    for (name, value) in [("gaintype", json!("K")), ("gaintype", json!("GSPLINE"))] {
-        let mut values = base.clone();
-        values[name] = value.clone();
-        let message = refused(casa("gaincal", values), name);
-        assert!(message.contains("#979"), "{name}={value}: {message}");
-    }
+    assert!(refused(with("gaintype", json!("GSPLINE")), "gaintype").contains("#979"));
     for solint in ["nan", "1Jy", "soon"] {
         let message = refused(with("solint", json!(solint)), "solint");
         assert!(message.contains("not valid"), "{solint}: {message}");

@@ -8,7 +8,7 @@
 //! Supported in this wave:
 //!
 //! - chained complex `CPARAM` tables
-//! - narrow float `FPARAM` support for `K Jones` delay tables
+//! - float `FPARAM` support for `K Jones` and `Kcross Jones` delay tables
 //! - legacy `BPOLY` bandpass tables expanded onto the target SPW grid
 //! - diagonal `G` / `T`-style application to `RR/RL/LR/LL` and `XX/XY/YX/YY`
 //! - all six apply modes, including strict and flag-only application
@@ -3377,7 +3377,7 @@ enum TimeParameterFamily {
 impl TimeParameterFamily {
     fn from_subtype(subtype: &str) -> Option<Self> {
         match subtype {
-            "K Jones" => Some(Self::Delay),
+            "K Jones" | "Kcross Jones" => Some(Self::Delay),
             "KAntPos Jones" => Some(Self::Antpos),
             "EGainCurve" => Some(Self::GainCurve),
             "TOpac" => Some(Self::Opacity),
@@ -4157,7 +4157,10 @@ fn load_parameters(
                 )?)
             }
             CalibrationParameterFamily::Float
-                if table_plan.summary.table_subtype.as_str() == "K Jones" =>
+                if matches!(
+                    table_plan.summary.table_subtype.as_str(),
+                    "K Jones" | "Kcross Jones"
+                ) =>
             {
                 let delays = table
                     .cell_accessor(row_index, COL_FPARAM)
