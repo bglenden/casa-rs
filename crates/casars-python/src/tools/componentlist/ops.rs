@@ -569,7 +569,7 @@ impl State {
                 "Failed AlwaysAssert itsROFlag == false",
             ));
         }
-        let path = absolute(filename)?;
+        let path = absolute(if filename.is_empty() { "." } else { filename })?;
         if path.exists() {
             let name = if filename.is_empty() {
                 path.to_string_lossy().into_owned()

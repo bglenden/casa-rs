@@ -140,7 +140,7 @@ def test_rename_empty_name_means_current_directory_in_casa(attached, tmp_path, m
         assert cl.addcomponent(label="kept")
         if attached:
             assert cl.rename("source.cl")
-            assert cl.putkeyword("example", 42)
+            assert cl.putkeyword("example", 42) is None
         with pytest.raises(RuntimeError) as error:
             cl.rename("")
         assert str(error.value) == f"Table {tmp_path} already exists"

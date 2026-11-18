@@ -209,7 +209,14 @@ fn directions_casa_cannot_read_are_false_or_raise() {
     );
     // Divergence: CASA reuses the longitude for an unreadable latitude.
     assert!(message("J2000 12h00m00 garbage").contains("latitude"));
-    assert!(message("JUPITER").contains("not yet implemented in casa-rs"));
+    // Reading CASA's planetary reference label does not calculate an
+    // ephemeris. Its stored default is the pole, as the CASA cl fixtures show.
+    assert_angles(
+        &read_direction(text("JUPITER")),
+        0.0,
+        std::f64::consts::FRAC_PI_2,
+        DirectionRef::JUPITER,
+    );
 }
 
 fn read_position(value: Variant) -> [f64; 3] {
