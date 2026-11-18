@@ -702,8 +702,8 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
     refused_naming_979(
         dir.path(),
         "bandpass",
-        with(&solve, "solint", json!("inf,2ch")),
-        "solint",
+        with(&solve, "combine", json!("spw")),
+        "combine",
     );
     // Fluxscale's former fitorder/time/scan refusals are replaced by the
     // positive scientific check above now that those behaviors are implemented.
@@ -777,12 +777,6 @@ fn gaincal_and_bandpass_use_the_unit_model_for_an_empty_virtual_record() {
         opened.save().expect("save");
     }
     let ms = ms.to_str().unwrap();
-    refused_naming_979(
-        dir.path(),
-        "bandpass",
-        json!({"vis": ms, "caltable": "legacy.bpoly", "refant": "0", "bandtype": "BPOLY"}),
-        "smodel",
-    );
     for surface in ["gaincal", "bandpass"] {
         for (label, smodel) in [("virtual", json!([])), ("point", json!([1, 0, 0, 0]))] {
             let caltable = format!("{surface}-{label}.cal");

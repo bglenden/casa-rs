@@ -428,7 +428,13 @@ fn bandpass_reads_casas_values() {
     .expect("bandpass") else {
         panic!("a bandpass solve");
     };
-    assert_eq!(solve.refant, RefAntSelector::AntennaId(7));
+    assert_eq!(
+        solve.refant,
+        RefAntSelector::Expression {
+            selection: "7".to_string(),
+            strict: false,
+        }
+    );
     assert_eq!(solve.band_type, BandpassType::BPoly);
     assert!(!solve.combine.scans && !solve.combine.fields);
     assert_eq!((solve.amplitude_degree, solve.phase_degree), (5, 4));
@@ -441,6 +447,8 @@ fn bandpass_reads_casas_values() {
             min_snr: 1.5,
             fill_gaps: 0,
             mask_edge_percent: 10.0,
+            mask_center_channels: 0,
+            normalize_visibilities: false,
         })
     );
     // CASA's bandpass combines scans by default, and cuts as CASA does.
