@@ -554,9 +554,14 @@ pub(crate) fn solve_closed_group(
         available_antennas,
         request.gain_type,
         request.solve_mode,
-        refant_id,
         request.min_snr,
-        request.min_baselines_per_antenna,
+        kernel::SolveGraphOptions {
+            refant_id,
+            min_baselines_per_antenna: request.min_baselines_per_antenna,
+            scalar_seed: None,
+            correlation_dependent_flags: request.correlation_dependent_flags,
+            defer_reference: true,
+        },
     )
 }
 

@@ -68,12 +68,21 @@ pub(super) fn bucketed_rows(
         .collect()
 }
 
-/// First baseline in the buffer seen by `TJones::guessPar`. The CASA
+#[derive(Debug, Clone, Copy)]
+pub(super) struct FirstTBuffer {
+    pub(super) field: i32,
+    pub(super) time: f64,
+    pub(super) max_span: Option<f64>,
+    pub(super) skipped_baseline: (i32, i32),
+}
+
+/// First buffer seen by `TJones::guessPar`. The CASA
 /// initializer starts at row 1. The skipped row can have zero weight or be
 /// an autocorrelation, so decide this using row metadata before reading DATA.
-pub(super) fn first_t_baselines(
+pub(super) fn first_t_buffers(
     rows: &[BucketedRow<'_>],
-) -> BTreeMap<(SolveBaseKey, SolveBucketKey), (i32, i32)> {
+    max_span: Option<f64>,
+) -> BTreeMap<(SolveBaseKey, SolveBucketKey), FirstTBuffer> {
     let mut first = BTreeMap::new();
     for &(row, base, bucket) in rows {
         let seed = first.entry((base, bucket)).or_insert(row);
@@ -90,10 +99,12 @@ pub(super) fn first_t_baselines(
         .map(|(key, row)| {
             (
                 key,
-                (
-                    row.antenna1.min(row.antenna2),
-                    row.antenna1.max(row.antenna2),
-                ),
+                FirstTBuffer {
+                    field: row.field_id,
+                    time: row.time_seconds,
+                    max_span,
+                    skipped_baseline: (row.antenna1, row.antenna2),
+                },
             )
         })
         .collect()

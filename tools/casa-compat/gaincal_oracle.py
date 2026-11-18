@@ -118,7 +118,7 @@ def amplitude_data(root, source):
     return path
 
 
-def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normtype='mean', calmode='a', **extra):
+def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normtype='mean', calmode='a', compare_flagged_gains=True, **extra):
     label = f'{calmode}-{gaintype}-{solint}-{normtype}-norm{int(solnorm)}'
     if 'preavg' in extra:
         label += f'-preavg{extra["preavg"]:g}'
@@ -149,6 +149,9 @@ def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normty
     errors = {name: relative_rms(actual[name], expected[name])
               for name in ['CPARAM', 'PARAMERR', 'SNR']}
     raw_cparam = errors['CPARAM']
+    if not compare_flagged_gains:
+        valid = ~expected['FLAG']
+        errors['CPARAM'] = relative_rms(actual['CPARAM'][valid], expected['CPARAM'][valid])
     if extra.get('refant') == '' and calmode != 'a':
         # With no reference, a constant phase per receptor and solution
         # interval leaves the baseline gain products invariant.
@@ -164,6 +167,8 @@ def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normty
     errors['WEIGHT'] = relative_rms(actual_ms['WEIGHT'], expected_ms['WEIGHT'])
     np.testing.assert_array_equal(actual_ms['FLAG'], expected_ms['FLAG'], err_msg=label)
     assert max(errors.values()) < 1e-3, (label, errors)
+    if not compare_flagged_gains:
+        errors['CPARAM_with_flagged_values'] = raw_cparam
     if extra.get('refant') == '':
         errors['CPARAM_before_phase_alignment'] = raw_cparam
     return errors
@@ -295,6 +300,56 @@ def correlation_flags(root, source, native):
         finally:
             t.close()
         results[name] = gain_and_apply(case, alternate, native, 'T', 'inf', calmode='ap', minblperant=3)
+    case = root/'missing-reference-hand'
+    case.mkdir()
+    alternate = case/'source.ms'
+    copy_ms(source, alternate)
+    t.open(str(alternate), nomodify=False)
+    try:
+        a, b = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+        flags = np.zeros_like(t.getcol('FLAG'))
+        flags[0, :, (a==0) | (b==0)] = True
+        t.putcol('FLAG', flags)
+    finally:
+        t.close()
+    results['missing-reference-hand'] = gain_and_apply(
+        case, alternate, native, 'G', 'inf', calmode='ap', minblperant=3,
+        refant='A0,A1', corrdepflags=True, compare_flagged_gains=False)
+    expected = contents(case/'ap-G-inf-mean-norm0-casa.cal')
+    np.testing.assert_array_equal(expected['ANTENNA2'], 1)
+    np.testing.assert_array_equal(expected['FLAG'][0, 0], expected['ANTENNA1']==0)
+    assert not np.any(expected['FLAG'][1])
+
+    case = root/'first-buffer-no-reference-baselines'
+    case.mkdir()
+    alternate = case/'source.ms'
+    copy_ms(source, alternate)
+    t.open(str(alternate), nomodify=False)
+    try:
+        a, b = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+        time = t.getcol('TIME')
+        flags = np.zeros_like(t.getcol('FLAG'))
+        flags[..., (a==0) & (b!=1) & (time-time.min()<20.)] = True
+        t.putcol('FLAG', flags)
+    finally:
+        t.close()
+    trace_path = case/'seed.jsonl'
+    previous_trace = os.environ.get('CASA_RS_GAIN_TRACE')
+    os.environ['CASA_RS_GAIN_TRACE'] = str(trace_path)
+    try:
+        results['first-buffer-no-reference-baselines'] = gain_and_apply(
+            case, alternate, native, 'T', 'inf', calmode='ap', minblperant=3, field='0', preavg=20.)
+    finally:
+        if previous_trace is None:
+            os.environ.pop('CASA_RS_GAIN_TRACE')
+        else:
+            os.environ['CASA_RS_GAIN_TRACE'] = previous_trace
+    events = (json.loads(line) for line in trace_path.read_text().splitlines())
+    first_iteration = next(event for event in events if event['event'] == 'rust_phase_solver_iteration')
+    for sample in first_iteration['antennas']:
+        # CASA's TJones::guessPar skips row zero. With no remaining valid
+        # reference baseline in this first buffer, it uses a gain of 0.3.
+        np.testing.assert_allclose([sample['last_gain_re'], sample['last_gain_im']], [.3, 0.], atol=1e-6)
     return results
 
 
