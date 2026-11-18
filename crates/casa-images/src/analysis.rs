@@ -54,7 +54,9 @@ pub use self::task_contract::{
     IMAGE_ANALYSIS_TASK_PROTOCOL_NAME, IMAGE_ANALYSIS_TASK_PROTOCOL_VERSION,
     image_analysis_protocol_descriptor, image_analysis_task_schema_bundle,
 };
+use crate::expr_parser::{ExprParseError, ExprValueConvert, HashMapResolver, parse_mask_expr};
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
+use crate::image_expr::ImageExprValue;
 use crate::regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
 use crate::{
     AnyPagedImage, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImagePixel,
@@ -1941,7 +1943,7 @@ fn imstat_typed<T>(
     request: &ImstatRequest,
 ) -> Result<ImstatOutcome, ImageError>
 where
-    T: ImagePixel + StatsElement,
+    T: ImagePixel + ImageExprValue + PartialOrd + ExprValueConvert + StatsElement,
 {
     let algorithm = parse_imstat_algorithm(request).map_err(ImageError::InvalidMetadata)?;
     let axes =
@@ -1972,8 +1974,13 @@ where
         request.chans.as_deref(),
         request.stokes.as_deref(),
     )?;
-    let pixel_mask =
-        selection_pixel_mask(image, effective_region, &selection, request.mask.as_deref())?;
+    let pixel_mask = selection_pixel_mask(
+        image,
+        effective_region,
+        &selection,
+        request.mask.as_deref(),
+        request.stretch,
+    )?;
     let coordinates = image.coordinates();
     let world_text = |position: &[usize]| -> Result<String, ImageError> {
         let pixel: Vec<f64> = position.iter().map(|&value| value as f64).collect();
@@ -2387,16 +2394,19 @@ struct ComputedStats {
     maxpos: Option<Vec<usize>>,
 }
 
-/// The image mask of a selection, combined with its region's and a mask
-/// expression's.
+/// The image mask of a selection, combined with its region's and a LEL
+/// mask expression's. The expression is CASA's full lattice expression
+/// language, evaluated over the image and extended to its shape when
+/// `stretch` allows.
 fn selection_pixel_mask<T>(
     image: &PagedImage<T>,
     effective_region: Option<&PixelRegion>,
     selection: &Selection,
     mask_expr: Option<&str>,
+    stretch: bool,
 ) -> Result<Option<ndarray::ArrayD<bool>>, ImageError>
 where
-    T: ImagePixel,
+    T: ImagePixel + ImageExprValue + PartialOrd + ExprValueConvert,
 {
     let mut pixel_mask =
         image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
@@ -2413,7 +2423,7 @@ where
         });
     }
     if let Some(expr) = mask_expr.filter(|text| !text.trim().is_empty()) {
-        let expr_mask = image_threshold_mask(expr, selection)?;
+        let expr_mask = image_mask_expression(expr, image, selection, stretch)?;
         pixel_mask = Some(match pixel_mask {
             Some(mut mask) => {
                 Zip::from(&mut mask)
@@ -2425,6 +2435,132 @@ where
         });
     }
     Ok(pixel_mask)
+}
+
+/// A CASA LEL mask expression over the image: parsed by the expression
+/// engine, evaluated over the whole image, extended to the image's shape
+/// when `stretch` allows it, and cut to the selection.
+fn image_mask_expression<T>(
+    expr: &str,
+    image: &PagedImage<T>,
+    selection: &Selection,
+    stretch: bool,
+) -> Result<ndarray::ArrayD<bool>, ImageError>
+where
+    T: ImagePixel + ImageExprValue + PartialOrd + ExprValueConvert,
+{
+    // The expression names its images in quotes; open each as the
+    // target's pixel type and hand them to the parser's resolver.
+    let names = quoted_expression_names(expr);
+    let mut opened: Vec<PagedImage<T>> = Vec::with_capacity(names.len());
+    for name in &names {
+        let opened_image = PagedImage::<T>::open(name).map_err(|_| {
+            ImageError::CasaSelection(format!(
+                "Input mask specification is incorrect: ImageExprParse: '{name}' \
+                 is an unknown lattice or image or it is an unqualified region"
+            ))
+        })?;
+        opened.push(opened_image);
+    }
+    let sources: std::collections::HashMap<String, &dyn ImageInterface<T>> = names
+        .iter()
+        .zip(opened.iter())
+        .map(|(name, opened)| (name.clone(), opened as &dyn ImageInterface<T>))
+        .collect();
+    let resolver = HashMapResolver(sources);
+    let expression = parse_mask_expr(expr, &resolver).map_err(|error| {
+        ImageError::CasaSelection(format!(
+            "Input mask specification is incorrect: {}",
+            mask_error_wording(error)
+        ))
+    })?;
+    let mask = expression.get()?;
+    let mask_shape = mask.shape().to_vec();
+    let target_shape = image.shape().to_vec();
+    let extended = if mask_shape == target_shape {
+        mask
+    } else {
+        let extendable = mask_shape.len() <= target_shape.len()
+            && mask_shape
+                .iter()
+                .zip(&target_shape)
+                .all(|(mask_axis, image_axis)| mask_axis == image_axis || *mask_axis == 1);
+        if !extendable {
+            return Err(ImageError::CasaSelection(
+                "Unable to extend mask: ExtendSpecifier - lengths of old axis mismatch".to_string(),
+            ));
+        }
+        if !stretch {
+            return Err(ImageError::CasaSelection(format!(
+                "The input image shape ({target_shape:?}) and mask shape ({mask_shape:?}) are \
+                 different, and it was specified that the mask should not be extended, so the \
+                 mask cannot be applied to the (sub)image. Specifying that the mask should be \
+                 extended may resolve the issue"
+            )));
+        }
+        extend_mask_to_shape(mask, &target_shape)?
+    };
+    let start = &selection.start;
+    let shape = &selection.shape;
+    let cut = extended.slice_each_axis(|axis| {
+        ndarray::Slice::from(start[axis.axis.0]..start[axis.axis.0] + shape[axis.axis.0])
+    });
+    Ok(cut.to_owned())
+}
+
+/// Tile a mask whose axes prefix the image's, each equal or degenerate,
+/// to the image's full shape: casacore extends along the image's later
+/// axes and broadcasts degenerate ones.
+fn extend_mask_to_shape(
+    mask: ndarray::ArrayD<bool>,
+    target_shape: &[usize],
+) -> Result<ndarray::ArrayD<bool>, ImageError> {
+    let mask_shape = mask.shape().to_vec();
+    let tiled = ndarray::ArrayD::<bool>::from_shape_fn(ndarray::IxDyn(target_shape), |index| {
+        let target: Vec<usize> = index.slice().to_vec();
+        let source: Vec<usize> = mask_shape
+            .iter()
+            .enumerate()
+            .map(|(axis, &mask_axis)| target.get(axis).copied().unwrap_or(0).min(mask_axis - 1))
+            .collect();
+        mask[ndarray::IxDyn(&source)]
+    });
+    Ok(tiled)
+}
+
+/// The quoted image names a LEL expression carries.
+fn quoted_expression_names(expr: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let characters: Vec<char> = expr.chars().collect();
+    let mut index = 0;
+    while index < characters.len() {
+        let quote = characters[index];
+        if (quote == '"' || quote == '\'')
+            && let Some(end) = characters[index + 1..].iter().position(|&c| c == quote)
+        {
+            let name: String = characters[index + 1..index + 1 + end].iter().collect();
+            if !name.is_empty() && !names.contains(&name) {
+                names.push(name);
+            }
+            index += end + 2;
+            continue;
+        }
+        index += 1;
+    }
+    names
+}
+
+/// The parser's own wording, as CASA reports a refused mask expression.
+fn mask_error_wording(error: ExprParseError) -> String {
+    if error.message.starts_with("unknown image") {
+        // The resolver's miss: CASA's ImageExprParse wording.
+        error
+            .message
+            .replace("unknown image: ", "ImageExprParse: '")
+            + "' is an unknown lattice or image or it is an unqualified region"
+    } else {
+        format!("Image Expression: {error}")
+    }
 }
 
 /// The selection's pixel values as a robust-algorithm sample, with each
