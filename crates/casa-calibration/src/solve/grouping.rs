@@ -23,7 +23,7 @@ use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::resolve_calibration_selection;
 use crate::solve::kernel::SolveGraph;
-use time::{bucketed_rows, first_t_baselines};
+use time::{FirstTBuffer, bucketed_rows, first_t_buffers};
 
 pub(crate) fn validate_solve_interval(
     solve_interval: GainSolveInterval,
@@ -80,10 +80,10 @@ pub(crate) fn build_solve_groups(
     let mut layouts_by_ddid = HashMap::new();
     let scalar_gain = options.gain_type == GainType::T;
     let mut ordered = bucketed_rows(rows, options.solve_interval, options.combine, scalar_gain);
-    let seed_baselines = if scalar_gain {
-        let baselines = first_t_baselines(&ordered);
+    let seed_buffers = if scalar_gain {
+        let buffers = first_t_buffers(&ordered, options.preaverage_max_span);
         ordered.retain(|(row, _, _)| row.antenna1 != row.antenna2);
-        baselines
+        buffers
     } else {
         BTreeMap::new()
     };
@@ -110,7 +110,7 @@ pub(crate) fn build_solve_groups(
             let group = groups.entry((base_key, bucket_key)).or_insert_with(|| {
                 let mut group =
                     SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id);
-                group.first_t_baseline = seed_baselines.get(&(base_key, bucket_key)).copied();
+                group.first_t_buffer = seed_buffers.get(&(base_key, bucket_key)).copied();
                 group
             });
             if options.combine.fields {
@@ -618,8 +618,8 @@ pub(crate) struct SolveAccumulator {
     /// model division), and sets its window's gain-table channel then,
     /// whether or not the solve succeeds.
     pub(crate) attempted: bool,
-    /// The first buffer row skipped by CASA's scalar-gain initializer.
-    pub(crate) first_t_baseline: Option<(i32, i32)>,
+    first_t_buffer: Option<FirstTBuffer>,
+    parallel_hands: usize,
     baseline_centroids: HashMap<AveragedBaseline, WeightedTime>,
     preaverage_starts: HashMap<AveragedBaseline, f64>,
     receptor_accumulations: Vec<HashMap<SolveAccumulationKey, Vec<SolveEdgeAccumulation>>>,
@@ -733,7 +733,8 @@ impl SolveAccumulator {
             channel_graphs: Vec::new(),
             solution_time: 0.0,
             attempted: false,
-            first_t_baseline: None,
+            first_t_buffer: None,
+            parallel_hands: 1,
             baseline_centroids: HashMap::new(),
             preaverage_starts: HashMap::new(),
             receptor_accumulations: Vec::new(),
@@ -825,7 +826,14 @@ impl SolveAccumulator {
 
         let graph_count = match options.gain_type {
             GainType::G => 2,
-            GainType::T => 1,
+            GainType::T => {
+                self.parallel_hands = if matches!(correlation_types.len(), 2 | 4) {
+                    2
+                } else {
+                    1
+                };
+                1
+            }
         };
         if self.receptor_accumulations.len() < graph_count {
             self.receptor_accumulations
