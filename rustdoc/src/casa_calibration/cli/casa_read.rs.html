@@ -662,91 +662,93 @@
 <a href=#662 id=662 data-nosnippet>662</a>/// text, or text that contains `inf`, in any case, is one solution per
 <a href=#663 id=663 data-nosnippet>663</a>/// scan; text that contains `int`, one per integration; anything else is a
 <a href=#664 id=664 data-nosnippet>664</a>/// time, in seconds when it has no unit. A time of zero is CASA's `inf`,
-<a href=#665 id=665 data-nosnippet>665</a>/// and a negative one its `int`. Channel intervals (`'inf,2ch'`) are not
-<a href=#666 id=666 data-nosnippet>666</a>/// implemented yet.
+<a href=#665 id=665 data-nosnippet>665</a>/// and a negative one its `int`. G and T have a single gain per spectral
+<a href=#666 id=666 data-nosnippet>666</a>/// window, so CASA ignores the frequency interval after a comma.
 <a href=#667 id=667 data-nosnippet>667</a></span><span class="kw">fn </span>solint(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainSolveInterval, TaskFailure&gt; {
-<a href=#668 id=668 data-nosnippet>668</a>    <span class="kw">let </span>text = selector_text(task.value(<span class="string">"solint"</span>)).unwrap_or_default();
-<a href=#669 id=669 data-nosnippet>669</a>    <span class="kw">if </span>text.contains(<span class="string">','</span>) {
-<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"solint"</span>, <span class="kw-2">&amp;</span>text));
-<a href=#671 id=671 data-nosnippet>671</a>    }
-<a href=#672 id=672 data-nosnippet>672</a>    <span class="kw">let </span>upper = text.to_ascii_uppercase();
-<a href=#673 id=673 data-nosnippet>673</a>    <span class="kw">if </span>upper.is_empty() || upper.contains(<span class="string">"INF"</span>) {
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(GainSolveInterval::Infinite);
-<a href=#675 id=675 data-nosnippet>675</a>    }
-<a href=#676 id=676 data-nosnippet>676</a>    <span class="kw">if </span>upper.contains(<span class="string">"INT"</span>) {
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(GainSolveInterval::Integration);
-<a href=#678 id=678 data-nosnippet>678</a>    }
-<a href=#679 id=679 data-nosnippet>679</a>    <span class="kw">let </span>invalid = || unknown(<span class="string">"solint"</span>, <span class="kw-2">&amp;</span>text, <span class="string">"'inf', 'int' or a time such as '60s'"</span>);
-<a href=#680 id=680 data-nosnippet>680</a>    <span class="kw">let </span>quantity = text.parse::&lt;Quantity&gt;().map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?</span>;
-<a href=#681 id=681 data-nosnippet>681</a>    <span class="kw">let </span>seconds = <span class="kw">if </span>quantity.unit().name().is_empty() {
-<a href=#682 id=682 data-nosnippet>682</a>        quantity.value()
-<a href=#683 id=683 data-nosnippet>683</a>    } <span class="kw">else </span>{
-<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>second = Unit::new(<span class="string">"s"</span>).map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?</span>;
-<a href=#685 id=685 data-nosnippet>685</a>        quantity.get_value_in(<span class="kw-2">&amp;</span>second).map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?
-<a href=#686 id=686 data-nosnippet>686</a>    </span>};
-<a href=#687 id=687 data-nosnippet>687</a>    <span class="kw">if </span>!seconds.is_finite() {
-<a href=#688 id=688 data-nosnippet>688</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(invalid());
-<a href=#689 id=689 data-nosnippet>689</a>    }
-<a href=#690 id=690 data-nosnippet>690</a>    <span class="prelude-val">Ok</span>(<span class="kw">if </span>seconds &gt; <span class="number">0.0 </span>{
-<a href=#691 id=691 data-nosnippet>691</a>        GainSolveInterval::Seconds(seconds)
-<a href=#692 id=692 data-nosnippet>692</a>    } <span class="kw">else if </span>seconds == <span class="number">0.0 </span>{
-<a href=#693 id=693 data-nosnippet>693</a>        GainSolveInterval::Infinite
-<a href=#694 id=694 data-nosnippet>694</a>    } <span class="kw">else </span>{
-<a href=#695 id=695 data-nosnippet>695</a>        GainSolveInterval::Integration
-<a href=#696 id=696 data-nosnippet>696</a>    })
-<a href=#697 id=697 data-nosnippet>697</a>}
-<a href=#698 id=698 data-nosnippet>698</a>
-<a href=#699 id=699 data-nosnippet>699</a><span class="doccomment">/// The axes CASA's `combine` names, found as `SolvableVisCal` finds them:
-<a href=#700 id=700 data-nosnippet>700</a>/// by the axis name anywhere in the text, in any case (`'Scan,Field'` and
-<a href=#701 id=701 data-nosnippet>701</a>/// `'scan field'` both combine scans and fields).
-<a href=#702 id=702 data-nosnippet>702</a></span><span class="kw">fn </span>combine(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainSolveCombine, TaskFailure&gt; {
-<a href=#703 id=703 data-nosnippet>703</a>    <span class="kw">let </span>text = task.required_text(<span class="string">"combine"</span>)<span class="question-mark">?</span>;
-<a href=#704 id=704 data-nosnippet>704</a>    <span class="kw">let </span>upper = text.to_ascii_uppercase();
-<a href=#705 id=705 data-nosnippet>705</a>    <span class="kw">let </span>spectral_windows = upper.contains(<span class="string">"SPW"</span>);
-<a href=#706 id=706 data-nosnippet>706</a>    <span class="kw">let </span>observations = upper.contains(<span class="string">"OBS"</span>);
-<a href=#707 id=707 data-nosnippet>707</a>    <span class="kw">if </span>task.surface() == <span class="string">"bandpass" </span>&amp;&amp; (spectral_windows || observations) {
-<a href=#708 id=708 data-nosnippet>708</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"combine"</span>, <span class="kw-2">&amp;</span>text));
-<a href=#709 id=709 data-nosnippet>709</a>    }
-<a href=#710 id=710 data-nosnippet>710</a>    <span class="prelude-val">Ok</span>(GainSolveCombine {
-<a href=#711 id=711 data-nosnippet>711</a>        scans: upper.contains(<span class="string">"SCAN"</span>),
-<a href=#712 id=712 data-nosnippet>712</a>        fields: upper.contains(<span class="string">"FIELD"</span>),
-<a href=#713 id=713 data-nosnippet>713</a>        observations,
-<a href=#714 id=714 data-nosnippet>714</a>        spectral_windows,
-<a href=#715 id=715 data-nosnippet>715</a>    })
-<a href=#716 id=716 data-nosnippet>716</a>}
-<a href=#717 id=717 data-nosnippet>717</a>
-<a href=#718 id=718 data-nosnippet>718</a><span class="doccomment">/// CASA's `refant`: one antenna, by name or id. CASA's ranked lists, and
-<a href=#719 id=719 data-nosnippet>719</a>/// its default `''`, a solve with no reference antenna, are not
-<a href=#720 id=720 data-nosnippet>720</a>/// implemented yet.
-<a href=#721 id=721 data-nosnippet>721</a></span><span class="kw">fn </span>refant(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;RefAntSelector, TaskFailure&gt; {
-<a href=#722 id=722 data-nosnippet>722</a>    <span class="kw">if </span>text.trim().is_empty() {
-<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"refant"</span>, text));
-<a href=#724 id=724 data-nosnippet>724</a>    }
-<a href=#725 id=725 data-nosnippet>725</a>    <span class="kw">if </span>text.contains(<span class="string">','</span>) {
-<a href=#726 id=726 data-nosnippet>726</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"refant"</span>, text));
-<a href=#727 id=727 data-nosnippet>727</a>    }
-<a href=#728 id=728 data-nosnippet>728</a>    <span class="prelude-val">Ok</span>(parse_refant_selector(text.trim()))
-<a href=#729 id=729 data-nosnippet>729</a>}
-<a href=#730 id=730 data-nosnippet>730</a>
-<a href=#731 id=731 data-nosnippet>731</a><span class="doccomment">/// The fields `name` lists; an item may itself list them, `','`-separated.
-<a href=#732 id=732 data-nosnippet>732</a></span><span class="kw">fn </span>fields(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;, TaskFailure&gt; {
-<a href=#733 id=733 data-nosnippet>733</a>    task.texts(name)
-<a href=#734 id=734 data-nosnippet>734</a>}
-<a href=#735 id=735 data-nosnippet>735</a>
-<a href=#736 id=736 data-nosnippet>736</a><span class="doccomment">/// The refusal of a CASA value casa-rs does not implement yet.
-<a href=#737 id=737 data-nosnippet>737</a></span><span class="kw">fn </span>not_yet(name: <span class="kw-2">&amp;</span>str, text: <span class="kw-2">&amp;</span>str) -&gt; TaskFailure {
-<a href=#738 id=738 data-nosnippet>738</a>    TaskFailure::validation(<span class="macro">format!</span>(
-<a href=#739 id=739 data-nosnippet>739</a>        <span class="string">"{name}={text:?} is not implemented by casa-rs yet (#979)"
-<a href=#740 id=740 data-nosnippet>740</a>    </span>))
-<a href=#741 id=741 data-nosnippet>741</a>    .at(name)
-<a href=#742 id=742 data-nosnippet>742</a>}
-<a href=#743 id=743 data-nosnippet>743</a>
-<a href=#744 id=744 data-nosnippet>744</a><span class="doccomment">/// The refusal of a value CASA does not take either.
-<a href=#745 id=745 data-nosnippet>745</a></span><span class="kw">fn </span>unknown(name: <span class="kw-2">&amp;</span>str, text: <span class="kw-2">&amp;</span>str, expected: <span class="kw-2">&amp;</span>str) -&gt; TaskFailure {
-<a href=#746 id=746 data-nosnippet>746</a>    TaskFailure::validation(<span class="macro">format!</span>(<span class="string">"{name}={text:?} is not valid; expected {expected}"</span>)).at(name)
-<a href=#747 id=747 data-nosnippet>747</a>}
-<a href=#748 id=748 data-nosnippet>748</a>
-<a href=#749 id=749 data-nosnippet>749</a><span class="kw">fn </span>out_of_range(name: <span class="kw-2">&amp;</span>str, id: i64) -&gt; TaskFailure {
-<a href=#750 id=750 data-nosnippet>750</a>    TaskFailure::validation(<span class="macro">format!</span>(<span class="string">"{name} value {id} is out of range"</span>)).at(name)
-<a href=#751 id=751 data-nosnippet>751</a>}
+<a href=#668 id=668 data-nosnippet>668</a>    <span class="kw">let </span>supplied = selector_text(task.value(<span class="string">"solint"</span>)).unwrap_or_default();
+<a href=#669 id=669 data-nosnippet>669</a>    <span class="kw">let </span>text = <span class="kw">match </span>supplied.split_once(<span class="string">','</span>) {
+<a href=#670 id=670 data-nosnippet>670</a>        <span class="prelude-val">Some</span>((time, <span class="kw">_</span>)) <span class="kw">if </span>task.surface() == <span class="string">"gaincal" </span>=&gt; time,
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"solint"</span>, <span class="kw-2">&amp;</span>supplied)),
+<a href=#672 id=672 data-nosnippet>672</a>        <span class="prelude-val">None </span>=&gt; <span class="kw-2">&amp;</span>supplied,
+<a href=#673 id=673 data-nosnippet>673</a>    };
+<a href=#674 id=674 data-nosnippet>674</a>    <span class="kw">let </span>upper = text.to_ascii_uppercase();
+<a href=#675 id=675 data-nosnippet>675</a>    <span class="kw">if </span>upper.is_empty() || upper.contains(<span class="string">"INF"</span>) {
+<a href=#676 id=676 data-nosnippet>676</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(GainSolveInterval::Infinite);
+<a href=#677 id=677 data-nosnippet>677</a>    }
+<a href=#678 id=678 data-nosnippet>678</a>    <span class="kw">if </span>upper.contains(<span class="string">"INT"</span>) {
+<a href=#679 id=679 data-nosnippet>679</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(GainSolveInterval::Integration);
+<a href=#680 id=680 data-nosnippet>680</a>    }
+<a href=#681 id=681 data-nosnippet>681</a>    <span class="kw">let </span>invalid = || unknown(<span class="string">"solint"</span>, text, <span class="string">"'inf', 'int' or a time such as '60s'"</span>);
+<a href=#682 id=682 data-nosnippet>682</a>    <span class="kw">let </span>quantity = text.parse::&lt;Quantity&gt;().map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?</span>;
+<a href=#683 id=683 data-nosnippet>683</a>    <span class="kw">let </span>seconds = <span class="kw">if </span>quantity.unit().name().is_empty() {
+<a href=#684 id=684 data-nosnippet>684</a>        quantity.value()
+<a href=#685 id=685 data-nosnippet>685</a>    } <span class="kw">else </span>{
+<a href=#686 id=686 data-nosnippet>686</a>        <span class="kw">let </span>second = Unit::new(<span class="string">"s"</span>).map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?</span>;
+<a href=#687 id=687 data-nosnippet>687</a>        quantity.get_value_in(<span class="kw-2">&amp;</span>second).map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?
+<a href=#688 id=688 data-nosnippet>688</a>    </span>};
+<a href=#689 id=689 data-nosnippet>689</a>    <span class="kw">if </span>!seconds.is_finite() {
+<a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(invalid());
+<a href=#691 id=691 data-nosnippet>691</a>    }
+<a href=#692 id=692 data-nosnippet>692</a>    <span class="prelude-val">Ok</span>(<span class="kw">if </span>seconds &gt; <span class="number">0.0 </span>{
+<a href=#693 id=693 data-nosnippet>693</a>        GainSolveInterval::Seconds(seconds)
+<a href=#694 id=694 data-nosnippet>694</a>    } <span class="kw">else if </span>seconds == <span class="number">0.0 </span>{
+<a href=#695 id=695 data-nosnippet>695</a>        GainSolveInterval::Infinite
+<a href=#696 id=696 data-nosnippet>696</a>    } <span class="kw">else </span>{
+<a href=#697 id=697 data-nosnippet>697</a>        GainSolveInterval::Integration
+<a href=#698 id=698 data-nosnippet>698</a>    })
+<a href=#699 id=699 data-nosnippet>699</a>}
+<a href=#700 id=700 data-nosnippet>700</a>
+<a href=#701 id=701 data-nosnippet>701</a><span class="doccomment">/// The axes CASA's `combine` names, found as `SolvableVisCal` finds them:
+<a href=#702 id=702 data-nosnippet>702</a>/// by the axis name anywhere in the text, in any case (`'Scan,Field'` and
+<a href=#703 id=703 data-nosnippet>703</a>/// `'scan field'` both combine scans and fields).
+<a href=#704 id=704 data-nosnippet>704</a></span><span class="kw">fn </span>combine(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainSolveCombine, TaskFailure&gt; {
+<a href=#705 id=705 data-nosnippet>705</a>    <span class="kw">let </span>text = task.required_text(<span class="string">"combine"</span>)<span class="question-mark">?</span>;
+<a href=#706 id=706 data-nosnippet>706</a>    <span class="kw">let </span>upper = text.to_ascii_uppercase();
+<a href=#707 id=707 data-nosnippet>707</a>    <span class="kw">let </span>spectral_windows = upper.contains(<span class="string">"SPW"</span>);
+<a href=#708 id=708 data-nosnippet>708</a>    <span class="kw">let </span>observations = upper.contains(<span class="string">"OBS"</span>);
+<a href=#709 id=709 data-nosnippet>709</a>    <span class="kw">if </span>task.surface() == <span class="string">"bandpass" </span>&amp;&amp; (spectral_windows || observations) {
+<a href=#710 id=710 data-nosnippet>710</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"combine"</span>, <span class="kw-2">&amp;</span>text));
+<a href=#711 id=711 data-nosnippet>711</a>    }
+<a href=#712 id=712 data-nosnippet>712</a>    <span class="prelude-val">Ok</span>(GainSolveCombine {
+<a href=#713 id=713 data-nosnippet>713</a>        scans: upper.contains(<span class="string">"SCAN"</span>),
+<a href=#714 id=714 data-nosnippet>714</a>        fields: upper.contains(<span class="string">"FIELD"</span>),
+<a href=#715 id=715 data-nosnippet>715</a>        observations,
+<a href=#716 id=716 data-nosnippet>716</a>        spectral_windows,
+<a href=#717 id=717 data-nosnippet>717</a>    })
+<a href=#718 id=718 data-nosnippet>718</a>}
+<a href=#719 id=719 data-nosnippet>719</a>
+<a href=#720 id=720 data-nosnippet>720</a><span class="doccomment">/// CASA's `refant`: one antenna, by name or id. CASA's ranked lists, and
+<a href=#721 id=721 data-nosnippet>721</a>/// its default `''`, a solve with no reference antenna, are not
+<a href=#722 id=722 data-nosnippet>722</a>/// implemented yet.
+<a href=#723 id=723 data-nosnippet>723</a></span><span class="kw">fn </span>refant(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;RefAntSelector, TaskFailure&gt; {
+<a href=#724 id=724 data-nosnippet>724</a>    <span class="kw">if </span>text.trim().is_empty() {
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"refant"</span>, text));
+<a href=#726 id=726 data-nosnippet>726</a>    }
+<a href=#727 id=727 data-nosnippet>727</a>    <span class="kw">if </span>text.contains(<span class="string">','</span>) {
+<a href=#728 id=728 data-nosnippet>728</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"refant"</span>, text));
+<a href=#729 id=729 data-nosnippet>729</a>    }
+<a href=#730 id=730 data-nosnippet>730</a>    <span class="prelude-val">Ok</span>(parse_refant_selector(text.trim()))
+<a href=#731 id=731 data-nosnippet>731</a>}
+<a href=#732 id=732 data-nosnippet>732</a>
+<a href=#733 id=733 data-nosnippet>733</a><span class="doccomment">/// The fields `name` lists; an item may itself list them, `','`-separated.
+<a href=#734 id=734 data-nosnippet>734</a></span><span class="kw">fn </span>fields(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;, TaskFailure&gt; {
+<a href=#735 id=735 data-nosnippet>735</a>    task.texts(name)
+<a href=#736 id=736 data-nosnippet>736</a>}
+<a href=#737 id=737 data-nosnippet>737</a>
+<a href=#738 id=738 data-nosnippet>738</a><span class="doccomment">/// The refusal of a CASA value casa-rs does not implement yet.
+<a href=#739 id=739 data-nosnippet>739</a></span><span class="kw">fn </span>not_yet(name: <span class="kw-2">&amp;</span>str, text: <span class="kw-2">&amp;</span>str) -&gt; TaskFailure {
+<a href=#740 id=740 data-nosnippet>740</a>    TaskFailure::validation(<span class="macro">format!</span>(
+<a href=#741 id=741 data-nosnippet>741</a>        <span class="string">"{name}={text:?} is not implemented by casa-rs yet (#979)"
+<a href=#742 id=742 data-nosnippet>742</a>    </span>))
+<a href=#743 id=743 data-nosnippet>743</a>    .at(name)
+<a href=#744 id=744 data-nosnippet>744</a>}
+<a href=#745 id=745 data-nosnippet>745</a>
+<a href=#746 id=746 data-nosnippet>746</a><span class="doccomment">/// The refusal of a value CASA does not take either.
+<a href=#747 id=747 data-nosnippet>747</a></span><span class="kw">fn </span>unknown(name: <span class="kw-2">&amp;</span>str, text: <span class="kw-2">&amp;</span>str, expected: <span class="kw-2">&amp;</span>str) -&gt; TaskFailure {
+<a href=#748 id=748 data-nosnippet>748</a>    TaskFailure::validation(<span class="macro">format!</span>(<span class="string">"{name}={text:?} is not valid; expected {expected}"</span>)).at(name)
+<a href=#749 id=749 data-nosnippet>749</a>}
+<a href=#750 id=750 data-nosnippet>750</a>
+<a href=#751 id=751 data-nosnippet>751</a><span class="kw">fn </span>out_of_range(name: <span class="kw-2">&amp;</span>str, id: i64) -&gt; TaskFailure {
+<a href=#752 id=752 data-nosnippet>752</a>    TaskFailure::validation(<span class="macro">format!</span>(<span class="string">"{name} value {id} is out of range"</span>)).at(name)
+<a href=#753 id=753 data-nosnippet>753</a>}
 </code></pre></div></section></main></body></html>
