@@ -87,12 +87,12 @@
 <a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">for </span>item <span class="kw">in </span>values.iter().chain(errors.iter().flatten()) {
 <a href=#88 id=88 data-nosnippet>88</a>        <span class="kw">if </span>!item.re.is_finite() || !item.im.is_finite() {
 <a href=#89 id=89 data-nosnippet>89</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(
-<a href=#90 id=90 data-nosnippet>90</a>                <span class="string">"non-finite flux or error refused (#1053)"</span>,
+<a href=#90 id=90 data-nosnippet>90</a>                <span class="string">"non-finite flux or error refused (#1252)"</span>,
 <a href=#91 id=91 data-nosnippet>91</a>            ));
 <a href=#92 id=92 data-nosnippet>92</a>        }
 <a href=#93 id=93 data-nosnippet>93</a>        <span class="kw">if </span>item.im != <span class="number">0.0 </span>{
 <a href=#94 id=94 data-nosnippet>94</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(
-<a href=#95 id=95 data-nosnippet>95</a>                <span class="string">"imaginary flux or error would be discarded by CASA (#1053)"</span>,
+<a href=#95 id=95 data-nosnippet>95</a>                <span class="string">"imaginary flux or error would be discarded by CASA (#1252)"</span>,
 <a href=#96 id=96 data-nosnippet>96</a>            ));
 <a href=#97 id=97 data-nosnippet>97</a>        }
 <a href=#98 id=98 data-nosnippet>98</a>    }

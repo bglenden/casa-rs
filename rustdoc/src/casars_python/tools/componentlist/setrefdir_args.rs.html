@@ -34,7 +34,7 @@
 <a href=#34 id=34 data-nosnippet>34</a>            <span class="kw">let </span>identity = value.as_ptr() <span class="kw">as </span>usize;
 <a href=#35 id=35 data-nosnippet>35</a>            <span class="kw">if </span>!active.insert(identity) {
 <a href=#36 id=36 data-nosnippet>36</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(PyValueError::new_err(
-<a href=#37 id=37 data-nosnippet>37</a>                    <span class="string">"cyclic component direction record (CASA crashes: #1053)"</span>,
+<a href=#37 id=37 data-nosnippet>37</a>                    <span class="string">"cyclic component direction record (CASA crashes: #1252)"</span>,
 <a href=#38 id=38 data-nosnippet>38</a>                ));
 <a href=#39 id=39 data-nosnippet>39</a>            }
 <a href=#40 id=40 data-nosnippet>40</a>            <span class="kw">let </span>values: Vec&lt;<span class="kw">_</span>&gt; = record.iter().map(|(<span class="kw">_</span>, item)| item).collect();

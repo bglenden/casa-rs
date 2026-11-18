@@ -52,20 +52,20 @@
 <a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>value = quantity(<span class="kw-2">&amp;</span>request.reference)<span class="question-mark">?</span>;
 <a href=#53 id=53 data-nosnippet>53</a>        <span class="kw">let </span>hz = casacore_unit(<span class="string">"Hz"</span>).map_err(ConvertError::runtime)<span class="question-mark">?</span>;
 <a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">if </span>!value.unit().conformant(<span class="kw-2">&amp;</span>hz) || !value.get_si_value().is_finite() {
-<a href=#55 id=55 data-nosnippet>55</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(<span class="string">"invalid frequency refused (#1053)"</span>));
+<a href=#55 id=55 data-nosnippet>55</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(<span class="string">"invalid frequency refused (#1252)"</span>));
 <a href=#56 id=56 data-nosnippet>56</a>        }
 <a href=#57 id=57 data-nosnippet>57</a>        value.get_si_value()
 <a href=#58 id=58 data-nosnippet>58</a>    };
 <a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">if </span>request.index.invalid || request.index.values.is_empty() {
 <a href=#60 id=60 data-nosnippet>60</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(
-<a href=#61 id=61 data-nosnippet>61</a>            <span class="string">"invalid or empty spectrum index refused (#1053)"</span>,
+<a href=#61 id=61 data-nosnippet>61</a>            <span class="string">"invalid or empty spectrum index refused (#1252)"</span>,
 <a href=#62 id=62 data-nosnippet>62</a>        ));
 <a href=#63 id=63 data-nosnippet>63</a>    }
 <a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">if </span>name == <span class="string">"POWER LOGARITHMIC POLYNOMIAL" </span>{
 <a href=#65 id=65 data-nosnippet>65</a>        <span class="comment">// CASA returns false after changing the reference frequency.
 <a href=#66 id=66 data-nosnippet>66</a>        </span><span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(Plan {
 <a href=#67 id=67 data-nosnippet>67</a>            kind: SpectralKind::Constant,
-<a href=#68 id=68 data-nosnippet>68</a>            reference: <span class="prelude-val">None</span>,
+<a href=#68 id=68 data-nosnippet>68</a>            reference: <span class="prelude-val">Some</span>((hz, frame)),
 <a href=#69 id=69 data-nosnippet>69</a>            refused: <span class="bool-val">true</span>,
 <a href=#70 id=70 data-nosnippet>70</a>        }));
 <a href=#71 id=71 data-nosnippet>71</a>    }
@@ -73,7 +73,7 @@
 <a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">let </span>indices = <span class="kw-2">&amp;</span>request.index.values;
 <a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">if </span>indices.iter().any(|value| !value.is_finite()) {
 <a href=#75 id=75 data-nosnippet>75</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(
-<a href=#76 id=76 data-nosnippet>76</a>                <span class="string">"non-finite spectrum index refused (#1053)"</span>,
+<a href=#76 id=76 data-nosnippet>76</a>                <span class="string">"non-finite spectrum index refused (#1252)"</span>,
 <a href=#77 id=77 data-nosnippet>77</a>            ));
 <a href=#78 id=78 data-nosnippet>78</a>        }
 <a href=#79 id=79 data-nosnippet>79</a>        <span class="kw">let </span>index = SpectralIndex::new(indices[<span class="number">0</span>]);
@@ -110,7 +110,7 @@
 <a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">let </span>frame = frame(<span class="kw-2">&amp;</span>request.frame)<span class="question-mark">?</span>;
 <a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">if </span>request.vectors.iter().any(|v| v.invalid) {
 <a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(
-<a href=#113 id=113 data-nosnippet>113</a>            <span class="string">"unrepresentable tabular value refused (#1053)"</span>,
+<a href=#113 id=113 data-nosnippet>113</a>            <span class="string">"unrepresentable tabular value refused (#1252)"</span>,
 <a href=#114 id=114 data-nosnippet>114</a>        ));
 <a href=#115 id=115 data-nosnippet>115</a>    }
 <a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">if </span>request
@@ -120,7 +120,7 @@
 <a href=#120 id=120 data-nosnippet>120</a>        .any(|value| !value.is_finite())
 <a href=#121 id=121 data-nosnippet>121</a>    {
 <a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(
-<a href=#123 id=123 data-nosnippet>123</a>            <span class="string">"non-finite tabular spectrum refused (#1053)"</span>,
+<a href=#123 id=123 data-nosnippet>123</a>            <span class="string">"non-finite tabular spectrum refused (#1252)"</span>,
 <a href=#124 id=124 data-nosnippet>124</a>        ));
 <a href=#125 id=125 data-nosnippet>125</a>    }
 <a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">let </span>values = (<span class="number">0</span>..freq.values.len())

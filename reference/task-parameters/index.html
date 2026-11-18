@@ -4403,11 +4403,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>center</code></td>
-<td><code>parameter.center@r2</code></td>
-<td><code>choice (3 values)</code></td>
+<td><code>parameter.center@r3</code></td>
+<td><code>string</code></td>
 <td><code>"mean"</code>; optional</td>
 <td>Statistics</td>
-<td>Center of the fit-half statistics algorithm: mean, median or zero.</td>
+<td>Center of the fit-half statistics algorithm: mean, median or zero, by minimum match of three letters for the mean and median and one for zero.</td>
 </tr>
 <tr>
 <td><code>lside</code></td>
@@ -6521,11 +6521,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>uvrange</code></td>
-<td><code>ms.selection.uvrange@r4</code></td>
-<td><code>variant</code></td>
+<td><code>ms.selection.uvrange@r3</code></td>
+<td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Data selection</td>
-<td>Accepts a CASA variant and converts it to selector text during MeasurementSet selection.</td>
+<td>UV range selector.</td>
 </tr>
 <tr>
 <td><code>antenna</code></td>
@@ -6545,11 +6545,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>observation</code></td>
-<td><code>ms.selection.observation@r4</code></td>
-<td><code>variant</code></td>
+<td><code>ms.selection.observation@r3</code></td>
+<td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Data selection</td>
-<td>Accepts selector text or an observation ID. Preserve the input type for HISTORY.</td>
+<td>Observation selection applied to every MeasurementSet</td>
 </tr>
 <tr>
 <td><code>intent</code></td>

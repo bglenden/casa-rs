@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Scaling"],"fn":["add","casacore_unit","conversion","convert","div","formxxx","get_conformant_value","get_value","mul","mvangle_normalized","mvangle_radians","stream_double","stream_double_precision","sub","tos"],"struct":["QuantumError"]};
+window.SIDEBAR_ITEMS = {"enum":["Scaling"],"fn":["add","casacore_unit","conversion","convert","div","formxxx","frequency_hz","get_conformant_value","get_value","mul","mvangle_normalized","mvangle_radians","stream_double","stream_double_precision","sub","tos"],"struct":["QuantumError"]};

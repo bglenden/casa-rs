@@ -87,7 +87,7 @@
 <a href=#87 id=87 data-nosnippet>87</a>    }
 <a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">if </span>[major, minor, angle].iter().any(|value| !value.is_finite()) {
 <a href=#89 id=89 data-nosnippet>89</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(
-<a href=#90 id=90 data-nosnippet>90</a>            <span class="string">"non-finite component shape refused (#1053)"</span>,
+<a href=#90 id=90 data-nosnippet>90</a>            <span class="string">"non-finite component shape refused (#1252)"</span>,
 <a href=#91 id=91 data-nosnippet>91</a>        ));
 <a href=#92 id=92 data-nosnippet>92</a>    }
 <a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">for </span>(name, q) <span class="kw">in </span>[<span class="string">"majoraxiserror"</span>, <span class="string">"minoraxiserror"</span>, <span class="string">"positionangleerror"</span>]
@@ -105,7 +105,7 @@
 <a href=#105 id=105 data-nosnippet>105</a>        .any(|value| !value.is_finite())
 <a href=#106 id=106 data-nosnippet>106</a>    {
 <a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(
-<a href=#108 id=108 data-nosnippet>108</a>            <span class="string">"non-finite component shape error refused (#1053)"</span>,
+<a href=#108 id=108 data-nosnippet>108</a>            <span class="string">"non-finite component shape error refused (#1252)"</span>,
 <a href=#109 id=109 data-nosnippet>109</a>        ));
 <a href=#110 id=110 data-nosnippet>110</a>    }
 <a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">if </span>[major_error, minor_error, angle_error]
@@ -185,7 +185,7 @@
 <a href=#185 id=185 data-nosnippet>185</a>            <span class="kw">let </span>identity = object.as_ptr() <span class="kw">as </span>usize;
 <a href=#186 id=186 data-nosnippet>186</a>            <span class="kw">if </span>!active.insert(identity) {
 <a href=#187 id=187 data-nosnippet>187</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(PyValueError::new_err(
-<a href=#188 id=188 data-nosnippet>188</a>                    <span class="string">"cyclic component double-vector argument (CASA crash: #1053)"</span>,
+<a href=#188 id=188 data-nosnippet>188</a>                    <span class="string">"cyclic component double-vector argument (CASA crash: #1252)"</span>,
 <a href=#189 id=189 data-nosnippet>189</a>                ));
 <a href=#190 id=190 data-nosnippet>190</a>            }
 <a href=#191 id=191 data-nosnippet>191</a>            <span class="kw">let </span>items = object.try_iter()<span class="question-mark">?</span>.collect::&lt;PyResult&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;

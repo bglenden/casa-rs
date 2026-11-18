@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>CasaDefault::{Bool, Empty, EmptyRecord, Floats, Int, Ints, Required, Text};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>Kind <span class="kw">as </span>K;
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>Returns <span class="kw">as </span>R;
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>Status::{Implemented <span class="kw">as </span>Yes, NotYetImplemented <span class="kw">as </span>No};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>Status::Implemented <span class="kw">as </span>Yes;
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">const </span>WHICH: Parameter = param(<span class="string">"which"</span>, K::Int, Required);
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">const </span>WHICH_ALL: Parameter = param(<span class="string">"which"</span>, K::Ints, Ints(<span class="kw-2">&amp;</span>[-<span class="number">1</span>]));
@@ -36,7 +36,7 @@
 <a href=#36 id=36 data-nosnippet>36</a>            param(<span class="string">"iknow"</span>, K::Bool, Bool(<span class="bool-val">true</span>)),
 <a href=#37 id=37 data-nosnippet>37</a>        ],
 <a href=#38 id=38 data-nosnippet>38</a>        R::Bool,
-<a href=#39 id=39 data-nosnippet>39</a>        No,
+<a href=#39 id=39 data-nosnippet>39</a>        Yes,
 <a href=#40 id=40 data-nosnippet>40</a>    ),
 <a href=#41 id=41 data-nosnippet>41</a>    method(
 <a href=#42 id=42 data-nosnippet>42</a>        <span class="string">"addcomponent"</span>,
@@ -136,7 +136,7 @@
 <a href=#136 id=136 data-nosnippet>136</a>        <span class="string">"fromrecord"</span>,
 <a href=#137 id=137 data-nosnippet>137</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"record"</span>, K::Record, EmptyRecord)],
 <a href=#138 id=138 data-nosnippet>138</a>        R::Bool,
-<a href=#139 id=139 data-nosnippet>139</a>        No,
+<a href=#139 id=139 data-nosnippet>139</a>        Yes,
 <a href=#140 id=140 data-nosnippet>140</a>    ),
 <a href=#141 id=141 data-nosnippet>141</a>    method(
 <a href=#142 id=142 data-nosnippet>142</a>        <span class="string">"getcomponent"</span>,
@@ -367,21 +367,26 @@
 <a href=#367 id=367 data-nosnippet>367</a>        <span class="string">"sort"</span>,
 <a href=#368 id=368 data-nosnippet>368</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"criteria"</span>, K::Text, Text(<span class="string">"Flux"</span>)), LOG],
 <a href=#369 id=369 data-nosnippet>369</a>        R::Bool,
-<a href=#370 id=370 data-nosnippet>370</a>        No,
+<a href=#370 id=370 data-nosnippet>370</a>        Yes,
 <a href=#371 id=371 data-nosnippet>371</a>    ),
 <a href=#372 id=372 data-nosnippet>372</a>    of_one(<span class="string">"spectrumtype"</span>, R::Text, Yes),
-<a href=#373 id=373 data-nosnippet>373</a>    method(<span class="string">"summarize"</span>, <span class="kw-2">&amp;</span>[param(<span class="string">"which"</span>, K::Int, Int(-<span class="number">1</span>))], R::Bool, No),
-<a href=#374 id=374 data-nosnippet>374</a>    method(<span class="string">"torecord"</span>, <span class="kw-2">&amp;</span>[], R::Record, Yes),
-<a href=#375 id=375 data-nosnippet>375</a>];
-<a href=#376 id=376 data-nosnippet>376</a>
-<a href=#377 id=377 data-nosnippet>377</a><span class="kw">const </span>WHICH_ALL_ONES: Parameter = param(<span class="string">"whichones"</span>, K::Ints, Ints(<span class="kw-2">&amp;</span>[-<span class="number">1</span>]));
-<a href=#378 id=378 data-nosnippet>378</a>
-<a href=#379 id=379 data-nosnippet>379</a><span class="doccomment">/// The `componentlist` tool's surface.
-<a href=#380 id=380 data-nosnippet>380</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>SURFACE: ToolSurface = ToolSurface {
-<a href=#381 id=381 data-nosnippet>381</a>    name: <span class="string">"componentlist"</span>,
-<a href=#382 id=382 data-nosnippet>382</a>    module: <span class="string">"casars.tools"</span>,
-<a href=#383 id=383 data-nosnippet>383</a>    constructor: <span class="kw-2">&amp;</span>[],
-<a href=#384 id=384 data-nosnippet>384</a>    methods: METHODS,
-<a href=#385 id=385 data-nosnippet>385</a>    lifecycle: <span class="kw-2">&amp;</span>[<span class="string">"open"</span>, <span class="string">"rename"</span>, <span class="string">"close"</span>, <span class="string">"done"</span>],
-<a href=#386 id=386 data-nosnippet>386</a>};
+<a href=#373 id=373 data-nosnippet>373</a>    method(
+<a href=#374 id=374 data-nosnippet>374</a>        <span class="string">"summarize"</span>,
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"which"</span>, K::Int, Int(-<span class="number">1</span>))],
+<a href=#376 id=376 data-nosnippet>376</a>        R::Bool,
+<a href=#377 id=377 data-nosnippet>377</a>        Yes,
+<a href=#378 id=378 data-nosnippet>378</a>    ),
+<a href=#379 id=379 data-nosnippet>379</a>    method(<span class="string">"torecord"</span>, <span class="kw-2">&amp;</span>[], R::Record, Yes),
+<a href=#380 id=380 data-nosnippet>380</a>];
+<a href=#381 id=381 data-nosnippet>381</a>
+<a href=#382 id=382 data-nosnippet>382</a><span class="kw">const </span>WHICH_ALL_ONES: Parameter = param(<span class="string">"whichones"</span>, K::Ints, Ints(<span class="kw-2">&amp;</span>[-<span class="number">1</span>]));
+<a href=#383 id=383 data-nosnippet>383</a>
+<a href=#384 id=384 data-nosnippet>384</a><span class="doccomment">/// The `componentlist` tool's surface.
+<a href=#385 id=385 data-nosnippet>385</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>SURFACE: ToolSurface = ToolSurface {
+<a href=#386 id=386 data-nosnippet>386</a>    name: <span class="string">"componentlist"</span>,
+<a href=#387 id=387 data-nosnippet>387</a>    module: <span class="string">"casars.tools"</span>,
+<a href=#388 id=388 data-nosnippet>388</a>    constructor: <span class="kw-2">&amp;</span>[],
+<a href=#389 id=389 data-nosnippet>389</a>    methods: METHODS,
+<a href=#390 id=390 data-nosnippet>390</a>    lifecycle: <span class="kw-2">&amp;</span>[<span class="string">"open"</span>, <span class="string">"rename"</span>, <span class="string">"close"</span>, <span class="string">"done"</span>],
+<a href=#391 id=391 data-nosnippet>391</a>};
 </code></pre></div></section></main></body></html>

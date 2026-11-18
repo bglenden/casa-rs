@@ -51,7 +51,7 @@
 <a href=#51 id=51 data-nosnippet>51</a>        <span class="kw">let </span>name = name.split(<span class="string">'\0'</span>).next().unwrap_or_default();
 <a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>result = <span class="kw">if let </span><span class="prelude-val">Some</span>(name) = DIRECTION_CODES.resolve(name) {
 <a href=#53 id=53 data-nosnippet>53</a>            <span class="kw">let </span>frame = DirectionRef::from_str(name).map_err(|<span class="kw">_</span>| PyNotImplementedError::new_err(
-<a href=#54 id=54 data-nosnippet>54</a>                <span class="macro">format!</span>(<span class="string">"direction reference {name} is not supported by the shared measure model (#1053)"</span>),
+<a href=#54 id=54 data-nosnippet>54</a>                <span class="macro">format!</span>(<span class="string">"direction reference {name} is not supported by the shared measure model (#1252)"</span>),
 <a href=#55 id=55 data-nosnippet>55</a>            ))<span class="question-mark">?</span>;
 <a href=#56 id=56 data-nosnippet>56</a>            <span class="self">self</span>.call(py, <span class="kw">move </span>|state, <span class="kw">_</span>| {
 <a href=#57 id=57 data-nosnippet>57</a>                state.convertrefdir(which, frame).map(CasaValue::Bool)

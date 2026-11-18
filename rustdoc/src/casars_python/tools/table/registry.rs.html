@@ -24,7 +24,7 @@
 <a href=#24 id=24 data-nosnippet>24</a>/// `State::id`.
 <a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">static </span>TOOLS: Mutex&lt;Vec&lt;(u64, Weak&lt;Mutex&lt;State&gt;&gt;)&gt;&gt; = Mutex::new(Vec::new());
 <a href=#26 id=26 data-nosnippet>26</a>
-<a href=#27 id=27 data-nosnippet>27</a><span class="doccomment">/// Per-table notification of component-list keyword writes in this process.
+<a href=#27 id=27 data-nosnippet>27</a><span class="doccomment">/// Per-table notification of metadata writes in this process.
 <a href=#28 id=28 data-nosnippet>28</a>/// Weak references keep the registry from retaining closed tables.
 <a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>keyword_epoch(path: <span class="kw-2">&amp;</span>Path) -&gt; Arc&lt;AtomicU64&gt; {
 <a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">static </span>EPOCHS: OnceLock&lt;Mutex&lt;HashMap&lt;PathBuf, Weak&lt;AtomicU64&gt;&gt;&gt;&gt; = OnceLock::new();
