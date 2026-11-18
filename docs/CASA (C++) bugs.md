@@ -6472,3 +6472,20 @@ both self maps and the identical input MS/calibration table. That control
 matches native corrected data, flags and weight/sigma columns. Missing joint
 contexts still use the ordinary unavailable-calibration rules. No tolerance
 is relaxed, and this correction is separate from same-input task matches.
+
+## Empty or ragged nested sequences in quantity records crash or corrupt values
+
+- Date noted: 2026-11-18
+- Status: CASA crashes or truncates/zero-pads data; casa-rs refuses the inputs (#1170).
+- Affected code: `casatools` Python-to-`Variant` / `QuantumHolder` record conversion.
+
+In CASA 6.7.6.14, `qa.quantity({'value': [[]], 'unit': 'm'})` terminates Python
+with a segmentation fault (exit code 139). For ragged nested floating-point
+lists, CASA silently discards trailing elements in longer rows (`[[1.0, 2.0],
+[3.0]]` becomes `array([[1.], [3.]])`) or zero-pads shorter rows (`[[1.0], [2.0,
+3.0]]` becomes `array([[1., 0.], [2., 3.]])`).
+
+casa-rs checks nesting depth and row shapes in `crates/casars-python/src/convert.rs`
+and rejects empty or ragged nested Python sequences with CASA's catchable
+`Illegal Quantum record in QuantumHolder::fromRecord` `RuntimeError` instead of
+crashing or corrupting values (#1252, #1170).

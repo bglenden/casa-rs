@@ -114,12 +114,12 @@ pub(super) fn quantity_of(
     Ok(quantum.to_value())
 }
 
-/// A quantity record holding an array, else `None`.
+/// A quantity record holding a 1-D array, else `None`.
 fn array_record(value: &Variant) -> ConvertResult<Option<Quantum>> {
     let Variant::Record(record) = value else {
         return Ok(None);
     };
-    if matches!(record.get("value"), Some(Variant::Array { shape, .. }) if shape.is_empty()) {
+    if matches!(record.get("value"), Some(Variant::Array { shape, .. }) if shape.len() != 1) {
         return Ok(None);
     }
     Ok(quantum_holder(value)?.filter(Quantum::is_array))
@@ -435,6 +435,83 @@ pub(super) fn isangle(value: &Variant) -> ConvertResult<CasaValue> {
     Ok(CasaValue::Bool(
         has(&value, Dimension::Angle) || has(&value, Dimension::Time),
     ))
+}
+
+const MAP_NAMES: &[&str] = &["all", "Prefix", "SI", "Custom", "User"];
+
+const MAP_CONSTANTS: &str = "\
+== Constants ====
+pi    3.14..           \t\t3.14159 
+ee    2.71..           \t\t2.71828 
+c     light vel.       \t\t2.99792e+08 m/s
+G     grav. const      \t\t6.67259e-11 N.m2/kg2
+h     Planck const     \t\t6.62608e-34 J.s
+HI    HI line          \t\t1420.41 MHz
+R     gas const        \t\t8.31451 J/K/mol
+NA    Avogadro #       \t\t6.02214e+23 mol-1
+e     electron charge  \t\t1.60218e-19 C
+mp    proton mass      \t\t1.67262e-27 kg
+mp_me mp/me            \t\t1836.15 
+mu0   permeability vac.\t\t1.25664e-06 H/m
+eps0  permittivity vac.\t\t8.85419e-12 F/m
+k     Boltzmann const  \t\t1.38066e-23 J/K
+F     Faraday const    \t\t96485.3 C/mol
+me    electron mass    \t\t9.10939e-31 kg
+re    electron radius  \t\t2.8179e-15 m
+a0    Bohr's radius   \t\t5.2918e-11 m
+R0    solar radius     \t\t6.9599e+08 m
+k2    IAU grav. const^2\t\t0.000295912 AU3/d2/S0
+";
+
+fn map_sections(v: &str) -> Option<&'static [&'static str]> {
+    match unique_prefix_index(v, MAP_NAMES)? {
+        0 => Some(&MAP_NAMES[1..]),
+        index => Some(&MAP_NAMES[index..=index]),
+    }
+}
+
+/// `qa.map(v)`: list known unit mappings or constants as text.
+pub(super) fn map(v: &str) -> CasaValue {
+    if matches!(v, "Constants" | "constants" | "const" | "Const") {
+        return CasaValue::Text(MAP_CONSTANTS.to_string());
+    }
+    let Some(sections) = map_sections(v) else {
+        return CasaValue::Text("Unknown mapping requested\n".to_string());
+    };
+    let registry = casa_types::quanta::registry::global_registry();
+    let mut out = String::new();
+    for &section in sections {
+        out.push_str(&format!("== {section} ====\n"));
+        for (_, formatted) in registry.map_section(section) {
+            out.push_str("    ");
+            out.push_str(&formatted);
+            out.push('\n');
+        }
+    }
+    CasaValue::Text(out)
+}
+
+/// `qa.maprec(v)`: record containing the named unit mappings.
+pub(super) fn maprec(v: &str) -> CasaValue {
+    let Some(sections) = map_sections(v) else {
+        return CasaValue::record([(
+            "Error",
+            CasaValue::Text("Unknown mapping requested".to_string()),
+        )]);
+    };
+    let registry = casa_types::quanta::registry::global_registry();
+    let mut fields = std::collections::BTreeMap::new();
+    for &section in sections {
+        let entries = registry.map_section(section);
+        fields.insert(
+            format!("== {section} =="),
+            CasaValue::Text(format!("== {section} ==== {} ====", entries.len())),
+        );
+        for (name, formatted) in entries {
+            fields.insert(format!("{section}_{name}"), CasaValue::Text(formatted));
+        }
+    }
+    CasaValue::record(fields)
 }
 
 /// `qa.check(v)`: whether casacore reads the string as a quantity.

@@ -2127,7 +2127,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 7 | 17 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
-| [quanta](#quanta) | `casars.tools` | 57 | yes | 55 | 0 | 2 | 0 | 0 | 0 |
+| [quanta](#quanta) | `casars.tools` | 57 | yes | 57 | 0 | 0 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 23 | 6 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 54 | 1 | 2 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
@@ -2929,7 +2929,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 55, Partial: 0, Not implemented: 2, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 57, Partial: 0, Not implemented: 0, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2970,8 +2970,8 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `log` | `v=[]` | Implemented | Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors. | [signature](#quanta-evidence-signature), [logarithms-casa](#quanta-evidence-logarithms-casa) |
 | `log10` | `v=[]` | Implemented | Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors. | [signature](#quanta-evidence-signature), [logarithms-casa](#quanta-evidence-logarithms-casa) |
 | `lt` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
-| `map` | `v='all'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `maprec` | `v='all'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `map` | `v='all'` | Implemented (#1252) | Lists known unit mappings (Prefix, SI, Custom, User, all) or physical constants as formatted text, with CASA's case-insensitive prefix matching and unknown-mapping message. | [signature](#quanta-evidence-signature), [map-casa](#quanta-evidence-map-casa) |
+| `maprec` | `v='all'` | Implemented (#1252) | Returns a record of known unit mappings (Prefix, SI, Custom, User, all) with section headers and formatted entries, or CASA's Error record for unknown mappings. | [signature](#quanta-evidence-signature), [map-casa](#quanta-evidence-map-casa) |
 | `mul` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `ne` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `neg` | `v=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
@@ -3019,13 +3019,13 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_quanta.py)
 - [crates/casars-python/src/tools/quanta/surface.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/quanta/surface.rs)
 
-<a id="quanta-evidence-refusals"></a>
-##### refusals
+<a id="quanta-evidence-map-casa"></a>
+##### map-casa
 
-**Refusal test — recorded.** Each method casa-rs does not implement raises NotImplementedError naming #1053.
+**CASA-recorded values — measured.** Fifteen CASA 6.7.6-14 calls compare map and maprec across all, Prefix, SI, Custom, User, Constants and unknown mappings, plus prefix matching, bytes inputs, TypeError diagnostics and user-defined unit reflection. quanta.map and quanta.maprec.
 
 - [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_quanta.py)
-- [crates/casars-python/src/tools/mod.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/mod.rs)
+- [crates/casars-python/src/tools/quanta/ops.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/quanta/ops.rs)
 
 <a id="quanta-evidence-casa-values"></a>
 ##### casa-values

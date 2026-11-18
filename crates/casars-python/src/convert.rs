@@ -303,6 +303,17 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
 /// CASA rejects NumPy's complex64 scalar in quantity records, unlike Python
 /// complex and NumPy complex128. Do not classify zero-dimensional arrays.
 fn is_numpy_complex64_scalar(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if value.is_instance_of::<PyFloat>()
+        || value.is_instance_of::<PyInt>()
+        || value.is_instance_of::<PyString>()
+        || value.is_instance_of::<PyList>()
+        || value.is_instance_of::<PyTuple>()
+        || value.is_instance_of::<PyDict>()
+        || value.is_instance_of::<PyComplex>()
+        || value.is_none()
+    {
+        return Ok(false);
+    }
     let Ok(dtype) = value.getattr("dtype") else {
         return Ok(false);
     };
@@ -323,48 +334,87 @@ fn is_numpy_complex64_scalar(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     value.is_instance(&value.py().import("numpy")?.getattr("generic")?)
 }
 
-/// Keep the integer kind and low 32 bits of one-dimensional record arrays.
+/// Keep the integer kind and low 32 bits of record arrays and sequences.
 fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarKind>> {
-    let array_kind = value
-        .getattr("dtype")
-        .and_then(|d| d.getattr("kind"))
-        .and_then(|k| k.extract::<String>());
-    if matches!(array_kind.as_deref(), Ok("f"))
-        && matches!(
-            value
-                .getattr("dtype")
-                .and_then(|d| d.getattr("itemsize"))
-                .and_then(|n| n.extract::<usize>()),
-            Ok(4 | 8)
-        )
-        && value
-            .getattr("ndim")
-            .and_then(|n| n.extract::<usize>())
-            .ok()
-            == Some(1)
-        && value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)?
-        && value.len()? == 0
+    if value.is_instance_of::<PyFloat>()
+        || value.is_instance_of::<PyInt>()
+        || value.is_instance_of::<PyString>()
+        || value.is_instance_of::<PyDict>()
+        || value.is_instance_of::<PyComplex>()
+        || value.is_none()
     {
-        return Ok(Some(RecordScalarKind::EmptyFloatVector));
+        return Ok(None);
     }
-    let is_array = matches!(array_kind.as_deref(), Ok("i" | "u" | "b"))
-        && value
-            .getattr("ndim")
-            .and_then(|n| n.extract::<usize>())
-            .ok()
-            == Some(1)
-        && value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)?;
+    if let Ok(array) = value.extract::<PyReadonlyArrayDyn<'_, f64>>() {
+        if array.ndim() == 1 && array.is_empty() {
+            return Ok(Some(RecordScalarKind::EmptyFloatVector));
+        }
+        return Ok(None);
+    }
+    let (is_array, array_kind) =
+        if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
+            (false, Err(PyTypeError::new_err("not an array")))
+        } else {
+            let array_kind = value
+                .getattr("dtype")
+                .and_then(|d| d.getattr("kind"))
+                .and_then(|k| k.extract::<String>());
+            if matches!(array_kind.as_deref(), Ok("f"))
+                && value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)?
+            {
+                let itemsize = value
+                    .getattr("dtype")
+                    .and_then(|d| d.getattr("itemsize"))
+                    .and_then(|n| n.extract::<usize>())
+                    .ok();
+                if !matches!(itemsize, Some(4 | 8)) {
+                    return Ok(Some(RecordScalarKind::NumpyUnsupported));
+                }
+                if value
+                    .getattr("ndim")
+                    .and_then(|n| n.extract::<usize>())
+                    .ok()
+                    == Some(1)
+                    && value.len()? == 0
+                {
+                    return Ok(Some(RecordScalarKind::EmptyFloatVector));
+                }
+                return Ok(None);
+            }
+            let is_array = matches!(array_kind.as_deref(), Ok("i" | "u" | "b"))
+                && value
+                    .getattr("ndim")
+                    .and_then(|n| n.extract::<usize>())
+                    .ok()
+                    .is_some_and(|n| n >= 1)
+                && value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)?;
+            (is_array, array_kind)
+        };
     let values = if is_array {
         if matches!(array_kind.as_deref(), Ok("b")) {
             return Ok(Some(RecordScalarKind::NumpyUnsupported));
         }
-        value.call_method0("tolist")?
+        value
+            .call_method0("ravel")?
+            .call_method0("tolist")?
+            .try_iter()?
+            .collect::<PyResult<Vec<_>>>()?
     } else if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
-        value.clone()
+        let items = value.try_iter()?.collect::<PyResult<Vec<_>>>()?;
+        if items
+            .first()
+            .is_some_and(|item| item.is_instance_of::<PyList>() || item.is_instance_of::<PyTuple>())
+        {
+            match nested_sequence_items(value)? {
+                Some((_, flat)) => flat,
+                None => return Ok(None),
+            }
+        } else {
+            items
+        }
     } else {
         return Ok(None);
     };
-    let values = values.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     if values.is_empty() {
         return Ok(is_array.then_some(RecordScalarKind::IntegerVector(None)));
     }
@@ -401,6 +451,8 @@ fn zero_dim_record_float(object: &Bound<'_, PyAny>) -> PyResult<Option<Variant>>
         || object.is_instance_of::<PyInt>()
         || object.is_instance_of::<PyString>()
         || object.is_instance_of::<PyComplex>()
+        || object.is_instance_of::<PyList>()
+        || object.is_instance_of::<PyTuple>()
         || object
             .getattr("ndim")
             .and_then(|n| n.extract::<usize>())
@@ -440,6 +492,23 @@ fn zero_dim_record_float(object: &Bound<'_, PyAny>) -> PyResult<Option<Variant>>
 /// A numeric NumPy array with a retained shape. Complex arrays also handle
 /// zero and one dimensions without discarding their imaginary parts.
 fn numeric_array(object: &Bound<'_, PyAny>) -> PyResult<Option<Variant>> {
+    if object.is_instance_of::<PyList>() || object.is_instance_of::<PyTuple>() {
+        return Ok(None);
+    }
+    if let Ok(array) = object.extract::<PyReadonlyArrayDyn<'_, f64>>() {
+        if array.ndim() == 1 && !array.is_empty() {
+            let values = array.as_slice().map_or_else(
+                |_| array.as_array().iter().copied().collect(),
+                |s| s.to_vec(),
+            );
+            return Ok(Some(Variant::Numbers(values)));
+        }
+        if array.ndim() >= 2 {
+            let shape = array.shape().to_vec();
+            let values = array.as_array().t().iter().copied().collect();
+            return Ok(Some(Variant::Array { shape, values }));
+        }
+    }
     let Ok(ndim) = object
         .getattr("ndim")
         .and_then(|ndim| ndim.extract::<usize>())
@@ -489,9 +558,59 @@ fn is_sequence(object: &Bound<'_, PyAny>) -> PyResult<bool> {
     Ok(object.hasattr("__len__")? && object.hasattr("__iter__")?)
 }
 
+type NestedItems<'py> = (Vec<usize>, Vec<Bound<'py, PyAny>>);
+
+/// Flatten a nested Python `list` or `tuple` of two or more dimensions into
+/// `(shape, flat_items_in_fortran_order)`. Returns `None` if any list/tuple
+/// is empty or nesting depth is inconsistent.
+fn nested_sequence_items<'py>(object: &Bound<'py, PyAny>) -> PyResult<Option<NestedItems<'py>>> {
+    fn collect<'py>(seq: &Bound<'py, PyAny>) -> PyResult<Option<NestedItems<'py>>> {
+        if !seq.is_instance_of::<PyList>() && !seq.is_instance_of::<PyTuple>() {
+            return Ok(None);
+        }
+        let items = seq.try_iter()?.collect::<PyResult<Vec<_>>>()?;
+        if items.is_empty() {
+            return Ok(None);
+        }
+        if !items
+            .iter()
+            .any(|item| item.is_instance_of::<PyList>() || item.is_instance_of::<PyTuple>())
+        {
+            return Ok(Some((vec![items.len()], items)));
+        }
+        let mut sub_results = Vec::with_capacity(items.len());
+        for item in &items {
+            let Some(sub) = collect(item)? else {
+                return Ok(None);
+            };
+            sub_results.push(sub);
+        }
+        let sub_shape = sub_results[0].0.clone();
+        if sub_results.iter().any(|(shape, _)| *shape != sub_shape) {
+            return Ok(None);
+        }
+        let sub_len = sub_results[0].1.len();
+        let mut flat = Vec::with_capacity(items.len() * sub_len);
+        for idx in 0..sub_len {
+            for (_, sub_items) in &sub_results {
+                flat.push(sub_items[idx].clone());
+            }
+        }
+        let mut shape = Vec::with_capacity(1 + sub_shape.len());
+        shape.push(items.len());
+        shape.extend(sub_shape);
+        Ok(Some((shape, flat)))
+    }
+    let Some((shape, items)) = collect(object)? else {
+        return Ok(None);
+    };
+    Ok((shape.len() >= 2).then_some((shape, items)))
+}
+
 /// A sequence as [`Variant::Empty`], [`Variant::Texts`],
-/// [`Variant::Numbers`] or (with a `complex` among the numbers)
-/// [`Variant::Complexes`], or [`Variant::Other`] when it mixes kinds.
+/// [`Variant::Numbers`], [`Variant::Array`] or (with a `complex` among the
+/// numbers) [`Variant::Complexes`] / [`Variant::ComplexArray`], or
+/// [`Variant::Other`] when it mixes kinds.
 fn sequence_variant(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
     let items = object.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     if items.is_empty() {
@@ -511,6 +630,28 @@ fn sequence_variant(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
             item.extract::<f64>().ok()
         }
     };
+    if items[0].is_instance_of::<PyList>() || items[0].is_instance_of::<PyTuple>() {
+        if let Some((shape, flat)) = nested_sequence_items(object)? {
+            let variant = if flat.iter().any(|item| item.is_instance_of::<PyComplex>()) {
+                flat.iter()
+                    .map(|item| match item.cast::<PyComplex>() {
+                        Ok(value) => Some(complex_of(value)),
+                        Err(_) => number(item).map(|re| Complex64::new(re, 0.0)),
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(|values| Variant::ComplexArray { shape, values })
+            } else {
+                flat.iter()
+                    .map(number)
+                    .collect::<Option<Vec<_>>>()
+                    .map(|values| Variant::Array { shape, values })
+            };
+            if let Some(variant) = variant {
+                return Ok(variant);
+            }
+        }
+        return Ok(Variant::Other(object.repr()?.to_string()));
+    }
     let variant = if items.iter().any(|item| item.is_instance_of::<PyComplex>()) {
         items
             .iter()
@@ -834,6 +975,7 @@ pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quan
     let value = match value {
         Variant::Number(number) => *number,
         Variant::Numbers(numbers) if numbers.len() == 1 => numbers[0],
+        Variant::Array { shape, values } if !shape.is_empty() && values.len() == 1 => values[0],
         // Numeric arrays and complex values are valid QuantumHolders, so
         // CASA checks their unit before a scalar operation refuses them.
         Variant::Numbers(_)
@@ -842,9 +984,6 @@ pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quan
         | Variant::Complexes(_)
         | Variant::ComplexArray { .. } => {
             casacore_unit(unit)?;
-            return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string());
-        }
-        Variant::Other(_) => {
             return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string());
         }
         _ => return Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string()),

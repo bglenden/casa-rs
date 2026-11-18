@@ -3,9 +3,8 @@
 //! quanta.
 //!
 //! The class declares every method of CASA's installed binding with CASA's
-//! names, parameter order and effective defaults ([`surface`]); the
-//! methods casa-rs implements delegate to `ops`, and the rest raise
-//! `NotImplementedError` naming #1053. Quantities are casacore's quantity records,
+//! names, parameter order and effective defaults ([`surface`]), delegating
+//! to `ops`. Quantities are casacore's quantity records,
 //! `{'unit': ..., 'value': ...}`. The tool has no state; each call releases
 //! the GIL while it computes. A failure CASA raises is a `RuntimeError`
 //! with CASA's message (CASA also logs it at SEVERE; casa-rs only raises).
@@ -19,7 +18,7 @@ use pyo3::types::{PyBytes, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, StringList, Variant};
-use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use crate::tools::{LogLine, emit};
 
 /// The Python logger the tool's warnings go to.
 const LOGGER: &str = "casars.tools.quanta";
@@ -35,15 +34,21 @@ fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>
 }
 
 /// CASA accepts text and UTF-8 bytes for a string argument.
-fn output_unit(value: Option<Bound<'_, PyAny>>, default: &str) -> PyResult<String> {
+fn text_argument(value: Option<Bound<'_, PyAny>>, name: &str, default: &str) -> PyResult<String> {
     match value {
         None => Ok(default.to_string()),
         Some(value) if value.is_instance_of::<PyString>() => value.extract(),
         Some(value) if value.is_instance_of::<PyBytes>() => {
             value.call_method1("decode", ("utf-8",))?.extract()
         }
-        Some(_) => Err(PyTypeError::new_err("argument _outunit must be a string")),
+        Some(_) => Err(PyTypeError::new_err(format!(
+            "argument _{name} must be a string"
+        ))),
     }
+}
+
+fn output_unit(value: Option<Bound<'_, PyAny>>, default: &str) -> PyResult<String> {
+    text_argument(value, "outunit", default)
 }
 
 /// The format placeholders accept text or bytes and ignore their contents.
@@ -67,12 +72,6 @@ pub(crate) struct PyQuanta;
 fn call(py: Python<'_>, work: impl Fn() -> ConvertResult<CasaValue> + Send) -> PyResult<Py<PyAny>> {
     py.detach(|| casa_types::quanta::registry::global_registry().with_stable_units(work))?
         .into_python(py)
-}
-
-/// A method casa-rs does not implement yet, refused naming #1053, which
-/// classifies them.
-fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented_in("quanta", method, 1053)
 }
 
 #[pymethods]
@@ -463,18 +462,26 @@ impl PyQuanta {
         call(py, || ops::relational(&v, &a, "lt"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
+    /// List known unit mappings or constants as formatted text.
     #[pyo3(signature = (v = None), text_signature = "($self, v='all')")]
-    fn map(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("map")
+    fn map(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] v: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let v = text_argument(v, "v", "all")?;
+        call(py, || Ok(ops::map(&v)))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
+    /// Return known unit mappings as a record.
     #[pyo3(signature = (v = None), text_signature = "($self, v='all')")]
-    fn maprec(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("maprec")
+    fn maprec(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] v: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let v = text_argument(v, "v", "all")?;
+        call(py, || Ok(ops::maprec(&v)))
     }
 
     /// CASA's scalar quantity comparison.

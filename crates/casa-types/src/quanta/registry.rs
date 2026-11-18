@@ -13,9 +13,19 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Once, OnceLock, RwLock};
 
+use crate::quanta::casacore::stream_double_precision;
 use crate::quanta::dim::UnitDim;
 use crate::quanta::registry_data;
 use crate::quanta::unit_val::UnitVal;
+
+/// casacore's 32-space padding constant in `operator<<(ostream&, UnitName const&)`.
+const SPACES_32: &str = "                                ";
+
+fn format_name_and_description(name: &str, description: &str) -> String {
+    let name_pad = &SPACES_32[..10usize.wrapping_sub(name.len()).min(SPACES_32.len())];
+    let desc_pad = &SPACES_32[..27usize.wrapping_sub(description.len()).min(SPACES_32.len())];
+    format!("{name}{name_pad}({description}){desc_pad}")
+}
 
 /// A named unit definition: name, value, and description.
 ///
@@ -39,6 +49,17 @@ impl UnitName {
             description: description.into(),
         }
     }
+
+    /// Formats this unit definition as casacore's `operator<<(ostream&, UnitName const&)`.
+    pub fn format_map_entry(&self) -> String {
+        let head = format_name_and_description(&self.name, &self.description);
+        let factor = stream_double_precision(self.val.factor, 12);
+        if self.val.dim.is_dimensionless() {
+            format!("{head}{factor}")
+        } else {
+            format!("{head}{factor} {}", self.val.dim)
+        }
+    }
 }
 
 /// A prefix entry: name, scale factor, and description.
@@ -50,6 +71,15 @@ pub struct PrefixEntry {
     pub factor: f64,
     /// Human-readable description (e.g. `"kilo"`).
     pub description: String,
+}
+
+impl PrefixEntry {
+    /// Formats this prefix definition as casacore's `operator<<(ostream&, UnitName const&)`.
+    pub fn format_map_entry(&self) -> String {
+        let head = format_name_and_description(&self.name, &self.description);
+        let factor = stream_double_precision(self.factor, 12);
+        format!("{head}{factor}")
+    }
 }
 
 /// A parsed unit and the FITS state under which it was resolved.
@@ -150,12 +180,18 @@ impl UnitRegistry {
             );
         }
 
+        let mut user = HashMap::new();
+        user.insert(
+            "pix".to_owned(),
+            UnitName::new("pix", UnitVal::NODIM, "pixel units"),
+        );
+
         Self {
             prefixes,
             defining,
             si,
             customary,
-            user: RwLock::new(HashMap::new()),
+            user: RwLock::new(user),
             cache: RwLock::new(HashMap::new()),
             fits_once: Once::new(),
             fits_enabled: AtomicBool::new(false),
@@ -374,6 +410,57 @@ impl UnitRegistry {
     /// Clears the parse cache.
     pub fn clear_cache(&self) {
         self.cache.write().unwrap().clear();
+    }
+
+    /// Returns `(name, formatted_entry)` pairs sorted in ASCII key order for one of
+    /// casacore's unit map sections: `"Prefix"`, `"SI"`, `"Custom"`, or `"User"`.
+    pub fn map_section(&self, section: &str) -> Vec<(String, String)> {
+        static BUILTIN_SECTIONS: OnceLock<[Vec<(String, String)>; 3]> = OnceLock::new();
+        let builtin = BUILTIN_SECTIONS.get_or_init(|| {
+            let sort = |mut v: Vec<(String, String)>| {
+                v.sort_by(|left, right| left.0.cmp(&right.0));
+                v
+            };
+            [
+                sort(
+                    self.prefixes
+                        .values()
+                        .map(|entry| (entry.name.clone(), entry.format_map_entry()))
+                        .collect(),
+                ),
+                sort(
+                    self.defining
+                        .values()
+                        .filter(|entry| entry.name != "kg")
+                        .chain(self.si.values())
+                        .map(|entry| (entry.name.clone(), entry.format_map_entry()))
+                        .collect(),
+                ),
+                sort(
+                    self.customary
+                        .values()
+                        .map(|entry| (entry.name.clone(), entry.format_map_entry()))
+                        .collect(),
+                ),
+            ]
+        });
+        match section {
+            "Prefix" => builtin[0].clone(),
+            "SI" => builtin[1].clone(),
+            "Custom" => builtin[2].clone(),
+            "User" => {
+                let mut entries: Vec<(String, String)> = self
+                    .user
+                    .read()
+                    .unwrap()
+                    .values()
+                    .map(|entry| (entry.name.clone(), entry.format_map_entry()))
+                    .collect();
+                entries.sort_by(|left, right| left.0.cmp(&right.0));
+                entries
+            }
+            _ => Vec::new(),
+        }
     }
 }
 

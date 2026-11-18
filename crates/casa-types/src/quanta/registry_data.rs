@@ -106,12 +106,7 @@ pub const DEFINING: &[(&str, f64, &str, [i8; 10])] = &[
 /// coherent SI derived units).
 pub const SI_DERIVED: &[(&str, f64, &str, [i8; 10])] = &[
     // Currency / dimensionless specials
-    (
-        "$",
-        1.0,
-        "currency (dimensionless)",
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    ),
+    ("$", 1.0, "currency", [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
     ("%", 0.01, "percent", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
     ("%%", 0.001, "permille", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
     // Gram (base unit is kg)
@@ -154,24 +149,9 @@ pub const SI_DERIVED: &[(&str, f64, &str, [i8; 10])] = &[
 pub const SI_EXTRA: &[(&str, f64, &str, [i8; 10])] = &[
     // Angular
     ("deg", DEGREE, "degree", [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
-    (
-        "arcmin",
-        ARCMIN,
-        "arcminute",
-        [0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
-    ),
-    (
-        "arcsec",
-        ARCSEC,
-        "arcsecond",
-        [0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
-    ),
-    (
-        "as",
-        ARCSEC,
-        "arcsecond (alias)",
-        [0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
-    ),
+    ("arcmin", ARCMIN, "arcmin", [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
+    ("arcsec", ARCSEC, "arcsec", [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
+    ("as", ARCSEC, "arcsec", [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
     // Volume
     ("L", 1e-3, "litre", [3, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
     ("l", 1e-3, "litre", [3, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
@@ -179,12 +159,7 @@ pub const SI_EXTRA: &[(&str, f64, &str, [i8; 10])] = &[
     ("d", DAY, "day", [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
     ("h", HOUR, "hour", [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
     ("min", MINUTE, "minute", [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
-    (
-        "a",
-        DAY * 365.25,
-        "year (Julian)",
-        [0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-    ),
+    ("a", DAY * 365.25, "year", [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
     // Mass
     ("t", 1000.0, "tonne", [0, 1, 0, 0, 0, 0, 0, 0, 0, 0]),
     // Astronomy
@@ -261,13 +236,13 @@ pub const CUSTOMARY: &[(&str, f64, &str, [i8; 10])] = &[
     (
         "sq_arcmin",
         SQ_ARCMIN,
-        "square arcminute",
+        "square arcmin",
         [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
     ),
     (
         "sq_arcsec",
         SQ_ARCSEC,
-        "square arcsecond",
+        "square arcsec",
         [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
     ),
     (
@@ -279,69 +254,44 @@ pub const CUSTOMARY: &[(&str, f64, &str, [i8; 10])] = &[
     (
         "arcmin_2",
         SQ_ARCMIN,
-        "square arcminute",
+        "square arcmin",
         [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
     ),
     (
         "arcsec_2",
         SQ_ARCSEC,
-        "square arcsecond",
+        "square arcsec",
         [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
     ),
     // Symbolic angle/time aliases
-    ("'", ARCMIN, "arcminute", [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
-    ("''", ARCSEC, "arcsecond", [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
-    ("\"", ARCSEC, "arcsecond", [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
+    ("'", ARCMIN, "arcmin", [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
+    ("''", ARCSEC, "arcsec", [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
+    ("\"", ARCSEC, "arcsec", [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
     (
         "'_2",
         SQ_ARCMIN,
-        "square arcminute",
+        "square arcmin",
         [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
     ),
     (
         "''_2",
         SQ_ARCSEC,
-        "square arcsecond",
+        "square arcsec",
         [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
     ),
     (
         "\"_2",
         SQ_ARCSEC,
-        "square arcsecond",
+        "square arcsec",
         [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
     ),
     // Time notation
-    (
-        ":",
-        HOUR,
-        "hour (time notation)",
-        [0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-    ),
-    (
-        "::",
-        MINUTE,
-        "minute (time notation)",
-        [0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-    ),
-    (
-        ":::",
-        1.0,
-        "second (time notation)",
-        [0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-    ),
+    (":", HOUR, "hour", [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
+    ("::", MINUTE, "minute", [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
+    (":::", 1.0, "second", [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
     // Flux
-    (
-        "FU",
-        1e-26,
-        "flux unit (jansky)",
-        [0, 1, -2, 0, 0, 0, 0, 0, 0, 0],
-    ),
-    (
-        "fu",
-        1e-26,
-        "flux unit (jansky)",
-        [0, 1, -2, 0, 0, 0, 0, 0, 0, 0],
-    ),
+    ("FU", 1e-26, "flux unit", [0, 1, -2, 0, 0, 0, 0, 0, 0, 0]),
+    ("fu", 1e-26, "flux unit", [0, 1, -2, 0, 0, 0, 0, 0, 0, 0]),
     (
         "WU",
         5e-3 * 1e-26,
@@ -395,7 +345,7 @@ pub const CUSTOMARY: &[(&str, f64, &str, [i8; 10])] = &[
     (
         "debye",
         1e-17 * (0.1 / C) * 0.01,
-        "debye",
+        "statvolt",
         [1, 0, 1, 1, 0, 0, 0, 0, 0, 0],
     ),
     // ── Traditional / engineering (UnitMap6.cc) ──
@@ -416,7 +366,7 @@ pub const CUSTOMARY: &[(&str, f64, &str, [i8; 10])] = &[
     (
         "atm",
         1.013_25e5,
-        "atmosphere",
+        "standard atmosphere",
         [-1, 1, -2, 0, 0, 0, 0, 0, 0, 0],
     ),
     // Technical atmosphere: 9.80665 N/cm² = 9.80665e4 Pa
@@ -436,7 +386,7 @@ pub const CUSTOMARY: &[(&str, f64, &str, [i8; 10])] = &[
     (
         "Btu",
         1055.056,
-        "British thermal unit",
+        "British thermal unit (Int)",
         [2, 1, -2, 0, 0, 0, 0, 0, 0, 0],
     ),
     (
@@ -449,7 +399,7 @@ pub const CUSTOMARY: &[(&str, f64, &str, [i8; 10])] = &[
     (
         "Cal",
         4186.8,
-        "large calorie",
+        "large calorie (Int)",
         [2, 1, -2, 0, 0, 0, 0, 0, 0, 0],
     ),
     // Metric carat: 1e-3/5 kg = 2e-4 kg
@@ -568,18 +518,18 @@ pub const CUSTOMARY: &[(&str, f64, &str, [i8; 10])] = &[
     (
         "oz",
         0.453_592_37 / 16.0,
-        "ounce (avdp)",
+        "ounce (avoirdupois)",
         [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
     ),
     // Pound (avoirdupois)
     (
         "lb",
         0.453_592_37,
-        "pound (avdp)",
+        "pound (avoirdupois)",
         [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
     ),
-    // Roentgen: 2.58e-4 C/kg
-    ("R", 2.58e-4, "roentgen", [0, -1, 1, 1, 0, 0, 0, 0, 0, 0]),
+    // Roentgen: 2.58e-4 C/kg (casacore's UnitMap7.cc labels it "mile")
+    ("R", 2.58e-4, "mile", [0, -1, 1, 1, 0, 0, 0, 0, 0, 0]),
     // Stilb: 1e4 cd/m²
     ("sb", 1e4, "stilb", [-2, 0, 0, 0, 0, 1, 0, 0, 0, 0]),
     // Stokes: 1 cm²/s = 1e-4 m²/s
@@ -594,15 +544,20 @@ pub const CUSTOMARY: &[(&str, f64, &str, [i8; 10])] = &[
     // Yard: 3 * 12 * 2.54 cm = 91.44 cm = 0.9144 m
     ("yd", 0.9144, "yard", [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
     // Year (Julian) - same as "a"
-    (
-        "yr",
-        DAY * 365.25,
-        "year (Julian)",
-        [0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-    ),
+    ("yr", DAY * 365.25, "year", [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
     // Dimensionless specials
-    ("adu", 1.0, "ADC unit", [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
-    ("beam", 1.0, "beam area", [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+    (
+        "adu",
+        1.0,
+        "dimensionless ADC unit",
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    ),
+    (
+        "beam",
+        1.0,
+        "undefined beam area",
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    ),
     ("count", 1.0, "count", [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
     ("pixel", 1.0, "pixel", [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
     ("lambda", 1.0, "lambda", [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
