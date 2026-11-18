@@ -52,7 +52,10 @@ fn direction_frame_labels_are_checked_and_planetary_labels_are_retained() {
     // body. The first CASA fixture row stores 45 degrees, 10 degrees.
     let list = ComponentList::read_table(&altered).expect("stored MOON reference");
     let direction = list.get(0).unwrap().shape().reference_direction();
-    assert_eq!(direction.refer(), casa_types::measures::direction::DirectionRef::MOON);
+    assert_eq!(
+        direction.refer(),
+        casa_types::measures::direction::DirectionRef::MOON
+    );
     let (longitude, latitude) = direction.as_angles();
     assert!((longitude - 45_f64.to_radians()).abs() < 1e-15);
     assert!((latitude - 10_f64.to_radians()).abs() < 1e-15);
