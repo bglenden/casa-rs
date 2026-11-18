@@ -11,9 +11,9 @@ use std::process::ExitCode;
 
 use casa_images::{
     ImageError, ImageHeaderSummary, ImageStatisticsSummary, ImstatOutcome, ImstatPlanesSummary,
-    ImstatRequest, image_task_front_end, imhead, imhead_add_delete, imhead_extrema,
-    imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_planes_record,
-    imstat_record, parse_imstat_algorithm,
+    ImstatRequest, StatisticsAlgorithmKind, image_task_front_end, imhead, imhead_add_delete,
+    imhead_extrema, imhead_list_record, imhead_put, imhead_summary_record, imstat,
+    imstat_planes_record, imstat_record, parse_imstat_algorithm,
 };
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
@@ -320,6 +320,12 @@ fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         niter: task.integer("niter")?,
         axes: axes_list(task)?,
         stokes: task.text("stokes")?,
+        mask: task.text("mask")?,
+        stretch: task.flag("stretch")?,
+        logfile: task.text("logfile")?,
+        append: task.flag("append")?,
+        listit: task.flag("listit")?,
+        verbose: task.flag("verbose")?,
         ..ImstatRequest::default()
     };
     let algorithm = parse_imstat_algorithm(&request).map_err(TaskFailure::execution)?;
@@ -329,16 +335,30 @@ fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         other => image_error("imstat", &path, other),
     })?;
+    // CASA writes the statistics block to the logfile whatever `listit`
+    // holds, and prints it to the logger under `listit` and `verbose`.
+    let block = match &outcome {
+        ImstatOutcome::Global(summary) => statistics_block(summary, algorithm.kind(), true, true),
+        ImstatOutcome::Planes(summary) => planes_block(summary, algorithm.kind(), true, true),
+    };
+    if let Some(logfile) = request
+        .logfile
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+    {
+        write_logfile(logfile, &block, request.append)?;
+    }
     match outcome {
         ImstatOutcome::Global(summary) => {
-            let text = statistics_text(&summary);
+            let text =
+                statistics_block(&summary, algorithm.kind(), request.listit, request.verbose);
             Ok(
                 TaskSuccess::new(imstat_record(&summary, algorithm.kind()), &summary)?
                     .with_text(text),
             )
         }
         ImstatOutcome::Planes(summary) => {
-            let text = planes_text(&summary);
+            let text = planes_block(&summary, algorithm.kind(), request.listit, request.verbose);
             Ok(TaskSuccess::new(imstat_planes_record(&summary), &summary)?.with_text(text))
         }
     }
@@ -380,36 +400,139 @@ fn image_error(operation: &str, path: &Path, error: impl Display) -> TaskFailure
     ))
 }
 
-fn statistics_text(summary: &ImageStatisticsSummary) -> String {
+/// The statistics block the logger prints under `listit` and the
+/// `logfile` records: the selection's bounds and statistics, headed by
+/// the additional messages `verbose` controls.
+fn statistics_block(
+    summary: &ImageStatisticsSummary,
+    kind: StatisticsAlgorithmKind,
+    listit: bool,
+    verbose: bool,
+) -> String {
     let mut out = String::new();
-    let _ = writeln!(out, "npts: {}", summary.npts);
-    let _ = writeln!(out, "min: {}", summary.min);
-    let _ = writeln!(out, "max: {}", summary.max);
-    let _ = writeln!(out, "sum: {}", summary.sum);
-    let _ = writeln!(out, "mean: {}", summary.mean);
-    let _ = writeln!(out, "rms: {}", summary.rms);
-    let _ = writeln!(out, "sigma: {}", summary.sigma);
-    if let Some(flux) = summary.flux {
-        let _ = writeln!(out, "flux: {flux}");
+    if verbose {
+        let _ = writeln!(
+            out,
+            "imstat: {} statistics of {}",
+            kind_name(kind),
+            summary.imagename
+        );
+    }
+    if listit {
+        let _ = writeln!(
+            out,
+            "  -- bottom-left corner (pixel) [blc]:  {:?}",
+            summary.blc
+        );
+        let _ = writeln!(
+            out,
+            "  -- top-right corner (pixel) [trc]:    {:?}",
+            summary.trc
+        );
+        let _ = writeln!(
+            out,
+            "  -- bottom-left corner (world) [blcf]: {}",
+            summary.blcf
+        );
+        let _ = writeln!(
+            out,
+            "  -- top-right corner (world) [trcf]:   {}",
+            summary.trcf
+        );
+        let _ = writeln!(out, "npts: {}", summary.npts);
+        let _ = writeln!(out, "min: {}", summary.min);
+        let _ = writeln!(out, "max: {}", summary.max);
+        let _ = writeln!(out, "sum: {}", summary.sum);
+        let _ = writeln!(out, "mean: {}", summary.mean);
+        let _ = writeln!(out, "rms: {}", summary.rms);
+        let _ = writeln!(out, "sigma: {}", summary.sigma);
+        if let Some(flux) = summary.flux {
+            let _ = writeln!(out, "flux: {flux}");
+        }
     }
     out
 }
 
-/// One line per plane of a per-plane `imstat` run.
-fn planes_text(summary: &ImstatPlanesSummary) -> String {
+/// The statistics block of a per-plane run, one line per plane.
+fn planes_block(
+    summary: &ImstatPlanesSummary,
+    kind: StatisticsAlgorithmKind,
+    listit: bool,
+    verbose: bool,
+) -> String {
     let mut out = String::new();
-    let _ = writeln!(
-        out,
-        "planes: {} (display shape {:?})",
-        summary.npts.len(),
-        summary.display_shape
-    );
-    for (plane, npts) in summary.npts.iter().enumerate() {
+    if verbose {
         let _ = writeln!(
             out,
-            "plane {plane}: npts {npts} mean {} sigma {}",
-            summary.mean[plane], summary.sigma[plane]
+            "imstat: {} statistics of {}",
+            kind_name(kind),
+            summary.imagename
         );
     }
+    if listit {
+        let _ = writeln!(
+            out,
+            "  -- bottom-left corner (pixel) [blc]:  {:?}",
+            summary.blc
+        );
+        let _ = writeln!(
+            out,
+            "  -- top-right corner (pixel) [trc]:    {:?}",
+            summary.trc
+        );
+        let _ = writeln!(
+            out,
+            "  -- bottom-left corner (world) [blcf]: {}",
+            summary.blcf
+        );
+        let _ = writeln!(
+            out,
+            "  -- top-right corner (world) [trcf]:   {}",
+            summary.trcf
+        );
+        let _ = writeln!(
+            out,
+            "planes: {} (display shape {:?})",
+            summary.npts.len(),
+            summary.display_shape
+        );
+        for (plane, npts) in summary.npts.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "plane {plane}: npts {npts} mean {} sigma {}",
+                summary.mean[plane], summary.sigma[plane]
+            );
+        }
+    }
     out
+}
+
+/// CASA's own spelling of an algorithm, for the logger.
+fn kind_name(kind: StatisticsAlgorithmKind) -> &'static str {
+    match kind {
+        StatisticsAlgorithmKind::Classic => "Classic",
+        StatisticsAlgorithmKind::HingesFences => "Hinges-Fences",
+        StatisticsAlgorithmKind::Chauvenet => "Chauvenet",
+        StatisticsAlgorithmKind::FitToHalf => "Fit-Half",
+        StatisticsAlgorithmKind::Biweight => "Biweight",
+    }
+}
+
+/// Write the statistics block to CASA's `logfile`, appending or
+/// overwriting as `append` selects. CASA writes the block to the file
+/// whatever `listit` holds.
+fn write_logfile(path: &str, block: &str, append: bool) -> Result<(), TaskFailure> {
+    use std::io::Write as _;
+    let result = if append {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut file| file.write_all(block.as_bytes()))
+    } else {
+        std::fs::File::create(path).and_then(|mut file| file.write_all(block.as_bytes()))
+    };
+    result.map_err(|error| {
+        TaskFailure::execution(format!("imstat: cannot write logfile '{path}': {error}"))
+    })
 }

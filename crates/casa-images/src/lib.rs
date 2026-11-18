@@ -95,7 +95,9 @@ pub use analysis::{
     parse_image_channel_selection, parse_imstat_algorithm, run_image_analysis_task,
 };
 pub use beam::{BeamComponent, GaussianBeam, ImageBeamSet, StoredGaussianBeam};
-pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
+pub use casa_lattices::{
+    ScratchSpace, StatisticsAlgorithmKind, TempStoragePlan, TempStoragePolicy,
+};
 pub use casa_return::{
     ImheadGetError, imhead_get_value, imhead_list_record, imhead_summary_record,
     imstat_planes_record, imstat_record,

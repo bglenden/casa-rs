@@ -11714,8 +11714,7 @@
             "provider": {"field": "listit"},
             "python": {"name": "listit"},
             "presentation": {"label": "List", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "verbose",
@@ -11729,8 +11728,7 @@
             "provider": {"field": "verbose"},
             "python": {"name": "verbose"},
             "presentation": {"label": "Verbose", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "mask",
@@ -11745,8 +11743,7 @@
             "provider": {"field": "mask"},
             "python": {"name": "mask"},
             "presentation": {"label": "Mask", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "stretch",
@@ -11760,10 +11757,6 @@
             "provider": {"field": "stretch"},
             "python": {"name": "stretch"},
             "presentation": {"label": "Stretch Mask", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
           }
         },
         {
@@ -11778,8 +11771,7 @@
             "provider": {"field": "logfile"},
             "python": {"name": "logfile"},
             "presentation": {"label": "Log File", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "append",
@@ -11793,10 +11785,6 @@
             "provider": {"field": "append"},
             "python": {"name": "append"},
             "presentation": {"label": "Append to Log File", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "logfile", "value": {"kind": "string", "value": ""}}}
           }
         },
         {

@@ -1972,7 +1972,8 @@ where
         request.chans.as_deref(),
         request.stokes.as_deref(),
     )?;
-    let pixel_mask = selection_pixel_mask(image, effective_region, &selection)?;
+    let pixel_mask =
+        selection_pixel_mask(image, effective_region, &selection, request.mask.as_deref())?;
     let coordinates = image.coordinates();
     let world_text = |position: &[usize]| -> Result<String, ImageError> {
         let pixel: Vec<f64> = position.iter().map(|&value| value as f64).collect();
@@ -2386,11 +2387,13 @@ struct ComputedStats {
     maxpos: Option<Vec<usize>>,
 }
 
-/// The image mask of a selection, combined with its region's.
+/// The image mask of a selection, combined with its region's and a mask
+/// expression's.
 fn selection_pixel_mask<T>(
     image: &PagedImage<T>,
     effective_region: Option<&PixelRegion>,
     selection: &Selection,
+    mask_expr: Option<&str>,
 ) -> Result<Option<ndarray::ArrayD<bool>>, ImageError>
 where
     T: ImagePixel,
@@ -2407,6 +2410,18 @@ where
                 mask
             }
             None => region_mask,
+        });
+    }
+    if let Some(expr) = mask_expr.filter(|text| !text.trim().is_empty()) {
+        let expr_mask = image_threshold_mask(expr, selection)?;
+        pixel_mask = Some(match pixel_mask {
+            Some(mut mask) => {
+                Zip::from(&mut mask)
+                    .and(&expr_mask)
+                    .for_each(|existing, expr_valid| *existing = *existing && *expr_valid);
+                mask
+            }
+            None => expr_mask,
         });
     }
     Ok(pixel_mask)

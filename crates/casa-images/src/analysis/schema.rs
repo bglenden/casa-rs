@@ -151,6 +151,34 @@ pub struct ImstatRequest {
     /// `IQUV`, comma-separated and concatenated.
     #[serde(default)]
     pub stokes: Option<String>,
+    /// CASA `mask` expression: an image threshold expression, as in
+    /// `'"image.im" > 100'`, selecting the pixels the statistics use.
+    #[serde(default)]
+    pub mask: Option<String>,
+    /// Whether CASA would stretch a mask whose shape differs; the
+    /// expressions this surface reaches are same-shaped, so the value is
+    /// accepted and inert.
+    #[serde(default = "default_false")]
+    pub stretch: bool,
+    /// CASA `logfile`: a file to write the statistics block to, in
+    /// addition to the logger.
+    #[serde(default)]
+    pub logfile: Option<String>,
+    /// Whether the logfile is appended to rather than overwritten.
+    #[serde(default = "default_true")]
+    pub append: bool,
+    /// Whether the statistics block is printed to the logger; the
+    /// returned record is the same either way.
+    #[serde(default = "default_true")]
+    pub listit: bool,
+    /// Whether additional messages are printed to the logger; the
+    /// returned record is the same either way.
+    #[serde(default = "default_true")]
+    pub verbose: bool,
+}
+
+fn default_false() -> bool {
+    false
 }
 
 impl Default for ImstatRequest {
@@ -172,6 +200,12 @@ impl Default for ImstatRequest {
             niter: default_niter(),
             axes: None,
             stokes: None,
+            mask: None,
+            stretch: default_false(),
+            logfile: None,
+            append: default_true(),
+            listit: default_true(),
+            verbose: default_true(),
         }
     }
 }

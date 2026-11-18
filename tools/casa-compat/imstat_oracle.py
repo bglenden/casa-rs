@@ -183,9 +183,44 @@ def main() -> None:
             "hinges-fences with axes",
             {"algorithm": "hinges-fences", "fence": 1.0, "axes": [0, 1]},
         ),
+        (
+            "mask threshold",
+            {"mask": f'"{values}" > 100'},
+        ),
+        (
+            "mask threshold with stretch",
+            {"mask": f'"{values}" > 100', "stretch": True},
+        ),
+        (
+            "mask empty selection",
+            {"mask": f'"{values}" < -1000'},
+        ),
+        ("mask bad expression", {"mask": "not an expression"}),
+        ("listit false", {"listit": False}),
+        ("verbose false", {"verbose": False}),
+        ("listit and verbose false", {"listit": False, "verbose": False}),
     ):
         call = dict(imagename=str(values), **call)
         record_case(result["values"], name, **call)
+
+    # CASA's logfile semantics: the statistics block is written whatever
+    # `listit` holds, appended or overwritten as `append` selects.
+    log = root / "stats.log"
+    if log.exists():
+        log.unlink()
+    imstat(imagename=str(values), logfile=str(log), append=False, listit=False)
+    first = log.read_text()
+    imstat(imagename=str(values), logfile=str(log), append=True, listit=False)
+    appended = log.read_text()
+    imstat(imagename=str(values), logfile=str(log), append=False, listit=False)
+    overwritten = log.read_text()
+    result["logfile"] = {
+        "listit false writes": True,
+        "content head": first[:400],
+        "first length": len(first),
+        "appended length": len(appended),
+        "overwritten length": len(overwritten),
+    }
     for name, call in (
         ("classic", {}),
         ("classic box", {"box": "2,2,5,5"}),

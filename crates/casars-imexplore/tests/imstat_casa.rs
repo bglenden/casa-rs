@@ -439,6 +439,75 @@ fn imstat_stokes_match_casas_selections() {
     assert_eq!(message, "Stokes Q is not one of this image's Stokes planes");
 }
 
+/// Every `mask` form the oracle recorded, with `stretch` inert on the
+/// same-shaped expressions this surface reaches; the record is the same
+/// whatever `listit` and `verbose` hold, as CASA returns it.
+#[test]
+fn imstat_mask_and_logging_match_casa() {
+    let expected = expected();
+    let values = fixture("values.im");
+    let mask = format!("\"{}\" > 100", values.display());
+    for (case, call) in [
+        ("mask threshold", json!({"mask": mask})),
+        (
+            "mask threshold with stretch",
+            json!({"mask": mask, "stretch": true}),
+        ),
+        ("listit false", json!({"listit": false})),
+        ("verbose false", json!({"verbose": false})),
+        (
+            "listit and verbose false",
+            json!({"listit": false, "verbose": false}),
+        ),
+    ] {
+        let ours = run_imstat(&values, call);
+        assert_record_matches(&ours, &expected["values"][case], case);
+    }
+    let ours = run_imstat(
+        &values,
+        json!({"mask": format!("\"{}\" < -1000", values.display())}),
+    );
+    assert_record_matches(
+        &ours,
+        &expected["values"]["mask empty selection"],
+        "mask empty",
+    );
+    // CASA's mask expression subset: an image threshold. CASA's full LEL
+    // parser refuses this wording differently; casa-rs's own refusal is
+    // the immoments precedent.
+    let message = run_imstat_failure(&values, json!({"mask": "not an expression"}));
+    assert!(message.contains("unsupported mask expression"), "{message}");
+}
+
+/// CASA's logfile: the statistics block is written whatever `listit`
+/// holds, appended or overwritten as `append` selects; the presentation
+/// is each surface's own, the information the same.
+#[test]
+fn imstat_logfile_records_the_block_and_appends() {
+    let workspace = tempfile::tempdir().expect("scratch");
+    let values = fixture("values.im");
+    let log = workspace.path().join("stats.log");
+
+    run_imstat(&values, json!({"logfile": log.clone()}));
+    let first = std::fs::read_to_string(&log).expect("the logfile is written");
+    assert!(first.contains("npts: 256"), "{first}");
+    assert!(first.contains("min: -400"), "{first}");
+
+    run_imstat(&values, json!({"logfile": log.clone(), "append": true}));
+    let appended = std::fs::read_to_string(&log).expect("the logfile is appended");
+    assert_eq!(appended.matches("npts: 256").count(), 2, "{appended}");
+
+    run_imstat(&values, json!({"logfile": log.clone(), "append": false}));
+    let overwritten = std::fs::read_to_string(&log).expect("the logfile is overwritten");
+    assert_eq!(overwritten.matches("npts: 256").count(), 1, "{overwritten}");
+
+    // CASA writes the logfile even with the logger block suppressed.
+    let log2 = workspace.path().join("stats2.log");
+    run_imstat(&values, json!({"logfile": log2.clone(), "listit": false}));
+    let text = std::fs::read_to_string(&log2).expect("listit does not gate the logfile");
+    assert!(text.contains("npts: 256"), "{text}");
+}
+
 #[test]
 fn imstat_classic_statistics_match_casa_without_a_beam_and_with_a_box() {
     let expected = expected();
