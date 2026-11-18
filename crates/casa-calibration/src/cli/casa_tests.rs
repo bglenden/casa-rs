@@ -244,7 +244,10 @@ fn gaincal_reads_casas_values() {
         "vis": "dataset.ms",
         "caltable": "phase.gcal",
         "field": "0",
-        "solint": "30s",
+        "solint": 30,
+        "observation": 0,
+        "uvrange": ">20m",
+        "intent": "*PHASE*",
         "preavg": 12.5,
         "combine": "scan,field",
         "refant": "VA15",
@@ -269,6 +272,10 @@ fn gaincal_reads_casas_values() {
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection {
                 field: Some("0".into()),
+                observation: Some("0".into()),
+                uvrange: Some(">20m".into()),
+                intent: Some("*PHASE*".into()),
+                msselect: Some("ANTENNA1!=ANTENNA2".into()),
                 ..MsSelection::new()
             },
             output_table: PathBuf::from("phase.gcal"),
@@ -330,26 +337,6 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
     // implemented yet.
     let message = refused(with("smodel", json!([1, 0.1])), "smodel");
     assert!(message.contains("#979"), "{message}");
-    // CASA's numeric solint and observation are refused as the wrong type,
-    // naming the issue.
-    for (name, value) in [("solint", json!(30)), ("observation", json!(0))] {
-        let bundle = builtin_surface_bundle("gaincal").expect("gaincal");
-        let mut request = OpenSessionRequest::defaults(bundle, ".");
-        request.override_patch = ResolutionPatch {
-            values: [(
-                name.to_string(),
-                ParameterValue::from_plain_json(&value).expect("a value"),
-            )]
-            .into(),
-            ..ResolutionPatch::default()
-        };
-        request.managed_save = false;
-        let message = ParameterRuntime::default()
-            .open_session(request)
-            .expect_err("the wrong type")
-            .to_string();
-        assert!(message.contains("#979"), "{name}: {message}");
-    }
 }
 
 #[test]

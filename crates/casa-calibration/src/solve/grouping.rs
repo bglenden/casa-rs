@@ -21,7 +21,7 @@ use super::{
 use crate::ApplyCalibrationTableSpec;
 use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
-use crate::session::resolve_calibration_selection;
+use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
 use crate::solve::kernel::{RobustSample, SolveGraph};
 use time::{FirstTBuffer, bucketed_rows, first_t_buffers};
 
@@ -419,23 +419,28 @@ pub(crate) fn resolve_refants(
 pub(crate) fn collect_selected_rows(
     ms: &MeasurementSet,
     selection: &MsSelection,
+    full_selection: bool,
 ) -> Result<Vec<SelectedSolveRow>, GainSolveError> {
-    let selected_rows = resolve_calibration_selection(ms, selection).map_err(|error| {
-        GainSolveError::OpenMeasurementSet {
-            path: ms
-                .path()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "<in-memory>".to_string()),
-            source: match error {
-                casa_ms::MsSelectionError::Domain(source) => source,
-                other => MsError::InvalidInput(other.to_string()),
-            },
-        }
+    let selected_rows = if full_selection {
+        resolve_casa_calibration_selection(ms, selection)
+    } else {
+        resolve_calibration_selection(ms, selection)
+    }
+    .map_err(|error| GainSolveError::OpenMeasurementSet {
+        path: ms
+            .path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<in-memory>".to_string()),
+        source: match error {
+            casa_ms::MsSelectionError::Domain(source) => source,
+            other => MsError::InvalidInput(other.to_string()),
+        },
     })?;
     if selected_rows.selected_rows.is_empty() {
         return Err(GainSolveError::EmptySelection);
     }
 
+    let channels = &selected_rows.channel_selections;
     selected_rows
         .selected_rows
         .into_iter()
@@ -446,7 +451,11 @@ pub(crate) fn collect_selected_rows(
                 observation_id: get_i32(ms.main_table(), row.row_index, "OBSERVATION_ID")?,
                 data_desc_id: row.data_desc_id,
                 data_spw_id: row.spectral_window_id,
-                channel_selection: selection.channel_selection_for_spw(row.spectral_window_id),
+                channel_selection: if full_selection {
+                    channels.get(&row.spectral_window_id).cloned()
+                } else {
+                    selection.channel_selection_for_spw(row.spectral_window_id)
+                },
                 antenna1: row.antenna1_id,
                 antenna2: row.antenna2_id,
                 time_seconds: row.time_mjd_seconds,

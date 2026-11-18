@@ -299,6 +299,7 @@ pub(crate) fn solve_bandpass(
         &request.refant,
         &request.prior_calibration_tables,
         request.parang,
+        false,
     )?;
     let groups = build_solve_groups(
         ms,

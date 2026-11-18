@@ -711,8 +711,6 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
         values
     };
     for (surface, name, value) in [
-        ("gaincal", "uvrange", json!(">1klambda")),
-        ("gaincal", "intent", json!("*PHASE*")),
         ("bandpass", "solint", json!("int")),
         ("bandpass", "fillgaps", json!(2)),
     ] {
