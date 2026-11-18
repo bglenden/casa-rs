@@ -687,17 +687,20 @@ fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
 
 /// The axes CASA's `combine` names, found as `SolvableVisCal` finds them:
 /// by the axis name anywhere in the text, in any case (`'Scan,Field'` and
-/// `'scan field'` both combine scans and fields). `'scan'` and `'field'`
-/// are implemented; `'spw'` and `'obs'` are not yet.
+/// `'scan field'` both combine scans and fields).
 fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
     let text = task.required_text("combine")?;
     let upper = text.to_ascii_uppercase();
-    if upper.contains("SPW") || upper.contains("OBS") {
+    let spectral_windows = upper.contains("SPW");
+    let observations = upper.contains("OBS");
+    if task.surface() == "bandpass" && (spectral_windows || observations) {
         return Err(not_yet("combine", &text));
     }
     Ok(GainSolveCombine {
         scans: upper.contains("SCAN"),
         fields: upper.contains("FIELD"),
+        observations,
+        spectral_windows,
     })
 }
 

@@ -285,6 +285,7 @@ fn gaincal_reads_casas_values() {
             combine: GainSolveCombine {
                 scans: true,
                 fields: true,
+                ..GainSolveCombine::default()
             },
             refant: RefAntSelector::Expression {
                 selection: "VA15".into(),
@@ -316,9 +317,6 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
     for (name, value) in [
         ("gaintype", json!("K")),
         ("gaintype", json!("GSPLINE")),
-        ("combine", json!("spw")),
-        ("combine", json!("scan,obs")),
-        ("combine", json!("Scan,SPW")),
         ("solint", json!("inf,2ch")),
         ("smodel", json!([1, 0.1, 0, 0])),
     ] {
@@ -373,7 +371,11 @@ fn gaincal_reads_solint_and_combine_as_casa_does() {
     ] {
         assert_eq!(
             read("combine", combine).combine,
-            GainSolveCombine { scans, fields },
+            GainSolveCombine {
+                scans,
+                fields,
+                ..GainSolveCombine::default()
+            },
             "{combine}"
         );
     }
