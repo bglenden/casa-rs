@@ -72,7 +72,7 @@ fn observe(
         gain_type: request.gain_type,
         model_source: request.model_source,
         point_stokes: request.smodel,
-        rotate_point_model: false,
+        rotate_model: false,
         solve_interval: request.solve_interval,
         combine: request.combine,
         channelized: false,

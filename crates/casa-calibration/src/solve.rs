@@ -17,6 +17,7 @@
 mod batch_trial;
 pub(crate) mod grouping;
 pub(crate) mod kernel;
+mod model;
 mod trace;
 pub(crate) mod writer;
 
@@ -111,6 +112,8 @@ pub enum GainSolveModelSource {
     PointSource,
     /// Use per-sample visibilities from the MS `MODEL_DATA` column.
     ModelColumn,
+    /// Select the field’s virtual model, MODEL_DATA, or the unit point model.
+    FromMeasurementSet,
 }
 
 /// Supported first-wave gain solution intervals.
@@ -263,6 +266,10 @@ pub enum GainSolveError {
         smodel: [f32; 4],
     },
 
+    /// A virtual model could not be decoded or evaluated.
+    #[error("cannot read virtual model: {0}")]
+    VirtualModel(String),
+
     /// The solve requested `MODEL_DATA`, but the MS does not contain it.
     #[error("gain solve model_source=ModelColumn requires a MODEL_DATA column")]
     MissingModelColumn,
@@ -400,27 +407,34 @@ pub(crate) fn solve_gain_rows(
 ) -> Result<SolvedGains, GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel, true)?;
-    } else if !ms
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
+    } else if request.model_source == GainSolveModelSource::ModelColumn
+        && !ms
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
     {
         return Err(GainSolveError::MissingModelColumn);
     }
     validate_solve_interval(request.solve_interval)?;
     // P Jones is later in CASA's Jones chain than G, so the rotation
-    // corrupts a polarized point model before a diagonal gain is fitted.
-    let rotate_point_model = request.parang
+    // corrupts the MeasurementSet model or a polarized explicit point
+    // before a diagonal gain is fitted.
+    let rotate_model = request.parang
         && request.gain_type == GainType::G
-        && request.model_source == GainSolveModelSource::PointSource
-        && request.smodel[1..].iter().any(|value| *value != 0.0);
+        && (request.model_source != GainSolveModelSource::PointSource
+            || request.smodel[1..].iter().any(|value| *value != 0.0));
+    let point_stokes = if request.model_source == GainSolveModelSource::PointSource {
+        request.smodel
+    } else {
+        [1.0, 0.0, 0.0, 0.0]
+    };
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
-        request.parang && !rotate_point_model,
+        request.parang && !rotate_model,
         true,
     )?;
     let requested_preaverage = request.preaverage_seconds as f32;
@@ -441,8 +455,8 @@ pub(crate) fn solve_gain_rows(
         SolveGroupOptions {
             gain_type: request.gain_type,
             model_source: request.model_source,
-            point_stokes: request.smodel,
-            rotate_point_model,
+            point_stokes,
+            rotate_model,
             solve_interval: request.solve_interval,
             combine: request.combine,
             // VbAvg applies this boundary to either source of the interval.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selection of CASA's scalar and per-channel solve weights.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use casa_ms::MeasurementSet;
 use casa_tables::{TableColumn, TableError};
@@ -158,6 +158,37 @@ impl VisibilityBuffer {
             time: row.time_seconds.to_bits(),
         }
     }
+}
+
+/// MSIter evaluates a moving FIELD direction at its chunk's first timestamp.
+pub(super) fn chunk_phase_times(
+    rows: &[BucketedRow<'_>],
+    combine: GainSolveCombine,
+    fields: &BTreeSet<i32>,
+) -> BTreeMap<usize, f64> {
+    if fields.is_empty() {
+        return BTreeMap::new();
+    }
+    let mut first = HashMap::<VisibilityChunk, f64>::new();
+    let changing = || {
+        rows.iter()
+            .filter(|(row, _, _)| fields.contains(&row.field_id))
+    };
+    for row in changing() {
+        let time = row.0.time_seconds;
+        first
+            .entry(VisibilityBuffer::new(row, combine).chunk)
+            .and_modify(|first| *first = first.min(time))
+            .or_insert(time);
+    }
+    changing()
+        .map(|row| {
+            (
+                row.0.row_index,
+                first[&VisibilityBuffer::new(row, combine).chunk],
+            )
+        })
+        .collect()
 }
 
 fn defined_cells(column: &TableColumn<'_>, rows: &[usize]) -> Result<Vec<bool>, TableError> {

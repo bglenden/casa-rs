@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical calibration solve session boundary.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use casa_ms::{
@@ -17,8 +17,7 @@ use crate::bandpass::{
 use crate::execute::EvaluatedApplyRow;
 use crate::selected_data::SelectedData;
 use crate::solve::grouping::{
-    SelectedSolveRow, all_antenna_ids, collect_selected_rows, load_preapplied_rows,
-    refuse_shared_spectral_windows, resolve_refants,
+    SelectedSolveRow, all_antenna_ids, collect_selected_rows, load_preapplied_rows, resolve_refants,
 };
 use crate::solve::{GainSolveError, GainSolveReport, GainSolveRequest, RefAntSelector, solve_gain};
 
@@ -181,6 +180,25 @@ pub(crate) fn prepare_calibration_solve(
             parang,
         )?,
     })
+}
+
+pub(crate) fn refuse_shared_spectral_windows(
+    rows: &[SelectedSolveRow],
+) -> Result<(), GainSolveError> {
+    let mut descriptions = BTreeMap::<i32, BTreeSet<i32>>::new();
+    for row in rows {
+        descriptions
+            .entry(row.data_spw_id)
+            .or_default()
+            .insert(row.data_desc_id);
+    }
+    match descriptions.into_iter().find(|(_, ids)| ids.len() > 1) {
+        Some((spw_id, ids)) => Err(GainSolveError::SharedSpectralWindow {
+            spw_id,
+            data_desc_ids: ids.into_iter().collect(),
+        }),
+        None => Ok(()),
+    }
 }
 
 pub(crate) fn resolve_calibration_selection(

@@ -63,7 +63,7 @@ pub(crate) fn build_solve_groups(
     options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
-    let mut layouts = SolveRowLayouts::new(ms, options.rotate_point_model)?;
+    let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let needs_first_buffer = options.gain_type == GainType::T || options.robust_seed;
     let mut ordered = bucketed_rows(
         rows,
@@ -79,6 +79,9 @@ pub(crate) fn build_solve_groups(
         } else {
             BTreeMap::new()
         };
+    models.phase_times =
+        weights::chunk_phase_times(&ordered, options.combine, models.dynamic_fields());
+    let mut layouts = SolveRowLayouts::new(ms, options.rotate_model, &models)?;
     let spectral_weights = SpectralWeights::new(ms, &ordered, options.combine)?;
     let pipelined = overlap_inputs(ordered.len());
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
@@ -93,8 +96,15 @@ pub(crate) fn build_solve_groups(
         read_input_batch(
             ms,
             &indices,
-            preapplied_rows.is_none(),
-            options.model_source,
+            (
+                preapplied_rows.is_none(),
+                batch
+                    .iter()
+                    .any(|(row, _, _)| models.uses_fourier(row.field_id)),
+            ),
+            batch
+                .iter()
+                .any(|(row, _, _)| models.reads_column(row.field_id)),
             batch
                 .iter()
                 .map(|row| spectral_weights.contains(row))
@@ -186,8 +196,8 @@ pub(crate) struct SolveInputBatch {
 fn read_input_batch(
     ms: &MeasurementSet,
     rows: &[usize],
-    read_visibilities: bool,
-    model: GainSolveModelSource,
+    (read_visibilities, read_model_flags): (bool, bool),
+    read_model_column: bool,
     spectral_weights: Vec<bool>,
 ) -> Result<SolveInputBatch, GainSolveError> {
     let schema = ms.main_table().schema();
@@ -199,9 +209,12 @@ fn read_input_batch(
         columns.push("SIGMA");
     }
     if read_visibilities {
-        columns.extend(["DATA", "FLAG"]);
+        columns.push("DATA");
     }
-    if model == GainSolveModelSource::ModelColumn {
+    if read_visibilities || read_model_flags {
+        columns.push("FLAG");
+    }
+    if read_model_column {
         columns.push("MODEL_DATA");
     }
     let mut inputs = SolveInputBatch {
@@ -337,28 +350,6 @@ fn ms_read_error(ms: &MeasurementSet, source: casa_tables::TableError) -> GainSo
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "<in-memory>".to_string()),
         source: MsError::from(source),
-    }
-}
-
-/// Refuses `rows` when two of their data descriptions share a spectral
-/// window, whatever their polarizations: CASA solves each description
-/// apart, where casa-rs's groups and tables are keyed by window.
-pub(crate) fn refuse_shared_spectral_windows(
-    rows: &[SelectedSolveRow],
-) -> Result<(), GainSolveError> {
-    let mut descriptions = BTreeMap::<i32, BTreeSet<i32>>::new();
-    for row in rows {
-        descriptions
-            .entry(row.data_spw_id)
-            .or_default()
-            .insert(row.data_desc_id);
-    }
-    match descriptions.into_iter().find(|(_, ids)| ids.len() > 1) {
-        Some((spw_id, ids)) => Err(GainSolveError::SharedSpectralWindow {
-            spw_id,
-            data_desc_ids: ids.into_iter().collect(),
-        }),
-        None => Ok(()),
     }
 }
 
@@ -523,7 +514,7 @@ pub(crate) struct SolveGroupOptions {
     pub(crate) gain_type: GainType,
     pub(crate) model_source: GainSolveModelSource,
     pub(crate) point_stokes: [f32; 4],
-    pub(crate) rotate_point_model: bool,
+    pub(crate) rotate_model: bool,
     pub(crate) solve_interval: GainSolveInterval,
     pub(crate) combine: GainSolveCombine,
     /// Maximum time from the first sample in an average of one baseline.
@@ -735,9 +726,15 @@ impl SolveAccumulator {
         preapplied_row: Option<&EvaluatedApplyRow>,
         options: &SolveGroupOptions,
         layouts: &mut SolveRowLayouts,
-        inputs: (&SolveInputBatch, usize),
+        batch: (&SolveInputBatch, usize),
     ) -> Result<(), GainSolveError> {
-        let inputs = read_row_inputs(ms, row, preapplied_row, options.model_source, inputs)?;
+        let inputs = read_row_inputs(
+            ms,
+            row,
+            preapplied_row,
+            layouts.models.reads_column(row.field_id),
+            batch,
+        )?;
         let channel_count = inputs.data.shape()[1];
         let layout = match layouts.by_ddid.entry(row.data_desc_id) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
@@ -755,20 +752,45 @@ impl SolveAccumulator {
             layout.channel_count = channel_count;
             layout.selection.clone_from(&row.channel_selection);
         }
+        let raw_flags = if preapplied_row.is_some() && layouts.models.uses_fourier(row.field_id) {
+            match input_cell(ms, row.row_index, batch, "FLAG")? {
+                ArrayValue::Bool(flags) if flags.shape() == inputs.data.shape() => flags,
+                other => return Err(unsupported_shape("FLAG", other)),
+            }
+        } else {
+            inputs.flags.as_ref()
+        };
+        let mut predicted = layouts
+            .models
+            .predict(ms, row, &layout.correlations, raw_flags)?;
         let rotated = layouts
             .rotation
             .as_ref()
             .map(|state| {
-                samples::rotate_point_model(
+                if predicted.is_none() {
+                    predicted = inputs.model.cloned();
+                }
+                samples::rotate_model(
                     ms,
                     row,
                     state,
                     &layout.correlations,
                     options.point_stokes,
+                    predicted.as_mut(),
                 )
             })
-            .transpose()?;
+            .transpose()?
+            .flatten();
         let mut samples = inputs.samples();
+        if let Some(predicted) = &predicted {
+            if predicted.shape() != samples.data.shape() {
+                return Err(GainSolveError::UnsupportedParameterShape {
+                    path: "<virtual model visibility>".into(),
+                    shape: predicted.shape().to_vec(),
+                });
+            }
+            samples.model = Some(two_dimensional(predicted));
+        }
         samples.point_model = rotated.as_deref();
         self.observe_selected_samples(
             &SolveSampleRow::of(row),
@@ -896,7 +918,7 @@ impl SolveAccumulator {
                 )
             };
             if !parallel_hand && options.gain_type == GainType::G {
-                if samples.point_model.is_some() {
+                if options.rotate_model {
                     row_weight += samples::centroid_weight(
                         samples,
                         corr_index,
@@ -920,7 +942,9 @@ impl SolveAccumulator {
                 values: accumulations,
                 attempted: &mut self.attempted,
                 channelized: options.channelized,
-                retain_zero_model: options.gain_type == GainType::T,
+                retain_zero_model: options.gain_type == GainType::T
+                    || (!options.channelized
+                        && (samples.model.is_some() || point.norm_sqr() == 0.0)),
             }
             .observe(
                 samples,
@@ -1130,7 +1154,7 @@ fn read_row_inputs<'a>(
     ms: &'a MeasurementSet,
     row: &SelectedSolveRow,
     preapplied_row: Option<&'a EvaluatedApplyRow>,
-    model_source: GainSolveModelSource,
+    read_model_column: bool,
     inputs: (&'a SolveInputBatch, usize),
 ) -> Result<SolveRowInputs<'a>, GainSolveError> {
     let (data, flags) = match preapplied_row {
@@ -1152,15 +1176,14 @@ fn read_row_inputs<'a>(
             shape: data.shape().to_vec(),
         });
     }
-    let model = match model_source {
-        GainSolveModelSource::ModelColumn => {
-            let model = input_cell(ms, row.row_index, inputs, "MODEL_DATA")?;
-            match model {
-                ArrayValue::Complex32(model) if model.shape() == data.shape() => Some(model),
-                other => return Err(unsupported_shape("MODEL_DATA", other)),
-            }
+    let model = if read_model_column {
+        let model = input_cell(ms, row.row_index, inputs, "MODEL_DATA")?;
+        match model {
+            ArrayValue::Complex32(model) if model.shape() == data.shape() => Some(model),
+            other => return Err(unsupported_shape("MODEL_DATA", other)),
         }
-        GainSolveModelSource::PointSource => None,
+    } else {
+        None
     };
     let mut weights = solve_weights(ms, row.row_index, data.shape(), inputs)?;
     if let Some(factors) = preapplied_row.and_then(|row| row.weight_factors.as_ref()) {
@@ -1446,6 +1469,7 @@ mod tests {
 
     #[test]
     fn data_descriptions_sharing_a_window_are_refused() {
+        use crate::session::refuse_shared_spectral_windows;
         // Two descriptions on window 0, as a duplicated description or one
         // holding the cross hands would give.
         let rows = [row(0, 0, 1, 0, 100.0), row(1, 0, 1, 1, 100.0)];
