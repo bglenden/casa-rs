@@ -41,6 +41,9 @@
 //! never deletes anything else. A multi-MS is written as one table, where
 //! CASA writes each part.
 
+#[doc(hidden)]
+pub mod ft_record;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -280,9 +283,11 @@ fn put_model(
     let mut state = ModelState::read(ms)?;
     let mut record = RecordValue::default();
     let mut adds = false;
+    let mut images = Vec::new();
     if state.is_defined(&key) {
         record = state.record(ms, &key)?;
         if !incremental {
+            images = record_images(&record);
             adds = add_to_record(&mut record, &entry.index_combination)?;
         }
     } else if let Some(held) = state.first_source_row_record(ms, first)?
@@ -308,9 +313,9 @@ fn put_model(
         format!("{}{counter}", entry.kind.prefix()),
         Value::Record(entry.to_record()),
     );
-    let mut images = Vec::new();
-    if !incremental && state.is_defined(&key) {
-        images = record_images(&state.record(ms, &key)?);
+    if !images.is_empty() {
+        let retained = record_images(&record);
+        images.retain(|path| !retained.contains(path));
     }
     state.put_model_record(ms, &fields, &key, record)?;
     state.write_holding(ms, lock)?;
@@ -680,20 +685,28 @@ fn matrix_rows(value: Option<&Value>) -> Option<Vec<[i32; 4]>> {
 /// (`ft_<k>.container.diskimage`), which CASA deletes with the record
 /// (`VisModelData::deleteDiskImage`).
 fn record_images(record: &RecordValue) -> Vec<PathBuf> {
-    (0..count(record, VirtualModelKind::FtMachine))
-        .filter_map(|index| {
-            let Some(Value::Record(entry)) = record.get(&format!("ft_{index}")) else {
-                return None;
-            };
-            let Some(Value::Record(container)) = entry.get("container") else {
-                return None;
-            };
-            match container.get("diskimage") {
-                Some(Value::Scalar(ScalarValue::String(path))) => Some(PathBuf::from(path)),
-                _ => None,
-            }
-        })
-        .collect()
+    let mut paths = Vec::new();
+    for index in 0..count(record, VirtualModelKind::FtMachine) {
+        if let Some(Value::Record(entry)) = record.get(&format!("ft_{index}"))
+            && let Some(Value::Record(container)) = entry.get("container")
+        {
+            machine_images(container, &mut paths);
+        }
+    }
+    paths
+}
+
+fn machine_images(machine: &RecordValue, paths: &mut Vec<PathBuf>) {
+    if let Some(Value::Scalar(ScalarValue::String(path))) = machine.get("diskimage") {
+        paths.push(PathBuf::from(path));
+    }
+    for field in machine.fields() {
+        if (field.name == "subftm" || field.name.starts_with("subftm_"))
+            && let Value::Record(term) = &field.value
+        {
+            machine_images(term, paths);
+        }
+    }
 }
 
 /// Delete each of `images` that is an `FT_MODEL*` table in the

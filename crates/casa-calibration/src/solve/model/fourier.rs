@@ -116,6 +116,7 @@ struct PreparedFourierModel {
     mosaic: Option<MosaicLayout>,
     scale: Option<setjy::FluxScale>,
     legacy_taylor: Option<(i32, f64)>,
+    legacy_flags: Option<ArrayD<i32>>,
     continuum_axis: Option<SpectralAxis>,
     convert_frequencies: bool,
     backend: CpuBackend,
@@ -204,6 +205,12 @@ impl PreparedFourierModel {
             None
         };
         let project = uses_projected_tangent(terms[0], row.ms)?;
+        let legacy_flags = match terms[0].get("spwchanselflag") {
+            Some(Value::Array(ArrayValue::Int32(flags))) if !flags.is_empty() => {
+                Some(flags.clone())
+            }
+            _ => None,
+        };
         Ok(Self {
             operator,
             resampler,
@@ -218,6 +225,7 @@ impl PreparedFourierModel {
             mosaic,
             scale,
             legacy_taylor: legacy_taylor_term(record)?,
+            legacy_flags,
             continuum_axis: (channels == 1).then_some(axis),
             convert_frequencies: matches!(
                 record.get("freqframevalid"),
@@ -304,19 +312,29 @@ impl PreparedFourierModel {
         self.frequencies.clear();
         self.frequencies
             .extend(row.frequencies.iter().map(|frequency| frequency * ratio));
-        // Reopened GridFT uses the original flag cube and the channel-wide
-        // flag from setSpectralFlag, before any solve pre-calibration.
-        for ((flags, raw), &frequency) in self
+        for (channel, ((flags, raw), &frequency)) in self
             .flags
             .chunks_exact_mut(row.correlations.len())
             .zip(row.raw_flags.axis_iter(Axis(1)))
             .zip(&self.frequencies)
+            .enumerate()
         {
             let outside = self
                 .continuum_axis
                 .as_ref()
                 .is_some_and(|axis| axis.nearest_channel(frequency).is_none());
-            flags.fill(outside || raw.iter().any(|flag| *flag));
+            if let Some(selected) = &self.legacy_flags {
+                // The legacy GridFT combines its channel selection with
+                // the per-correlation flags from VisBuffer::flagCube.
+                let spectral_flag = selected
+                    .get([0, row.row.data_spw_id as usize, channel].as_slice())
+                    .is_some_and(|&flag| flag != 1);
+                for (value, &raw_flag) in flags.iter_mut().zip(raw) {
+                    *value = outside || spectral_flag || raw_flag;
+                }
+            } else {
+                flags.fill(outside || raw.iter().any(|flag| *flag));
+            }
         }
         let native = NativeRow {
             uvw_m,

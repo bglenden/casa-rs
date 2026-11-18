@@ -23,45 +23,45 @@ use ndarray::{ArrayD, IxDyn};
 /// its field, the selected channels' LSRK frequencies, their image
 /// channels, its correlations and their grid polarizations.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct FirstBuffer {
-    pub(crate) field: i32,
-    pub(crate) frequencies_lsrk_hz: Vec<f64>,
-    pub(crate) channel_map: Vec<i32>,
+pub struct FirstBuffer {
+    pub field: i32,
+    pub frequencies_lsrk_hz: Vec<f64>,
+    pub channel_map: Vec<i32>,
     /// The correlations' `CORR_TYPE` codes.
-    pub(crate) correlations: Vec<i32>,
-    pub(crate) polarization_map: Vec<i32>,
+    pub correlations: Vec<i32>,
+    pub polarization_map: Vec<i32>,
 }
 
 /// One `GridFT` of a virtual model: where its grid image is and what CASA
 /// recorded beside it.
-pub(crate) struct GridFt<'a> {
-    pub(crate) disk_image: &'a Path,
+pub struct GridFt<'a> {
+    pub disk_image: &'a Path,
     /// The padded grid `[nx, ny]`, the image's shape.
-    pub(crate) grid: [usize; 2],
+    pub grid: [usize; 2],
     /// Grid polarizations and image channels.
-    pub(crate) polarizations: usize,
-    pub(crate) image_frequencies_hz: &'a [f64],
+    pub polarizations: usize,
+    pub image_frequencies_hz: &'a [f64],
     /// Signed radians per pixel.
-    pub(crate) increment_rad: [f64; 2],
+    pub increment_rad: [f64; 2],
     /// The image's phase centre and its frame (`J2000`, ...).
-    pub(crate) phase_centre_rad: [f64; 2],
-    pub(crate) direction_frame: &'a str,
+    pub phase_centre_rad: [f64; 2],
+    pub direction_frame: &'a str,
     /// The observatory, ITRF longitude, latitude (geocentric) and radius.
-    pub(crate) observatory: [f64; 3],
+    pub observatory: [f64; 3],
     /// The image's spectral coordinate record.
-    pub(crate) spectral: RecordValue,
-    pub(crate) buffer: &'a FirstBuffer,
+    pub spectral: RecordValue,
+    pub buffer: &'a FirstBuffer,
     /// `InterpolateArray1D`'s method: nearest 0, linear 1, cubic 2.
-    pub(crate) interpolation: i32,
+    pub interpolation: i32,
     /// Whether the machine converted its buffers' frequencies itself: a
     /// Taylor term's machine, which `MultiTermFTNew` drives, records not.
-    pub(crate) frequency_frame_valid: bool,
+    pub frequency_frame_valid: bool,
 }
 
 impl GridFt<'_> {
     /// The record, `GridFT::toRecord` with its image on disk: CASA writes
     /// padding 1 since the image is the padded grid.
-    pub(crate) fn record(&self) -> RecordValue {
+    pub fn record(&self) -> RecordValue {
         let [nx, ny] = self.grid;
         let channels = self.image_frequencies_hz.len();
         let buffer = self.buffer;
@@ -173,7 +173,7 @@ impl GridFt<'_> {
 
 /// `MultiTermFTNew::toRecord` of a prediction machine: its Taylor terms'
 /// `GridFT` records, each naming its own grid image.
-pub(crate) fn multi_term(terms: Vec<RecordValue>, reference_hz: f64) -> RecordValue {
+pub fn multi_term(terms: Vec<RecordValue>, reference_hz: f64) -> RecordValue {
     let count = terms.len();
     let mut record = RecordValue::new(vec![
         RecordField::new("name", text("MultiTermFTNew")),
@@ -212,13 +212,36 @@ const SPECTRAL_FIELDS: [&str; 12] = [
     "name",
 ];
 
+/// The legacy imager emits a separate machine record for each Taylor term.
+pub fn legacy_multi_term(
+    grid: RecordValue,
+    terms: i32,
+    term: i32,
+    reference_hz: f64,
+) -> RecordValue {
+    let mut record = grid.clone();
+    record.remove("diskimage");
+    record.upsert("name", text("MultiTermFT"));
+    record.upsert("subftm", Value::Record(grid));
+    record.upsert("subftname", text("GridFT"));
+    record.upsert("nterms", int(terms));
+    record.upsert("thisterm", int(term));
+    record.upsert("reffreq", double(reference_hz));
+    record.upsert("dbg", boolean(false));
+    record.upsert("dotime", boolean(false));
+    for field in ["time_get", "time_put", "time_res"] {
+        record.upsert(field, double(0.0));
+    }
+    record
+}
+
 /// A spectral coordinate's record as CASA's `SpectralCoordinate::save`
 /// leaves it in a machine record: its fields in CASA's order, a linear
 /// axis's WCS in `crval, crpix, cdelt, pc, ctype` with the type as wcslib's
 /// nine-character `FREQ`, and, for a coordinate with no conversion layer,
 /// CASA's default one (the default J2000 direction, ITRF origin and LAST
 /// epoch, to the coordinate's own system).
-pub(crate) fn casa_spectral(record: &RecordValue) -> RecordValue {
+pub fn casa_spectral(record: &RecordValue) -> RecordValue {
     let mut out = RecordValue::default();
     for name in SPECTRAL_FIELDS {
         let Some(value) = record.get(name) else {
@@ -364,5 +387,5 @@ fn position([longitude, latitude, radius]: [f64; 3]) -> Value {
 }
 
 #[cfg(test)]
-#[path = "record_tests.rs"]
+#[path = "ft_record_tests.rs"]
 mod tests;

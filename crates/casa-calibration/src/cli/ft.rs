@@ -2,11 +2,14 @@
 //! CASA ft task selection, prediction and provenance.
 
 use casa_components::ComponentList;
-use casa_ms::{MeasurementSet, MsSelection, VirtualModelKind};
+use casa_ms::virtual_model::put_virtual_model_holding;
+use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelKind};
 use casa_provider_contracts::CasaValue;
 use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+use casa_types::quanta::Quantity;
 
+use crate::ft::image::{ImageModel, TaylorTerm, prepare_image, reference_frequency};
 use crate::ft::{model_entry, publish_models};
 use crate::model_columns::initialize_model_column;
 use crate::session::resolve_casa_calibration_selection;
@@ -66,37 +69,127 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     }
     let terms = task.integer("nterms")?;
     validate_terms(terms, models.len())?;
-    let incremental = task.flag("incremental")?;
-    let mut entries = Vec::new();
     if !selected.selected_rows.is_empty() {
-        if !component.is_empty() && !incremental {
-            let list =
-                ComponentList::read_table(task.workspace().join(&component)).map_err(execution)?;
-            let container = list.to_record().map_err(execution)?;
-            entries.push(
-                model_entry(&ms, &selected, VirtualModelKind::ComponentList, container)
-                    .map_err(execution)?,
-            );
-        }
-        if models.iter().any(|name| !name.is_empty()) {
-            return Err(
-                TaskFailure::execution("Image model prediction is pending in #1520").at("model"),
-            );
-        }
-        publish_models(
+        let options = Prediction {
+            scratch,
+            incremental: task.flag("incremental")?,
+            terms,
+        };
+        predict(
+            task,
             &mut ms,
             &selected,
-            &entries,
-            scratch,
-            incremental,
+            (&models, &component),
+            options,
             &mut lock,
-        )
-        .map_err(execution)?;
+        )?;
     }
     drop(ms);
     lock.release().map_err(execution)?;
     super::history::record_task(task, &path);
     TaskSuccess::new(CasaValue::None, &())
+}
+
+#[derive(Clone, Copy)]
+struct Prediction {
+    scratch: bool,
+    incremental: bool,
+    terms: i64,
+}
+
+fn predict(
+    task: &TaskInvocation<'_>,
+    ms: &mut MeasurementSet,
+    selected: &ResolvedMsSelection,
+    (models, component): (&[String], &str),
+    options: Prediction,
+    lock: &mut TableWriteLock,
+) -> Result<(), TaskFailure> {
+    let mut entries = Vec::new();
+    if !component.is_empty() && !options.incremental {
+        let list =
+            ComponentList::read_table(task.workspace().join(component)).map_err(execution)?;
+        let container = list.to_record().map_err(execution)?;
+        entries.push(
+            model_entry(ms, selected, VirtualModelKind::ComponentList, container)
+                .map_err(execution)?,
+        );
+    }
+    let mut images = image_models(task, ms, selected, models, options, entries.is_empty())?;
+    if options.scratch {
+        entries.extend(images.iter().map(|image| image.entry.clone()));
+        publish_models(ms, selected, &entries, true, options.incremental, lock)
+            .map_err(execution)?;
+    } else {
+        publish_models(ms, selected, &entries, false, options.incremental, lock)
+            .map_err(execution)?;
+        for (index, model) in images.iter_mut().enumerate() {
+            put_virtual_model_holding(ms, &model.entry, index > 0 || options.incremental, lock)
+                .map_err(execution)?;
+            model.retain();
+        }
+    }
+    Ok(())
+}
+
+fn image_models(
+    task: &TaskInvocation<'_>,
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    models: &[String],
+    options: Prediction,
+    no_components: bool,
+) -> Result<Vec<ImageModel>, TaskFailure> {
+    let terms = options.terms;
+    let zero = options.scratch && !options.incremental && no_components;
+    let reference = if terms > 1 {
+        let quantity = task.text("reffreq")?.unwrap_or_default();
+        let explicit = if quantity.is_empty() {
+            0.0
+        } else {
+            quantity
+                .parse::<Quantity>()
+                .map_err(|_| {
+                    TaskFailure::execution(format!(
+                        "In conversion of reffreq={quantity:?} to a numerical value"
+                    ))
+                    .at("reffreq")
+                })?
+                .get_si_value()
+        };
+        Some(if explicit == 0.0 {
+            reference_frequency(&task.workspace().join(&models[0])).map_err(execution)?
+        } else {
+            explicit
+        })
+    } else {
+        None
+    };
+    let mut images = Vec::new();
+    for (index, path) in models
+        .iter()
+        .enumerate()
+        .filter(|(_, path)| !path.is_empty())
+    {
+        let taylor = reference.map(|reference_hz| TaylorTerm {
+            count: terms as i32,
+            index: index as i32,
+            reference_hz,
+        });
+        if let Some(model) = prepare_image(
+            ms,
+            selected,
+            &task.workspace().join(path),
+            taylor,
+            zero && index == 0,
+            options.scratch,
+        )
+        .map_err(execution)?
+        {
+            images.push(model);
+        }
+    }
+    Ok(images)
 }
 
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {

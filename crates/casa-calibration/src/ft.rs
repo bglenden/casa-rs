@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Publish CASA's virtual source recipes or their sampled scratch visibilities.
 
+pub(crate) mod image;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 

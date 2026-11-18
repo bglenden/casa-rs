@@ -23,8 +23,6 @@
 //! MT-MFS, `MultiTermFTNew` over it); other gridders, polarizations,
 //! facets and outlier fields are refused when the request is validated.
 
-mod record;
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -49,7 +47,7 @@ use num_complex::Complex32;
 use crate::imaging::{self, ImagingError, KernelAdmission};
 use crate::native::NativeError;
 use crate::{ApplicationRuntime, ImagingRequest, MeasurementSetSelection};
-use record::{FirstBuffer, GridFt};
+use casa_ms::virtual_model::ft_record::{self as record, FirstBuffer, GridFt};
 
 /// The selection a virtual model is written for, as the run resolved it
 /// (`compile`'s `virtual_selection`): no expression is parsed again.
