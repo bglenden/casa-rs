@@ -12,6 +12,7 @@ use casa_observation::FieldEphemeris;
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_types::measures::MeasuresProvider;
+use casa_types::measures::baseline::UvwFrame;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
@@ -64,6 +65,7 @@ pub struct MsCalEngine {
     /// What each field follows, once attached
     /// ([`Self::with_field_ephemerides`]); empty until then.
     field_motions: Box<[FieldMotion]>,
+    calibration_field_directions: bool,
     /// The epoch each field's `PHASE_DIR` is stated at (MSv2 `FIELD.TIME`),
     /// when the store states one.
     field_reference_epochs: Box<[Option<MEpoch>]>,
@@ -180,6 +182,7 @@ impl MsCalEngine {
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             field_motions: Box::new([]),
+            calibration_field_directions: false,
             field_reference_epochs: field_reference_epochs.into_boxed_slice(),
             observatory_position,
             time_reference,
@@ -207,6 +210,18 @@ impl MsCalEngine {
     pub fn with_field_ephemerides(mut self, ms: &MeasurementSet) -> MsResult<Self> {
         self.field_motions = crate::ephemeris::field_motions(ms)?;
         Ok(self)
+    }
+
+    /// Create the engine for calibration and MeasurementSet geometry diagnostics.
+    /// Attached ephemerides use `MSFieldColumns::phaseDirMeas` at the row epoch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the antenna or field metadata cannot be opened.
+    pub fn for_calibration(ms: &MeasurementSet) -> MsResult<Self> {
+        let mut engine = Self::new(ms)?.with_field_ephemerides(ms)?;
+        engine.calibration_field_directions = true;
+        Ok(engine)
     }
 
     /// Whether `field_id` follows an attached ephemeris
@@ -243,6 +258,7 @@ impl MsCalEngine {
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets,
             field_motions: Box::new([]),
+            calibration_field_directions: false,
             field_reference_epochs: Box::new([]),
             observatory_position,
             time_reference: EpochRef::UTC,
@@ -439,6 +455,24 @@ impl MsCalEngine {
         let Some((ephemeris, offset)) = self.field_series(field_id)? else {
             return Ok(Cow::Borrowed(self.field_dir(field_id)?));
         };
+        if self.calibration_field_directions {
+            let mjd = self.ephemeris_mjd_utc(time_mjd_sec)?;
+            if ephemeris
+                .times_mjd()
+                .last()
+                .is_some_and(|&last| mjd >= last)
+            {
+                return Err(MsError::InvalidInput(format!(
+                    "UTC MJD {mjd} is outside the ephemeris interpolation range"
+                )));
+            }
+            let reference = crate::ephemeris::reference_direction(ephemeris, mjd, offset)?;
+            let frame =
+                self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+            return Ok(Cow::Owned(
+                reference.convert_to(DirectionRef::J2000, &frame)?,
+            ));
+        }
         let direction = self.field_body_direction(time_mjd_sec, ephemeris)?;
         Ok(Cow::Owned(
             casa_types::measures::ephemeris::offset_true_angle(&direction, offset)?,
@@ -754,6 +788,22 @@ impl MsCalEngine {
 
         // Get the field direction in J2000
         let dir = self.direction_at(time_mjd_sec, field_id)?;
+        if self.field_moves(field_id) {
+            // MSCalEngine::getNewUVW forms the baseline from antenna 1 to 2
+            // and projects it in an observatory frame at this row's epoch.
+            let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, self.time_reference);
+            let measures = self
+                .measures
+                .clone()
+                .map_or_else(crate::open_measures_runtime, Ok)?;
+            let projection = UvwFrame::new(
+                dir.as_angles().into(),
+                epoch,
+                &self.observatory_position,
+                measures,
+            )?;
+            return Ok(projection.baseline_uvw([dx, dy, dz]));
+        }
         let (ra, dec) = dir.as_angles();
 
         let (sin_dec, cos_dec) = dec.sin_cos();

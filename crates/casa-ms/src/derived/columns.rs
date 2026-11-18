@@ -10,6 +10,7 @@
 use casa_tables::Table;
 
 use crate::error::MsResult;
+use crate::ms::MeasurementSet;
 use crate::subtables::{get_f64, get_i32};
 
 use super::engine::MsCalEngine;
@@ -23,12 +24,10 @@ use super::engine::MsCalEngine;
 ///
 /// ```rust,no_run
 /// use casa_ms::derived::columns::DerivedColumns;
-/// use casa_ms::derived::engine::MsCalEngine;
 /// use casa_ms::ms::MeasurementSet;
 ///
 /// # fn example(ms: &MeasurementSet) -> casa_ms::MsResult<()> {
-/// let engine = MsCalEngine::new(ms)?;
-/// let derived = DerivedColumns::new(ms.main_table(), engine);
+/// let derived = DerivedColumns::from_measurement_set(ms)?;
 /// for row in 0..ms.row_count() {
 ///     let ha1 = derived.ha1(row)?;
 ///     let pa1 = derived.pa1(row)?;
@@ -45,6 +44,16 @@ pub struct DerivedColumns<'a> {
 }
 
 impl<'a> DerivedColumns<'a> {
+    /// Read derived values from an MS, including its time-dependent field directions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if antenna, time or field metadata cannot be opened.
+    pub fn from_measurement_set(ms: &'a MeasurementSet) -> MsResult<Self> {
+        let engine = MsCalEngine::for_calibration(ms)?;
+        Ok(Self::new(ms.main_table(), engine))
+    }
+
     /// Create derived column accessors for the given main table and engine.
     pub fn new(table: &'a Table, engine: MsCalEngine) -> Self {
         Self { table, engine }
@@ -93,8 +102,13 @@ impl<'a> DerivedColumns<'a> {
 
     /// Hour angle (radians) using the observatory position.
     pub fn ha(&self, row: usize) -> MsResult<f64> {
-        // Use antenna 0 as the reference
-        self.ha1(row)
+        let time = self.time(row)?;
+        let field = self.field_id(row)?;
+        if self.engine.field_moves(field) {
+            self.engine.hour_angle_observatory(time, field)
+        } else {
+            self.engine.hour_angle(time, field, self.antenna1(row)?)
+        }
     }
 
     // ---- Parallactic angle ----
@@ -133,9 +147,15 @@ impl<'a> DerivedColumns<'a> {
         self.engine.azel(time, field, ant)
     }
 
-    /// Azimuth and elevation (radians) using ANTENNA1 as reference.
+    /// Azimuth and elevation (radians) at the field's reference position.
     pub fn azel(&self, row: usize) -> MsResult<(f64, f64)> {
-        self.azel1(row)
+        let time = self.time(row)?;
+        let field = self.field_id(row)?;
+        if self.engine.field_moves(field) {
+            self.engine.azel_observatory(time, field)
+        } else {
+            self.engine.azel(time, field, self.antenna1(row)?)
+        }
     }
 
     // ---- Local Apparent Sidereal Time ----
