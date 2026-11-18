@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::model::CalibrationTableSummary;
-use crate::session::resolve_calibration_selection;
+use crate::session::resolve_apply_selection;
 use crate::summary::{CalibrationTableError, summarize_table};
 
 #[path = "plan_fields.rs"]
@@ -386,6 +386,10 @@ pub enum ApplyPlanError {
     #[error("apply planning requires at least one calibration table unless parang=true")]
     MissingCalibrationTables,
 
+    /// One traditional argument failed after opening and selecting the MS.
+    #[error(transparent)]
+    Argument(crate::ApplyArgumentError),
+
     /// The MeasurementSet is outside the supported complex-DATA surface.
     #[error("MeasurementSet is missing required MAIN.DATA column")]
     MissingDataColumn,
@@ -505,15 +509,17 @@ pub fn plan_apply_with_timings(
     plan_apply_with_preparation_error(ms, request, None)
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ApplyPreparationError<'a> {
+    Callibrary(&'a str),
+    Argument(&'a crate::ApplyArgumentError),
+}
+
 pub(crate) fn plan_apply_with_preparation_error(
     ms: &MeasurementSet,
     request: &ApplyPlanRequest,
-    preparation_error: Option<&str>,
+    preparation_error: Option<ApplyPreparationError<'_>>,
 ) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
-    if request.calibration_tables.is_empty() && !request.parang && preparation_error.is_none() {
-        return Err(ApplyPlanError::MissingCalibrationTables);
-    }
-
     ms.data_column(VisibilityDataColumn::Data)
         .map_err(|error| match error {
             MsError::ColumnNotPresent(_) => ApplyPlanError::MissingDataColumn,
@@ -528,15 +534,14 @@ pub(crate) fn plan_apply_with_preparation_error(
         };
 
     let selection_started_at = Instant::now();
-    let resolved_selection =
-        resolve_calibration_selection(ms, &request.selection).map_err(|error| {
-            ApplyPlanError::Selection {
-                source: match error {
-                    casa_ms::MsSelectionError::Domain(source) => source,
-                    other => MsError::InvalidInput(other.to_string()),
-                },
-            }
-        })?;
+    let resolved_selection = resolve_apply_selection(ms, &request.selection).map_err(|error| {
+        ApplyPlanError::Selection {
+            source: match error {
+                casa_ms::MsSelectionError::Domain(source) => source,
+                other => MsError::InvalidInput(other.to_string()),
+            },
+        }
+    })?;
     let requested_channels = resolved_selection.channel_selections.clone();
     let selected_row_indices = resolved_selection.row_indices().collect::<Vec<_>>();
     if selected_row_indices.is_empty() {
@@ -589,7 +594,7 @@ pub(crate) fn plan_apply_with_preparation_error(
     }
     let measurement_set_spectral_windows_ns = ms_spw_started_at.elapsed().as_nanos() as u64;
 
-    if let Some(message) = preparation_error {
+    if let Some(ApplyPreparationError::Callibrary(message)) = preparation_error {
         return Err(ApplyPlanError::Callibrary {
             message: message.to_string(),
         });
@@ -600,6 +605,12 @@ pub(crate) fn plan_apply_with_preparation_error(
         .iter()
         .map(|spec| build_table_plan(ms, spec, &selected_rows))
         .collect::<Result<Vec<_>, _>>()?;
+    if let Some(ApplyPreparationError::Argument(error)) = preparation_error {
+        return Err(ApplyPlanError::Argument(error.clone()));
+    }
+    if calibration_tables.is_empty() && !request.parang {
+        return Err(ApplyPlanError::MissingCalibrationTables);
+    }
     library::validate_overlaps(&calibration_tables)?;
     let calibration_tables = calibration_tables
         .into_iter()
@@ -865,11 +876,11 @@ fn build_table_plan(
 
     let is_bpoly = summary.table_subtype == "BPOLY";
     let (resolved_gainfields, resolved_nearest_gainfields) = if is_bpoly {
-        if let Some(selector) = spec.gainfield.as_ref() {
-            return Err(ApplyPlanError::ResolveGainField {
-                path: spec.path.display().to_string(),
-                selector: format!("{selector:?}"),
-                reason: "BPOLY apply currently supports only the default field mapping".to_string(),
+        // BJonesPoly::loadMemCalTable ignores field selections and emits a
+        // modern B table with wildcard FIELD_ID=-1 for every sampled row.
+        if spec.callibrary.is_some() {
+            return Err(ApplyPlanError::Callibrary {
+                message: "BPOLY is not supported for application by cal library in CASA".into(),
             });
         }
         (Vec::new(), Vec::new())

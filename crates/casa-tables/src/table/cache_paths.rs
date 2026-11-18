@@ -76,6 +76,22 @@ fn visit(
 }
 
 impl Table {
+    /// Read a concatenation's immediate table paths in its stored row order.
+    /// Plain and reference tables return `None`. No table cells are opened.
+    pub fn concatenated_source_paths(path: &Path) -> Result<Option<Vec<PathBuf>>, TableError> {
+        let path = table_cache_name(path)?;
+        let control = read_table_dat_dispatch(&path.join(crate::storage::TABLE_CONTROL_FILE))?;
+        match control {
+            TableDatResult::Concat(concat) => concat
+                .table_paths
+                .iter()
+                .map(|part| table_cache_name(&add_directory_for_link(part, &path)))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Some),
+            _ => Ok(None),
+        }
+    }
+
     /// Return the absolute plain-table cache names held by this table. A
     /// reference contributes its root and a concatenation contributes its
     /// constituents; memory tables contribute none. Names are sorted and

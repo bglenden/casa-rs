@@ -704,7 +704,7 @@ pub(crate) fn execute_apply_with_preparation_error(
     path: &Path,
     request: &ApplyPlanRequest,
     options: ApplyExecutionOptions,
-    preparation_error: Option<&str>,
+    preparation_error: Option<crate::plan::ApplyPreparationError<'_>>,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
     let path = path.to_path_buf();
     let total_started_at = Instant::now();
@@ -1506,8 +1506,6 @@ struct RowGeometryCache {
     last_projected_offsets: Vec<Option<LastProjectedOffset>>,
     last_fast_term_context: Option<RowGeometryContextKey>,
     last_fast_antpos_delays: Vec<Vec<Option<FastAntposDelay>>>,
-    last_fast_gain_curves: Vec<Vec<Option<FastReceptorGains>>>,
-    last_fast_opacities: Vec<Vec<Option<f32>>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1673,8 +1671,6 @@ impl RowGeometryCache {
         if self.last_fast_term_context != Some(context) {
             self.last_fast_term_context = Some(context);
             self.last_fast_antpos_delays.clear();
-            self.last_fast_gain_curves.clear();
-            self.last_fast_opacities.clear();
         }
     }
 
@@ -1707,39 +1703,6 @@ impl RowGeometryCache {
             offset_bits,
             delay_ns,
         });
-    }
-
-    fn cached_fast_gain_curve(
-        &mut self,
-        table_index: usize,
-        antenna_index: usize,
-    ) -> Option<FastReceptorGains> {
-        self.last_fast_gain_curves
-            .get(table_index)
-            .and_then(|values| values.get(antenna_index))
-            .and_then(|value| *value)
-    }
-
-    fn remember_fast_gain_curve(
-        &mut self,
-        table_index: usize,
-        antenna_index: usize,
-        gains: FastReceptorGains,
-    ) {
-        let values = resize_nested_vec(&mut self.last_fast_gain_curves, table_index, antenna_index);
-        values[antenna_index] = Some(gains);
-    }
-
-    fn cached_fast_opacity(&mut self, table_index: usize, antenna_index: usize) -> Option<f32> {
-        self.last_fast_opacities
-            .get(table_index)
-            .and_then(|values| values.get(antenna_index))
-            .and_then(|value| *value)
-    }
-
-    fn remember_fast_opacity(&mut self, table_index: usize, antenna_index: usize, gain: f32) {
-        let values = resize_nested_vec(&mut self.last_fast_opacities, table_index, antenna_index);
-        values[antenna_index] = Some(gain);
     }
 
     fn materialized_grid(&self, key: MaterializedGridKey) -> Option<Arc<CalibrationGrid>> {
@@ -2829,7 +2792,6 @@ fn build_fast_gain_pair(
         }
         (CalibrationGrid::GainCurve(ant1), CalibrationGrid::GainCurve(ant2)) => {
             let Some(ant1) = fast_gain_curve_values(
-                table_index,
                 ant1,
                 engine,
                 field_id,
@@ -2842,7 +2804,6 @@ fn build_fast_gain_pair(
                 return Ok(None);
             };
             let Some(ant2) = fast_gain_curve_values(
-                table_index,
                 ant2,
                 engine,
                 field_id,
@@ -2858,7 +2819,6 @@ fn build_fast_gain_pair(
         }
         (CalibrationGrid::Opacity(ant1), CalibrationGrid::Opacity(ant2)) => {
             let gain1 = fast_opacity_gain(
-                table_index,
                 ant1,
                 engine,
                 field_id,
@@ -2868,7 +2828,6 @@ fn build_fast_gain_pair(
                 reborrow_geometry_cache(&mut geometry_cache),
             )?;
             let gain2 = fast_opacity_gain(
-                table_index,
                 ant2,
                 engine,
                 field_id,
@@ -2953,9 +2912,7 @@ fn fast_antpos_delay_ns(
     Ok(delay_ns)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn fast_gain_curve_values(
-    table_index: usize,
     grid: &GainCurveGrid,
     engine: Option<&MsCalEngine>,
     field_id: i32,
@@ -2964,24 +2921,18 @@ fn fast_gain_curve_values(
     path: &Path,
     geometry_cache: Option<&mut RowGeometryCache>,
 ) -> Result<Option<FastReceptorGains>, ApplyExecutionError> {
-    let mut geometry_cache = geometry_cache;
     if grid.receptor_count > FAST_GAIN_RECEPTOR_LIMIT {
         return Ok(None);
     }
-    let antenna_index = usize::try_from(antenna_id).ok();
     let Some(engine) = engine else {
         return Err(ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason: "EGainCurve apply requires MeasurementSet geometry".to_string(),
         });
     };
-    let elevation = if let Some(cache) = reborrow_geometry_cache(&mut geometry_cache) {
-        cache.ensure_fast_term_context(time_seconds, field_id);
-        if let Some(antenna_index) = antenna_index
-            && let Some(gains) = cache.cached_fast_gain_curve(table_index, antenna_index)
-        {
-            return Ok(Some(gains));
-        }
+    // The sampled coefficients vary by calibration window and slice.
+    // Only cache the geometry, which is independent of those coefficients.
+    let elevation = if let Some(cache) = geometry_cache {
         cache.elevation(engine, time_seconds, field_id, antenna_id)
     } else {
         engine
@@ -3015,17 +2966,10 @@ fn fast_gain_curve_values(
         values,
         flags,
     };
-    if let (Some(cache), Some(antenna_index)) =
-        (reborrow_geometry_cache(&mut geometry_cache), antenna_index)
-    {
-        cache.remember_fast_gain_curve(table_index, antenna_index, gains);
-    }
     Ok(Some(gains))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn fast_opacity_gain(
-    table_index: usize,
     grid: &OpacityGrid,
     engine: Option<&MsCalEngine>,
     field_id: i32,
@@ -3034,21 +2978,13 @@ fn fast_opacity_gain(
     path: &Path,
     geometry_cache: Option<&mut RowGeometryCache>,
 ) -> Result<f32, ApplyExecutionError> {
-    let mut geometry_cache = geometry_cache;
     let Some(engine) = engine else {
         return Err(ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason: "TOpac apply requires MeasurementSet geometry".to_string(),
         });
     };
-    let antenna_index = usize::try_from(antenna_id).ok();
-    let elevation = if let Some(cache) = reborrow_geometry_cache(&mut geometry_cache) {
-        cache.ensure_fast_term_context(time_seconds, field_id);
-        if let Some(antenna_index) = antenna_index
-            && let Some(gain) = cache.cached_fast_opacity(table_index, antenna_index)
-        {
-            return Ok(gain);
-        }
+    let elevation = if let Some(cache) = geometry_cache {
         cache.elevation(engine, time_seconds, field_id, antenna_id)
     } else {
         engine
@@ -3069,11 +3005,6 @@ fn fast_opacity_gain(
     } else {
         1.0
     };
-    if let (Some(cache), Some(antenna_index)) =
-        (reborrow_geometry_cache(&mut geometry_cache), antenna_index)
-    {
-        cache.remember_fast_opacity(table_index, antenna_index, gain);
-    }
     Ok(gain)
 }
 
@@ -3427,12 +3358,32 @@ pub(crate) struct LoadedCalibrationTable {
     callibrary: Option<crate::CallibraryOptions>,
     time_plans: HashMap<i32, crate::lookup::TimePlan>,
     missing_grids: HashMap<i32, Arc<CalibrationGrid>>,
-    time_is_delay: bool,
+    time_parameter_family: Option<TimeParameterFamily>,
     phase_delay: bool,
     interp: ApplyInterpolationMode,
     supports_calwt: bool,
     engine: Option<Arc<MsCalEngine>>,
     pub(crate) solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
+}
+
+#[derive(Clone, Copy)]
+enum TimeParameterFamily {
+    Delay,
+    Antpos,
+    GainCurve,
+    Opacity,
+}
+
+impl TimeParameterFamily {
+    fn from_subtype(subtype: &str) -> Option<Self> {
+        match subtype {
+            "K Jones" => Some(Self::Delay),
+            "KAntPos Jones" => Some(Self::Antpos),
+            "EGainCurve" => Some(Self::GainCurve),
+            "TOpac" => Some(Self::Opacity),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -3811,7 +3762,7 @@ impl AntposGrid {
                 });
             }
         };
-        let ArrayValue::Bool(flags) = flags else {
+        let ArrayValue::Bool(_) = flags else {
             return Err(ApplyExecutionError::UnsupportedParameterShape {
                 path: path.display().to_string(),
                 shape: flags.shape().to_vec(),
@@ -3825,7 +3776,9 @@ impl AntposGrid {
         }
         Ok(Self {
             offsets_m: [values[[0, 0]], values[[1, 0]], values[[2, 0]]],
-            flagged: flags.iter().any(|flag| *flag),
+            // KAntPosJones::calcAllJones marks the projected Jones term valid
+            // regardless of the FPARAM flags. Missing rows are handled separately.
+            flagged: false,
         })
     }
 
@@ -3893,7 +3846,7 @@ impl GainCurveGrid {
                 });
             }
         };
-        let ArrayValue::Bool(flags) = flags else {
+        let ArrayValue::Bool(_) = flags else {
             return Err(ApplyExecutionError::UnsupportedParameterShape {
                 path: path.display().to_string(),
                 shape: flags.shape().to_vec(),
@@ -3907,8 +3860,10 @@ impl GainCurveGrid {
         }
         Ok(Self {
             receptor_count: coefficients.shape()[0] / 4,
+            // EGainCurve::calcAllJones evaluates the coefficients and marks
+            // each Jones term valid regardless of the input flags.
+            flags: ArrayD::from_elem(IxDyn(coefficients.shape()), false),
             coefficients,
-            flags: flags.clone(),
         })
     }
 
@@ -4153,7 +4108,11 @@ fn load_parameters(
             source: MsError::from(source),
         }
     })?;
-    let supports_calwt = table_plan.summary.parameter_family == CalibrationParameterFamily::Complex;
+    let supports_calwt = table_plan.summary.parameter_family == CalibrationParameterFamily::Complex
+        || matches!(
+            table_plan.summary.table_subtype.as_str(),
+            "TOpac" | "EGainCurve"
+        );
 
     let mut solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>> = HashMap::new();
     for row_index in 0..table.row_count() {
@@ -4287,7 +4246,7 @@ fn load_parameters(
         callibrary: None,
         time_plans: HashMap::new(),
         missing_grids: HashMap::new(),
-        time_is_delay: false,
+        time_parameter_family: None,
         phase_delay: false,
     })
 }
@@ -4360,7 +4319,7 @@ fn load_bpoly_calibration_table(
         callibrary: None,
         time_plans: HashMap::new(),
         missing_grids: HashMap::new(),
-        time_is_delay: false,
+        time_parameter_family: None,
         phase_delay: false,
     })
 }
@@ -5324,31 +5283,8 @@ mod tests {
         assert_eq!(cache.cached_fast_antpos_delay(0, 2, offset_a), Some(4.25));
         assert_eq!(cache.cached_fast_antpos_delay(0, 2, offset_b), None);
 
-        let gains = FastReceptorGains {
-            receptor_count: 2,
-            values: [1.5, 2.5, 0.0, 0.0],
-            flags: [false, true, false, false],
-        };
-        cache.remember_fast_gain_curve(1, 3, gains);
-        let cached_gains = cache.cached_fast_gain_curve(1, 3).expect("gain cache");
-        assert_eq!(cached_gains.sample(0), (1.5, false));
-        // Cache raw solutions unchanged. At application, JonesDiag::invert
-        // substitutes identity for a flagged gain (the other antenna still applies).
-        assert_eq!((cached_gains.values[1], cached_gains.flags[1]), (2.5, true));
-        assert_eq!(cached_gains.sample(8), (1.0, true));
-
-        cache.remember_fast_opacity(2, 4, 0.875);
-        assert_eq!(cache.cached_fast_opacity(2, 4), Some(0.875));
-
         cache.ensure_fast_term_context(12.5, 4);
         assert_eq!(cache.cached_fast_antpos_delay(0, 2, offset_a), None);
-        assert_eq!(
-            cache
-                .cached_fast_gain_curve(1, 3)
-                .map(|value| value.sample(0)),
-            None
-        );
-        assert_eq!(cache.cached_fast_opacity(2, 4), None);
 
         let antpos = Arc::new(CalibrationGrid::Antpos(AntposGrid {
             offsets_m: [1.0, 2.0, 3.0],

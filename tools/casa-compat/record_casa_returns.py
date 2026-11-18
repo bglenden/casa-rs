@@ -121,7 +121,7 @@ def ms_cases(root: Path) -> dict[str, Callable[[], Any]]:
     }
 
 
-def make_cal_ms(path: str, *, channels: int = 8, scan_seconds: int = 60, integration_seconds: int = 10, stokes: str = 'XX YY') -> None:
+def make_cal_ms(path: str, *, channels: int = 8, scan_seconds: int = 60, integration_seconds: int = 10, stokes: str = 'XX YY', telescope: str = 'ALMA', frequency: str = '100GHz', antenna_names: list[str] | None = None) -> None:
     """A MeasurementSet of five antennas, two fields (FLUX, then PHASE) and
     one 8-channel window in XX and YY: a 60 s scan of each, 10 s
     integrations, predicted from point sources of 2 and 1 Jy with no
@@ -131,26 +131,26 @@ def make_cal_ms(path: str, *, channels: int = 8, scan_seconds: int = 60, integra
     me = measures()
     components = path + ".cl"
     cl = componentlist()
-    cl.addcomponent(dir="J2000 0h0m0s -30d0m0s", flux=2.0, fluxunit="Jy", freq="100GHz", shape="point")
-    cl.addcomponent(dir="J2000 1h0m0s -30d0m0s", flux=1.0, fluxunit="Jy", freq="100GHz", shape="point")
+    cl.addcomponent(dir="J2000 0h0m0s -30d0m0s", flux=2.0, fluxunit="Jy", freq=frequency, shape="point")
+    cl.addcomponent(dir="J2000 1h0m0s -30d0m0s", flux=1.0, fluxunit="Jy", freq=frequency, shape="point")
     cl.rename(components)
     cl.close()
     sm = simulator()
     sm.open(path)
     sm.setconfig(
-        telescopename="ALMA",
+        telescopename=telescope,
         x=[0.0, 30.0, 0.0, 30.0, 60.0],
         y=[0.0, 0.0, 30.0, 30.0, 10.0],
         z=[0.0] * 5,
-        dishdiameter=[12.0] * 5,
+        dishdiameter=[25.0 if telescope == "VLA" else 12.0] * 5,
         mount=["alt-az"] * 5,
-        antname=["A0", "A1", "A2", "A3", "A4"],
+        antname=antenna_names or ["A0", "A1", "A2", "A3", "A4"],
         padname=["P0", "P1", "P2", "P3", "P4"],
         coordsystem="local",
-        referencelocation=me.observatory("ALMA"),
+        referencelocation=me.observatory(telescope),
     )
     sm.setspwindow(
-        spwname="SPW0", freq="100GHz", deltafreq="1MHz", freqresolution="1MHz", nchannels=channels, stokes=stokes
+        spwname="SPW0", freq=frequency, deltafreq="1MHz", freqresolution="1MHz", nchannels=channels, stokes=stokes
     )
     sm.setfeed(mode="perfect R L" if stokes.startswith('RR') else "perfect X Y")
     sm.setfield(sourcename="FLUX", sourcedirection=me.direction("J2000", "0h0m0s", "-30d0m0s"))

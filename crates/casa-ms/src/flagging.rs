@@ -44,7 +44,9 @@ use casa_numerics::solve_weighted_least_squares;
 
 mod extend;
 mod summary;
+mod version_backup;
 pub use summary::{FlagCounts, FlagSummaryBreakdown};
+pub use version_backup::{save_next_flag_backup, save_next_partition_flag_backup};
 
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
@@ -2856,27 +2858,6 @@ pub fn rename_flag_version(
         reason: format!("rename flag version {oldname:?}: {source}"),
     })?;
     rename_flag_version_entry(path, oldname, versionname, comment)
-}
-
-/// Save the MAIN flags to the next free `<task>_N` flag version and return its
-/// name.
-///
-/// This is CASA's `flaghelper.backupFlags(prename=task)`: `N` is the smallest
-/// positive integer whose name is not yet taken, and the backup replaces
-/// nothing. `flagdata` and `applycal` call it before they change flags, so
-/// `flagmanager(mode="restore")` can undo the run.
-pub fn save_next_flag_backup(ms: &MeasurementSet, task: &str) -> Result<String, FlaggingError> {
-    let versions = list_flag_versions(ms)?;
-    let mut index = 1;
-    loop {
-        let candidate = format!("{task}_{index}");
-        if !versions.iter().any(|entry| entry.name == candidate) {
-            let comment = format!("{task} auto-backup");
-            save_flag_version(ms, &candidate, &comment, FlagMerge::Replace)?;
-            return Ok(candidate);
-        }
-        index += 1;
-    }
 }
 
 fn flag_version_schema() -> Result<TableSchema, casa_tables::SchemaError> {

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from copy import deepcopy
 import inspect
 import io
 import json
@@ -30,6 +31,8 @@ from record_casa_returns import make_cal_ms
 
 
 def plain(value):
+    if isinstance(value, Path):
+        return str(value)
     if isinstance(value, dict):
         return {str(key): plain(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -47,6 +50,34 @@ def copy_ms(source, destination, endian='aipsrc'):
     copied = tool.copy(str(destination), deep=True, valuecopy=True, endian=endian)
     copied.close()
     tool.close()
+
+
+def isolated_applycal(arguments):
+    return subprocess.run([sys.executable, '-c',
+        'import json,resource,sys; resource.setrlimit(resource.RLIMIT_CORE,(0,0)); '
+        'from casatasks import applycal; applycal(**json.load(sys.stdin))'],
+        input=json.dumps(arguments), text=True, capture_output=True, timeout=45)
+
+
+def bpoly_nearest_control(root, source, poly, native):
+    paths = {engine: root/f'family-BPOLY-nearest.{engine}.ms'
+             for engine in ['crash', 'casa-control', 'native']}
+    for path in paths.values():
+        copy_ms(source, path)
+    arguments = dict(vis=str(paths['crash']), gaintable=[str(poly)], gainfield=['nearest'], flagbackup=False)
+    probe = isolated_applycal(arguments)
+    assert probe.returncode in [-6, -11], (probe.returncode, probe.stderr)
+    assert casa.applycal(vis=str(paths['casa-control']), gaintable=[str(poly)], flagbackup=False) is None
+    preload = os.environ.pop('LD_PRELOAD', None)
+    try:
+        assert native.applycal(**dict(arguments, vis=str(paths['native']))) is None
+    finally:
+        if preload is not None:
+            os.environ['LD_PRELOAD'] = preload
+    equal(paths['casa-control'], paths['native'])
+    return dict(casa_returncode=probe.returncode, casa_arguments=arguments,
+                casa_stderr=probe.stderr, corrected_casa_crash=True,
+                native_matches_casa_unscoped_control=True)
 
 
 def run(root, native_bin, only=None):
@@ -293,15 +324,56 @@ def run(root, native_bin, only=None):
     tool.putcol('NUM_CHAN', np.full_like(tool.getcol('NUM_CHAN'), 4))
     tool.close()
 
+    family_tables = {}
+    for label, caltype, parameters, antennas in [
+            ('K', 'sbd', [5.], 'A0'),
+            ('antpos', 'antpos', [.001, .002, .003], 'A0'),
+            ('opacity', 'opac', [.15], '')]:
+        path = root/('family-'+label+'.cal')
+        casa.gencal(vis=str(source), caltable=str(path), caltype=caltype, parameter=parameters, antenna=antennas)
+        family_tables[label] = path
+    vla_source = root/'source-vla.ms'
+    make_cal_ms(str(vla_source), stokes='RR LL', telescope='VLA', frequency='1.5GHz', antenna_names=['ea01','ea02','ea03','ea04','ea05'])
+    gaincurve = root/'family-gaincurve.cal'
+    casa.gencal(vis=str(vla_source), caltable=str(gaincurve), caltype='gc')
+    family_tables['gaincurve'] = gaincurve
+    poly = root/'family-poly.bcal'
+    casa.bandpass(vis=str(source), caltable=str(poly), bandtype='BPOLY', refant='A0', solint='inf', minsnr=0., degamp=1, degphase=1, maskedge=0)
+    family_tables['BPOLY'] = poly
+    varying_family_tables = {}
+    for label, original in family_tables.items():
+        if label == 'BPOLY':
+            continue
+        destination = root/('family-'+label+'-time.cal')
+        copy_ms(original, destination)
+        input_ms = vla_source if label == 'gaincurve' else source
+        tool.open(str(input_ms))
+        epoch = float(tool.getcol('TIME').min())-5.
+        tool.close()
+        tool.open(str(destination), nomodify=False)
+        count = tool.nrows()
+        records = [{column: tool.getcell(column, row) for column in tool.colnames() if tool.iscelldefined(column, row)} for row in range(count)]
+        tool.addrows(count*3)
+        for knot, multiplier in enumerate([1., 2., .5, 1.25]):
+            for row, record in enumerate(records):
+                index = knot*count+row
+                for column, value in record.items():
+                    tool.putcell(column, index, value)
+                tool.putcell('TIME', index, epoch+40.*knot)
+                tool.putcell('FPARAM', index, record['FPARAM']*multiplier)
+        tool.close()
+        varying_family_tables[label] = destination
+
     result = dict(casa_version=casa.version_string(), signature=str(reference), case_filter=only, cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
-    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None, casa_control_callib=None):
+    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None, casa_control_callib=None, positional=False, vis_as_list=False):
         if only is not None and re.search(only, name) is None:
             return
         records, paths = {}, {}
         supplied_tables = (extra or {}).get('gaintable', [str(gain)])
-        supplied_tables = [supplied_tables] if isinstance(supplied_tables, str) else supplied_tables
+        if isinstance(supplied_tables, (str, Path)):
+            supplied_tables = [supplied_tables]
         before_gain = {Path(path): snapshot(Path(path)) if Path(path).exists() else None
                        for path in supplied_tables if path}
         for engine, module in [('casa', casa), ('native', native)]:
@@ -315,11 +387,12 @@ def run(root, native_bin, only=None):
                 tool.close()
             if precorrected:
                 tool.open(str(path), nomodify=False)
-                descriptor = tool.getcoldesc('DATA')
-                descriptor['name'] = 'CORRECTED_DATA'
-                descriptor['dataManagerType'] = 'StandardStMan'
-                descriptor['dataManagerGroup'] = 'CorrectedDataTest'
-                tool.addcols({'CORRECTED_DATA': descriptor})
+                if 'CORRECTED_DATA' not in tool.colnames():
+                    descriptor = tool.getcoldesc('DATA')
+                    descriptor['name'] = 'CORRECTED_DATA'
+                    descriptor['dataManagerType'] = 'StandardStMan'
+                    descriptor['dataManagerGroup'] = 'CorrectedDataTest'
+                    tool.addcols({'CORRECTED_DATA': descriptor})
                 tool.putcol('CORRECTED_DATA', tool.getcol('DATA')*(7.+2.j))
                 tool.close()
             if weight_seed is not None:
@@ -339,8 +412,8 @@ def run(root, native_bin, only=None):
                     tool.putcol(column, values)
                 tool.close()
             before = history(path)['TIME'].size
-            arguments = dict(vis=str(path), gaintable=[str(gain)], flagbackup=False)
-            arguments.update(extra or {})
+            arguments = dict(vis=[str(path)] if vis_as_list else str(path), gaintable=[str(gain)], flagbackup=False)
+            arguments.update(deepcopy(extra or {}))
             captured = io.StringIO()
             preload = os.environ.pop('LD_PRELOAD', None) if engine == 'native' else None
             cpu_start = sum(resource.getrusage(kind).ru_utime+resource.getrusage(kind).ru_stime
@@ -350,7 +423,11 @@ def run(root, native_bin, only=None):
             try:
                 with contextlib.redirect_stderr(captured):
                     for _ in range(repetitions):
-                        value = module.applycal(**arguments)
+                        if positional:
+                            value = module.applycal(*(arguments.get(key, deepcopy(param.default))
+                                                      for key, param in reference.parameters.items()))
+                        else:
+                            value = module.applycal(**arguments)
                 record = dict(value=plain(value))
             except Exception as error:
                 record = dict(error=type(error).__name__, exception_bases=[kind.__name__ for kind in type(error).__mro__], message=str(error))
@@ -429,6 +506,19 @@ def run(root, native_bin, only=None):
                     if message.startswith('version: '):
                         assert message.startswith('version: 6.7.6-14 ' if engine == 'casa' else 'version: casa-rs '), message
                         message = '<implementation version>'
+                    if name == 'api-arrays' and engine == 'casa':
+                        # CASA prints NumPy constructors in these HISTORY
+                        # rows. The stored selector and map values are equal.
+                        key, sep, value = message.partition(' = ')
+                        parameter = key.strip()
+                        if parameter in ['gaintable', 'gainfield', 'interp']:
+                            array = extra[parameter]
+                            assert value == repr(list(array)), message
+                            message = key + sep + repr(array.tolist())
+                        elif parameter == 'spwmap':
+                            array = extra[parameter]
+                            assert value == repr([array]), message
+                            message = key + sep + repr([array.tolist()])
                     messages.append(message.replace(str(paths[engine]), '<vis>'))
                 normalized[engine] = messages
             assert normalized['casa'] == normalized['native'], normalized
@@ -542,6 +632,84 @@ def run(root, native_bin, only=None):
             ('empty-intent-bound-union', dict(intent=f'>{state_start}&<{state_start+1},{state_start}')),
             ('trial-error', dict(uvrange='invalid', applymode='trial'))]:
         case('selection-'+name, arguments, input_vis=selection_source)
+    if only is None or 'literal' in only:
+        literal_source = root/'literal-selectors.ms'
+        copy_ms(source, literal_source)
+        for subtable, row in [('FIELD', 1), ('ANTENNA', 0), ('SPECTRAL_WINDOW', 0)]:
+            tool.open(str(literal_source/subtable), nomodify=False)
+            tool.putcell('NAME', row, 'none')
+            tool.close()
+        for name in ['field', 'spw', 'antenna', 'scan', 'timerange', 'msselect']:
+            case(f'api-literal-{name}', {name: 'none', 'flagbackup': True},
+                 input_vis=literal_source, precorrected=True)
+        library = root/'none'
+        library.write_text(f"caltable='{constant}'\n")
+        case('api-literal-callib', dict(docallib=True, callib='none'), precorrected=True)
+
+    for label, arguments in [
+        ('field-wildcard', dict(field='PH*')),
+        ('field-id-range', dict(field='0~1')),
+        ('field-bound', dict(field='>0')),
+        ('spw-wildcard', dict(spw='*:1~5')),
+        ('time-exact', dict(timerange='2019/12/31/21:52:15.3')),
+        ('time-range', dict(timerange='21:52:15~21:52:37')),
+        ('time-duration', dict(timerange='21:52:15+00:00:20')),
+        ('time-bound', dict(timerange='>21:53:15')),
+        ('time-bracketed', dict(timerange='[21:52:17~21:52:27]')),
+        ('time-buffer-width', dict(timerange='3.0[21:52:17~21:52:27]')),
+        ('time-wildcard', dict(timerange='2019/12/*/21:52:15.3')),
+        ('time-invalid', dict(timerange='invalid', flagbackup=True)),
+        ('antenna-union', dict(antenna='A0&A1;A3&A4')),
+        ('antenna-exclude', dict(antenna='!A0')),
+        ('antenna-length', dict(antenna='<50m')),
+        ('antenna-invalid', dict(antenna='not-an-antenna', flagbackup=True)),
+        ('scan-range', dict(scan='1~2')),
+        ('scan-bound', dict(scan='>1')),
+        ('scan-missing', dict(scan='999', flagbackup=True)),
+        ('observation-int', dict(observation=1)),
+        ('observation-union', dict(observation='0,1')),
+        ('observation-missing', dict(observation='99', flagbackup=True)),
+        ('taql', dict(msselect='ANTENNA1==0 AND SCAN_NUMBER==2')),
+        ('taql-empty', dict(msselect='ANTENNA1==999', flagbackup=True)),
+        ('taql-invalid', dict(msselect='NONEXISTENT_COLUMN==0', flagbackup=True)),
+    ]:
+        case(f'api-select-{label}', arguments, input_vis=observation_source)
+
+    for label, arguments in [
+        ('scalar-map', dict(spwmap=0, flagbackup=True)),
+        ('empty-text-map', dict(spwmap='')),
+        ('empty-record-map', dict(spwmap={})),
+        ('record-map', dict(spwmap={'0': [0]}, flagbackup=True)),
+        ('unused-malformed-map', dict(spwmap=[[0], 'unused'])),
+        ('invalid-observation-type', dict(observation=1.5, flagbackup=True)),
+        ('invalid-observation-int16', dict(observation=np.int16(0), flagbackup=True)),
+        ('invalid-tuple-spwmap', dict(spwmap=(0,), flagbackup=True)),
+        ('invalid-tuple-uvrange', dict(uvrange=(), flagbackup=True)),
+        ('observation-bool', dict(observation=True, flagbackup=True)),
+        ('uvrange-list', dict(uvrange=['<50m', '>60m'])),
+        ('uvrange-empty-list', dict(uvrange=[])),
+        ('scalar-lists', dict(gaintable=str(time_gain), interp='nearest', gainfield='1', calwt=False, spwmap=[0])),
+        ('tuple', dict(gaintable=(str(time_gain), str(constant)), interp=('linear', 'nearest'),
+                       gainfield=('1', ''), calwt=(True, False), spwmap=[[0], [0]])),
+        ('arrays', dict(gaintable=np.array([str(time_gain), str(constant)]), interp=np.array(['linear', 'nearest']),
+                        gainfield=np.array(['1', '']), calwt=[True, False], spwmap=np.array([0]))),
+        ('skip-empty-table', dict(gaintable=['', str(time_gain)], gainfield=['unknown', '1'], calwt=[False, True])),
+        ('no-tables', dict(gaintable=[], flagbackup=True)),
+        ('blank-table', dict(gaintable=[''], flagbackup=True)),
+        ('gain-missing', dict(gaintable=[str(root/'absent.gcal')], flagbackup=True)),
+        ('vis-missing', dict(vis=str(root/'absent.ms'), flagbackup=True)),
+        ('vis-empty', dict(vis='')),
+        ('calwt-short', dict(gaintable=[str(time_gain)]*3, calwt=[True, False], flagbackup=True)),
+        ('calwt-empty', dict(calwt=[], flagbackup=True)),
+        ('invalid-mode', dict(applymode='invalid', flagbackup=True)),
+        ('invalid-bool', dict(selectdata=1, flagbackup=True)),
+        ('negative-observation', dict(observation=-1, flagbackup=True)),
+        ('variant-uvrange', dict(uvrange=50)),
+    ]:
+        case(f'api-{label}', arguments, input_vis=chain_source)
+    case('api-vis-list', dict(flagbackup=True), vis_as_list=True)
+    case('api-positional', dict(field='PHASE', interp='nearest'), gain=time_gain, positional=True)
+
     case('chain-default-fields', gain=time_gain, input_vis=chain_source, precorrected=True)
     for name, selector in [('id0', '0'), ('id1', '1'), ('name0', 'FLUX'), ('name1', 'PHASE'),
                            ('glob', 'FL*'), ('all', '*'), ('list', '0,1'), ('range', '0~1'),
@@ -584,6 +752,68 @@ def run(root, native_bin, only=None):
         case('review-missing-antenna-'+mode, dict(interp=['linearperobs'], applymode=mode), gain=missing_antenna_gain, input_vis=observation_source, precorrected=True)
     for method in ['cubic', 'cubicflag']:
         case('review-compressed-grid-'+method, dict(interp=['linear,'+method]), gain=compressed_bandpass, input_vis=compressed_source, precorrected=True)
+    for label, gain in family_tables.items():
+        input_vis = vla_source if label == 'gaincurve' else source
+        case('family-'+label+'-default', gain=gain, input_vis=input_vis, precorrected=True)
+        case('family-'+label+'-channels', dict(spw='0:1~5^2'), gain=gain, input_vis=input_vis, precorrected=True)
+        case('family-'+label+'-no-calwt', dict(calwt=False), gain=gain, input_vis=input_vis, precorrected=True, spectral_sigma=True)
+        case('family-'+label+'-trial', dict(applymode='trial'), gain=gain, input_vis=input_vis, precorrected=True)
+    for label, gain in varying_family_tables.items():
+        input_vis = vla_source if label == 'gaincurve' else source
+        flagged = root/f'family-{label}-flagged.cal'
+        copy_ms(gain, flagged)
+        tool.open(str(flagged), nomodify=False)
+        flags = tool.getcol('FLAG')
+        flags[:, :, tool.getcol('ANTENNA1') == 0] = True
+        tool.putcol('FLAG', flags)
+        tool.close()
+        for mode in ['calflag', 'calonly', 'flagonly', 'calflagstrict', 'flagonlystrict']:
+            case(f'family-{label}-flagged-{mode}',
+                 dict(interp=['linear'], applymode=mode, spw='0:1~5^2'),
+                 gain=flagged, input_vis=input_vis, precorrected=True, spectral_sigma=True)
+        library = root/f'family-{label}-library.txt'
+        library.write_text(f"caltable='{gain}' tinterp='cubic' calwt=True\n")
+        case(f'family-{label}-library', dict(docallib=True, callib=str(library)),
+             input_vis=input_vis, precorrected=True, spectral_sigma=True)
+        case('family-'+label+'-time-cubic', dict(interp=['cubic']), gain=gain,
+             input_vis=input_vis, precorrected=True)
+    for label, input_vis in [('opacity', source), ('gaincurve', vla_source)]:
+        if only is not None and re.search(only, f'family-{label}-same-time-windows') is None:
+            continue
+        vis, gain = multi_window(input_vis, family_tables[label], root, windows=2,
+                                 name=f'family-{label}-multi')
+        tool.open(str(vis/'DATA_DESCRIPTION'), nomodify=False)
+        row = {column: tool.getcell(column, 0) for column in tool.colnames()}
+        tool.addrows(1)
+        for column, value in row.items():
+            tool.putcell(column, 1, 1 if column == 'SPECTRAL_WINDOW_ID' else value)
+        tool.close()
+        tool.open(str(vis), nomodify=False)
+        tool.putcol('DATA_DESC_ID', np.arange(tool.nrows(), dtype=np.int32) % 2)
+        tool.close()
+        tool.open(str(gain), nomodify=False)
+        parameters = tool.getcol('FPARAM')
+        parameters[:, :, tool.getcol('SPECTRAL_WINDOW_ID') == 1] *= 2
+        tool.putcol('FPARAM', parameters)
+        tool.close()
+        case(f'family-{label}-same-time-windows', dict(calwt=False), gain=gain, input_vis=vis)
+
+    for selector in ['0', '1', 'PHASE', 'NO_SUCH_FIELD']:
+        case('family-BPOLY-gainfield-'+selector, dict(gainfield=[selector]), gain=poly, precorrected=True)
+
+    family_chain = [family_tables[label] for label in ['K', 'antpos', 'opacity', 'BPOLY']]
+    for label, chain in [('forward', family_chain), ('reverse', family_chain[::-1])]:
+        case(f'family-chain-{label}', dict(gaintable=[str(gain) for gain in [constant, *chain]],
+             calwt=[gain in {constant, family_tables['opacity']} for gain in [constant, *chain]]),
+             precorrected=True, spectral_sigma=True)
+    poly_library = root/'family-BPOLY-library.txt'
+    poly_library.write_text(f"caltable='{poly}'\n")
+    case('family-BPOLY-library', dict(docallib=True, callib=str(poly_library)), precorrected=True)
+
+    if only is None or re.search(only, 'family-BPOLY-nearest'):
+        result.setdefault('casa_crash_controls', {})['BPOLY-nearest'] = bpoly_nearest_control(root, source, poly, native)
+        (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
+
     # Callibrary task parsing uses CalLibraryGram/CLPatchPanel, distinct from
     # the private Python helper's read/eval implementation.
     mixed_observations = root/'source-mixed-observations.ms'
@@ -697,6 +927,7 @@ def run(root, native_bin, only=None):
     active = root/'library-default.txt'
     case('callib-inactive-traditional', dict(docallib=True, callib=str(active), gaintable=[str(root/'absent.gcal')],
          gainfield=['NO_SUCH_FIELD'], interp=['invalid'], spwmap=[999], calwt=[False]), gain=time_gain, input_vis=chain_source, precorrected=True)
+    case('callib-inactive-scalar-spwmap', dict(docallib=True, callib=str(active), spwmap=0), input_vis=chain_source)
     case('callib-empty-path', dict(docallib=True), gain=time_gain, input_vis=chain_source)
     duplicate = root/'library-repeat.txt'
     duplicate.write_text(f"caltable='{time_gain}' field='FLUX' fldmap='FLUX' calwt=False\ncaltable='{time_gain}' field='PHASE' fldmap='PHASE' calwt=True\n")
@@ -711,15 +942,12 @@ def run(root, native_bin, only=None):
     # CASA crashes when perscan is combined with multiple observation IDs.
     # Its documented/source partition is only by scan. Compare native results
     # to the same samples/scan series under CASA's working one-observation control.
-    result['casa_crash_controls'] = {}
+    result.setdefault('casa_crash_controls', {})
     for method in ['nearestperscan', 'linearperscan', 'linearperobsperscan', 'spline']:
         crash_vis = root/('crash-'+method+'.ms')
         copy_ms(observation_source if method != 'spline' else chain_source, crash_vis)
         arguments = dict(vis=str(crash_vis), gaintable=[str(observation_gain if method != 'spline' else time_gain)], interp=[method], flagbackup=False)
-        probe = subprocess.run([sys.executable, '-c',
-            'import json,resource,sys; resource.setrlimit(resource.RLIMIT_CORE,(0,0)); '
-            'from casatasks import applycal; applycal(**json.load(sys.stdin))'],
-            input=json.dumps(arguments), text=True, capture_output=True, timeout=45)
+        probe = isolated_applycal(arguments)
         assert probe.returncode == -11, (method, probe.returncode, probe.stderr)
         record = dict(casa_returncode=probe.returncode, casa_arguments=arguments,
                       casa_stderr=probe.stderr, corrected_casa_crash=True)
@@ -742,7 +970,6 @@ def run(root, native_bin, only=None):
             record['native_reference'] = 'apply_execute::spline_time_apply_matches_the_closed_form_natural_curve'
         result['casa_crash_controls'][method] = record
         (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
-    return result
     return result
 
 

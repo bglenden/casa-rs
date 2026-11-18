@@ -27,6 +27,7 @@ pub(super) fn render(
 fn render_json(result: &CalibrationTaskResult) -> Result<String, String> {
     let report = match result {
         CalibrationTaskResult::Apply(report) => serde_json::to_string_pretty(report),
+        CalibrationTaskResult::ApplyMultiMs(report) => serde_json::to_string_pretty(report),
         CalibrationTaskResult::ExportCorrectedData(report) => serde_json::to_string_pretty(report),
         CalibrationTaskResult::Summary(report) => serde_json::to_string_pretty(report),
         CalibrationTaskResult::PlanApply(report) => serde_json::to_string_pretty(report),
@@ -44,6 +45,21 @@ fn render_json(result: &CalibrationTaskResult) -> Result<String, String> {
 fn render_text(result: &CalibrationTaskResult) -> String {
     match result {
         CalibrationTaskResult::Apply(report) => render_apply_report_text(report),
+        CalibrationTaskResult::ApplyMultiMs(report) => {
+            let mut text = format!("Multi-MS: {}\n", report.measurement_set.display());
+            if let Some(version) = &report.flag_backup_version {
+                let _ = writeln!(text, "  flag backup: {version}");
+            }
+            for part in &report.partitions {
+                match &part.result {
+                    Ok(report) => text.push_str(&render_apply_report_text(report)),
+                    Err(error) => {
+                        let _ = writeln!(text, "  {}: {error}", part.measurement_set.display());
+                    }
+                }
+            }
+            text
+        }
         CalibrationTaskResult::ExportCorrectedData(report) => {
             render_export_corrected_data_report_text(report)
         }

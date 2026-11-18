@@ -14234,37 +14234,38 @@
           "projections": {
             "cli": {"flags": ["--vis", "--ms"], "metavar": "MS"},
             "provider": {"field": "measurement_set", "adapter": "identity"},
-            "python": {"name": "vis"},
+            "python": {"name": "vis", "type_hint": "StrPath"},
             "presentation": {"label": "MeasurementSet Path", "group": "Input"}
           }
         },
         {
           "name": "field",
-          "concept": {"id": "ms.selection.field", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.field", "semantic_revision": 4},
           "order": 1,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "context_role": "field_selection",
-          "surface_note": "This calibration provider currently accepts comma-separated FIELD_ID integers.",
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal keeps literal text for native parsing and HISTORY. Only empty text is absent."},
           "projections": {
-            "cli": {"flags": ["--field"], "metavar": "IDS"},
-            "provider": {"field": "field", "adapter": "omit_none"},
+            "cli": {"flags": ["--field"], "metavar": "SELECTOR"},
+            "provider": {"field": "field", "adapter": "identity"},
             "python": {"name": "field"},
             "presentation": {"label": "Field IDs", "group": "Selection"}
           }
         },
         {
           "name": "spw",
-          "concept": {"id": "ms.selection.spw", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.spw", "semantic_revision": 3},
           "order": 2,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "context_role": "spectral_window_selection",
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal keeps literal text for native parsing and HISTORY. Only empty text is absent."},
           "projections": {
-            "cli": {"flags": ["--spw"], "metavar": "IDS"},
-            "provider": {"field": "spw", "adapter": "omit_none"},
+            "cli": {"flags": ["--spw"], "metavar": "SELECTOR"},
+            "provider": {"field": "spw", "adapter": "identity"},
             "python": {"name": "spw"},
             "presentation": {"label": "SPW IDs", "group": "Selection"}
           }
@@ -14276,7 +14277,7 @@
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal takes a scalar CASA selector string and preserves its literal text, including empty text and names such as none. Legacy normalization and per-MeasurementSet list consumers keep their existing revisions."},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal passes a CASA variant to calibrater.selectvis and records its original value in HISTORY."},
           "projections": {
             "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
             "provider": {"field": "intent", "adapter": "identity"},
@@ -14301,86 +14302,90 @@
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 4},
           "order": 5,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal keeps literal text for native parsing and HISTORY. Only empty text is absent."},
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "START:END"},
-            "provider": {"field": "timerange", "adapter": "omit_none"},
+            "provider": {"field": "timerange", "adapter": "identity"},
             "python": {"name": "timerange"},
             "presentation": {"label": "Time Range", "group": "Selection"}
           }
         },
         {
           "name": "uvrange",
-          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 3},
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 4},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal takes a scalar CASA selector string and preserves its literal text, including empty text and names such as none. Legacy normalization and per-MeasurementSet list consumers keep their existing revisions."},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal passes a CASA variant to calibrater.selectvis and records its original value in HISTORY."},
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
             "provider": {"field": "uvrange", "adapter": "identity"},
-            "python": {"name": "uvrange"},
+            "python": {"name": "uvrange", "type_hint": "str | int | float | list[str]"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
           }
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 4},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal keeps literal text for native parsing and HISTORY. Only empty text is absent."},
           "projections": {
-            "cli": {"flags": ["--antenna"], "metavar": "IDS"},
-            "provider": {"field": "antenna", "adapter": "omit_none"},
+            "cli": {"flags": ["--antenna"], "metavar": "SELECTOR"},
+            "provider": {"field": "antenna", "adapter": "identity"},
             "python": {"name": "antenna"},
             "presentation": {"label": "Antenna IDs", "group": "Selection"}
           }
         },
         {
           "name": "scan",
-          "concept": {"id": "ms.selection.scan", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.scan", "semantic_revision": 4},
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal keeps literal text for native parsing and HISTORY. Only empty text is absent."},
           "projections": {
             "cli": {"flags": ["--scan"], "metavar": "IDS"},
-            "provider": {"field": "scan", "adapter": "omit_none"},
+            "provider": {"field": "scan", "adapter": "identity"},
             "python": {"name": "scan"},
             "presentation": {"label": "Scan Numbers", "group": "Selection"}
           }
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 4},
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--observation"], "metavar": "IDS"},
-            "provider": {"field": "observation", "adapter": "omit_none"},
-            "python": {"name": "observation"},
+            "provider": {"field": "observation", "adapter": "identity"},
+            "python": {"name": "observation", "type_hint": "str | int"},
             "presentation": {"label": "Observation IDs", "group": "Selection"}
           },
-          "unimplemented_forms": {"issue": 979, "forms": "an observation id as a number (give it as text: observation='0')"}
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal accepts numeric observation IDs and records their original type in HISTORY."}
         },
         {
           "name": "msselect",
-          "concept": {"id": "ms.selection.msselect", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.msselect", "semantic_revision": 2},
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal keeps literal text for native parsing and HISTORY. Only empty text is absent."},
           "projections": {
             "cli": {"flags": ["--msselect"], "metavar": "EXPR"},
-            "provider": {"field": "msselect", "adapter": "omit_none"},
+            "provider": {"field": "msselect", "adapter": "identity"},
             "python": {"name": "msselect"},
             "presentation": {"label": "MSSelect", "group": "Selection", "advanced": true}
           }
@@ -14401,14 +14406,15 @@
         },
         {
           "name": "callib",
-          "concept": {"id": "parameter.callib", "semantic_revision": 1},
+          "concept": {"id": "parameter.callib", "semantic_revision": 2},
           "order": 12,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "reviewed_homonym": {"review_id": "#1518", "reason": "Applycal keeps literal text for native parsing and HISTORY. Only empty text is absent."},
           "projections": {
             "cli": {"flags": ["--callib"], "metavar": "PATH"},
-            "provider": {"field": "callib", "adapter": "omit_none"},
+            "provider": {"field": "callib", "adapter": "identity"},
             "python": {"name": "callib"},
             "presentation": {"label": "Callibrary File", "group": "Input"}
           }
@@ -14459,7 +14465,7 @@
         },
         {
           "name": "spwmap",
-          "concept": {"id": "setapply.spwmap", "semantic_revision": 1},
+          "concept": {"id": "setapply.spwmap", "semantic_revision": 2},
           "order": 16,
           "default": {"kind": "literal", "value": {"kind": "array", "value": []}},
           "required_when": {"kind": "never"},
@@ -14467,7 +14473,7 @@
           "projections": {
             "cli": {"flags": ["--spwmap"], "metavar": "TABLE_SPWMAP"},
             "provider": {"field": "spwmap", "adapter": "identity"},
-            "python": {"name": "spwmap"},
+            "python": {"name": "spwmap", "type_hint": "list[int] | list[list[int]]"},
             "presentation": {"label": "SPW Map", "group": "Apply"}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "CASA's spwmap is a list of window maps, one per gain table; calibrate's is casa-rs's ;-separated text."}
@@ -15168,7 +15174,8 @@
             "provider": {"field": "spwmap", "adapter": "identity"},
             "python": {"name": "spwmap"},
             "presentation": {"label": "SPW Map", "group": "Apply"}
-          }
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "Solver preapply uses one integer window map per gain table."}
         },
         {
           "name": "parang",

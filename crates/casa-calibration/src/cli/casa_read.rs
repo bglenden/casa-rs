@@ -21,16 +21,17 @@
 use std::path::{Path, PathBuf};
 
 use casa_ms::{MeasurementSet, MsSelection};
+use casa_provider_contracts::{ParameterValue, python_repr};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::quanta::{Quantity, Unit};
 
 use super::read::{count, parse_gainfield_value, parse_interp_value, parse_refant_selector};
 use crate::{
-    ApplyCalibrationTableSpec, ApplyMode, BandpassSolveCombine, BandpassSolveCuts, BandpassType,
-    CalibrationTaskRequest, ExecuteApplyTaskRequest, FluxScaleRequest, GainSolveCombine,
-    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalTaskRequest,
-    GencalType, RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest,
-    load_apply_specs_from_callib,
+    ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassSolveCombine,
+    BandpassSolveCuts, BandpassType, CalibrationTaskRequest, ExecuteApplyTaskRequest,
+    FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
+    GainType, GencalTaskRequest, GencalType, RefAntSelector, SolveBandpassTaskRequest,
+    SolveGainTaskRequest, load_apply_specs_from_callib,
 };
 
 /// The request a CASA-named surface makes.
@@ -52,24 +53,39 @@ pub(super) fn task_request(
 }
 
 fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFailure> {
-    let (calibration_tables, callibrary_error) = if task.flag("docallib")? {
+    let (calibration_tables, callibrary_error, argument_error) = if task.flag("docallib")? {
         let source = task.text("callib")?.unwrap_or_default();
         match load_apply_specs_from_callib(Path::new(&source)) {
-            Ok(tables) => (tables, None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
+            Ok(tables) => (tables, None, None),
+            Err(error) => (Vec::new(), Some(error.to_string()), None),
         }
     } else {
-        (chain(task, Chain::Apply)?, None)
+        let (tables, error) = traditional_chain(task, Chain::Apply)?;
+        (tables, None, error)
     };
-    if calibration_tables.is_empty() && callibrary_error.is_none() && !task.flag("parang")? {
-        return Err(TaskFailure::validation(
-            "applycal has nothing to apply; set gaintable, or docallib and callib",
-        )
-        .at("gaintable"));
-    }
     let mut selection = selection(task)?;
     selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
-    selection.uvrange = task.text("uvrange")?.filter(|text| !text.is_empty());
+    selection.uvrange = uv_selector_text(task.value("uvrange"));
+    // calibrater.selectvis converts these variants with toCasaString, which
+    // removes one outer bracket pair even when the input was a string.
+    for selector in [
+        &mut selection.field,
+        &mut selection.spw,
+        &mut selection.intent,
+        &mut selection.timerange,
+        &mut selection.uvrange,
+        &mut selection.antenna,
+        &mut selection.scan,
+        &mut selection.observation,
+    ] {
+        if let Some(text) = selector
+            && let Some(inner) = text
+                .strip_prefix('[')
+                .and_then(|text| text.strip_suffix(']'))
+        {
+            *selector = (!inner.is_empty()).then(|| inner.to_string());
+        }
+    }
     // CASA accepts these parameters even when disabled, retaining their input
     // values for HISTORY while passing empty selectors to calibrater.selectvis.
     if !task.flag("selectdata")? {
@@ -85,6 +101,7 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
         selection,
         calibration_tables,
         callibrary_error,
+        argument_error,
         apply_mode: applymode(task)?,
         parang: task.flag("parang")?,
         flagbackup: task.flag("flagbackup")?,
@@ -279,19 +296,57 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
 /// CASA's selection: `field`, `spw` and `intent` always; the others are inactive,
 /// and so unset, while `selectdata` is not.
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
-    let text = |name: &str| task.text(name);
+    let text = |name: &str| {
+        task.text(name).map(|value| {
+            if task.surface() == "applycal" {
+                value.filter(|text| !text.is_empty())
+            } else {
+                value
+            }
+        })
+    };
     Ok(MsSelection {
         selectdata: true,
         field: text("field")?,
         spw: text("spw")?,
         antenna: text("antenna")?,
         scan: text("scan")?,
-        observation: text("observation")?,
+        observation: if task.surface() == "applycal" {
+            selector_text(task.value("observation"))
+        } else {
+            text("observation")?
+        },
         array: text("array")?,
         timerange: text("timerange")?,
         msselect: text("msselect")?,
         ..MsSelection::default()
     })
+}
+
+fn selector_text(value: Option<&ParameterValue>) -> Option<String> {
+    let text = match value? {
+        ParameterValue::String(text) => text.clone(),
+        ParameterValue::NumpyScalar { value, .. } | ParameterValue::ScalarArray(value) => {
+            return selector_text(Some(value));
+        }
+        other => python_repr(other),
+    };
+    (!text.is_empty()).then_some(text)
+}
+
+fn uv_selector_text(value: Option<&ParameterValue>) -> Option<String> {
+    match value? {
+        ParameterValue::Array(values) => {
+            let text = values
+                .iter()
+                .filter_map(|value| selector_text(Some(value)))
+                .collect::<Vec<_>>()
+                .join(",");
+            (!text.is_empty()).then_some(text)
+        }
+        ParameterValue::EmptyArray { .. } => None,
+        value => selector_text(Some(value)),
+    }
 }
 
 /// Whether a chain is applied, each table with its own `calwt`, or
@@ -316,19 +371,39 @@ fn chain(
         return load_apply_specs_from_callib(Path::new(&callib))
             .map_err(|error| TaskFailure::validation(error.to_string()).at("callib"));
     }
+    traditional_chain(task, chain).map(|(tables, _)| tables)
+}
+
+fn traditional_chain(
+    task: &TaskInvocation<'_>,
+    chain: Chain,
+) -> Result<(Vec<ApplyCalibrationTableSpec>, Option<ApplyArgumentError>), TaskFailure> {
     let tables = task.texts("gaintable")?;
     let gainfield = task.texts("gainfield")?;
     let interp = task.texts("interp")?;
-    let spwmap = task.integer_lists("spwmap")?;
+    let spwmap = match apply_spw_maps(task.value("spwmap")) {
+        Ok(maps) => maps,
+        Err(error) if chain == Chain::Apply => return Ok((Vec::new(), Some(error))),
+        Err(error) => return Err(TaskFailure::validation(error.to_string()).at("spwmap")),
+    };
     let calwt = match chain {
-        Chain::Apply => calwt(task, tables.len())?,
-        Chain::Solve => vec![true; tables.len()],
+        Chain::Apply => task.flags("calwt")?,
+        Chain::Solve => vec![true],
     };
     let mut specs = Vec::new();
     for (index, table) in tables.iter().enumerate() {
         if table.is_empty() {
             continue;
         }
+        let weight = match calwt.as_slice() {
+            [one] => *one,
+            values => match values.get(index) {
+                Some(weight) => *weight,
+                // Python indexes calwt immediately before setapply for an active
+                // table. All earlier table setup still takes place first.
+                None => return Ok((specs, Some(ApplyArgumentError::MissingCalwt))),
+            },
+        };
         let mut spec = ApplyCalibrationTableSpec::new(table);
         spec.gainfield = gainfield
             .get(index)
@@ -339,31 +414,78 @@ fn chain(
             }
             None => crate::ApplyInterpolationMode::Linear,
         };
-        spec.spwmap = match spwmap.get(index) {
-            Some(map) => window_map(map)?,
-            None => Vec::new(),
-        };
-        spec.calwt = calwt[index];
+        if let Some(map) = spwmap.get(index) {
+            match apply_spw_map(map) {
+                Ok(map) => spec.spwmap = map,
+                Err(error) if chain == Chain::Apply => return Ok((specs, Some(error))),
+                Err(error) => return Err(TaskFailure::validation(error.to_string()).at("spwmap")),
+            }
+        }
+        spec.calwt = weight;
         specs.push(spec);
     }
-    Ok(specs)
+    Ok((specs, None))
 }
 
-/// `calwt` for each of `tables` tables: one value holds for all of them.
-fn calwt(task: &TaskInvocation<'_>, tables: usize) -> Result<Vec<bool>, TaskFailure> {
-    let calwt = task.flags("calwt")?;
-    match calwt.as_slice() {
-        [one] => Ok(vec![*one; tables]),
-        _ if calwt.len() >= tables => Ok(calwt),
-        _ => Err(TaskFailure::validation(format!(
-            "calwt gives {} values for {tables} gain tables; give one, or one for each table",
-            calwt.len()
-        ))
-        .at("calwt")),
-    }
+fn apply_spw_maps(
+    value: Option<&ParameterValue>,
+) -> Result<Vec<ParameterValue>, ApplyArgumentError> {
+    Ok(match value {
+        Some(ParameterValue::Array(items))
+            if !items.is_empty() && !matches!(items[0], ParameterValue::Array(_)) =>
+        {
+            vec![ParameterValue::Array(items.clone())]
+        }
+        Some(ParameterValue::Array(items)) => items.clone(),
+        Some(ParameterValue::String(text)) if text.is_empty() => Vec::new(),
+        Some(ParameterValue::Table(entries)) if entries.is_empty() => Vec::new(),
+        Some(ParameterValue::Table(_)) => return Err(ApplyArgumentError::SpwMap("0".into())),
+        Some(ParameterValue::EmptyArray { .. }) | None => Vec::new(),
+        Some(value) => {
+            let ty = match value {
+                ParameterValue::Integer(_) => "int",
+                ParameterValue::Float(_) => "float",
+                ParameterValue::Bool(_) => "bool",
+                _ => {
+                    return Err(ApplyArgumentError::SpwMap(
+                        "expected an integer window map".into(),
+                    ));
+                }
+            };
+            return Err(ApplyArgumentError::SpwMap(format!(
+                "object of type '{ty}' has no len()"
+            )));
+        }
+    })
 }
 
-/// One table's window map; CASA's `[-1]`, or none, maps no window.
+fn apply_spw_map(value: &ParameterValue) -> Result<Vec<i32>, ApplyArgumentError> {
+    let ParameterValue::Array(items) = value else {
+        return Err(ApplyArgumentError::SpwMap(
+            "expected an integer window map".into(),
+        ));
+    };
+    let ids = items
+        .iter()
+        .map(|item| match item {
+            ParameterValue::Integer(id) => Ok(*id),
+            ParameterValue::Bool(id) => Ok(i64::from(*id)),
+            ParameterValue::NumpyScalar { value, .. }
+                if matches!(value.as_ref(), ParameterValue::Integer(_)) =>
+            {
+                let ParameterValue::Integer(id) = value.as_ref() else {
+                    unreachable!()
+                };
+                Ok(*id)
+            }
+            _ => Err(ApplyArgumentError::SpwMap(
+                "expected an integer window map".into(),
+            )),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    window_map(&ids).map_err(|failure| ApplyArgumentError::SpwMap(failure.message))
+}
+
 fn window_map(map: &[i64]) -> Result<Vec<i32>, TaskFailure> {
     if map == [-1] {
         return Ok(Vec::new());

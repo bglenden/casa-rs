@@ -23,6 +23,7 @@
 
 mod casa_read;
 mod history;
+mod multi_ms;
 mod read;
 mod render;
 
@@ -90,9 +91,38 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     } else {
         None
     };
-    let result = request
-        .execute_with_output_mode(mode)
-        .map_err(TaskFailure::execution)?;
+    let multi = match &request {
+        CalibrationTaskRequest::ExecuteApply(request) if task.surface() == "applycal" => {
+            multi_ms::execute(task, request)?
+        }
+        _ => None,
+    };
+    let result = if let Some(report) = multi {
+        CalibrationTaskResult::ApplyMultiMs(report)
+    } else if let CalibrationTaskRequest::ExecuteApply(request) = &request {
+        request
+            .execute_apply()
+            .map(CalibrationTaskResult::Apply)
+            .map_err(|error| {
+                let failure = TaskFailure::execution(error.to_string());
+                match error {
+                    crate::ApplyExecutionError::Plan(source) => match *source {
+                        crate::ApplyPlanError::Argument(
+                            crate::ApplyArgumentError::MissingCalwt,
+                        ) => failure.at("calwt"),
+                        crate::ApplyPlanError::Argument(crate::ApplyArgumentError::SpwMap(_)) => {
+                            failure.at("spwmap")
+                        }
+                        _ => failure,
+                    },
+                    _ => failure,
+                }
+            })?
+    } else {
+        request
+            .execute_with_output_mode(mode)
+            .map_err(TaskFailure::execution)?
+    };
     if task.surface() == "fluxscale"
         && let (
             CalibrationTaskRequest::FluxScale(request),
@@ -102,6 +132,7 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         crate::fluxscale::history::record(task, request, report);
     }
     if task.surface() == "applycal"
+        && matches!(&result, CalibrationTaskResult::Apply(_))
         && let CalibrationTaskRequest::ExecuteApply(request) = &request
     {
         history::record_applycal(task, &request.measurement_set);

@@ -1,0 +1,1361 @@
+{
+  "casa_version": "6.7.6.14",
+  "native_revision": "06cf4d1f6da24cc8627d7d535c3b1b0ef98eac29",
+  "native_core_revision": "809595f0b5b1907c781147da586427047133dbf2",
+  "oracle_revision": "06cf4d1f6da24cc8627d7d535c3b1b0ef98eac29",
+  "command": "python tools/casa-compat/applycal_mms_oracle.py --work target/calibration-1518/mms-reviewed --native-bin target/calibration-1518/calibrate-mms-reviewed-debug",
+  "result": "Eleven paired Multi-MS scenarios pass for all six modes, selected or failed partitions, callibrary, missing-partition setup and parent backup controls. CASA reads the native backup and restores its 744 changed FLAG samples exactly.",
+  "cases": {
+    "default": {
+      "casa": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/default-casa.mms/SUBMSS/default-casa.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/default-casa.mms/SUBMSS/default-casa.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      },
+      "native": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/default-native.mms/SUBMSS/default-native.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/default-native.mms/SUBMSS/default-native.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ],
+        "restored_with_casa": 744
+      }
+    },
+    "field": {
+      "casa": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/field-casa.mms/SUBMSS/field-casa.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 0,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/field-casa.mms/SUBMSS/field-casa.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      },
+      "native": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/field-native.mms/SUBMSS/field-native.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 0,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/field-native.mms/SUBMSS/field-native.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      }
+    },
+    "trial": {
+      "casa": {
+        "backups": [],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/trial-casa.mms/SUBMSS/trial-casa.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/trial-casa.mms/SUBMSS/trial-casa.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      },
+      "native": {
+        "backups": [],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/trial-native.mms/SUBMSS/trial-native.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/trial-native.mms/SUBMSS/trial-native.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      }
+    },
+    "calonly": {
+      "casa": {
+        "backups": [],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/calonly-casa.mms/SUBMSS/calonly-casa.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/calonly-casa.mms/SUBMSS/calonly-casa.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      },
+      "native": {
+        "backups": [],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/calonly-native.mms/SUBMSS/calonly-native.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/calonly-native.mms/SUBMSS/calonly-native.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      }
+    },
+    "flagonly": {
+      "casa": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/flagonly-casa.mms/SUBMSS/flagonly-casa.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/flagonly-casa.mms/SUBMSS/flagonly-casa.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      },
+      "native": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/flagonly-native.mms/SUBMSS/flagonly-native.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/flagonly-native.mms/SUBMSS/flagonly-native.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      }
+    },
+    "calflagstrict": {
+      "casa": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/calflagstrict-casa.mms/SUBMSS/calflagstrict-casa.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/calflagstrict-casa.mms/SUBMSS/calflagstrict-casa.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      },
+      "native": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/calflagstrict-native.mms/SUBMSS/calflagstrict-native.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/calflagstrict-native.mms/SUBMSS/calflagstrict-native.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      }
+    },
+    "flagonlystrict": {
+      "casa": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/flagonlystrict-casa.mms/SUBMSS/flagonlystrict-casa.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/flagonlystrict-casa.mms/SUBMSS/flagonlystrict-casa.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      },
+      "native": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/flagonlystrict-native.mms/SUBMSS/flagonlystrict-native.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/flagonlystrict-native.mms/SUBMSS/flagonlystrict-native.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      }
+    },
+    "without-backup": {
+      "casa": {
+        "backups": [],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/without-backup-casa.mms/SUBMSS/without-backup-casa.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/without-backup-casa.mms/SUBMSS/without-backup-casa.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      },
+      "native": {
+        "backups": [],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/without-backup-native.mms/SUBMSS/without-backup-native.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/without-backup-native.mms/SUBMSS/without-backup-native.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      }
+    },
+    "callibrary": {
+      "casa": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/callibrary-casa.mms/SUBMSS/callibrary-casa.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/callibrary-casa.mms/SUBMSS/callibrary-casa.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      },
+      "native": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/callibrary-native.mms/SUBMSS/callibrary-native.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/callibrary-native.mms/SUBMSS/callibrary-native.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 1,
+            "local_backup": false
+          }
+        ]
+      }
+    },
+    "missing-caltable": {
+      "casa": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/missing-caltable-casa.mms/SUBMSS/missing-caltable-casa.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 0,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/missing-caltable-casa.mms/SUBMSS/missing-caltable-casa.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 0,
+            "local_backup": false
+          }
+        ]
+      },
+      "native": {
+        "backups": [
+          "flags.applycal_1"
+        ],
+        "partitions": [
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/missing-caltable-native.mms/SUBMSS/missing-caltable-native.mms.0000.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 0,
+            "local_backup": false
+          },
+          {
+            "path": "/workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/missing-caltable-native.mms/SUBMSS/missing-caltable-native.mms.0001.ms",
+            "columns": [
+              "ANTENNA1",
+              "ANTENNA2",
+              "ARRAY_ID",
+              "CORRECTED_DATA",
+              "DATA",
+              "DATA_DESC_ID",
+              "EXPOSURE",
+              "FEED1",
+              "FEED2",
+              "FIELD_ID",
+              "FLAG",
+              "FLAG_ROW",
+              "INTERVAL",
+              "MODEL_DATA",
+              "OBSERVATION_ID",
+              "PROCESSOR_ID",
+              "SCAN_NUMBER",
+              "SIGMA",
+              "STATE_ID",
+              "TIME",
+              "TIME_CENTROID",
+              "UVW",
+              "WEIGHT"
+            ],
+            "apply_history": 0,
+            "local_backup": false
+          }
+        ]
+      }
+    },
+    "missing-partition": {
+      "casa": {
+        "error": "RuntimeError",
+        "message": "Table /workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/missing-partition-casa.mms/SUBMSS/missing-partition-casa.mms.0001.ms does not exist",
+        "first_partition_unchanged": true
+      },
+      "native": {
+        "error": "TaskExecutionError",
+        "message": "applycal failed: open Multi-MS partition /workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/missing-partition-native.mms/SUBMSS/missing-partition-native.mms.0001.ms: storage error: table path does not exist: /workspace/casa-rs-cal1518/target/calibration-1518/mms-reviewed/missing-partition-native.mms/SUBMSS/missing-partition-native.mms.0001.ms",
+        "first_partition_unchanged": true
+      }
+    }
+  },
+  "test_scope": "functional comparison",
+  "review": "One local review. The missing-partition regression leaves earlier parts intact, seeded backup flags verify physical row order, and the backup comment preserves CASA local time formatting."
+}

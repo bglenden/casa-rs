@@ -206,7 +206,55 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         for name, value in arguments.items()
         if not _is_default(value, defaults.get(name, _MISSING))
     }
+    if wrapper.__name__ == "applycal":
+        return _call_applycal(values, arguments["vis"])
     return run(wrapper.__name__, **values).value
+
+
+def _call_applycal(values: dict[str, Any], vis: Any) -> Any:
+    # CASA's required-path validation runs before calibrater opens the MS.
+    # Keep PathLike as the native API's additional path form.
+    if isinstance(vis, (str, PathLike)):
+        path = os.path.expanduser(os.fspath(vis))
+        if not path or not os.path.exists(path):
+            raise AssertionError(f"the vis parameter must be a path that exists ('{path}' does not exist)")
+        if path != os.fspath(vis):
+            values["vis"] = path
+    else:
+        raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
+    _check_applycal_selectors(values)
+    try:
+        return run("applycal", **values).value
+    except TaskExecutionError as error:
+        if error.completion.parameter == "calwt":
+            raise IndexError(error.completion.message) from error
+        if error.completion.parameter == "spwmap":
+            if isinstance(values.get("spwmap"), dict):
+                raise KeyError(0) from error
+            raise TypeError(error.completion.message) from error
+        raise
+    except (TypeError, ValueError) as error:
+        # The generated CASA wrapper uses AssertionError for schema refusals.
+        raise AssertionError(str(error)) from error
+
+
+
+def _check_applycal_selectors(values: Mapping[str, Any]) -> None:
+    observation = values.get("observation", "")
+    variants = {key: values[key] for key in ("uvrange", "spwmap") if key in values}
+    ordinary_variant = (str, int, float, list, dict)
+    if isinstance(observation, (str, int)) and all(
+        isinstance(value, ordinary_variant) for value in variants.values()
+    ):
+        return
+    import numpy as np
+
+    if not isinstance(observation, (str, int, np.int32, np.int64)):
+        raise AssertionError("{'observation': ['must be of cStr type', 'must be of cInt type']}")
+    accepted_variant = (*ordinary_variant, np.int32, np.int64, np.float32, np.float64, np.ndarray)
+    for key, value in variants.items():
+        if not isinstance(value, accepted_variant):
+            raise AssertionError(str({key: ["must be of cVariant type"]}))
 
 
 _MISSING = object()

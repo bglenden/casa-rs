@@ -2,6 +2,7 @@
 //! CLPatchPanel arranges Cartesian context axes; negative IDs are wildcards.
 use super::*;
 use crate::CallibraryContextMap;
+use crate::session::resolve_calibration_selection;
 
 pub(crate) type PatchGroup = [Vec<i32>; 6];
 

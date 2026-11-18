@@ -137,7 +137,7 @@ mod tests {
             interp: ApplyInterpolationMode::Linear,
             supports_calwt: true,
             engine: None,
-            time_is_delay: false,
+            time_parameter_family: None,
             phase_delay: false,
             callibrary: None,
             time_plans: HashMap::new(),

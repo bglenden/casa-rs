@@ -85,6 +85,7 @@ pub(super) fn task_request(
 fn apply(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFailure> {
     Ok(ExecuteApplyTaskRequest {
         callibrary_error: None,
+        argument_error: None,
         measurement_set: task.path("vis")?,
         selection: selection(task)?,
         calibration_tables: calibration_tables(task, Chain::Apply)?,

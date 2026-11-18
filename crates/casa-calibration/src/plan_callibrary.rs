@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Resolve CLPatchPanel data slices against the globally selected MS.
 use super::*;
+use crate::session::resolve_calibration_selection;
 use std::collections::HashMap;
 #[path = "plan_callibrary_keys.rs"]
 mod keys;

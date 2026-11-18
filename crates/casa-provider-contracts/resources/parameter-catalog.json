@@ -9986,6 +9986,18 @@
       "persistence_class": "profile"
     },
     {
+      "id": "setapply.spwmap",
+      "semantic_revision": 2,
+      "casa_name": "spwmap",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "apply_spw_map"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Spectral-window maps per table, read only in traditional applycal.", "details": null, "examples": ["[0]", "[[0], [1]]"]},
+      "persistence_class": "profile"
+    },
+    {
       "id": "setsolve.append",
       "semantic_revision": 1,
       "casa_name": "append",
@@ -12260,6 +12272,30 @@
     },
     {
       "id": "ms.selection.uvrange",
+      "semantic_revision": 4,
+      "casa_name": "uvrange",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Applycal accepts a CASA variant and converts it to selector text during MS selection.", "details": null, "examples": ["", "0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.observation",
+      "semantic_revision": 4,
+      "casa_name": "observation",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Applycal accepts selector text or an observation ID. Preserve the input type for HISTORY.", "details": null, "examples": ["", "0"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.uvrange",
       "semantic_revision": 3,
       "casa_name": "uvrange",
       "value_domain": {
@@ -12278,6 +12314,90 @@
           ""
         ]
       },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.field",
+      "semantic_revision": 4,
+      "casa_name": "field",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Applycal field selector text.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.spw",
+      "semantic_revision": 3,
+      "casa_name": "spw",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Applycal spw selector text.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.antenna",
+      "semantic_revision": 4,
+      "casa_name": "antenna",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Applycal antenna selector text.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.scan",
+      "semantic_revision": 4,
+      "casa_name": "scan",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Applycal scan selector text.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.timerange",
+      "semantic_revision": 4,
+      "casa_name": "timerange",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Applycal timerange selector text.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.msselect",
+      "semantic_revision": 2,
+      "casa_name": "msselect",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "Applycal msselect selector text.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.callib",
+      "semantic_revision": 2,
+      "casa_name": "callib",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {"summary": "Calibration library path supplied verbatim to applycal.", "details": null, "examples": [""]},
       "persistence_class": "profile"
     }
   ]

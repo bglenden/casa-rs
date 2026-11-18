@@ -406,6 +406,9 @@ pub enum NormalizationRule {
     /// variant parameters take one: `tclean`'s `phasecenter=3` names field
     /// 3 and `width=2` two channels (#931).
     NumberAsText,
+    /// Canonicalize integer window maps while keeping other variants for
+    /// applycal's inactive-map and deferred parameter handling.
+    ApplySpwMap,
     Sequence {
         rules: Vec<NormalizationRule>,
     },

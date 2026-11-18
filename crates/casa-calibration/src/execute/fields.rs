@@ -9,7 +9,12 @@ pub(super) fn load(
     engine: Option<&Arc<MsCalEngine>>,
     ms: &MeasurementSet,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
-    let mut table = load_calibration_table(plan, engine)?;
+    let family = TimeParameterFamily::from_subtype(&plan.summary.table_subtype);
+    // Interpolate the real FPARAM coefficients before constructing the Jones
+    // matrix. Antenna positions, opacity and gain-curve coefficients share
+    // the same real time operator as delays.
+    let mut table = load_parameters(plan, engine, family.is_some())?;
+    table.time_parameter_family = family;
     table.callibrary = plan.spec.callibrary.clone();
     if !plan.resolved_gainfields.is_empty() {
         table.solutions.retain(|(field, _, _), _| {
@@ -34,15 +39,17 @@ pub(super) fn load(
         if let std::collections::hash_map::Entry::Vacant(entry) = table.missing_grids.entry(window)
             && let Some(row) = rows.first()
         {
-            entry.insert(flagged(&row.grid));
+            let grid = physical_grid(&table.path, family, Arc::clone(&row.grid))?;
+            entry.insert(flagged(&grid));
         }
     }
-    let nearest_field = matches!(plan.spec.gainfield, Some(crate::GainFieldSelector::Nearest))
-        || plan
-            .spec
-            .callibrary
-            .as_ref()
-            .is_some_and(|library| !library.field_map.is_empty());
+    let nearest_field = plan.summary.table_subtype != "BPOLY"
+        && (matches!(plan.spec.gainfield, Some(crate::GainFieldSelector::Nearest))
+            || plan
+                .spec
+                .callibrary
+                .as_ref()
+                .is_some_and(|library| !library.field_map.is_empty()));
     let sample = table
         .solutions
         .values()
@@ -54,7 +61,6 @@ pub(super) fn load(
         Some(CalibrationGrid::Complex(_) | CalibrationGrid::Delay(_))
     );
     if curve {
-        table.time_is_delay = matches!(sample, Some(CalibrationGrid::Delay(_)));
         let observation_count = ms
             .observation()
             .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
@@ -91,20 +97,7 @@ pub(super) fn load(
             context.mapped_contexts(library.observation_map.active(), library.scan_map.active());
         }
         let mut groups = HashMap::<_, HashMap<_, _>>::new();
-        for (key, mut rows) in std::mem::take(&mut table.solutions) {
-            if table.time_is_delay {
-                for row in &mut rows {
-                    let CalibrationGrid::Delay(delay) = row.grid.as_ref() else {
-                        unreachable!("one parameter family")
-                    };
-                    row.grid = Arc::new(CalibrationGrid::Complex(GainGrid {
-                        receptor_count: delay.receptor_count,
-                        channel_count: delay.channel_count,
-                        values: delay.values_ns.mapv(|value| Complex32::new(value, 0.)),
-                        flags: delay.flags.clone(),
-                    }));
-                }
-            }
+        for (key, rows) in std::mem::take(&mut table.solutions) {
             groups
                 .entry(if nearest_field { key.0 } else { -1 })
                 .or_default()
@@ -120,12 +113,12 @@ pub(super) fn load(
                 callibrary: None,
                 time_plans: HashMap::new(),
                 missing_grids: HashMap::new(),
-                time_is_delay: false,
+                time_parameter_family: None,
                 phase_delay: false,
             };
             table.time_plans.insert(
                 field,
-                TimePlan::for_apply(&selected, options, table.time_is_delay, &context)?,
+                TimePlan::for_apply(&selected, options, family.is_some(), &context)?,
             );
         }
     } else if !nearest_field {
@@ -197,21 +190,43 @@ pub(super) fn lookup(
     let values =
         ArrayD::from_shape_vec(shape.clone(), solution.values).expect("time grid dimensions");
     let flags = ArrayD::from_shape_vec(shape, solution.flags).expect("time flag dimensions");
-    Ok(Some(Arc::new(if table.time_is_delay {
-        CalibrationGrid::Delay(DelayGrid {
-            receptor_count: solution.receptors,
-            channel_count: solution.channels,
-            values_ns: values.mapv(|value| value.re),
-            flags,
-        })
-    } else {
-        CalibrationGrid::Complex(GainGrid {
-            receptor_count: solution.receptors,
-            channel_count: solution.channels,
-            values,
-            flags,
-        })
-    })))
+    let raw = Arc::new(CalibrationGrid::Complex(GainGrid {
+        receptor_count: solution.receptors,
+        channel_count: solution.channels,
+        values,
+        flags,
+    }));
+    physical_grid(&table.path, table.time_parameter_family, raw).map(Some)
+}
+
+/// FPARAM interpolation operates on coefficients, not on their geometry-dependent gains.
+fn physical_grid(
+    path: &Path,
+    family: Option<TimeParameterFamily>,
+    raw: Arc<CalibrationGrid>,
+) -> Result<Arc<CalibrationGrid>, ApplyExecutionError> {
+    let Some(family) = family else {
+        return Ok(raw);
+    };
+    let CalibrationGrid::Complex(grid) = raw.as_ref() else {
+        unreachable!("real parameter carrier");
+    };
+    let values = ArrayValue::Float32(grid.values.mapv(|value| value.re));
+    let flags = ArrayValue::Bool(grid.flags.clone());
+    Ok(Arc::new(match family {
+        TimeParameterFamily::Delay => {
+            CalibrationGrid::Delay(DelayGrid::from_arrays(path, &values, &flags)?)
+        }
+        TimeParameterFamily::Antpos => {
+            CalibrationGrid::Antpos(AntposGrid::from_arrays(path, &values, &flags)?)
+        }
+        TimeParameterFamily::GainCurve => {
+            CalibrationGrid::GainCurve(GainCurveGrid::from_arrays(path, &values, &flags)?)
+        }
+        TimeParameterFamily::Opacity => {
+            CalibrationGrid::Opacity(OpacityGrid::from_arrays(path, &values, &flags)?)
+        }
+    }))
 }
 
 /// A missing slice has unity effect with flags, retaining its partner's gain.
