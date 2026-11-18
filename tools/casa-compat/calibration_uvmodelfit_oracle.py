@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Fit point, Gaussian and disk visibility models with CASA and casa-rs."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+
+import casatasks as casa
+from casatools import componentlist, table
+import numpy as np
+
+from bandpass_oracle import source_data
+from calibration_ft_oracle import coordinates, initial_time_range
+from calibration_scratch_oracle import prepare, state
+
+
+def fixture(root, seed, shape, corrected=True, uneven=False):
+    path = root/f'{shape}-source.ms'
+    prepare(seed, path, corrected=corrected)
+    unit = root/f'{shape}-unit.cl'
+    ra, dec = coordinates(seed)
+    cl = componentlist()
+    geometry = {} if shape == 'Point' else dict(majoraxis='1.4arcsec', minoraxis='0.98arcsec',
+                                                positionangle='28deg')
+    assert cl.addcomponent(dir=f'J2000 {ra}rad {dec}rad', flux=1., fluxunit='Jy',
+                           shape=shape, **geometry)
+    assert cl.rename(str(unit))
+    cl.done()
+    casa.ft(str(path), field='0', complist=str(unit), usescratch=True)
+    tb = table()
+    assert tb.open(str(path), nomodify=False)
+    try:
+        data = tb.getcol('MODEL_DATA')
+        u, v, _ = tb.getcol('UVW')
+        frequencies = 100e9 + np.arange(data.shape[1])*1e6
+        uv_phase = (2*np.pi * np.deg2rad(1./3600) / 299792458.) * (0.13*u - 0.12*v)
+        phase = np.exp(1j*frequencies[:, None]*uv_phase[None, :])
+        data *= 2.7*phase
+        data[1:3, ...] = 65
+        if uneven:
+            data[0, ::2, :] *= 1.4
+            data[-1, 1::2, :] *= 1.4
+        column = 'CORRECTED_DATA' if corrected else 'DATA'
+        tb.putcol(column, data)
+        weights = tb.getcol('WEIGHT')
+        weights *= np.arange(1, 5, dtype=np.float32)[:, None]
+        weights *= (1+tb.getcol('ANTENNA1')[None, :])
+        tb.putcol('WEIGHT', weights)
+    finally:
+        tb.close()
+    return path, unit
+
+
+def copy_for_case(source, dataset):
+    from applycal_oracle import copy_ms
+    copy_ms(source, dataset)
+
+
+def component(path):
+    cl = componentlist()
+    assert cl.open(str(path))
+    try:
+        return cl.getcomponent(0)
+    finally:
+        cl.done()
+
+
+def numeric_record(record):
+    shape = record['shape']
+    directions = shape['direction']
+    fields = [*record['flux']['value'], directions['m0']['value'], directions['m1']['value']]
+    if shape['type'] != 'Point':
+        for name in ('majoraxis', 'minoraxis', 'positionangle'):
+            fields.append(shape[name]['value'])
+    return np.asarray(fields)
+
+
+def compare(root, source, native, name, options, *, output=True, error=None):
+    outcomes = []
+    for label, api in [('casa', casa), ('native', native)]:
+        dataset = root/f'{name}-{label}.ms'
+        table_path = root/f'{name}-{label}.cl'
+        copy_for_case(source, dataset)
+        before = state(dataset)
+        try:
+            result = api.uvmodelfit(str(dataset), **options,
+                                    **({'outfile': str(table_path)} if output else {}))
+        except RuntimeError as actual:
+            assert error and error in str(actual)
+        else:
+            assert result is None and error is None
+        after = state(dataset)
+        np.testing.assert_equal(after[1], before[1])
+        for column, values in before[0].items():
+            np.testing.assert_array_equal(after[0][column], values)
+        outcomes.append((after[0], component(table_path) if output and not error else None))
+    np.testing.assert_equal(outcomes[1][0], outcomes[0][0])
+    if not output or error:
+        return {'agrees': True}
+    expected, actual = [r[1] for r in outcomes]
+    assert expected['shape']['type'] == actual['shape']['type']
+    np.testing.assert_equal(expected['spectrum'], actual['spectrum'])
+    reference, fitted = numeric_record(expected), numeric_record(actual)
+    np.testing.assert_allclose(fitted, reference, atol=1e-6, rtol=1e-3, err_msg=name)
+    return {'max_parameter_difference': float(np.max(np.abs(fitted-reference)))}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--work', type=Path, required=True)
+    parser.add_argument('--native-bin', type=Path, required=True)
+    parser.add_argument('--case')
+    args = parser.parse_args()
+    assert casa.version_string() == '6.7.6.14'
+    os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
+    os.environ['CASARS_REQUIRE_TASK_BINARIES'] = '1'
+    from casars import tasks
+    root = args.work.resolve()
+    root.mkdir(parents=True)
+    seed = root/'simulated.ms'
+    source_data(seed, stokes='XX XY YX YY')
+    point, _ = fixture(root, seed, 'Point')
+    gaussian, _ = fixture(root, seed, 'Gaussian')
+    disk, _ = fixture(root, seed, 'Disk')
+    no_scratch_root = root/'no-corrected'
+    no_scratch_root.mkdir()
+    bare, _ = fixture(no_scratch_root, seed, 'Point', corrected=False)
+    nonuniform_root = root/'nonuniform'
+    nonuniform_root.mkdir()
+    nonuniform, _ = fixture(nonuniform_root, seed, 'Point', uneven=True)
+    rows = [
+        ('point', point, dict(field='0', sourcepar=[1.5, .01, -.01], niter=10)),
+        ('flux-only', point, dict(field='0', sourcepar=[1.2, .13, -.12],
+                                  varypar=[True, False, False], niter=5)),
+        ('initial', point, dict(field='0', sourcepar=[1.2, .13, -.12], niter=0)),
+        ('gaussian', gaussian, dict(field='0', comptype='G',
+              sourcepar=[2.1, .1, -.1, 1.27, .72, 30.], niter=12)),
+        ('disk', disk, dict(field='0', comptype='D',
+              sourcepar=[2.3, .11, -.11, 1.31, .73, 30.], niter=14)),
+        ('new-corrected', bare, dict(field='0', sourcepar=[1.5, .01, -.01], niter=10)),
+        ('channel-range', nonuniform, dict(field='0', spw='0:1~7^2', sourcepar=[1.5, .13, -.12],
+                                            varypar=[True, False, False])),
+        ('selection', point, dict(field='0', scan='1', antenna='0~4',
+                                  timerange=initial_time_range(seed), uvrange='>1m',
+                                  msselect='ANTENNA1!=ANTENNA2', sourcepar=[1.2, .13, -.12])),
+        ('selection-disabled', point, dict(field='0', selectdata=False, scan='999', antenna='missing',
+                                           msselect='bad column', sourcepar=[1.2, .13, -.12])),
+        ('no-output', point, dict(field='0')),
+        ('more-than-one-field', point, dict(niter=0)),
+        ('wrong-length', point, dict(field='0', comptype='G')),
+    ]
+    results = {}
+    for name, source, options in rows:
+        if args.case and args.case not in name:
+            continue
+        error = 'Error in Calibrater::modelfit.' if name in ('more-than-one-field', 'wrong-length') else None
+        results[name] = compare(root, source, tasks, name, options, output=name!='no-output', error=error)
+        print(name, results[name], flush=True)
+    (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+
+
+if __name__ == '__main__':
+    main()

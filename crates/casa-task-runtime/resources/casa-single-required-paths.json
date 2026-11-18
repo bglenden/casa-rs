@@ -20,5 +20,6 @@
   "imsubimage": "imagename",
   "mstransform": "vis",
   "split": "vis",
+  "uvmodelfit": "vis",
   "uvsub": "vis"
 }

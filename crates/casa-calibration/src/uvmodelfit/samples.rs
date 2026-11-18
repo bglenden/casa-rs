@@ -1,0 +1,229 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Accumulate the fit's small normal equations in bounded MS row batches.
+
+use std::collections::BTreeMap;
+
+use casa_components::ShapeTransform;
+use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_ms::write_session::maximum_visibility_cell_elements;
+use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
+use casa_types::{ArrayValue, Complex32, Complex64};
+use ndarray::{ArrayD, Axis};
+
+use super::{Equations, FitModel, PARAMETERS, invalid};
+use crate::model_columns::{has_column, observed_column};
+
+const CORRECTED: VisibilityDataColumn = VisibilityDataColumn::CorrectedData;
+const WORKSPACE_BYTES: usize = 32 * 1024 * 1024;
+
+pub(super) struct FitSamples<'a> {
+    ms: &'a MeasurementSet,
+    selected: &'a ResolvedMsSelection,
+    frequencies: BTreeMap<i32, Vec<f64>>,
+    channels: BTreeMap<i32, Vec<usize>>,
+    parallel: BTreeMap<i32, Vec<usize>>,
+    input: &'static str,
+    batch_rows: usize,
+}
+
+impl<'a> FitSamples<'a> {
+    pub(super) fn new(ms: &'a MeasurementSet, selected: &'a ResolvedMsSelection) -> MsResult<Self> {
+        let spectral_windows = ms.spectral_window()?;
+        let mut frequencies = BTreeMap::new();
+        let mut channels = BTreeMap::new();
+        let polarization = ms.polarization()?;
+        let mut parallel = BTreeMap::new();
+        for row in &selected.selected_rows {
+            let window = row.spectral_window_id;
+            if let std::collections::btree_map::Entry::Vacant(entry) = frequencies.entry(window) {
+                let values = spectral_windows.chan_freq(window as usize)?;
+                let indices = match selected.channel_selections.get(&window) {
+                    Some(selection) => selection.indices(values.len())?,
+                    None => (0..values.len()).collect(),
+                };
+                channels.insert(window, indices);
+                entry.insert(values);
+            }
+            let id = row.polarization_id;
+            if let std::collections::btree_map::Entry::Vacant(entry) = parallel.entry(id) {
+                let correlations = polarization.corr_type(id as usize)?;
+                entry.insert(
+                    correlations
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, &code)| {
+                            matches!(code, 5 | 8 | 9 | 12).then_some(index)
+                        })
+                        .collect(),
+                );
+            }
+        }
+        let input = if has_column(ms, CORRECTED) {
+            CORRECTED.name()
+        } else {
+            observed_column(ms)
+        };
+        let cell_elements = maximum_visibility_cell_elements(ms).map_err(invalid)?;
+        let bytes_per_row = cell_elements.saturating_mul(16).max(1);
+        let batch_rows = (WORKSPACE_BYTES / bytes_per_row).clamp(1, 1024);
+        Ok(Self {
+            ms,
+            selected,
+            frequencies,
+            channels,
+            parallel,
+            input,
+            batch_rows,
+        })
+    }
+
+    pub(super) fn equations(
+        &self,
+        model: FitModel,
+        vary: &[bool; PARAMETERS],
+    ) -> MsResult<Equations> {
+        let transform = model.transform()?;
+        let mut equations = Equations::default();
+        for rows in self.selected.selected_rows.chunks(self.batch_rows) {
+            let rows: Vec<_> = rows
+                .iter()
+                .filter(|row| !row.flag_row && row.antenna1_id != row.antenna2_id)
+                .collect();
+            if rows.is_empty() {
+                continue;
+            }
+            let batch = self.batch(&rows)?;
+            for (index, row) in rows.into_iter().enumerate() {
+                let sample = batch.sample(index)?;
+                self.accumulate(&mut equations, row, sample, &transform, model, vary)?;
+            }
+        }
+        if equations.sum_weight <= 0.0 {
+            return Err(invalid(
+                "found no unflagged weighted visibility data to fit",
+            ));
+        }
+        Ok(equations)
+    }
+
+    fn batch(&self, rows: &[&ResolvedMsSelectionRow]) -> MsResult<Batch> {
+        let indices: Vec<_> = rows.iter().map(|row| row.row_index).collect();
+        let main = self.ms.main_table();
+        let read = |column| {
+            main.column_accessor(column)?
+                .array_cells_owned_uncached(&indices)
+        };
+        Ok(Batch {
+            data: read(self.input)?,
+            flags: read("FLAG")?,
+            weights: read("WEIGHT")?,
+            uvw: read("UVW")?,
+        })
+    }
+
+    fn accumulate(
+        &self,
+        equations: &mut Equations,
+        row: &ResolvedMsSelectionRow,
+        sample: Sample<'_>,
+        transform: &ShapeTransform,
+        model: FitModel,
+        vary: &[bool; PARAMETERS],
+    ) -> MsResult<()> {
+        let window = &self.frequencies[&row.spectral_window_id];
+        let parallel = &self.parallel[&row.polarization_id];
+        if sample.flags.shape() != sample.data.shape() || sample.data.shape()[1] != window.len() {
+            return Err(invalid(
+                "visibility arrays do not match the MeasurementSet layout",
+            ));
+        }
+        let baseline = transform.at_baseline(sample.uvw);
+        for &channel in &self.channels[&row.spectral_window_id] {
+            if sample
+                .flags
+                .index_axis(Axis(1), channel)
+                .iter()
+                .any(|&flag| flag)
+            {
+                continue;
+            }
+            let frequency = window[channel];
+            let shape = baseline.at_frequency(frequency).map_err(invalid)?;
+            let (predicted, slopes) = model.derivatives(sample.uvw, frequency, shape);
+            for &polarization in parallel {
+                let measured = sample.data.cell(polarization, channel);
+                equations.add(measured - predicted, &slopes, sample.weight, vary);
+            }
+        }
+        Ok(())
+    }
+}
+
+struct Batch {
+    data: Vec<Option<ArrayValue>>,
+    flags: Vec<Option<ArrayValue>>,
+    weights: Vec<Option<ArrayValue>>,
+    uvw: Vec<Option<ArrayValue>>,
+}
+
+impl Batch {
+    fn sample(&self, index: usize) -> MsResult<Sample<'_>> {
+        let data = match &self.data[index] {
+            Some(ArrayValue::Complex32(values)) => Data::Complex(values),
+            Some(ArrayValue::Float32(values)) => Data::Real(values),
+            _ => return Err(invalid("there are no observed visibility samples")),
+        };
+        let Some(ArrayValue::Bool(flags)) = &self.flags[index] else {
+            return Err(invalid("FLAG is not a Bool array"));
+        };
+        let Some(ArrayValue::Float32(weights)) = &self.weights[index] else {
+            return Err(invalid("WEIGHT is not a Float array"));
+        };
+        let Some(ArrayValue::Float64(uvw)) = &self.uvw[index] else {
+            return Err(invalid("UVW is not a Double array"));
+        };
+        if weights.is_empty() || uvw.len() != 3 || data.shape().len() != 2 || flags.ndim() != 2 {
+            return Err(invalid("a visibility fit row has an invalid cell shape"));
+        }
+        let first = *weights.iter().next().expect("checked nonempty");
+        let last = *weights.iter().next_back().expect("checked nonempty");
+        let weight = f64::from((first + last) * 0.5);
+        Ok(Sample {
+            data,
+            flags,
+            weight,
+            uvw: std::array::from_fn(|axis| uvw[[axis]]),
+        })
+    }
+}
+
+struct Sample<'a> {
+    data: Data<'a>,
+    flags: &'a ArrayD<bool>,
+    weight: f64,
+    uvw: [f64; 3],
+}
+
+enum Data<'a> {
+    Complex(&'a ArrayD<Complex32>),
+    Real(&'a ArrayD<f32>),
+}
+
+impl Data<'_> {
+    fn shape(&self) -> &[usize] {
+        match self {
+            Self::Complex(values) => values.shape(),
+            Self::Real(values) => values.shape(),
+        }
+    }
+
+    fn cell(&self, polarization: usize, channel: usize) -> Complex64 {
+        match self {
+            Self::Complex(values) => {
+                let value = values[[polarization, channel]];
+                Complex64::new(f64::from(value.re), f64::from(value.im))
+            }
+            Self::Real(values) => Complex64::new(f64::from(values[[polarization, channel]]), 0.0),
+        }
+    }
+}

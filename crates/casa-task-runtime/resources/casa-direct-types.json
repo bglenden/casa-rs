@@ -661,6 +661,20 @@
     "minweight": "cFloat",
     "brightnessunit": "cStr"
   },
+  "uvmodelfit": {
+    "field": "cStr",
+    "spw": "cStr",
+    "selectdata": "cBool",
+    "timerange": "cStr",
+    "antenna": "cStr",
+    "scan": "cStr",
+    "msselect": "cStr",
+    "niter": "cInt",
+    "comptype": "cStr",
+    "sourcepar": "cFloatVec",
+    "varypar": "cBoolVec",
+    "outfile": "cStr"
+  },
   "uvsub": {
     "reverse": "cBool"
   }

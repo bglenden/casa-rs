@@ -64,16 +64,17 @@ pub(crate) fn reset_scratch_columns(
     Ok(lock)
 }
 
-/// Add the imager's model scratch column before data selection.
-pub(crate) fn initialize_model_column(
+/// Add one absent visibility scratch column before data selection.
+pub(crate) fn initialize_scratch_column(
     ms: &mut MeasurementSet,
+    column: VisibilityDataColumn,
     lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
-    if has_column(ms, MODEL) {
+    if has_column(ms, column) {
         return Ok(lock);
     }
     let all = resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
-    reset(ms, all, &[MODEL], true, lock)
+    reset(ms, all, &[column], true, lock)
 }
 
 pub(crate) fn delete_model(

@@ -28,6 +28,7 @@ mod model_columns;
 mod multi_ms;
 mod read;
 mod render;
+mod uvmodelfit;
 
 use std::path::Path;
 
@@ -58,6 +59,9 @@ pub fn task_front_end()
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if task.surface() == "ft" {
         return ft::run(task);
+    }
+    if task.surface() == "uvmodelfit" {
+        return uvmodelfit::run(task);
     }
     if matches!(task.surface(), "clearcal" | "delmod" | "uvsub") {
         return model_columns::run(task);

@@ -50,6 +50,7 @@ mod stats;
 mod summary;
 mod task_contract;
 mod timing;
+mod uvmodelfit;
 mod uvsub;
 mod writer;
 

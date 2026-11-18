@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 628
-- Surfaces: 35 (35 task, 0 session)
-- Surface bindings: 922
+- Concepts: 633
+- Surfaces: 36 (36 task, 0 session)
+- Surface bindings: 936
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -33,6 +33,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 7 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
 | [Subtract Visibility Model](#surface-uvsub)<br><code>uvsub</code> | task | 1 | <code>calibration</code> | 2 | Subtract or restore the current visibility model in corrected data. |
 | [Predict Visibility Model](#surface-ft)<br><code>ft</code> | task | 1 | <code>calibration</code> | 15 | Predict model visibilities from component lists and model images. |
+| [Fit Visibility Component](#surface-uvmodelfit)<br><code>uvmodelfit</code> | task | 1 | <code>calibration</code> | 14 | Fit a single sky component to selected visibilities. |
 | [Clear Calibration](#surface-clearcal)<br><code>clearcal</code> | task | 1 | <code>calibration</code> | 5 | Initialize or reset scratch visibility columns. |
 | [Delete Model](#surface-delmod)<br><code>delmod</code> | task | 1 | <code>calibration</code> | 4 | Remove scratch or virtual model visibilities. |
 | [Gencal](#surface-gencal)<br><code>gencal</code> | task | 6 | <code>calibration</code> | 18 | Generate a calibration table such as antpos, gceff, or opac. |
@@ -821,6 +822,33 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>complist</code> | <code>parameter.complist@r1</code> | <code>path (product)</code> | <code>""</code>; optional | Model | Component list. |
 | <code>incremental</code> | <code>parameter.incremental@r1</code> | <code>bool</code> | <code>false</code>; optional | Model | Write incremental correction factors instead of absolute transfer gains |
 | <code>usescratch</code> | <code>parameter.usescratch@r1</code> | <code>bool</code> | <code>false</code>; optional | Model | Write MODEL_DATA. |
+
+<a id="surface-uvmodelfit"></a>
+
+## Fit Visibility Component (<code>uvmodelfit</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Fit a single sky component to selected visibilities.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal field selector text. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal spw selector text. |
+| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Component fit | Whether detailed data-selection controls are enabled. |
+| <code>timerange</code> | <code>ms.selection.timerange@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal timerange selector text. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Data selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
+| <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal antenna selector text. |
+| <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal scan selector text. |
+| <code>msselect</code> | <code>ms.selection.msselect@r2</code> | <code>string</code> | <code>""</code>; optional | Component fit | Applycal msselect selector text. |
+| <code>niter</code> | <code>uvmodelfit.niter@r1</code> | <code>integer</code> | <code>5</code>; optional | Component fit | Visibility model fitting iteration limit. |
+| <code>comptype</code> | <code>uvmodelfit.comptype@r1</code> | <code>choice (3 values)</code> | <code>"P"</code>; optional | Component fit | Single component shape. |
+| <code>sourcepar</code> | <code>uvmodelfit.sourcepar@r1</code> | <code>array&lt;float&gt;</code> | <code>[1.0,0.0,0.0]</code>; optional | Component fit | Initial model flux, direction offsets and optional ellipse. |
+| <code>varypar</code> | <code>uvmodelfit.varypar@r1</code> | <code>array&lt;bool&gt;</code> | <code>[]</code>; optional | Component fit | Which parameters the solver may vary. |
+| <code>outfile</code> | <code>uvmodelfit.outfile@r1</code> | <code>path (table)</code> | <code>""</code>; optional | Component fit | Optional fitted component-list table. |
 
 <a id="surface-clearcal"></a>
 

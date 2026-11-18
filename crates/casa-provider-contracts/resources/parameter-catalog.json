@@ -12471,6 +12471,113 @@
       "semantic_role": "input_data",
       "documentation": {"summary": "Calibration library path supplied verbatim to applycal.", "details": null, "examples": [""]},
       "persistence_class": "profile"
+    },
+    {
+      "id": "uvmodelfit.comptype",
+      "semantic_revision": 1,
+      "casa_name": "comptype",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "P",
+          "G",
+          "D"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Single component shape.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "uvmodelfit.niter",
+      "semantic_revision": 1,
+      "casa_name": "niter",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Visibility model fitting iteration limit.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "uvmodelfit.sourcepar",
+      "semantic_revision": 1,
+      "casa_name": "sourcepar",
+      "value_domain": {
+        "kind": "array",
+        "element": { "kind": "float" },
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Initial model flux, direction offsets and optional ellipse.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "uvmodelfit.varypar",
+      "semantic_revision": 1,
+      "casa_name": "varypar",
+      "value_domain": {
+        "kind": "array",
+        "element": { "kind": "bool" },
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Which parameters the solver may vary.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "uvmodelfit.outfile",
+      "semantic_revision": 1,
+      "casa_name": "outfile",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "table"
+      },
+      "normalization": {
+        "kind": "path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output",
+      "documentation": {
+        "summary": "Optional fitted component-list table.",
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

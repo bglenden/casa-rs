@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use casa_components::ComponentList;
+use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::virtual_model::{put_virtual_model_holding, virtual_model_target};
 use casa_ms::{
     MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
@@ -16,7 +17,7 @@ use casa_types::quanta::Quantity;
 
 use crate::ft::image::{ImageModel, TaylorTerm, prepare_image, reference_frequency};
 use crate::ft::{model_entry, write_model_scratch};
-use crate::model_columns::initialize_model_column;
+use crate::model_columns::initialize_scratch_column;
 use crate::session::resolve_casa_calibration_selection;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -93,8 +94,12 @@ impl OpenedMs {
     }
 
     fn initialize(mut self) -> Result<Self, TaskFailure> {
-        self.lock =
-            initialize_model_column(&mut self.measurement_set, self.lock).map_err(execution)?;
+        self.lock = initialize_scratch_column(
+            &mut self.measurement_set,
+            VisibilityDataColumn::ModelData,
+            self.lock,
+        )
+        .map_err(execution)?;
         Ok(self)
     }
 
