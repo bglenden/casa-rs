@@ -2176,7 +2176,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `57d7ac8e55f8c90be077d4b53a104fd13eecd961`. Status counts: Implemented: 61, Partial: 0, Not implemented: 0, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `69aa2b7091d025b82edc539b51a17535e075ae0e`. Status counts: Implemented: 61, Partial: 0, Not implemented: 0, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2248,7 +2248,7 @@ Audit baseline: `57d7ac8e55f8c90be077d4b53a104fd13eecd961`. Status counts: Imple
 
 ##### limb-darkened-disk-no-exponent: Previously agreed
 
-- Record: [Writing a limb-darkened disk without an exponent aborts CASA](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/docs/CASA%20%28C%2B%2B%29%20bugs.md#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa)
+- Record: [Writing a limb-darkened disk without an exponent aborts CASA](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/docs/CASA%20%28C%2B%2B%29%20bugs.md#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa)
 - Inputs: cl.fromrecord for a limb-darkened disk without optionalParameters, then cl.close.
 - CASA: writeTable stores an empty optional-parameter vector and throws casacore::indexError from the ComponentList destructor, terminating the process (CASA 6.7.6: close aborts); readTable would read out of bounds.
 - casa-rs: Leaves the cell undefined, read as the shape's default exponent 0.05.
@@ -2259,7 +2259,7 @@ Audit baseline: `57d7ac8e55f8c90be077d4b53a104fd13eecd961`. Status counts: Imple
 
 ##### single-spectral-index-read-past-end: Previously agreed
 
-- Record: [A single spectral index is read past its end](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-single-spectral-index-is-read-past-its-end)
+- Record: [A single spectral index is read past its end](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-single-spectral-index-is-read-past-its-end)
 - Inputs: cl.addcomponent(spectrumtype='spectral index', index=alpha) on a polarised component, then predict.
 - CASA: The matrix sampleStokes used by every component prediction has no one-index branch and reads indices 1 to 3 out of bounds; the per-frequency version scales only I (read from source, not probed).
 - casa-rs: Reads a single index as [alpha,0,0,0], so fractional polarisation is constant.
@@ -2270,7 +2270,7 @@ Audit baseline: `57d7ac8e55f8c90be077d4b53a104fd13eecd961`. Status counts: Imple
 
 ##### addcomponent-four-flux-as-stokes: Previously agreed
 
-- Record: [`cl.addcomponent` stores four flux values as Stokes](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/docs/CASA%20%28C%2B%2B%29%20bugs.md#claddcomponent-stores-four-flux-values-as-stokes)
+- Record: [`cl.addcomponent` stores four flux values as Stokes](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/docs/CASA%20%28C%2B%2B%29%20bugs.md#claddcomponent-stores-four-flux-values-as-stokes)
 - Inputs: cl.addcomponent(flux=[1,0.1,0.2,0.9], polarization='circular').
 - CASA: setflux stores four values with FluxRep::setValue(Vector<Double>), which resets the representation to Stokes, so the values become I,Q,U,V rather than RR,RL,LR,LL (probed with CASA 6.7.6).
 - casa-rs: Does the same (owner decision 2026-10-23), including raising for an unknown name or a non-Stokes representation with one value.
@@ -2281,7 +2281,7 @@ Audit baseline: `57d7ac8e55f8c90be077d4b53a104fd13eecd961`. Status counts: Imple
 
 ##### addcomponent-flux-single-precision: Previously agreed
 
-- Record: [`cl.addcomponent` stores the flux in single precision](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/docs/CASA%20%28C%2B%2B%29%20bugs.md#claddcomponent-stores-the-flux-in-single-precision)
+- Record: [`cl.addcomponent` stores the flux in single precision](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/docs/CASA%20%28C%2B%2B%29%20bugs.md#claddcomponent-stores-the-flux-in-single-precision)
 - Inputs: cl.addcomponent(flux=0.1).
 - CASA: setflux reads values into a Vector<Complex> (single precision), so flux=0.1 is stored as 0.10000000149011612 (CASA 6.7.6).
 - casa-rs: Keeps the values given.
@@ -2292,7 +2292,7 @@ Audit baseline: `57d7ac8e55f8c90be077d4b53a104fd13eecd961`. Status counts: Imple
 
 ##### addcomponent-point-for-bad-shape: Previously agreed
 
-- Record: [`cl.addcomponent` keeps a point for a shape it cannot make](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/docs/CASA%20%28C%2B%2B%29%20bugs.md#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make)
+- Record: [`cl.addcomponent` keeps a point for a shape it cannot make](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/docs/CASA%20%28C%2B%2B%29%20bugs.md#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make)
 - Inputs: cl.addcomponent with a misspelled shape name, a limb-darkened disk, or an axis that is not an angle.
 - CASA: addcomponent ignores setshape's False return, so the component stays a point and addcomponent returns True (CASA 6.7.6).
 - casa-rs: Does the same and logs at ERROR; what setshape raises, addcomponent raises too after removing the component.
@@ -2350,26 +2350,26 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Signature inventory — recorded.** CASA 6.7.6.14's methods, names and defaults, and the object-surface bundle's; not behavior.
 
-- [crates/casars-python/python/tests/data/casa_componentlist_signatures.json](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casars-python/python/tests/data/casa_componentlist_signatures.json)
-- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casars-python/python/tests/test_tools_componentlist.py)
-- [crates/casars-python/src/tools/componentlist/surface.rs](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casars-python/src/tools/componentlist/surface.rs)
+- [crates/casars-python/python/tests/data/casa_componentlist_signatures.json](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casars-python/python/tests/data/casa_componentlist_signatures.json)
+- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casars-python/python/tests/test_tools_componentlist.py)
+- [crates/casars-python/src/tools/componentlist/surface.rs](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casars-python/src/tools/componentlist/surface.rs)
 
 <a id="componentlist-evidence-refusals"></a>
 ##### refusals
 
 **Refusal test — recorded.** Each method casa-rs does not implement raises NotImplementedError naming #1053.
 
-- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casars-python/python/tests/test_tools_componentlist.py)
-- [crates/casars-python/src/tools/mod.rs](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casars-python/src/tools/mod.rs)
+- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casars-python/python/tests/test_tools_componentlist.py)
+- [crates/casars-python/src/tools/mod.rs](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casars-python/src/tools/mod.rs)
 
 <a id="componentlist-evidence-table-fixtures"></a>
 ##### table-fixtures
 
 **CASA fixture comparison — passed.** casa-components casa_fixture: 3 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. The component-list tables open reads and close and rename write.
 
-- [crates/casa-components/tests/casa_fixture.rs](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casa-components/tests/casa_fixture.rs)
-- [crates/casa-components/tests/data/casa-6.7.6](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casa-components/tests/data/casa-6.7.6)
-- [tools/simulation/componentlist_oracle.py](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/tools/simulation/componentlist_oracle.py)
+- [crates/casa-components/tests/casa_fixture.rs](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casa-components/tests/casa_fixture.rs)
+- [crates/casa-components/tests/data/casa-6.7.6](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casa-components/tests/data/casa-6.7.6)
+- [tools/simulation/componentlist_oracle.py](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/tools/simulation/componentlist_oracle.py)
 - Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
 - Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
 - Receipt: `resources/casa-compat/evidence/componentlist-fixtures-20261103.json`.
@@ -2379,8 +2379,8 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **CASA-recorded call sequences — passed.** test_tools_componentlist.py: 19 tests pass at the revision; the 2 that need a live CASA are skipped there, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. addcomponent and the accessors on 20 components and 36 recorded calls, with CASA's edge cases.
 
-- [crates/casars-python/python/tests/data/casa_componentlist_tool.json](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casars-python/python/tests/data/casa_componentlist_tool.json)
-- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casars-python/python/tests/test_tools_componentlist.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_tool.json](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casars-python/python/tests/data/casa_componentlist_tool.json)
+- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casars-python/python/tests/test_tools_componentlist.py)
 - Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
 - Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
 - Receipt: `resources/casa-compat/evidence/componentlist-fixtures-20261103.json`.
@@ -2390,14 +2390,14 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Deviation record — recorded.** Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.
 
-- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 <a id="componentlist-evidence-casa-on-casa"></a>
 ##### casa-on-casa
 
 **casa-rs's tests run on CASA itself — passed.** 11 of the 21 tests pass against CASA 6.7.6.14's own cl tool; the others test what only casa-rs has, compare log lines with CASA's timestamps or Python's log, or (rename) meet a CASA assertion failure. The receipt classifies each. The cl tests' expectations, checked against CASA itself.
 
-- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casars-python/python/tests/test_tools_componentlist.py)
+- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casars-python/python/tests/test_tools_componentlist.py)
 - Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
 - Command: `CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool componentlist (bg-mac-mini)`.
 - Receipt: `resources/casa-compat/evidence/cl-on-casa-20261103.json`.
@@ -2837,11 +2837,11 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="componentlist-evidence-full-cl-release"></a>
 ##### full-cl-release
 
-**CASA comparisons and release benchmark — passed.** All 61 methods are represented by 65 same-runtime cases; every repaired release median is faster than CASA, minimum 1.055x. All affected Python cases pass across the 1087-pass batch and 28-pass stale-expectation repair verification; explicit CASA raw-offset interoperability and native/C++/CASA gates pass. Complete componentlist outcome; measures remains in #1252.
+**CASA comparisons and release benchmark — passed.** All 61 methods are represented by 65 same-runtime cases. The repaired full release benchmark is 65/65 faster than CASA. After merging main, all six affected I/O cases remain faster (minimum 1.027x); 59 unchanged non-I/O cases reuse the full benchmark. The merged affected Python batch passes 1088 tests (six optional CASA-import skips); C++ and CASA persistence gates pass. Complete componentlist outcome; measures remains in #1252.
 
-- [tools/simulation/componentlist_benchmark.py](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/tools/simulation/componentlist_benchmark.py)
-- [crates/casars-python/python/tests/test_componentlist_upstream.py](https://github.com/bglenden/casa-rs/blob/57d7ac8e55f8c90be077d4b53a104fd13eecd961/crates/casars-python/python/tests/test_componentlist_upstream.py)
-- Revision: `57d7ac8e55f8c90be077d4b53a104fd13eecd961`; CASA: `casatools 6.7.6-14 / casatasks 6.7.6.14`.
+- [tools/simulation/componentlist_benchmark.py](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/tools/simulation/componentlist_benchmark.py)
+- [crates/casars-python/python/tests/test_componentlist_upstream.py](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casars-python/python/tests/test_componentlist_upstream.py)
+- Revision: `69aa2b7091d025b82edc539b51a17535e075ae0e`; CASA: `casatools 6.7.6-14 / casatasks 6.7.6.14`.
 - Command: `CASAPY componentlist_benchmark.py --backend casa|casars --repeat 1000 --samples 7 (release native build); focused native, C++ and Python gates in receipt`.
 - Receipt: `resources/casa-compat/evidence/cl-equivalence-20261118.json`.
 

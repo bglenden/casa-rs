@@ -1,6 +1,6 @@
 {
   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
-  "source_revision": "57d7ac8e55f8c90be077d4b53a104fd13eecd961",
+  "source_revision": "69aa2b7091d025b82edc539b51a17535e075ae0e",
   "build": {
     "profile": "release",
     "command": "VIRTUAL_ENV=target-1252/venv CARGO_TARGET_DIR=target-1252/build CARGO_INCREMENTAL=0 maturin develop --release --manifest-path crates/casars-python/Cargo.toml",
@@ -2384,5 +2384,338 @@
   "environment_repairs": [
     "Embedded Rust Python initially lacked NumPy on sys.path; setting PYTHONPATH to the isolated venv site-packages made all 60 binding tests pass without a code change.",
     "The CASA interop test uses getcomponent frequency converted to Hz; CASA getfreqvalue is a documented placeholder returning zero."
-  ]
+  ],
+  "merge_follow_up": {
+    "source_revision": "69aa2b7091d025b82edc539b51a17535e075ae0e",
+    "reason": "Main added compressed-column storage support, requiring affected component-table persistence and I/O checks after the conflict-only documentation merge.",
+    "validation": [
+      {
+        "name": "python",
+        "command": [
+          "target-1252/venv/bin/python",
+          "-m",
+          "pytest",
+          "-q",
+          "crates/casars-python/python/tests/test_binding_snapshots.py",
+          "crates/casars-python/python/tests/test_componentlist_ascii.py",
+          "crates/casars-python/python/tests/test_componentlist_concatenate.py",
+          "crates/casars-python/python/tests/test_componentlist_convertfluxpol.py",
+          "crates/casars-python/python/tests/test_componentlist_convertfluxunit.py",
+          "crates/casars-python/python/tests/test_componentlist_convertfrequnit.py",
+          "crates/casars-python/python/tests/test_componentlist_convertrefdir.py",
+          "crates/casars-python/python/tests/test_componentlist_convertshape.py",
+          "crates/casars-python/python/tests/test_componentlist_direction_models.py",
+          "crates/casars-python/python/tests/test_componentlist_edit.py",
+          "crates/casars-python/python/tests/test_componentlist_fluxerror.py",
+          "crates/casars-python/python/tests/test_componentlist_getshape.py",
+          "crates/casars-python/python/tests/test_componentlist_indices.py",
+          "crates/casars-python/python/tests/test_componentlist_iscomponentlist.py",
+          "crates/casars-python/python/tests/test_componentlist_isphysical.py",
+          "crates/casars-python/python/tests/test_componentlist_keyword_read.py",
+          "crates/casars-python/python/tests/test_componentlist_offsets.py",
+          "crates/casars-python/python/tests/test_componentlist_putkeyword.py",
+          "crates/casars-python/python/tests/test_componentlist_record_shape_units.py",
+          "crates/casars-python/python/tests/test_componentlist_records.py",
+          "crates/casars-python/python/tests/test_componentlist_removal.py",
+          "crates/casars-python/python/tests/test_componentlist_replace.py",
+          "crates/casars-python/python/tests/test_componentlist_sample.py",
+          "crates/casars-python/python/tests/test_componentlist_selection.py",
+          "crates/casars-python/python/tests/test_componentlist_setflux.py",
+          "crates/casars-python/python/tests/test_componentlist_setfreq.py",
+          "crates/casars-python/python/tests/test_componentlist_setfreqframe.py",
+          "crates/casars-python/python/tests/test_componentlist_setlabel.py",
+          "crates/casars-python/python/tests/test_componentlist_setrefdir.py",
+          "crates/casars-python/python/tests/test_componentlist_setrefdirframe.py",
+          "crates/casars-python/python/tests/test_componentlist_setshape.py",
+          "crates/casars-python/python/tests/test_componentlist_setspectrum.py",
+          "crates/casars-python/python/tests/test_componentlist_setstokesspectrum.py",
+          "crates/casars-python/python/tests/test_componentlist_simulate.py",
+          "crates/casars-python/python/tests/test_componentlist_sort_summary.py",
+          "crates/casars-python/python/tests/test_componentlist_upstream.py",
+          "crates/casars-python/python/tests/test_measures_addxvalue.py",
+          "crates/casars-python/python/tests/test_measures_getoffset.py",
+          "crates/casars-python/python/tests/test_measures_no_comet.py",
+          "crates/casars-python/python/tests/test_quanta_bare_complex_scalar.py",
+          "crates/casars-python/python/tests/test_quanta_define.py",
+          "crates/casars-python/python/tests/test_quanta_fits.py",
+          "crates/casars-python/python/tests/test_quanta_format_placeholders.py",
+          "crates/casars-python/python/tests/test_quanta_malformed_records.py",
+          "crates/casars-python/python/tests/test_quanta_normalize.py",
+          "crates/casars-python/python/tests/test_quanta_power.py",
+          "crates/casars-python/python/tests/test_quanta_record_complex_array.py",
+          "crates/casars-python/python/tests/test_quanta_record_complex_scalar.py",
+          "crates/casars-python/python/tests/test_quanta_record_empty_array.py",
+          "crates/casars-python/python/tests/test_quanta_record_errors.py",
+          "crates/casars-python/python/tests/test_quanta_record_scalar_types.py",
+          "crates/casars-python/python/tests/test_quanta_record_vector_types.py",
+          "crates/casars-python/python/tests/test_quanta_record_zero_dim.py",
+          "crates/casars-python/python/tests/test_quanta_relational.py",
+          "crates/casars-python/python/tests/test_quanta_spectral_conversion.py",
+          "crates/casars-python/python/tests/test_quanta_underscore_units.py",
+          "crates/casars-python/python/tests/test_quanta_unit_one.py",
+          "crates/casars-python/python/tests/test_tools_componentlist.py",
+          "crates/casars-python/python/tests/test_tools_measures.py",
+          "crates/casars-python/python/tests/test_tools_quanta.py",
+          "crates/casars-python/python/tests/test_tools_table.py",
+          "crates/casars-python/python/tests/test_tools_table_asdm_io.py",
+          "crates/casars-python/python/tests/test_tools_table_cache.py",
+          "crates/casars-python/python/tests/test_tools_table_copies.py",
+          "crates/casars-python/python/tests/test_tools_table_create.py",
+          "crates/casars-python/python/tests/test_tools_table_fits_io.py",
+          "crates/casars-python/python/tests/test_tools_table_row_iter.py",
+          "crates/casars-python/python/tests/test_tools_table_slices.py",
+          "crates/casars-python/python/tests/test_tools_table_taql.py",
+          "crates/casars-python/python/tests/test_tools_table_text_io.py",
+          "crates/casars-python/python/tests/test_componentlist_review.py"
+        ],
+        "exit_code": 0,
+        "result": [
+          "1088 passed, 6 skipped in 44.23s"
+        ]
+      },
+      {
+        "name": "components",
+        "command": [
+          "cargo",
+          "test",
+          "-p",
+          "casa-components"
+        ],
+        "exit_code": 0,
+        "result": [
+          "test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+          "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+          "test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+          "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+          "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+          "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.53s",
+          "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+        ]
+      },
+      {
+        "name": "cpp",
+        "command": [
+          "cargo",
+          "test",
+          "-p",
+          "casa-components",
+          "--features",
+          "cpp-interop-tests",
+          "--test",
+          "casacore_cpp_interop",
+          "--",
+          "--nocapture"
+        ],
+        "exit_code": 0,
+        "result": [
+          "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s"
+        ]
+      },
+      {
+        "name": "casa",
+        "command": [
+          "cargo",
+          "test",
+          "-p",
+          "casa-components",
+          "--test",
+          "casa_oracle",
+          "--",
+          "--ignored",
+          "--nocapture"
+        ],
+        "exit_code": 0,
+        "result": [
+          "fixture: 9 components; CASA read every field and cell, casa-rs read CASA's rewrite back unchanged, and CASA read casa-rs's rewrite of it",
+          "constructed: 4 components; CASA read every field and cell, casa-rs read CASA's rewrite back unchanged, and CASA read casa-rs's rewrite of it",
+          "empty: 0 components; CASA read every field and cell, casa-rs read CASA's rewrite back unchanged, and CASA read casa-rs's rewrite of it",
+          "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 28.48s"
+        ]
+      },
+      {
+        "name": "casarecords",
+        "command": [
+          "/Applications/CASA.app/Contents/MacOS/python3",
+          "-m",
+          "pytest",
+          "-q",
+          "crates/casars-python/python/tests/test_componentlist_review.py",
+          "-k",
+          "casa_reads_native"
+        ],
+        "exit_code": 0,
+        "result": [
+          "1 passed, 19 deselected in 2.86s"
+        ]
+      },
+      {
+        "name": "benchmark",
+        "command": [
+          "/Applications/CASA.app/Contents/MacOS/python3",
+          "tools/simulation/componentlist_benchmark.py",
+          "--backend",
+          "casars",
+          "--out",
+          "target-1252/evidence/bench-native-merged.json",
+          "--workdir",
+          "target-1252/evidence",
+          "--repeat",
+          "1000",
+          "--samples",
+          "7",
+          "--cases",
+          "concatenate(table)",
+          "getkeyword",
+          "haskeyword",
+          "putkeyword",
+          "open",
+          "rename"
+        ],
+        "exit_code": 0,
+        "result": []
+      }
+    ],
+    "native_benchmark": {
+      "revision": "69aa2b7091d025b82edc539b51a17535e075ae0e",
+      "source_dirty": false,
+      "python": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3",
+      "platform": "macOS-27.2.1-arm64-arm-64bit",
+      "backend": "casars",
+      "module": "/Users/brianglendenning/SoftwareProjects/casa-rs/crates/casars-python/python/casars/_core.cpython-312-darwin.so",
+      "casa_version": "6.7.6-14",
+      "command": [
+        "tools/simulation/componentlist_benchmark.py",
+        "--backend",
+        "casars",
+        "--out",
+        "target-1252/evidence/bench-native-merged.json",
+        "--workdir",
+        "target-1252/evidence",
+        "--repeat",
+        "1000",
+        "--samples",
+        "7",
+        "--cases",
+        "concatenate(table)",
+        "getkeyword",
+        "haskeyword",
+        "putkeyword",
+        "open",
+        "rename"
+      ],
+      "cases": {
+        "concatenate(table)": {
+          "median_ns": 246866.7,
+          "samples_ns": [
+            248521.0,
+            247624.8,
+            245720.9,
+            246866.7,
+            246470.9,
+            248316.8,
+            245516.7
+          ],
+          "calls_per_sample": 10
+        },
+        "getkeyword": {
+          "median_ns": 537.5,
+          "samples_ns": [
+            554.2,
+            525.2,
+            541.7,
+            504.2,
+            541.5,
+            537.5,
+            512.5
+          ],
+          "calls_per_sample": 10
+        },
+        "haskeyword": {
+          "median_ns": 370.8,
+          "samples_ns": [
+            370.9,
+            358.4,
+            370.9,
+            370.8,
+            404.3,
+            366.7,
+            370.8
+          ],
+          "calls_per_sample": 10
+        },
+        "putkeyword": {
+          "median_ns": 3216.8,
+          "samples_ns": [
+            3216.8,
+            3183.3,
+            3166.7,
+            3245.8,
+            3229.1,
+            3166.7,
+            3783.3
+          ],
+          "calls_per_sample": 10
+        },
+        "open": {
+          "median_ns": 455204.1,
+          "samples_ns": [
+            464891.6,
+            457808.3,
+            455204.1,
+            453325.0,
+            453429.1,
+            454187.8,
+            456566.6
+          ],
+          "calls_per_sample": 10
+        },
+        "rename": {
+          "median_ns": 652895.9,
+          "samples_ns": [
+            624020.7,
+            676291.7,
+            593408.4,
+            695679.3,
+            595137.6,
+            697516.6,
+            652895.9
+          ],
+          "calls_per_sample": 10
+        }
+      }
+    },
+    "comparison": {
+      "concatenate(table)": {
+        "casa_ns": 415541.7,
+        "native_ns": 246866.7,
+        "speedup": 1.6832634778202162
+      },
+      "getkeyword": {
+        "casa_ns": 1991.7,
+        "native_ns": 537.5,
+        "speedup": 3.7054883720930234
+      },
+      "haskeyword": {
+        "casa_ns": 641.6,
+        "native_ns": 370.8,
+        "speedup": 1.7303128371089536
+      },
+      "putkeyword": {
+        "casa_ns": 4387.5,
+        "native_ns": 3216.8,
+        "speedup": 1.3639331012186022
+      },
+      "open": {
+        "casa_ns": 708962.5,
+        "native_ns": 455204.1,
+        "speedup": 1.5574607082844818
+      },
+      "rename": {
+        "casa_ns": 670404.0,
+        "native_ns": 652895.9,
+        "speedup": 1.0268160666960844
+      }
+    },
+    "reuse": "59 non-I/O cases retain their exact unchanged implementation and use the complete 57d7ac8e55 benchmark above. CASA baseline and benchmark timing loops are unchanged. Type, binding and clippy evidence is retained for the unchanged componentlist/type/binding implementation; CI checks the incoming main changes."
+  }
 }
