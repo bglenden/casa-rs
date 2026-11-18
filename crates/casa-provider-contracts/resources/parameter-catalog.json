@@ -1804,27 +1804,23 @@
     },
     {
       "id": "parameter.center",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "center",
       "value_domain": {
-        "kind": "choice",
-        "values": [
-          "mean",
-          "median",
-          "zero"
-        ]
+        "kind": "string"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "lowercase"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Center of the fit-half statistics algorithm: mean, median or zero.",
+        "summary": "Center of the fit-half statistics algorithm: mean, median or zero, by minimum match of three letters for the mean and median and one for zero.",
         "details": null,
         "examples": [
-          "mean"
+          "mean",
+          "med"
         ]
       },
       "persistence_class": "profile"

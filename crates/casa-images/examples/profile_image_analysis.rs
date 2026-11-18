@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use casa_images::{ImmomentsRequest, export_fits, imhead, immoments, import_fits, imstat};
+use casa_lattices::StatisticsAlgorithm;
 
 const DEFAULT_CONT_IMAGE: &str = "/Users/brianglendenning/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/twhya_cont.image";
 const DEFAULT_CUBE_IMAGE: &str = "/Users/brianglendenning/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/twhya_n2hp.image";
@@ -49,6 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             None,
             None,
             None,
+            &StatisticsAlgorithm::Classic,
         )?);
         Ok(())
     })?);

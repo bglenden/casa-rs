@@ -62,10 +62,18 @@ def record_case(cases: dict, name: str, **call) -> None:
     try:
         result = imstat(**call)
     except RuntimeError as error:
-        message = str(error).split(" at File:", 1)[0]
-        cases[name] = {"error": message}
+        cases[name] = {"error": error_message(str(error))}
         return
     cases[name] = {key: plain(value) for key, value in result.items()}
+
+
+def error_message(text: str) -> str:
+    """CASA's own wording, without the throw site casacore appends."""
+    for cut in (" thrown by", " at File:"):
+        text = text.split(cut, 1)[0]
+    return (
+        text.split("\n", 1)[0].strip().removeprefix("Exception: ").rstrip(".")
+    )
 
 
 def main() -> None:
@@ -81,6 +89,7 @@ def main() -> None:
         ("classic", {}),
         ("classic clmethod tiled", {"clmethod": "tiled"}),
         ("classic clmethod framework", {"clmethod": "framework"}),
+        ("classic clmethod a", {"clmethod": "a"}),
         ("classic chans", {"chans": "1~2"}),
         ("classic box", {"box": "2,2,5,5"}),
         ("axes", {"axes": [0, 1]}),
@@ -88,9 +97,13 @@ def main() -> None:
         ("hinges-fences fence 0.5", {"algorithm": "hinges-fences", "fence": 0.5}),
         ("hinges-fences fence 1", {"algorithm": "hinges-fences", "fence": 1.0}),
         ("hinges-fences fence 2", {"algorithm": "hinges-fences", "fence": 2.0}),
+        ("hinges-fences fence 0", {"algorithm": "hinges-fences", "fence": 0.0}),
+        ("hinges-fences minimum h", {"algorithm": "hinges-fences", "fence": 1.0}),
+        ("hinges-fences upper case", {"algorithm": "Hinges-Fences", "fence": 1.0}),
         ("fit-half", {"algorithm": "fit-half"}),
         ("fit-half median", {"algorithm": "fit-half", "center": "median"}),
         ("fit-half zero", {"algorithm": "fit-half", "center": "zero"}),
+        ("fit-half center med", {"algorithm": "fit-half", "center": "med"}),
         ("fit-half lside false", {"algorithm": "fit-half", "lside": False}),
         ("fit-half median lside false", {
             "algorithm": "fit-half",
@@ -105,14 +118,33 @@ def main() -> None:
         ("chauvenet", {"algorithm": "chauvenet"}),
         ("chauvenet zscore 1.5", {"algorithm": "chauvenet", "zscore": 1.5}),
         ("chauvenet zscore 2", {"algorithm": "chauvenet", "zscore": 2.0}),
+        ("chauvenet zscore 3", {"algorithm": "chauvenet", "zscore": 3.0}),
         ("chauvenet maxiter 1", {"algorithm": "chauvenet", "maxiter": 1}),
         ("chauvenet maxiter 3", {"algorithm": "chauvenet", "maxiter": 3}),
+        ("chauvenet maxiter 0", {"algorithm": "chauvenet", "maxiter": 0}),
+        ("chauvenet maxiter -5", {"algorithm": "chauvenet", "maxiter": -5}),
         ("biweight", {"algorithm": "biweight"}),
         ("biweight niter 1", {"algorithm": "biweight", "niter": 1}),
+        ("biweight niter 2", {"algorithm": "biweight", "niter": 2}),
         ("biweight niter -1", {"algorithm": "biweight", "niter": -1}),
+        ("biweight niter 0", {"algorithm": "biweight", "niter": 0}),
+        ("biweight upper case", {"algorithm": "BIWEIGHT"}),
+        ("biweight box", {"algorithm": "biweight", "box": "2,2,5,5"}),
+        ("biweight single pixel", {"algorithm": "biweight", "box": "0,0,0,0", "chans": "0"}),
+        ("classic single pixel", {"box": "0,0,0,0", "chans": "0"}),
+        ("fit-half single pixel", {
+            "algorithm": "fit-half",
+            "center": "zero",
+            "box": "0,0,0,0",
+            "chans": "0",
+        }),
         ("minimum-match c", {"algorithm": "c"}),
         ("minimum-match x", {"algorithm": "x"}),
         ("minimum-match empty", {"algorithm": ""}),
+        ("minimum-match cla", {"algorithm": "cla"}),
+        ("center m", {"algorithm": "fit-half", "center": "m"}),
+        ("center bad", {"algorithm": "fit-half", "center": "bad"}),
+        ("clmethod bad", {"clmethod": "bad"}),
     ):
         call = dict(imagename=str(values), **call)
         record_case(result["values"], name, **call)

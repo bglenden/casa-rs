@@ -1209,11 +1209,11 @@ fn imstat_takes_casas_spellings_of_its_defaults() {
         "{}",
         String::from_utf8_lossy(&command_line.stderr)
     );
-    // Another algorithm is not yet, and with it the control it reads.
+    // Another parameter is not yet, and with it the control it reads.
     let (output, reply) = json_run(
         workspace.path(),
         "imstat",
-        json!({"imagename": image, "algorithm": "chauvenet", "zscore": 3.0}),
+        json!({"imagename": image, "axes": [0, 1], "stretch": true}),
     );
     assert_eq!(output.status.code(), Some(2));
     let Some(TaskReply::Failed {
@@ -1222,11 +1222,8 @@ fn imstat_takes_casas_spellings_of_its_defaults() {
     else {
         panic!("{reply:?}");
     };
-    assert_eq!(parameter.as_deref(), Some("algorithm"));
-    assert!(
-        message.contains("#977") && message.contains("zscore"),
-        "{message}"
-    );
+    assert_eq!(parameter.as_deref(), Some("axes"));
+    assert!(message.contains("#977"), "{message}");
 }
 
 /// An absent or missing `imagename` is a refusal naming it (exit 2), as

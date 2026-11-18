@@ -9,7 +9,11 @@ use casa_coordinates::{
     Coordinate, CoordinateSystem, CoordinateType, FitsHeader, FitsValue, fits::try_to_fits_header,
 };
 use casa_fft::Fft2;
-use casa_lattices::{LatticeStatistics, Statistic, StatsElement, TiledShape};
+use casa_lattices::{
+    LatticeStatistics, RobustStats, SamplePoint, Statistic, StatisticsAlgorithm,
+    StatisticsAlgorithmKind, StatsElement, TiledShape, compute_robust_stats, parse_algorithm,
+    parse_center, parse_clmethod,
+};
 use casa_provider_contracts::ParameterValue;
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayD, RecordValue, ScalarValue, Value};
@@ -17,7 +21,7 @@ use fitsio::{
     FitsFile,
     images::{ImageDescription, ImageType as FitsImageType},
 };
-use ndarray::{Array2, Axis, IxDyn, ShapeBuilder, Zip};
+use ndarray::{Array2, Axis, Dimension, IxDyn, ShapeBuilder, Zip};
 use num_complex::Complex32;
 
 mod axes;
@@ -67,13 +71,18 @@ pub fn run_image_analysis_task(
         ImageAnalysisTaskRequest::Imhead(request) => {
             Ok(ImageAnalysisTaskResult::Imhead(imhead(&request.imagename)?))
         }
-        ImageAnalysisTaskRequest::Imstat(request) => Ok(ImageAnalysisTaskResult::Imstat(imstat(
-            &request.imagename,
-            request.box_pixels.as_deref(),
-            request.region.as_deref(),
-            request.chans.as_deref(),
-            request.includepix,
-        )?)),
+        ImageAnalysisTaskRequest::Imstat(request) => {
+            let algorithm =
+                parse_imstat_algorithm(&request).map_err(ImageError::InvalidMetadata)?;
+            Ok(ImageAnalysisTaskResult::Imstat(imstat(
+                &request.imagename,
+                request.box_pixels.as_deref(),
+                request.region.as_deref(),
+                request.chans.as_deref(),
+                request.includepix,
+                &algorithm,
+            )?))
+        }
         ImageAnalysisTaskRequest::Immoments(request) => {
             Ok(ImageAnalysisTaskResult::Immoments(immoments(&request)?))
         }
@@ -125,22 +134,50 @@ pub fn imhead(path: impl AsRef<Path>) -> Result<ImageHeaderSummary, ImageError> 
 }
 
 /// Return CASA `imstat`-style statistics for tutorial selections.
+///
+/// The `algorithm` argument selects CASA's statistics algorithms; the
+/// classical one streams through the lattice statistics, and the robust
+/// ones materialize the selection.
+pub fn parse_imstat_algorithm(request: &ImstatRequest) -> Result<StatisticsAlgorithm, String> {
+    let kind = parse_algorithm(&request.algorithm)?;
+    parse_clmethod(&request.clmethod)?;
+    Ok(match kind {
+        StatisticsAlgorithmKind::Classic => StatisticsAlgorithm::Classic,
+        StatisticsAlgorithmKind::HingesFences => StatisticsAlgorithm::HingesFences {
+            fence: request.fence,
+        },
+        StatisticsAlgorithmKind::Chauvenet => StatisticsAlgorithm::Chauvenet {
+            zscore: request.zscore,
+            maxiter: request.maxiter,
+        },
+        StatisticsAlgorithmKind::FitToHalf => StatisticsAlgorithm::FitToHalf {
+            center: parse_center(&request.center)?,
+            upper: !request.lside,
+        },
+        StatisticsAlgorithmKind::Biweight => StatisticsAlgorithm::Biweight {
+            niter: request.niter,
+        },
+    })
+}
+
+/// Return CASA `imstat`-style statistics for tutorial selections.
 pub fn imstat(
     path: impl AsRef<Path>,
     box_pixels: Option<&str>,
     region: Option<&str>,
     chans: Option<&str>,
     includepix: Option<[f64; 2]>,
+    algorithm: &StatisticsAlgorithm,
 ) -> Result<ImageStatisticsSummary, ImageError> {
     let path = path.as_ref();
     let image = AnyPagedImage::open(path)?;
     match &image {
-        AnyPagedImage::Float32(image) => {
-            imstat_typed(path, image, box_pixels, region, chans, includepix)
-        }
-        AnyPagedImage::Float64(image) => {
-            imstat_typed(path, image, box_pixels, region, chans, includepix)
-        }
+        AnyPagedImage::Float32(image) => imstat_typed(
+            path, image, box_pixels, region, chans, includepix, algorithm,
+        ),
+        AnyPagedImage::Float64(image) => imstat_typed(
+            path, image, box_pixels, region, chans, includepix, algorithm,
+        ),
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => Err(
             ImageError::InvalidMetadata("imstat currently supports real-valued images".to_string()),
         ),
@@ -1922,6 +1959,7 @@ fn imstat_typed<T>(
     region: Option<&str>,
     chans: Option<&str>,
     includepix: Option<[f64; 2]>,
+    algorithm: &StatisticsAlgorithm,
 ) -> Result<ImageStatisticsSummary, ImageError>
 where
     T: ImagePixel + StatsElement,
@@ -1938,15 +1976,180 @@ where
     };
     let effective_region = explicit_box.as_ref().or(region_selection.as_ref());
     let selection = Selection::new(image, effective_region, chans)?;
-    let sub = image.sub_image(selection.start.clone(), selection.shape.clone())?;
-    let mut stats = LatticeStatistics::new(&sub);
-    if let Some([min, max]) = includepix {
-        stats.set_include_range(min, max);
-    }
+    let pixel_mask = selection_pixel_mask(image, effective_region, &selection)?;
+    let coordinates = image.coordinates();
+    let world_text = |position: &[usize]| -> Result<String, ImageError> {
+        let pixel: Vec<f64> = position.iter().map(|&value| value as f64).collect();
+        Ok(casa_coordinates::format_world_display(coordinates, &pixel)?)
+    };
+    let blcf = world_text(&selection.start)?;
+    let trc = trc_pixels(&selection.start, &selection.shape);
+    let trcf = world_text(&trc)?;
+
+    // The statistics the algorithm reports, with the extremum positions
+    // relative to the original image.
+    let computed = match algorithm {
+        StatisticsAlgorithm::Classic => {
+            let sub = image.sub_image(selection.start.clone(), selection.shape.clone())?;
+            let mut stats = LatticeStatistics::new(&sub);
+            if let Some([min, max]) = includepix {
+                stats.set_include_range(min, max);
+            }
+            if let Some(mask) = pixel_mask {
+                stats.set_pixel_mask(mask);
+            }
+            let (minpos, maxpos) = stats.get_min_max_pos()?;
+            ComputedStats {
+                npts: scalar_stat(&stats, Statistic::Npts)?,
+                sum: scalar_stat(&stats, Statistic::Sum)?,
+                min: scalar_stat(&stats, Statistic::Min)?,
+                max: scalar_stat(&stats, Statistic::Max)?,
+                sumsq: scalar_stat(&stats, Statistic::SumSq)?,
+                mean: scalar_stat(&stats, Statistic::Mean)?,
+                rms: scalar_stat(&stats, Statistic::Rms)?,
+                sigma: scalar_stat(&stats, Statistic::Sigma)?,
+                median: scalar_stat(&stats, Statistic::Median)?,
+                medabsdevmed: scalar_stat(&stats, Statistic::MedAbsDevMed)?,
+                q1: scalar_stat(&stats, Statistic::Q1)?,
+                q3: scalar_stat(&stats, Statistic::Q3)?,
+                quartile: scalar_stat(&stats, Statistic::Quartile)?,
+                minpos: minpos.map(|pos| offset_pos(&selection.start, pos)),
+                maxpos: maxpos.map(|pos| offset_pos(&selection.start, pos)),
+            }
+        }
+        robust => {
+            let pixels = image.get_slice(&selection.start, &selection.shape)?;
+            let sample = sample_points(&pixels, pixel_mask.as_ref(), includepix);
+            match compute_robust_stats(&sample, robust)? {
+                RobustStats::Sample(stats) => ComputedStats {
+                    npts: stats.npts,
+                    sum: stats.sum,
+                    min: stats.min,
+                    max: stats.max,
+                    sumsq: stats.sumsq,
+                    mean: stats.mean,
+                    rms: stats.rms,
+                    sigma: stats.sigma,
+                    median: stats.median,
+                    medabsdevmed: stats.medabsdevmed,
+                    q1: stats.q1,
+                    q3: stats.q3,
+                    quartile: stats.quartile,
+                    minpos: stats.minpos.map(|linear| {
+                        offset_pos(
+                            &selection.start,
+                            selection_position(linear, &selection.shape),
+                        )
+                    }),
+                    maxpos: stats.maxpos.map(|linear| {
+                        offset_pos(
+                            &selection.start,
+                            selection_position(linear, &selection.shape),
+                        )
+                    }),
+                },
+                RobustStats::Biweight { location, scale } => {
+                    // The biweight reports only its location and scale,
+                    // with the sample's count and extrema.
+                    let npts = sample.len() as f64;
+                    let min = sample.iter().map(|p| p.value).fold(f64::NAN, f64::min);
+                    let max = sample.iter().map(|p| p.value).fold(f64::NAN, f64::max);
+                    ComputedStats {
+                        npts,
+                        sum: f64::NAN,
+                        min,
+                        max,
+                        sumsq: f64::NAN,
+                        mean: location,
+                        rms: f64::NAN,
+                        sigma: scale,
+                        median: f64::NAN,
+                        medabsdevmed: f64::NAN,
+                        q1: f64::NAN,
+                        q3: f64::NAN,
+                        quartile: f64::NAN,
+                        minpos: None,
+                        maxpos: None,
+                    }
+                }
+            }
+        }
+    };
+
+    let minposf = match &computed.minpos {
+        Some(position) => Some(world_text(position)?),
+        None => None,
+    };
+    let maxposf = match &computed.maxpos {
+        Some(position) => Some(world_text(position)?),
+        None => None,
+    };
+    let flux = if algorithm.kind() == StatisticsAlgorithmKind::Biweight {
+        None
+    } else {
+        image_flux(image, computed.sum, &selection)
+    };
+    Ok(ImageStatisticsSummary {
+        blcf,
+        trcf,
+        npts: computed.npts,
+        min: computed.min,
+        max: computed.max,
+        sum: computed.sum,
+        sumsq: computed.sumsq,
+        mean: computed.mean,
+        rms: computed.rms,
+        sigma: computed.sigma,
+        median: computed.median,
+        medabsdevmed: computed.medabsdevmed,
+        q1: computed.q1,
+        q3: computed.q3,
+        quartile: computed.quartile,
+        minposf,
+        maxposf,
+        minpos: computed.minpos,
+        maxpos: computed.maxpos,
+        imagename: path.display().to_string(),
+        blc: selection.start.clone(),
+        trc,
+        flux,
+        units: image.units().to_string(),
+    })
+}
+
+/// The statistics one `imstat` computation reports, before the record and
+/// the world-coordinate strings are built.
+struct ComputedStats {
+    npts: f64,
+    min: f64,
+    max: f64,
+    sum: f64,
+    sumsq: f64,
+    mean: f64,
+    rms: f64,
+    sigma: f64,
+    median: f64,
+    medabsdevmed: f64,
+    q1: f64,
+    q3: f64,
+    quartile: f64,
+    minpos: Option<Vec<usize>>,
+    maxpos: Option<Vec<usize>>,
+}
+
+/// The image mask of a selection, combined with its region's.
+fn selection_pixel_mask<T>(
+    image: &PagedImage<T>,
+    effective_region: Option<&PixelRegion>,
+    selection: &Selection,
+) -> Result<Option<ndarray::ArrayD<bool>>, ImageError>
+where
+    T: ImagePixel,
+{
     let mut pixel_mask =
         image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
     if let Some(region) = effective_region {
-        let region_mask = region_pixel_mask(region, &selection)?;
+        let region_mask = region_pixel_mask(region, selection)?;
         pixel_mask = Some(match pixel_mask {
             Some(mut mask) => {
                 Zip::from(&mut mask)
@@ -1957,59 +2160,65 @@ where
             None => region_mask,
         });
     }
-    if let Some(mask) = pixel_mask {
-        stats.set_pixel_mask(mask);
+    Ok(pixel_mask)
+}
+
+/// The selection's pixel values as a robust-algorithm sample, with each
+/// value's Fortran-linear position inside the selection, filtered by
+/// the pixel mask and an inclusive pixel-value range.
+fn sample_points<T>(
+    pixels: &ndarray::ArrayD<T>,
+    pixel_mask: Option<&ndarray::ArrayD<bool>>,
+    includepix: Option<[f64; 2]>,
+) -> Vec<SamplePoint>
+where
+    T: ImagePixel + StatsElement,
+{
+    let shape = pixels.shape();
+    let mut strides = Vec::with_capacity(shape.len());
+    let mut stride = 1u64;
+    for &axis_shape in shape {
+        strides.push(stride);
+        stride *= axis_shape as u64;
     }
-    let npts = scalar_stat(&stats, Statistic::Npts)?;
-    let sum = scalar_stat(&stats, Statistic::Sum)?;
-    let min = scalar_stat(&stats, Statistic::Min)?;
-    let max = scalar_stat(&stats, Statistic::Max)?;
-    let (minpos, maxpos) = stats.get_min_max_pos()?;
-    let flux = image_flux(image, sum, &selection);
-    let coordinates = image.coordinates();
-    let world_text = |position: &[usize]| -> Result<String, ImageError> {
-        let pixel: Vec<f64> = position.iter().map(|&value| value as f64).collect();
-        Ok(casa_coordinates::format_world_display(coordinates, &pixel)?)
-    };
-    let minpos = minpos.map(|pos| offset_pos(&selection.start, pos));
-    let maxpos = maxpos.map(|pos| offset_pos(&selection.start, pos));
-    let minposf = match &minpos {
-        Some(position) => Some(world_text(position)?),
-        None => None,
-    };
-    let maxposf = match &maxpos {
-        Some(position) => Some(world_text(position)?),
-        None => None,
-    };
-    let blcf = world_text(&selection.start)?;
-    let trc = trc_pixels(&selection.start, &selection.shape);
-    let trcf = world_text(&trc)?;
-    Ok(ImageStatisticsSummary {
-        blcf,
-        trcf,
-        npts,
-        min,
-        max,
-        sum,
-        sumsq: scalar_stat(&stats, Statistic::SumSq)?,
-        mean: scalar_stat(&stats, Statistic::Mean)?,
-        rms: scalar_stat(&stats, Statistic::Rms)?,
-        sigma: scalar_stat(&stats, Statistic::Sigma)?,
-        median: scalar_stat(&stats, Statistic::Median)?,
-        medabsdevmed: scalar_stat(&stats, Statistic::MedAbsDevMed)?,
-        q1: scalar_stat(&stats, Statistic::Q1)?,
-        q3: scalar_stat(&stats, Statistic::Q3)?,
-        quartile: scalar_stat(&stats, Statistic::Quartile)?,
-        minposf,
-        maxposf,
-        minpos,
-        maxpos,
-        imagename: path.display().to_string(),
-        blc: selection.start.clone(),
-        trc,
-        flux,
-        units: image.units().to_string(),
-    })
+    let mut sample = Vec::new();
+    for (index, value) in pixels.indexed_iter() {
+        if let Some(mask) = pixel_mask {
+            let position: &[usize] = index.slice();
+            if !mask[position] {
+                continue;
+            }
+        }
+        let number = value.to_f64_stats();
+        if let Some([min, max]) = includepix
+            && !(min <= number && number <= max)
+        {
+            continue;
+        }
+        let mut linear = 0u64;
+        for (axis, &axis_stride) in strides.iter().enumerate() {
+            linear += index[axis] as u64 * axis_stride;
+        }
+        sample.push(SamplePoint {
+            value: number,
+            position: linear,
+        });
+    }
+    // casacore walks its arrays in Fortran order, so a tie's reported
+    // position is the first in that order.
+    sample.sort_by_key(|point| point.position);
+    sample
+}
+
+/// The position of a Fortran-linear index inside a selection shape.
+fn selection_position(linear: u64, shape: &[usize]) -> Vec<usize> {
+    let mut position = Vec::with_capacity(shape.len());
+    let mut remainder = linear;
+    for &axis_shape in shape {
+        position.push((remainder % axis_shape as u64) as usize);
+        remainder /= axis_shape.max(1) as u64;
+    }
+    position
 }
 
 /// The inclusive top-right corner of a selection, as pixels.
@@ -4547,9 +4756,9 @@ mod tests {
             run_image_analysis_task(ImageAnalysisTaskRequest::Imstat(ImstatRequest {
                 imagename: source_path.clone(),
                 box_pixels: Some("0,0,1,1".to_string()),
-                region: None,
                 chans: Some("1~2".to_string()),
                 includepix: Some([5.0, 12.0]),
+                ..ImstatRequest::default()
             }))
             .unwrap();
         let ImageAnalysisTaskResult::Imstat(stats) = imstat_result else {
@@ -4784,7 +4993,7 @@ mod tests {
         assert_eq!(complex_header.axes.len(), 2);
 
         assert!(matches!(
-            imstat(&complex_path, None, None, None, None),
+            imstat(&complex_path, None, None, None, None, &StatisticsAlgorithm::Classic),
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("real-valued images")
         ));
@@ -4808,11 +5017,18 @@ mod tests {
         ));
 
         assert!(matches!(
-            imstat(&real_path, Some("0,0,4,4"), None, None, None),
+            imstat(
+                &real_path,
+                Some("0,0,4,4"),
+                None,
+                None,
+                None,
+                &StatisticsAlgorithm::Classic
+            ),
             Err(ImageError::ShapeMismatch { .. })
         ));
         assert!(matches!(
-            imstat(&real_path, None, None, Some("0"), None),
+            imstat(&real_path, None, None, Some("0"), None, &StatisticsAlgorithm::Classic),
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("spectral axis")
         ));
@@ -4822,7 +5038,8 @@ mod tests {
                 Some("0,0,1,1"),
                 Some("box:0,0,1,1"),
                 None,
-                None
+                None,
+                &StatisticsAlgorithm::Classic
             ),
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("either box or region")
@@ -4887,6 +5104,7 @@ mod tests {
             Some("box[[0pix,0pix],[0pix,0pix]]"),
             None,
             None,
+            &StatisticsAlgorithm::Classic,
         )
         .unwrap();
         assert_eq!(inline.npts, 1.0);
@@ -4904,6 +5122,7 @@ mod tests {
             Some(region_path.to_str().unwrap()),
             None,
             None,
+            &StatisticsAlgorithm::Classic,
         )
         .unwrap();
         assert_eq!(from_file.npts, 2.0);
@@ -4937,6 +5156,7 @@ mod tests {
             Some(region_path.to_str().unwrap()),
             None,
             None,
+            &StatisticsAlgorithm::Classic,
         )
         .unwrap();
         assert_eq!(from_file.npts, 2.0);
@@ -4963,6 +5183,7 @@ mod tests {
             Some(region_path.to_str().unwrap()),
             None,
             None,
+            &StatisticsAlgorithm::Classic,
         )
         .unwrap();
 
@@ -4997,6 +5218,7 @@ mod tests {
             Some(region_path.to_str().unwrap()),
             None,
             None,
+            &StatisticsAlgorithm::Classic,
         )
         .unwrap();
 
@@ -5218,6 +5440,7 @@ mod tests {
             None,
             Some("0~1"),
             Some([1.0, 8.0]),
+            &StatisticsAlgorithm::Classic,
         )
         .unwrap();
         assert_eq!(stats.npts, 7.0);

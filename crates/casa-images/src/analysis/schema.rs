@@ -113,6 +113,88 @@ pub struct ImstatRequest {
     /// Inclusive pixel-value range to include.
     #[serde(default)]
     pub includepix: Option<[f64; 2]>,
+    /// CASA `algorithm` selection, minimum-matched: `biweight`,
+    /// `chauvenet`, `classic`, `fit-half` or `hinges-fences`.
+    #[serde(default = "default_algorithm")]
+    pub algorithm: String,
+    /// The `hinges-fences` fence multiplier.
+    #[serde(default = "default_fence")]
+    pub fence: f64,
+    /// The `fit-half` center, minimum-matched: `mean`, `median` or `zero`.
+    #[serde(default = "default_center")]
+    pub center: String,
+    /// Whether `fit-half` uses the values at or above the center.
+    #[serde(default = "default_true")]
+    pub lside: bool,
+    /// The fixed `chauvenet` z-score, or a negative value for
+    /// Chauvenet's criterion.
+    #[serde(default = "default_zscore")]
+    pub zscore: f64,
+    /// The maximum `chauvenet` iterations; negative means until
+    /// convergence.
+    #[serde(default = "default_maxiter")]
+    pub maxiter: i64,
+    /// CASA `clmethod` selection for the classical method: `auto`,
+    /// `tiled` or `framework`, minimum-matched. The strategy does not
+    /// change the statistics.
+    #[serde(default = "default_clmethod")]
+    pub clmethod: String,
+    /// The maximum `biweight` iterations; negative takes the fast pass.
+    #[serde(default = "default_niter")]
+    pub niter: i64,
+}
+
+impl Default for ImstatRequest {
+    /// CASA's defaults, as the task's XML records them.
+    fn default() -> Self {
+        Self {
+            imagename: PathBuf::new(),
+            box_pixels: None,
+            region: None,
+            chans: None,
+            includepix: None,
+            algorithm: default_algorithm(),
+            fence: default_fence(),
+            center: default_center(),
+            lside: default_true(),
+            zscore: default_zscore(),
+            maxiter: default_maxiter(),
+            clmethod: default_clmethod(),
+            niter: default_niter(),
+        }
+    }
+}
+
+fn default_algorithm() -> String {
+    "classic".to_string()
+}
+
+fn default_fence() -> f64 {
+    -1.0
+}
+
+fn default_center() -> String {
+    "mean".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_zscore() -> f64 {
+    -1.0
+}
+
+fn default_maxiter() -> i64 {
+    -1
+}
+
+fn default_clmethod() -> String {
+    "auto".to_string()
+}
+
+fn default_niter() -> i64 {
+    3
 }
 
 /// CASA `immoments` request.
