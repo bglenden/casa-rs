@@ -79,6 +79,28 @@ pub(super) fn solve_polynomial(
             ),
         );
     }
+    let combined_window = request.combine.spectral_windows.then(|| {
+        context
+            .rows
+            .iter()
+            .map(|row| row.data_spw_id)
+            .min()
+            .expect("selected windows")
+    });
+    if combined_window.is_some()
+        && frequencies_by_description.values().map(Vec::len).min()
+            != frequencies_by_description.values().map(Vec::len).max()
+    {
+        tracing::warn!(
+            "Spectral windows with different selected channel counts cannot be combined"
+        );
+        return Ok(empty_report(
+            request,
+            context.refant_id,
+            context.selected_data,
+            SolveStats::default(),
+        ));
+    }
     let mut channel_count = 0;
     let mut fitted = Vec::new();
     for group in groups {
@@ -93,7 +115,7 @@ pub(super) fn solve_polynomial(
         if frequencies.is_empty() {
             continue;
         }
-        let rows = match fit::fit_interval(
+        let mut rows = match fit::fit_interval(
             &group,
             &frequencies,
             &context.available_antennas,
@@ -109,6 +131,11 @@ pub(super) fn solve_polynomial(
             Err(error) => return Err(error),
         };
         if !rows.is_empty() {
+            if let Some(spw) = combined_window {
+                for row in &mut rows {
+                    row.spw_id = spw;
+                }
+            }
             channel_count = frequencies
                 .values()
                 .map(|channels| channels.len())

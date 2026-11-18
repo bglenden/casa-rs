@@ -5512,6 +5512,20 @@ solutions for this input, as it does for explicit field selectors. The
 public oracle compares the result against an independent CASA run with
 the same polynomial table and default gainfield.
 
+## BPOLY writes nonfinite coefficients when every channel is masked
+
+- Date noted: 2026-11-18
+- Status: corrected in the native polynomial solve (#31)
+- Affected code: CASA 6.7.6.14 `BJonesPoly::selfSolveOne` and the CLIC
+  `POLYANT` normal equations.
+
+In a 12-channel window, `maskcenter=12` excludes the entire spectrum. CASA
+attempts the singular fit and reports the resulting table in `solve_tables`
+with nonfinite coefficients. The native task returns an empty `solve_tables`
+entry when no interval can be fitted. Output creation and replacement still
+use the shared calibration table lifecycle. The pinned BPOLY oracle checks
+the observed CASA product and the native return.
+
 ## Simulator short cubic time axes can alter DATA before failing
 
 - Date noted: 2026-11-12

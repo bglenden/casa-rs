@@ -4551,6 +4551,22 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.minblperant",
+      "semantic_revision": 2,
+      "casa_name": "minblperant",
+      "value_domain": {"kind": "integer"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Minimum unflagged baselines an antenna needs to be solved for",
+        "details": "Values below zero disable the cut. BPOLY does not use this cut.",
+        "examples": ["4"]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.minbeamfrac",
       "semantic_revision": 1,
       "casa_name": "minbeamfrac",

@@ -15457,7 +15457,7 @@
         },
         {
           "name": "solint",
-          "concept": {"id": "parameter.solint", "semantic_revision": 1},
+          "concept": {"id": "parameter.solint", "semantic_revision": 2},
           "order": 12,
           "default": {"kind": "literal", "value": {"kind": "string", "value": "inf"}},
           "required_when": {"kind": "never"},
@@ -15499,7 +15499,7 @@
         },
         {
           "name": "minblperant",
-          "concept": {"id": "parameter.minblperant", "semantic_revision": 1},
+          "concept": {"id": "parameter.minblperant", "semantic_revision": 2},
           "order": 15,
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 4}},
           "required_when": {"kind": "never"},

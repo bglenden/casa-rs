@@ -479,7 +479,7 @@ def scalar_cases(root, native):
             ms = folder/f'{reader}-interop.ms'
             copy_ms(source, ms)
             engine.applycal(str(ms), field='0', gaintable=[str(folder/f'{writer}.B')],
-                            flagbackup=False)
+                            flagbackup=False, calwt=False)
             corrected = contents(ms)
             np.testing.assert_array_equal(corrected['FLAG'], False)
             errors[f'{reader}_interop'] = relative_rms(

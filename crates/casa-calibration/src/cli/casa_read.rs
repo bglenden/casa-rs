@@ -163,8 +163,8 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         correlation_dependent_flags: task.flag("corrdepflags")?,
         smodel,
         cuts: Some(BandpassSolveCuts {
-            min_baselines_per_antenna: count(task, "minblperant")?,
-            min_snr: min_snr(task)?,
+            min_baselines_per_antenna: task.integer("minblperant")?.max(0) as usize,
+            min_snr: task.number("minsnr")? as f32,
             fill_gaps: match band_type {
                 BandpassType::B => {
                     usize::try_from(task.integer("fillgaps")?.max(0)).unwrap_or(usize::MAX)

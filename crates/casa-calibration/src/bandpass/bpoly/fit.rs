@@ -154,7 +154,8 @@ impl FrequencyGrid {
         let step = frequencies
             .values()
             .filter_map(|channels| Some((channels.get(1)? - channels.first()?).abs()))
-            .reduce(f64::max)?;
+            .reduce(f64::max)
+            .unwrap_or(1.0);
         let values = frequencies
             .values()
             .flat_map(|channels| channels.iter().copied());

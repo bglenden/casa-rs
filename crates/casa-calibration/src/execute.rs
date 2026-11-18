@@ -2118,6 +2118,7 @@ fn apply_row_all_channels(
             table_plan.summary.table_subtype.as_str(),
             "B Jones" | "BPOLY"
         );
+        let scalar_bandpass = is_bandpass && correlation_types.len() == 1;
         let bandpass_weights = (is_bandpass && calibrate_weights)
             .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types))
             .flatten();
@@ -2162,6 +2163,7 @@ fn apply_row_all_channels(
         let materialize_started_at = compute_profile.as_ref().map(|_| Instant::now());
         if !forward_model
             && !calibrate_weights
+            && !scalar_bandpass
             && let Some(pair) = build_fast_gain_pair(
                 table_index,
                 &ant1,
@@ -2214,7 +2216,7 @@ fn apply_row_all_channels(
         }
 
         if !forward_model
-            && !(is_bandpass && correlation_types.len() == 1)
+            && !scalar_bandpass
             && let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) =
                 (ant1.as_ref(), ant2.as_ref())
         {
@@ -2261,7 +2263,7 @@ fn apply_row_all_channels(
 
         let generic_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
         for corr_index in 0..data.shape()[0] {
-            let receptors = if is_bandpass {
+            let receptors = if scalar_bandpass {
                 bandpass::receptors(correlation_types, corr_index)
             } else {
                 correlation_receptors(correlation_types[corr_index])
