@@ -12572,7 +12572,7 @@
       },
       "base_constraints": [],
       "unit_dimension": null,
-      "semantic_role": "output",
+      "semantic_role": "output_data",
       "documentation": {
         "summary": "Optional fitted component-list table.",
         "examples": []
