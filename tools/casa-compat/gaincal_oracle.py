@@ -353,11 +353,49 @@ def correlation_flags(root, source, native):
     return results
 
 
+def robust_gains(root, source, native):
+    t = table()
+    t.open(str(source), nomodify=False)
+    try:
+        a, b = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+        time = t.getcol('TIME')
+        corrupt = (a==1) & (b==3) & (time==np.unique(time)[1])
+        data = t.getcol('DATA')
+        data[0, :, corrupt] *= 1.7*np.exp(.8j)
+        t.putcol('DATA', data)
+    finally:
+        t.close()
+    casa_solutions, results = {}, {}
+    cases = {
+        'ordinary': {},
+        'rms-inactive': dict(rmsthresh=[.1]),
+        'R-default': dict(solmode='R'),
+        'R-explicit-default': dict(solmode='R', rmsthresh=[7., 5., 4., 3.5, 3., 2.8, 2.6, 2.4, 2.2, 2.5]),
+        'R-custom': dict(solmode='R', rmsthresh=[3., 2.5]),
+        'L1': dict(solmode='L1'),
+        'L1-inactive-rms': dict(solmode='L1', rmsthresh=[.1]),
+        'L1R': dict(solmode='L1R', rmsthresh=[3., 2.5]),
+    }
+    for mode, extra in cases.items():
+        case = root/mode
+        case.mkdir()
+        results[mode] = gain_and_apply(case, source, native, 'G', 'inf', calmode='ap',
+                                       preavg=10., minblperant=3, **extra)
+        casa_solutions[mode] = contents(case/'ap-G-inf-mean-norm0-preavg10-casa.cal')['CPARAM']
+    baseline = casa_solutions['ordinary']
+    for mode in ['R-default', 'R-custom', 'L1', 'L1R']:
+        assert relative_rms(casa_solutions[mode], baseline) > .004
+    for first, second in [('ordinary', 'rms-inactive'), ('L1', 'L1-inactive-rms'),
+                          ('R-default', 'R-explicit-default')]:
+        np.testing.assert_array_equal(casa_solutions[first], casa_solutions[second])
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -411,6 +449,8 @@ def main():
         results = spectral_window_reference(root, amplitude_data(root, source), native)
     elif args.case == 'corrflags':
         results = correlation_flags(root, amplitude_data(root, source), native)
+    elif args.case == 'robust':
+        results = robust_gains(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
