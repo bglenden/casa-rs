@@ -1092,6 +1092,19 @@ impl SolveAccumulator {
     /// averaged over its rows by row weight as time averaging does, weighted
     /// by the baseline's solve weight after that phase-only scaling.
     pub(crate) fn finalize_for_solve(&mut self, solve_mode: GainSolveMode, preserve_samples: bool) {
+        self.finalize(solve_mode, preserve_samples, false);
+    }
+
+    pub(crate) fn finalize_bandpass(&mut self) {
+        self.finalize(GainSolveMode::AmplitudePhase, false, true);
+    }
+
+    fn finalize(
+        &mut self,
+        solve_mode: GainSolveMode,
+        preserve_samples: bool,
+        direct_centroid: bool,
+    ) {
         self.channel_graphs = vec![
             vec![SolveGraph::default(); self.receptor_accumulations.len()];
             self.solution_channels
@@ -1163,6 +1176,10 @@ impl SolveAccumulator {
             }
         }
 
+        if direct_centroid {
+            self.solution_time = self.bandpass_centroid(baseline_weights);
+            return;
+        }
         let mut solution_time = WeightedTime::default();
         for (baseline, weight) in baseline_weights {
             let Some(centroid) = self.baseline_centroids.get(&baseline) else {
@@ -1175,6 +1192,38 @@ impl SolveAccumulator {
             .unwrap_or_else(|| self.aggregate_time());
     }
 
+    fn bandpass_centroid(&self, weights: HashMap<AveragedBaseline, f64>) -> f64 {
+        let mut baselines = weights.into_iter().collect::<Vec<_>>();
+        baselines.sort_unstable_by_key(|(baseline, _)| {
+            (
+                baseline.field_id,
+                baseline.data_desc_id,
+                baseline.start_bits,
+                baseline.antennas,
+            )
+        });
+        // SDBList::aggregateTimeCentroid uses absolute epochs. Rounding at
+        // an integration boundary decides which two solutions CASA blends.
+        let mut sum = 0.0;
+        let mut total = 0.0;
+        for (baseline, weight) in baselines {
+            let Some(time) = self
+                .baseline_centroids
+                .get(&baseline)
+                .and_then(|time| time.mean())
+            else {
+                continue;
+            };
+            let weight = f64::from(weight as f32);
+            sum += weight * time;
+            total += weight;
+        }
+        if total > 0.0 {
+            sum / total
+        } else {
+            self.aggregate_time()
+        }
+    }
     /// Add `other`'s accumulation, of the same group, to this one before
     /// [`Self::finalize_for_solve`], as if its samples had been observed
     /// here: the fragment work units of the MSv2/MSv4 trial accumulate apart

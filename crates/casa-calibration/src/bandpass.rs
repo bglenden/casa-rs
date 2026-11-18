@@ -400,7 +400,10 @@ pub(crate) fn solve_bandpass(
         &context.available_antennas,
     );
     for mut group in groups.into_values() {
-        group.finalize_for_solve(GainSolveMode::AmplitudePhase, false);
+        match request.band_type {
+            BandpassType::B => group.finalize_bandpass(),
+            BandpassType::BPoly => group.finalize_for_solve(GainSolveMode::AmplitudePhase, false),
+        }
         solve_stats.interval(&IntervalStages::of(
             &group,
             request
