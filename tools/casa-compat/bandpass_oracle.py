@@ -55,23 +55,40 @@ def gapped_data(source, target):
         tool.close()
 
 
-def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,)):
-    products = []
+def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,),
+            solint='inf', interval_count=None):
+    products, corrected, returns = [], [], []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
         copy_ms(source, ms)
-        engine.bandpass(str(ms), str(output), field='0', refant='A0',
-                        smodel=list(s_model), minsnr=0., solnorm=normalize, fillgaps=fillgaps)
+        result = engine.bandpass(str(ms), str(output), field='0', refant='A0',
+                                 smodel=list(s_model), minsnr=0., solnorm=normalize,
+                                 fillgaps=fillgaps, solint=solint)
+        if interval_count is not None:
+            np.testing.assert_array_equal(result['solvestats']['expected'], [interval_count]*2)
+        np.testing.assert_array_equal(result.pop('solve_tables'), [str(output)])
+        returns.append(result)
         products.append(contents(output))
+        engine.applycal(str(ms), field='0', gaintable=[str(output)], flagbackup=False)
+        corrected.append(contents(ms))
+    np.testing.assert_equal(returns[1], returns[0])
     expected, actual = products
     for column in ('FLAG', 'ANTENNA1', 'ANTENNA2', 'FIELD_ID', 'SPECTRAL_WINDOW_ID'):
         np.testing.assert_array_equal(actual[column], expected[column], err_msg=column)
     np.testing.assert_allclose(actual['TIME'], expected['TIME'], rtol=0., atol=1e-4)
+    if interval_count is not None:
+        assert len(np.unique(actual['TIME'])) == interval_count
     if remaining_flags is None:
         assert np.all(expected['PARAMERR'][~expected['FLAG']] > 0.)
     else:
         np.testing.assert_array_equal(np.flatnonzero(actual['FLAG'].all(axis=(0, 2))), remaining_flags)
-    return {key: relative_rms(actual[key], expected[key]) for key in ('CPARAM', 'PARAMERR', 'SNR')}
+    errors = {key: relative_rms(actual[key], expected[key]) for key in ('CPARAM', 'PARAMERR', 'SNR')}
+    expected_ms, actual_ms = corrected
+    for column in ('FLAG', 'FLAG_ROW'):
+        np.testing.assert_array_equal(actual_ms[column], expected_ms[column], err_msg=column)
+    for column in ('CORRECTED_DATA', 'WEIGHT', 'SIGMA'):
+        errors[column] = relative_rms(actual_ms[column], expected_ms[column])
+    return errors
 
 
 def model_cases(root, source, native):
@@ -131,6 +148,11 @@ def main():
         folder.mkdir()
         results[folder.name] = compare(folder, gapped, native, False, gaps, flags)
     results.update(model_cases(root, source, native))
+    for interval, count in [('int', 6), ('25s', 3), ('inf,none', 1)]:
+        folder = root/f"interval-{interval.replace(',', '-')}"
+        folder.mkdir()
+        results[folder.name] = compare(folder, source, native, False, solint=interval,
+                                       interval_count=count)
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, report in results.items():
         assert max(report.values()) < 1e-3, (name, report)

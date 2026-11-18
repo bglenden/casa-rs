@@ -129,9 +129,10 @@ pub enum GainSolveModelSource {
 }
 
 /// Supported first-wave gain solution intervals.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveInterval {
     /// Solve one solution per `(observation, field, spw, scan)` group.
+    #[default]
     Infinite,
     /// Solve one solution per integration timestamp inside each scan.
     Integration,
@@ -884,7 +885,9 @@ pub(crate) fn get_f64(table: &Table, row: usize, column: &str) -> Result<f64, Ga
     }
 }
 
-fn validate_solve_interval(solve_interval: GainSolveInterval) -> Result<(), GainSolveError> {
+pub(crate) fn validate_solve_interval(
+    solve_interval: GainSolveInterval,
+) -> Result<(), GainSolveError> {
     match solve_interval {
         GainSolveInterval::Infinite | GainSolveInterval::Integration => Ok(()),
         GainSolveInterval::Seconds(seconds) if seconds > 0.0 => Ok(()),

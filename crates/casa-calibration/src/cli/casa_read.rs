@@ -162,6 +162,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         amplitude_degree: count(task, "degamp")?,
         phase_degree: count(task, "degphase")?,
         model_source,
+        solve_interval: solint(task)?,
         smodel,
         cuts: Some(BandpassSolveCuts {
             min_baselines_per_antenna: count(task, "minblperant")?,
@@ -678,6 +679,11 @@ fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
     let supplied = selector_text(task.value("solint")).unwrap_or_default();
     let text = match supplied.split_once(',') {
         Some((time, _)) if task.surface() == "gaincal" => time,
+        Some((time, frequency))
+            if frequency.trim().is_empty() || frequency.trim().eq_ignore_ascii_case("none") =>
+        {
+            time
+        }
         Some(_) => return Err(not_yet("solint", &supplied)),
         None => &supplied,
     };

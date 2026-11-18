@@ -352,6 +352,9 @@ pub struct SolveBandpassTaskRequest {
     /// Source of the visibility model.
     #[serde(default)]
     pub model_source: GainSolveModelSource,
+    /// Time interval used to group channelized solutions.
+    #[serde(default)]
+    pub solve_interval: GainSolveInterval,
     /// Point-source Stokes model.
     #[serde(default = "default_smodel")]
     pub smodel: [f32; 4],
@@ -490,6 +493,7 @@ impl CalibrationTaskRequest {
                     amplitude_degree: request.amplitude_degree,
                     phase_degree: request.phase_degree,
                     model_source: request.model_source,
+                    solve_interval: request.solve_interval,
                     smodel: request.smodel,
                     cuts: request.cuts,
                 }),

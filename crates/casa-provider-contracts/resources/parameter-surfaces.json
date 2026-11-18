@@ -15471,7 +15471,7 @@
             "python": {"name": "solint"},
             "presentation": {"label": "Solution Interval", "group": "Solve", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
         },
         {
           "name": "combine",

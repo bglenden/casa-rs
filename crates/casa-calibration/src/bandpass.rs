@@ -1,13 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Limited `bandpass` support for the first `B Jones` solver wave.
-//!
-//! This module intentionally implements only a narrow, testable slice:
-//!
-//! - `bandtype='B'`
-//! - `solint='inf'`
-//! - explicit reference antenna
-//! - prior gain-table preapply
-//! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`)
+//! Channelized `B Jones` and legacy polynomial `BPOLY` bandpass solving.
 //!
 //! The acceptance contract is downstream behavior: the resulting caltable
 //! should be CASA-compatible on disk and should yield corrected visibilities
@@ -130,7 +122,7 @@ pub struct BandpassSolveRequest {
     pub combine: BandpassSolveCombine,
     /// Requested output bandpass table family.
     pub band_type: BandpassType,
-    /// Whether to normalize average amplitudes to unity. Deferred from this wave.
+    /// Whether to normalize average amplitudes to unity.
     pub normalize_average_amplitude: bool,
     /// Requested amplitude polynomial degree for `BPOLY` output.
     pub amplitude_degree: usize,
@@ -138,6 +130,8 @@ pub struct BandpassSolveRequest {
     pub phase_degree: usize,
     /// Visibility model source.
     pub model_source: GainSolveModelSource,
+    /// Time interval used to group channelized solutions.
+    pub solve_interval: GainSolveInterval,
     /// Point-source Stokes model when requested.
     pub smodel: [f32; 4],
     /// The per-channel cuts and `BPOLY` edge mask, or none: every antenna
@@ -315,14 +309,17 @@ pub(crate) fn solve_bandpass(
             model_source: request.model_source,
             point_stokes: request.smodel,
             rotate_model: false,
-            solve_interval: GainSolveInterval::Infinite,
+            solve_interval: request.solve_interval,
             combine: GainSolveCombine {
                 scans: request.combine.scans,
                 fields: request.combine.fields,
                 ..GainSolveCombine::default()
             },
             channelized: true,
-            preaverage_max_span: None,
+            preaverage_max_span: match request.solve_interval {
+                GainSolveInterval::Seconds(seconds) => Some(f64::from(seconds as f32) * 0.999),
+                _ => None,
+            },
             robust_seed: false,
             correlation_dependent_flags: false,
         },
@@ -416,6 +413,7 @@ pub(crate) fn solve_bandpass(
 
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
     crate::solve::validate_smodel(request.smodel, request.band_type == BandpassType::B)?;
+    crate::solve::validate_solve_interval(request.solve_interval)?;
     if matches!(
         request.refant,
         RefAntSelector::Unspecified | RefAntSelector::Expression { .. }

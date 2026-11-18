@@ -112,6 +112,7 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
     let bandpass_table = dir.path().join("bandpass.bcal");
     let request = BandpassSolveRequest {
         model_source: Default::default(),
+        solve_interval: Default::default(),
         selection: MsSelection::new().field(&[0]).spw(&[0]),
         output_table: bandpass_table.clone(),
         refant: RefAntSelector::AntennaId(0),
@@ -221,6 +222,7 @@ fn solve_bandpass_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
         &ms_path,
         &BandpassSolveRequest {
             model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),
@@ -326,6 +328,7 @@ fn solve_bandpass_with_prior_gain_corrects_dense_synthetic_ms_downstream() {
         &ms_path,
         &BandpassSolveRequest {
             model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),
@@ -490,6 +493,7 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
         &ms_path,
         &BandpassSolveRequest {
             model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),
@@ -633,6 +637,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
         &ms_path,
         &BandpassSolveRequest {
             model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0, 1]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),
@@ -743,6 +748,7 @@ fn solve_bandpass_with_solnorm_normalizes_per_receptor_average_amplitude() {
         &ms_path,
         &BandpassSolveRequest {
             model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),
@@ -867,6 +873,7 @@ fn solve_bpoly_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
         &ms_path,
         &BandpassSolveRequest {
             model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: bandpass_table.clone(),
             refant: RefAntSelector::AntennaId(0),

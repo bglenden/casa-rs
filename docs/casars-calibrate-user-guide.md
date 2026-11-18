@@ -83,11 +83,11 @@ CASA calibration library instead. `--applymode trial` reports the apply plan
 without changing the MeasurementSet. `calibrate --mode apply` keeps casa-rs's
 own `--gaintables` with `;`-separated per-table lists.
 
-With an empty `smodel`, `gaincal` looks for the selected field's virtual
-model, then its `MODEL_DATA` column, and falls back to a 1 Jy point source.
-For `bandpass`, supply a point source when the selected data has a stored
-model. A CASA parameter casa-rs does not implement yet is taken only at its
-default, and a
+With an empty `smodel`, `gaincal` and channelized `bandpass` (`bandtype='B'`)
+look for the selected field's virtual model, then its `MODEL_DATA` column,
+and fall back to a 1 Jy point source. Supply a point source for `BPOLY`
+when the selected data has a stored model. A CASA parameter casa-rs does
+not implement yet is taken only at its default, and a
 CASA value such as `gaintype='GSPLINE'` is refused until implemented. These
 errors name [#979](https://github.com/bglenden/casa-rs/issues/979).
 `docs/reference/casa-compatibility.md` lists them.
