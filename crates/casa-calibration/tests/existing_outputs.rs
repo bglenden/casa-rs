@@ -54,6 +54,7 @@ fn gain_request(output_table: PathBuf) -> GainSolveRequest {
         model_source: GainSolveModelSource::PointSource,
         normalize_average_amplitude: false,
         preaverage_seconds: 0.0,
+        correlation_dependent_flags: false,
         normalization_type: Default::default(),
         min_snr: 0.0,
         min_baselines_per_antenna: 0,

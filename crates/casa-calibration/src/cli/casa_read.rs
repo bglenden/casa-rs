@@ -126,6 +126,7 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
         solve_mode: calmode(task)?,
         solve_interval: solint(task)?,
         preaverage_seconds: task.number("preavg")?,
+        correlation_dependent_flags: task.flag("corrdepflags")?,
         combine: combine(task)?,
         refant: if reference.is_empty() {
             RefAntSelector::Unspecified

@@ -3,6 +3,7 @@
 
 use casa_types::Complex32;
 use ndarray::Axis;
+use std::borrow::Cow;
 
 use super::{SolveEdgeAccumulation, SolveSamples, median_with_even_mean};
 
@@ -44,13 +45,17 @@ impl SampleAccumulation<'_> {
         &mut self,
         samples: &SolveSamples<'_>,
         correlation: usize,
-        flags: &[bool],
+        shared_flags: Option<&[bool]>,
         channels: &[usize],
         stokes_i: f32,
         all_channels: bool,
     ) -> f64 {
         let data = samples.data.index_axis(Axis(0), correlation);
         let weights = samples.weights.index_axis(Axis(0), correlation);
+        let flags = shared_flags.map_or_else(
+            || Cow::Owned(samples.flags.row(correlation).to_vec()),
+            Cow::Borrowed,
+        );
         let model = samples
             .model
             .map(|model| model.index_axis_move(Axis(0), correlation));
@@ -70,7 +75,7 @@ impl SampleAccumulation<'_> {
             return self.add_uniform(
                 packed
                     .chunks_exact(correlations)
-                    .zip(flags)
+                    .zip(flags.iter())
                     .map(|(channel, &flagged)| Sample {
                         data: channel[correlation],
                         model: point,
@@ -83,7 +88,7 @@ impl SampleAccumulation<'_> {
         if all_channels {
             // Strided row iterators avoid repeated two-dimensional indexing;
             // scalar weights retain their broadcast stride of zero.
-            let values = data.iter().zip(weights.iter()).zip(flags);
+            let values = data.iter().zip(weights.iter()).zip(flags.iter());
             if let Some(model) = &model {
                 self.add::<false>(values.zip(model).map(
                     |(((&data, &weight), &flagged), &model)| Sample {

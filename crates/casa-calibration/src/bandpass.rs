@@ -315,6 +315,7 @@ pub(crate) fn solve_bandpass(
             },
             channelized: true,
             preaverage_max_span: None,
+            correlation_dependent_flags: false,
         },
     )?;
 

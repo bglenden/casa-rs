@@ -556,6 +556,7 @@ pub(crate) struct SolveGroupOptions {
     pub(crate) combine: GainSolveCombine,
     /// Maximum time from the first sample in an average of one baseline.
     pub(crate) preaverage_max_span: Option<f64>,
+    pub(crate) correlation_dependent_flags: bool,
     /// Solve each data channel apart (`bandpass`) rather than the selected
     /// channels together (`gaincal`).
     pub(crate) channelized: bool,
@@ -874,9 +875,12 @@ impl SolveAccumulator {
                 .resize_with(graph_count, HashMap::new);
         }
         self.observe_metadata(row);
-        let flags = samples::channel_flags(samples);
-        let no_weighted_data =
-            flags.iter().all(|flag| *flag) || samples.weights.iter().all(|weight| *weight <= 0.0);
+        let shared_flags =
+            (!options.correlation_dependent_flags).then(|| samples::channel_flags(samples));
+        let no_weighted_data = shared_flags
+            .as_ref()
+            .is_some_and(|flags| flags.iter().all(|flag| *flag))
+            || samples.weights.iter().all(|weight| *weight <= 0.0);
         // CASA gathers a separate field buffer into the solution. Keep
         // the complex averages separate until enforcing the solve mode.
         let mut baseline = AveragedBaseline {
@@ -930,7 +934,7 @@ impl SolveAccumulator {
             .observe(
                 samples,
                 corr_index,
-                &flags,
+                shared_flags.as_deref(),
                 channels,
                 options.stokes_i,
                 all_channels,

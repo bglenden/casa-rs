@@ -277,6 +277,9 @@ pub struct SolveGainTaskRequest {
     /// Positive averaging interval in seconds before the gain solve.
     #[serde(default)]
     pub preaverage_seconds: f64,
+    /// Preserve each correlation's flags independently when gathering data.
+    #[serde(default)]
+    pub correlation_dependent_flags: bool,
     /// Group-combine controls.
     #[serde(default)]
     pub combine: GainSolveCombine,
@@ -446,6 +449,7 @@ impl CalibrationTaskRequest {
                     solve_mode: request.solve_mode,
                     solve_interval: request.solve_interval,
                     preaverage_seconds: request.preaverage_seconds,
+                    correlation_dependent_flags: request.correlation_dependent_flags,
                     combine: request.combine,
                     refant: request.refant.clone(),
                     prior_calibration_tables: request.prior_calibration_tables.clone(),
