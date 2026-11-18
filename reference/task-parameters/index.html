@@ -1440,7 +1440,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 624</li>
+<li>Concepts: 625</li>
 <li>Surfaces: 31 (31 task, 0 session)</li>
 <li>Surface bindings: 896</li>
 </ul>
@@ -5298,7 +5298,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Applycal accepts a CASA variant and converts it to selector text during MS selection.</td>
+<td>Accepts a CASA variant and converts it to selector text during MeasurementSet selection.</td>
 </tr>
 <tr>
 <td><code>antenna</code></td>
@@ -5322,7 +5322,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Applycal accepts selector text or an observation ID. Preserve the input type for HISTORY.</td>
+<td>Accepts selector text or an observation ID. Preserve the input type for HISTORY.</td>
 </tr>
 <tr>
 <td><code>msselect</code></td>
@@ -5485,23 +5485,23 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>field</code></td>
-<td><code>ms.selection.field@r1</code></td>
+<td><code>ms.selection.field@r4</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers.</td>
+<td>Applycal field selector text.<br><em>Surface:</em> Select fields by CASA field ID, name, or pattern.</td>
 </tr>
 <tr>
 <td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
+<td><code>ms.selection.spw@r3</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
+<td>Applycal spw selector text.</td>
 </tr>
 <tr>
 <td><code>intent</code></td>
-<td><code>ms.selection.intent@r1</code></td>
+<td><code>ms.selection.intent@r3</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
@@ -5517,59 +5517,59 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>timerange</code></td>
-<td><code>ms.selection.timerange@r1</code></td>
+<td><code>ms.selection.timerange@r4</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Inclusive TIME range in MJD seconds</td>
+<td>Applycal timerange selector text.</td>
 </tr>
 <tr>
 <td><code>uvrange</code></td>
-<td><code>ms.selection.uvrange@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.uvrange@r4</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>UV range selector.</td>
+<td>Accepts a CASA variant and converts it to selector text during MeasurementSet selection.</td>
 </tr>
 <tr>
 <td><code>antenna</code></td>
-<td><code>ms.selection.antenna@r1</code></td>
+<td><code>ms.selection.antenna@r4</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+<td>Applycal antenna selector text.</td>
 </tr>
 <tr>
 <td><code>scan</code></td>
-<td><code>ms.selection.scan@r1</code></td>
+<td><code>ms.selection.scan@r4</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated scan numbers</td>
+<td>Applycal scan selector text.</td>
 </tr>
 <tr>
 <td><code>observation</code></td>
-<td><code>ms.selection.observation@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.observation@r4</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated OBSERVATION_ID integers</td>
+<td>Accepts selector text or an observation ID. Preserve the input type for HISTORY.</td>
 </tr>
 <tr>
 <td><code>msselect</code></td>
-<td><code>ms.selection.msselect@r1</code></td>
+<td><code>ms.selection.msselect@r2</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Raw TaQL WHERE expression to AND with the structured selectors</td>
+<td>Applycal msselect selector text.</td>
 </tr>
 <tr>
 <td><code>solint</code></td>
-<td><code>parameter.solint@r1</code></td>
-<td><code>string</code></td>
+<td><code>parameter.solint@r2</code></td>
+<td><code>variant</code></td>
 <td><code>"inf"</code>; optional</td>
 <td>Solve Gain</td>
-<td>Gain solution interval such as inf, int, or 30s</td>
+<td>Gain solution interval specified as inf, int, a time such as 30s, or seconds as a number.</td>
 </tr>
 <tr>
 <td><code>combine</code></td>

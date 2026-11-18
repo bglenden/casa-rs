@@ -66,7 +66,7 @@
 <a href=#66 id=66 data-nosnippet>66</a><span class="kw">use </span>gain_validity::correcting_gain;
 <a href=#67 id=67 data-nosnippet>67</a><span class="kw">mod </span>bandpass;
 <a href=#68 id=68 data-nosnippet>68</a><span class="kw">mod </span>channels;
-<a href=#69 id=69 data-nosnippet>69</a><span class="kw">mod </span>parang;
+<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>parang;
 <a href=#70 id=70 data-nosnippet>70</a><span class="kw">mod </span>weights;
 <a href=#71 id=71 data-nosnippet>71</a><span class="kw">use </span>channels::{DataChannelGrid, apply_row};
 <a href=#72 id=72 data-nosnippet>72</a>
@@ -1812,7 +1812,7 @@
 <a href=#1812 id=1812 data-nosnippet>1812</a>    }
 <a href=#1813 id=1813 data-nosnippet>1813</a>}
 <a href=#1814 id=1814 data-nosnippet>1814</a>
-<a href=#1815 id=1815 data-nosnippet>1815</a><span class="kw">struct </span>ParallacticAngleState {
+<a href=#1815 id=1815 data-nosnippet>1815</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ParallacticAngleState {
 <a href=#1816 id=1816 data-nosnippet>1816</a>    engine: MsCalEngine,
 <a href=#1817 id=1817 data-nosnippet>1817</a>    feed_rows: HashMap&lt;(i32, i32), Vec&lt;FeedAngleRow&gt;&gt;,
 <a href=#1818 id=1818 data-nosnippet>1818</a>}
@@ -3207,7 +3207,7 @@
 <a href=#3207 id=3207 data-nosnippet>3207</a>}
 <a href=#3208 id=3208 data-nosnippet>3208</a>
 <a href=#3209 id=3209 data-nosnippet>3209</a><span class="kw">impl </span>ParallacticAngleState {
-<a href=#3210 id=3210 data-nosnippet>3210</a>    <span class="kw">fn </span>feed_parallactic_angle(
+<a href=#3210 id=3210 data-nosnippet>3210</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>feed_parallactic_angle(
 <a href=#3211 id=3211 data-nosnippet>3211</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#3212 id=3212 data-nosnippet>3212</a>        time_seconds: f64,
 <a href=#3213 id=3213 data-nosnippet>3213</a>        field_id: i32,
@@ -3273,7 +3273,7 @@
 <a href=#3273 id=3273 data-nosnippet>3273</a>    (row.time_seconds - time_seconds).abs()
 <a href=#3274 id=3274 data-nosnippet>3274</a>}
 <a href=#3275 id=3275 data-nosnippet>3275</a>
-<a href=#3276 id=3276 data-nosnippet>3276</a><span class="kw">fn </span>load_parallactic_angle_state(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; MsResult&lt;ParallacticAngleState&gt; {
+<a href=#3276 id=3276 data-nosnippet>3276</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>load_parallactic_angle_state(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; MsResult&lt;ParallacticAngleState&gt; {
 <a href=#3277 id=3277 data-nosnippet>3277</a>    <span class="kw">let </span>engine = MsCalEngine::new(ms)<span class="question-mark">?</span>;
 <a href=#3278 id=3278 data-nosnippet>3278</a>    <span class="kw">let </span><span class="kw-2">mut </span>feed_rows = HashMap::&lt;(i32, i32), Vec&lt;FeedAngleRow&gt;&gt;::new();
 <a href=#3279 id=3279 data-nosnippet>3279</a>    <span class="kw">if let </span><span class="prelude-val">Ok</span>(feed) = ms.feed() {

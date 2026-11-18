@@ -21,7 +21,7 @@
 <a href=#21 id=21 data-nosnippet>21</a>            <span class="kw">for </span>sample <span class="kw">in </span>graph
 <a href=#22 id=22 data-nosnippet>22</a>                .robust_samples
 <a href=#23 id=23 data-nosnippet>23</a>                .iter()
-<a href=#24 id=24 data-nosnippet>24</a>                .filter(|sample| sample.in_first_buffer)
+<a href=#24 id=24 data-nosnippet>24</a>                .filter(|sample| sample.in_first_buffer &amp;&amp; sample.model &gt; <span class="number">0.0</span>)
 <a href=#25 id=25 data-nosnippet>25</a>            {
 <a href=#26 id=26 data-nosnippet>26</a>                sample.accumulate(<span class="kw-2">&amp;mut </span>first, sample.weight);
 <a href=#27 id=27 data-nosnippet>27</a>            }
@@ -151,24 +151,27 @@
 <a href=#151 id=151 data-nosnippet>151</a>
 <a href=#152 id=152 data-nosnippet>152</a><span class="kw">impl </span>RobustSample {
 <a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">fn </span>residual_power(<span class="self">self</span>, gains: <span class="kw-2">&amp;</span>HashMap&lt;i32, Complex64&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;f32&gt; {
-<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">let </span>model = gains.get(<span class="kw-2">&amp;</span><span class="self">self</span>.baseline.<span class="number">0</span>)<span class="question-mark">? </span>* gains.get(<span class="kw-2">&amp;</span><span class="self">self</span>.baseline.<span class="number">1</span>)<span class="question-mark">?</span>.conj();
-<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span>observed = Complex64::new(f64::from(<span class="self">self</span>.visibility.re), f64::from(<span class="self">self</span>.visibility.im));
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="prelude-val">Some</span>((model - observed).norm_sqr() <span class="kw">as </span>f32)
-<a href=#157 id=157 data-nosnippet>157</a>    }
-<a href=#158 id=158 data-nosnippet>158</a>
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">fn </span>accumulate(<span class="self">self</span>, graph: <span class="kw-2">&amp;mut </span>SolveGraph, weight: f32) {
-<a href=#160 id=160 data-nosnippet>160</a>        graph.accumulate(
-<a href=#161 id=161 data-nosnippet>161</a>            <span class="self">self</span>.baseline,
-<a href=#162 id=162 data-nosnippet>162</a>            weight,
-<a href=#163 id=163 data-nosnippet>163</a>            weight * <span class="self">self</span>.visibility,
-<a href=#164 id=164 data-nosnippet>164</a>            SolveEdgeStats {
-<a href=#165 id=165 data-nosnippet>165</a>                weighted_sample_power: f64::from(weight) * f64::from(<span class="self">self</span>.visibility.norm_sqr()),
-<a href=#166 id=166 data-nosnippet>166</a>                raw_weighted_sample_power: f64::from(<span class="self">self</span>.weight)
-<a href=#167 id=167 data-nosnippet>167</a>                    * f64::from(<span class="self">self</span>.visibility.norm_sqr()),
-<a href=#168 id=168 data-nosnippet>168</a>                sample_count: <span class="number">1</span>,
-<a href=#169 id=169 data-nosnippet>169</a>                collapsed_count: <span class="number">1</span>,
-<a href=#170 id=170 data-nosnippet>170</a>            },
-<a href=#171 id=171 data-nosnippet>171</a>        );
-<a href=#172 id=172 data-nosnippet>172</a>    }
-<a href=#173 id=173 data-nosnippet>173</a>}
+<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">let </span>model = gains.get(<span class="kw-2">&amp;</span><span class="self">self</span>.baseline.<span class="number">0</span>)<span class="question-mark">?
+<a href=#155 id=155 data-nosnippet>155</a>            </span>* gains.get(<span class="kw-2">&amp;</span><span class="self">self</span>.baseline.<span class="number">1</span>)<span class="question-mark">?</span>.conj()
+<a href=#156 id=156 data-nosnippet>156</a>            * f64::from(<span class="self">self</span>.model);
+<a href=#157 id=157 data-nosnippet>157</a>        <span class="kw">let </span>observed = Complex64::new(f64::from(<span class="self">self</span>.visibility.re), f64::from(<span class="self">self</span>.visibility.im));
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="prelude-val">Some</span>((model - observed).norm_sqr() <span class="kw">as </span>f32)
+<a href=#159 id=159 data-nosnippet>159</a>    }
+<a href=#160 id=160 data-nosnippet>160</a>
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">fn </span>accumulate(<span class="self">self</span>, graph: <span class="kw-2">&amp;mut </span>SolveGraph, weight: f32) {
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span>model_weight = weight * <span class="self">self</span>.model;
+<a href=#163 id=163 data-nosnippet>163</a>        graph.accumulate(
+<a href=#164 id=164 data-nosnippet>164</a>            <span class="self">self</span>.baseline,
+<a href=#165 id=165 data-nosnippet>165</a>            model_weight * <span class="self">self</span>.model,
+<a href=#166 id=166 data-nosnippet>166</a>            model_weight * <span class="self">self</span>.visibility,
+<a href=#167 id=167 data-nosnippet>167</a>            SolveEdgeStats {
+<a href=#168 id=168 data-nosnippet>168</a>                weighted_sample_power: f64::from(weight) * f64::from(<span class="self">self</span>.visibility.norm_sqr()),
+<a href=#169 id=169 data-nosnippet>169</a>                raw_weighted_sample_power: f64::from(<span class="self">self</span>.weight)
+<a href=#170 id=170 data-nosnippet>170</a>                    * f64::from(<span class="self">self</span>.visibility.norm_sqr()),
+<a href=#171 id=171 data-nosnippet>171</a>                sample_count: <span class="number">1</span>,
+<a href=#172 id=172 data-nosnippet>172</a>                collapsed_count: <span class="number">1</span>,
+<a href=#173 id=173 data-nosnippet>173</a>            },
+<a href=#174 id=174 data-nosnippet>174</a>        );
+<a href=#175 id=175 data-nosnippet>175</a>    }
+<a href=#176 id=176 data-nosnippet>176</a>}
 </code></pre></div></section></main></body></html>
