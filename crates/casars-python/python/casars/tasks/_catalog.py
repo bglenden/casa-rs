@@ -383,8 +383,7 @@ def imstat(
 
     CASA's ``imstat``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #977:
-    ``axes``, ``stokes``, ``listit``, ``verbose``, ``mask``, ``stretch``,
-    ``logfile``, ``append``.
+    ``listit``, ``verbose``, ``mask``, ``stretch``, ``logfile``, ``append``.
     """
     return _call_casa(imstat, locals())
 
