@@ -421,7 +421,8 @@ def prior_cases(root, source, native):
     casa.gaincal(str(source), delay, field='0', gaintype='K', refant='A0', minsnr=0., smodel=[1.])
     chain = [delay, *gains]
     library = folder/'chain.callib'
-    library.write_text(''.join(f"caltable='{path}' tinterp='nearest' calwt=True\n" for path in chain))
+    library.write_text(''.join(f"caltable='{path}' tinterp='nearest' calwt=True spwmap=[0]\n"
+                               for path in chain))
 
     flagged = folder/'flagged.G'
     copy_ms(Path(gains[0]), flagged)
