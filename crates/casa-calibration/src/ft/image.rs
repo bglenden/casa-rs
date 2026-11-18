@@ -21,10 +21,10 @@ use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
     virtual_model_image_path,
 };
-use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, Value};
+use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
 
-use super::{invalid, model_entry};
+use super::{channel_span, invalid, model_entry};
 
 /// An uncommitted Fourier image. The scratch path uses it until the write
 /// finishes. The virtual model can keep it once its on-disk record is filed.
@@ -34,6 +34,30 @@ pub(crate) struct ImageModel {
 }
 
 impl ImageModel {
+    pub(crate) fn copy_to(&self, target: &MeasurementSet) -> MsResult<Self> {
+        let backing = GridLifetime {
+            path: virtual_model_image_path(target)?,
+            retained: false,
+        };
+        crate::paths::copy_dir_recursive(&self.backing.path, &backing.path).map_err(invalid)?;
+        let copied_lock = backing.path.join("table.lock");
+        if copied_lock.is_file() {
+            std::fs::remove_file(copied_lock).map_err(invalid)?;
+        }
+        let mut entry = self.entry.clone();
+        let path = Value::Scalar(ScalarValue::String(
+            backing.path.to_string_lossy().into_owned(),
+        ));
+        if let Some(Value::Record(grid)) = entry.container.get("subftm") {
+            let mut grid = grid.clone();
+            grid.upsert("diskimage", path);
+            entry.container.upsert("subftm", Value::Record(grid));
+        } else {
+            entry.container.upsert("diskimage", path);
+        }
+        Ok(Self { entry, backing })
+    }
+
     pub(crate) fn retain(&mut self) {
         self.backing.retained = true;
     }
@@ -156,13 +180,10 @@ impl ImageTransform {
             .collect::<Vec<_>>();
         let routing = PolarizationRouting::compile(&correlations, &requested).map_err(invalid)?;
         let increment = [direction.increment()[0], direction.increment()[1]];
-        let reference = direction.reference_pixel();
-        let reference = [reference[0].round() as usize, reference[1].round() as usize];
-        let padding = if reference == [nx / 2, ny / 2] && nx % 2 == 0 && ny % 2 == 0 {
-            GridPadding::None
-        } else {
-            GridPadding::CasaComposite(PaddingFactor::new(2.0).map_err(invalid)?)
-        };
+        // GridFT phases on the world direction of the integer image
+        // midpoint, which need not be the WCS reference pixel.
+        let reference = [nx / 2, ny / 2];
+        let padding = GridPadding::CasaComposite(PaddingFactor::new(1.0).map_err(invalid)?);
         let geometry = GridGeometry::new(
             ImageExtent {
                 shape: [nx, ny],
@@ -174,13 +195,14 @@ impl ImageTransform {
         .map_err(invalid)?;
         let [gx, gy] = geometry.grid_shape();
         let phase_center = direction
-            .to_world(&[reference[0] as f64, reference[1] as f64])
+            .pixel_to_world([reference[0] as f64, reference[1] as f64])
             .map_err(invalid)?;
         let mut coordinates = CoordinateSystem::new();
         coordinates.add_coordinate(
             direction
                 .clone()
-                .with_reference_pixel([gx as f64 / 2.0, gy as f64 / 2.0]),
+                .with_reference_value(phase_center)
+                .with_reference_pixel([(gx / 2) as f64, (gy / 2) as f64]),
         );
         coordinates.add_coordinate(StokesCoordinate::new(
             routing
@@ -205,7 +227,7 @@ impl ImageTransform {
             coordinates,
             frequencies,
             increment,
-            phase_center: [phase_center[0], phase_center[1]],
+            phase_center,
             frame: direction.direction_ref().as_str().to_owned(),
         })
     }
@@ -391,8 +413,11 @@ fn selection_mask(ms: &MeasurementSet, selected: &ResolvedMsSelection) -> MsResu
         for channel in 0..count {
             mask[[0, window as usize, channel]] = 0;
         }
+        let (span, _) = channel_span(channels);
+        // Imager::setdata shifts its mask to the first selected channel.
+        // GridFT then indexes this mask with the compact buffer index.
         for channel in channels.indices(count)? {
-            mask[[0, window as usize, channel]] = 1;
+            mask[[0, window as usize, channel - span.start]] = 1;
         }
     }
     Ok(mask)

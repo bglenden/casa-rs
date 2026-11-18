@@ -2,11 +2,10 @@
 //! CASA ft task selection, prediction and provenance.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use casa_components::ComponentList;
-use casa_ms::schema::SubtableId;
-use casa_ms::virtual_model::put_virtual_model_holding;
+use casa_ms::virtual_model::{put_virtual_model_holding, virtual_model_target};
 use casa_ms::{
     MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
 };
@@ -102,15 +101,6 @@ impl OpenedMs {
     fn release(self) -> Result<(), TaskFailure> {
         drop(self.measurement_set);
         self.lock.release().map_err(execution)
-    }
-
-    fn source_path(&self) -> PathBuf {
-        self.measurement_set
-            .subtable(SubtableId::Source)
-            .and_then(casa_tables::Table::path)
-            .or_else(|| self.measurement_set.path())
-            .and_then(|path| path.canonicalize().ok())
-            .unwrap_or_default()
     }
 }
 
@@ -256,9 +246,23 @@ fn write_virtual(
     request: &ModelRequest,
     (entries, mut images): Models,
 ) -> Result<(), TaskFailure> {
+    let Some(first) = entries
+        .first()
+        .or_else(|| images.first().map(|image| &image.entry))
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let is_multi_ms = !parts.is_empty();
     let mut written = BTreeSet::new();
-    for target in std::iter::once(root).chain(parts) {
-        if !written.insert(target.source_path()) {
+    for (partition, target) in std::iter::once(root).chain(parts).enumerate() {
+        let path = virtual_model_target(&target.measurement_set, &first).map_err(execution)?;
+        if partition == 0 && is_multi_ms && target.measurement_set.main_table().path() == Some(path)
+        {
+            // Concatenated MAIN has no independently writable keyword set.
+            continue;
+        }
+        if !written.insert(path.canonicalize().map_err(execution)?) {
             continue;
         }
         // CASA appends repeated component recipes when no image is written.
@@ -266,16 +270,36 @@ fn write_virtual(
             put_virtual_model_holding(&mut target.measurement_set, entry, true, &mut target.lock)
                 .map_err(execution)?;
         }
-        for (index, model) in images.iter_mut().enumerate() {
-            put_virtual_model_holding(
-                &mut target.measurement_set,
-                &model.entry,
-                index > 0 || request.incremental,
-                &mut target.lock,
-            )
-            .map_err(execution)?;
-            model.retain();
+        if partition == 0 {
+            put_image_models(target, &mut images, request.incremental)?;
+        } else {
+            // Independent SOURCE tables must not share a backing path.
+            // Replacing a record owns deletion of the grid named in it.
+            let mut copies = images
+                .iter()
+                .map(|model| model.copy_to(&target.measurement_set))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(execution)?;
+            put_image_models(target, &mut copies, request.incremental)?;
         }
+    }
+    Ok(())
+}
+
+fn put_image_models(
+    target: &mut OpenedMs,
+    images: &mut [ImageModel],
+    incremental: bool,
+) -> Result<(), TaskFailure> {
+    for (index, model) in images.iter_mut().enumerate() {
+        put_virtual_model_holding(
+            &mut target.measurement_set,
+            &model.entry,
+            index > 0 || incremental,
+            &mut target.lock,
+        )
+        .map_err(execution)?;
+        model.retain();
     }
     Ok(())
 }

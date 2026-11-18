@@ -48,6 +48,7 @@ struct FocusSample {
 struct Entry {
     selection: EntrySelection,
     prediction: Prediction,
+    scratch_channels: Vec<[i32; 4]>,
 }
 
 enum EntrySelection {
@@ -120,6 +121,10 @@ impl ModelInputs {
                     EntrySelection::Rows(entry.index_combination.clone()),
                     &entry.container,
                 )
+                .map(|mut model| {
+                    model.scratch_channels = entry.channel_selection.clone();
+                    model
+                })
             })
             .collect::<Result<Vec<_>, _>>()?
             .into();
@@ -363,6 +368,11 @@ impl ModelInputs {
                             frame: &frame,
                             uvw,
                             focus_rows: &buffer.focus_rows,
+                            scratch_channels: entry
+                                .scratch_channels
+                                .iter()
+                                .find(|channels| channels[0] == row.data_spw_id)
+                                .copied(),
                         },
                         &mut model,
                         if !scratch_model {
@@ -461,6 +471,7 @@ fn decode_entry(
     Ok(Entry {
         selection,
         prediction,
+        scratch_channels: Vec::new(),
     })
 }
 

@@ -255,6 +255,30 @@ pub fn put_virtual_model(
     put_model(ms, entry, incremental, None)
 }
 
+/// The table in which this entry's record will be filed. CASA chooses
+/// SOURCE when the first field has a source defined there, or MAIN when
+/// SOURCE has no rows or the field's SOURCE_ID is -1.
+#[doc(hidden)]
+pub fn virtual_model_target<'a>(
+    ms: &'a MeasurementSet,
+    entry: &VirtualModelEntry,
+) -> MsResult<&'a Path> {
+    let fields = entry.fields();
+    let Some(&first) = fields.first() else {
+        return Err(invalid("a virtual model entry names no field"));
+    };
+    let state = ModelState::read(ms)?;
+    let table = if state.first_row_of_source(ms, first)?.is_some() {
+        ms.subtable(SubtableId::Source)
+            .expect("the model is written to SOURCE")
+    } else {
+        ms.main_table()
+    };
+    table
+        .path()
+        .ok_or_else(|| invalid("the model table is not on disk"))
+}
+
 /// File a model after resolving its selection under the MAIN write lock.
 ///
 /// This has the same persistence and errors as [`put_virtual_model`]. The

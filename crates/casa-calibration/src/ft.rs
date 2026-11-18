@@ -189,7 +189,7 @@ impl Prediction<'_> {
     }
 }
 
-fn channel_span(selection: &casa_ms::ChannelSelection) -> (Range<usize>, usize) {
+pub(super) fn channel_span(selection: &casa_ms::ChannelSelection) -> (Range<usize>, usize) {
     let first = selection
         .segments
         .iter()
@@ -207,11 +207,17 @@ fn channel_span(selection: &casa_ms::ChannelSelection) -> (Range<usize>, usize) 
         })
         .max()
         .unwrap_or(-1);
-    let step = match selection.segments.as_slice() {
-        [segment] => segment.stride,
-        _ => 1,
-    };
-    (first as usize..(last + 1) as usize, step)
+    let step = selection
+        .segments
+        .first()
+        .map_or(1, |segment| segment.stride);
+    if last < first {
+        return (0..0, step);
+    }
+    // The old iterator spans the outer selected samples at the first
+    // channel range's stride, rounding the count up over the envelope.
+    let end = first as usize + ((last - first) as usize).div_ceil(step) * step + 1;
+    (first as usize..end, step)
 }
 
 fn update_channels(

@@ -13,6 +13,7 @@ from casatools import componentlist, image, table
 import numpy as np
 
 from applycal_mms_oracle import referenced_tables
+from applycal_oracle import copy_ms
 from calibration_scratch_oracle import MAIN, prepare, state
 from bandpass_oracle import source_data
 from gaincal_oracle import relative_rms, solve
@@ -103,7 +104,8 @@ def make_images(root, source):
         tb.close()
     outputs = {}
     for name, count, flux in [('point', 1, 2.), ('term1', 1, .5),
-                               ('cube', len(frequencies), 1.), ('empty', 1, 0.)]:
+                               ('cube', len(frequencies), 1.), ('empty', 1, 0.),
+                               ('fractional', 1, 2.), ('outside', 1, 2.)]:
         path = root/f'{name}.im'
         tool = image()
         data = np.zeros((32, 32, 1, count), np.float32)
@@ -116,7 +118,8 @@ def make_images(root, source):
         cs.setunits(['rad', 'rad', '', 'Hz'])
         cs.setreferencevalue(value=f'{phase[0]}rad {phase[1]}rad', type='direction')
         cs.setincrement(value='-1arcsec 1arcsec', type='direction')
-        cs.setreferencepixel(value=[16., 16.], type='direction')
+        ref_pixel = {'fractional': [15.5, 15.5], 'outside': [-4., 12.]}.get(name, [16., 16.])
+        cs.setreferencepixel(value=ref_pixel, type='direction')
         cs.setreferencecode('TOPO', type='spectral', adjust=False)
         cs.setreferencepixel(value=[0.], type='spectral')
         cs.setreferencevalue(value=f'{frequencies[0]}Hz', type='spectral')
@@ -153,9 +156,16 @@ def image_workflows(root, source, native, point, case=None):
     cases = [
         ('point-scratch', 'point', True, {}),
         ('point-virtual', 'point', False, {}),
+        ('fractional-scratch', 'fractional', True, {}),
+        ('fractional-virtual', 'fractional', False, {}),
+        ('outside-reference', 'outside', True, {}),
         ('cube-scratch', 'cube', True, {}),
         ('cube-virtual', 'cube', False, {}),
         ('cube-selected', 'cube', True, {'spw': '0:2~4'}),
+        ('cube-strided-scratch', 'cube', True, {'spw': '0:1~8^2'}),
+        ('cube-disjoint-ranges', 'cube', True, {'spw': '0:1~2;5~8^2'}),
+        ('cube-disjoint-component', 'cube', True,
+         {'spw': '0:1~2;5~8^2', 'complist': str(point)}),
         ('cube-virtual-selected', 'cube', False, {'spw': '0:2~4'}),
         ('taylor-scratch', ('point', 'term1'), True, {'nterms': 2, 'reffreq': '99GHz'}),
         ('taylor-virtual', ('point', 'term1'), False, {'nterms': 2, 'reffreq': '99GHz'}),
@@ -195,6 +205,8 @@ def image_workflows(root, source, native, point, case=None):
         print(label, flush=True)
     if case is None or case in 'fits-model':
         outcomes['fits-model'] = fits_model(root, source, native, images)
+    if case is None or case in 'image-lifetime':
+        outcomes['image-lifetime'] = independent_image_lifetimes(root, source, native, images)
     return outcomes
 
 
@@ -215,7 +227,61 @@ def mms_workflows(root, source, native, point):
         for native_state, casa_state in zip(engine_states[1], engine_states[0]):
             compare_outputs(native_state, casa_state)
         result[f'mms-scratch-{scratch}'] = {'two_partitions_match': True}
+    for test in ('empty-SOURCE', 'missing-SOURCE-ID'):
+        engine_states = []
+        for label, api in [('casa', casa), ('native', native)]:
+            dataset = root/f'mms-{test}-{label}.ms'
+            path = root/f'mms-{test}-{label}.mms'
+            prepare(source, dataset)
+            if test == 'missing-SOURCE-ID':
+                tb = table()
+                tb.open(str(dataset/'FIELD'), nomodify=False)
+                tb.putcell('SOURCE_ID', 0, -1)
+                tb.close()
+            casa.partition(str(dataset), str(path), separationaxis='baseline', numsubms=2,
+                           disableparallel=True, flagbackup=False, datacolumn='all')
+            parts = referenced_tables(path)
+            if test == 'empty-SOURCE':
+                for part in parts:
+                    tb = table()
+                    tb.open(str(part/'SOURCE'), nomodify=False)
+                    tb.removerows(list(range(tb.nrows())))
+                    tb.close()
+            assert api.ft(str(path), field='0', complist=str(point)) is None
+            states = [state(part) for part in parts]
+            assert all('model_0' in model[0] for _, model in states)
+            engine_states.append(states)
+        for native_state, casa_state in zip(engine_states[1], engine_states[0]):
+            compare_outputs(native_state, casa_state)
+        result[test] = {'models_in_both_physical_main_tables': True}
     return result
+
+
+def independent_image_lifetimes(root, source, native, images):
+    path = root/'lifetime.mms'
+    dataset = root/'lifetime.ms'
+    prepare(source, dataset)
+    casa.partition(str(dataset), str(path), separationaxis='baseline', numsubms=2,
+                   disableparallel=True, flagbackup=False, datacolumn='all')
+    first, second = referenced_tables(path)
+    assert native.ft(str(path), field='0', model=images['point']) is None
+    originals = []
+    for part in (first, second):
+        records = state(part)[1][2]
+        grid = Path(next(record['ft_0']['container']['diskimage'] for record in records if record))
+        assert grid.resolve().parent == (part/'SOURCE').resolve()
+        originals.append(grid)
+    assert originals[0].resolve() != originals[1].resolve()
+    assert native.ft(str(first), field='0', model=images['cube']) is None
+    assert not originals[0].exists()
+    assert originals[1].exists()
+    expected = root/'lifetime-reference.ms'
+    copy_ms(second, expected)
+    assert casa.uvsub(str(expected)) is None
+    assert native.uvsub(str(second)) is None
+    np.testing.assert_allclose(state(second)[0]['CORRECTED_DATA'],
+                               state(expected)[0]['CORRECTED_DATA'], atol=1e-5, rtol=0)
+    return {'the_remaining_partition_retains_its_grid': True}
 
 
 def fits_model(root, source, native, images):
