@@ -16910,7 +16910,7 @@
           "name": "uvrange",
           "concept": {
             "id": "ms.selection.uvrange",
-            "semantic_revision": 4
+            "semantic_revision": 3
           },
           "order": 4,
           "default": {
@@ -16936,8 +16936,7 @@
               "field": "uvrange"
             },
             "python": {
-              "name": "uvrange",
-              "type_hint": "str | int | float | list[str]"
+              "name": "uvrange"
             },
             "presentation": {
               "label": "uvrange",
@@ -17025,7 +17024,7 @@
           "name": "observation",
           "concept": {
             "id": "ms.selection.observation",
-            "semantic_revision": 4
+            "semantic_revision": 3
           },
           "order": 7,
           "default": {
@@ -17051,8 +17050,7 @@
               "field": "observation"
             },
             "python": {
-              "name": "observation",
-              "type_hint": "str | int"
+              "name": "observation"
             },
             "presentation": {
               "label": "observation",

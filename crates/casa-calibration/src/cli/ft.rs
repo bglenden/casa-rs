@@ -373,10 +373,10 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         field: text("field")?,
         spw: text("spw")?,
         timerange: text("timerange")?,
-        uvrange: super::casa_read::selector_text(task.value("uvrange")),
+        uvrange: text("uvrange")?,
         antenna: text("antenna")?,
         scan: text("scan")?,
-        observation: super::casa_read::selector_text(task.value("observation")),
+        observation: text("observation")?,
         intent: text("intent")?,
         ..MsSelection::default()
     })

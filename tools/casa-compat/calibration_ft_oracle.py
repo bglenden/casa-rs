@@ -73,6 +73,10 @@ def validation_paths(root, source, native, point):
         ('restriction', {'scan': '1', 'complist': str(point)}, ValueError, False, 'usescratch must be set to True'),
         ('invalid-nterms', {'nterms': 0, 'complist': str(point)}, ValueError, False, 'greater than or equal to 1'),
         ('missing-terms', {'nterms': 2, 'complist': str(point)}, ValueError, False, 'nterms model-image names'),
+        ('uvrange-type', {'uvrange': ['>1m'], 'complist': str(point), 'usescratch': True},
+         AssertionError, False, "{'uvrange': ['must be of cStr type']}"),
+        ('observation-type', {'observation': 0, 'complist': str(point), 'usescratch': True},
+         AssertionError, False, "{'observation': ['must be of cStr type']}"),
     ]
     outcomes = {}
     for label, arguments, exception, added, text in failures:
@@ -390,6 +394,7 @@ def main():
         ('scratch-selection-distance', point, dict(uvrange='>1m', usescratch=True), {}, False),
         ('scratch-selection-time', point, dict(timerange=initial_time_range(source), usescratch=True), {}, False),
         ('scratch-selection-observation', point, dict(observation='0', usescratch=True), {}, False),
+        ('scratch-boolean-terms', point, dict(nterms=True, usescratch=True), {}, False),
         ('scratch-empty-selection', point, dict(scan='999', usescratch=True), {}, True),
     ]
     evidence = {}
