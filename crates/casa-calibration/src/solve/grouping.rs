@@ -79,7 +79,7 @@ pub(crate) fn build_solve_groups(
         } else {
             BTreeMap::new()
         };
-    let spectral_weights = SpectralWeights::new(ms, &ordered)?;
+    let spectral_weights = SpectralWeights::new(ms, &ordered, options.combine)?;
     let pipelined = overlap_inputs(ordered.len());
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
         eprintln!("calibration_workers {}", if pipelined { 2 } else { 1 });
@@ -97,7 +97,7 @@ pub(crate) fn build_solve_groups(
             options.model_source,
             batch
                 .iter()
-                .map(|(row, _, _)| spectral_weights.contains(row))
+                .map(|row| spectral_weights.contains(row))
                 .collect(),
         )
     };
@@ -449,6 +449,7 @@ pub(crate) fn collect_selected_rows(
         .map(|row| {
             Ok(SelectedSolveRow {
                 row_index: row.row_index,
+                array_id: get_i32(ms.main_table(), row.row_index, "ARRAY_ID")?,
                 field_id: row.field_id,
                 observation_id: get_i32(ms.main_table(), row.row_index, "OBSERVATION_ID")?,
                 data_desc_id: row.data_desc_id,
@@ -537,6 +538,7 @@ pub(crate) struct SolveGroupOptions {
 #[derive(Debug, Clone)]
 pub(crate) struct SelectedSolveRow {
     pub(crate) row_index: usize,
+    pub(crate) array_id: i32,
     pub(crate) field_id: i32,
     pub(crate) observation_id: i32,
     pub(crate) data_desc_id: i32,
@@ -601,7 +603,7 @@ pub(crate) struct SolveBaseKey {
     pub(crate) scan_number: i32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum SolveBucketKey {
     Infinite,
     Integration { time_bits: u64, interval_bits: u64 },
@@ -1387,6 +1389,7 @@ mod tests {
     ) -> SelectedSolveRow {
         SelectedSolveRow {
             row_index,
+            array_id: 0,
             field_id,
             observation_id: 0,
             data_desc_id,
