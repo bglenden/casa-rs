@@ -1,140 +1,223 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-calibration/src/bandpass/metadata.rs`."><title>metadata.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_calibration" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_calibration/bandpass/</div>metadata.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Selected B-table channelization, including CASA's persisted width defects.
-<a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use super</span>::{
-<a href=#4 id=4 data-nosnippet>4</a>    BandpassFrequencyInterval, BandpassSolutionRow, BandpassSolveError, BandpassSolveRequest,
-<a href=#5 id=5 data-nosnippet>5</a>};
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span><span class="kw">crate</span>::solve::grouping::SelectedSolveRow;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_ms::ms::MeasurementSet;
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_tables::{Table, TableOptions};
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_types::{ArrayValue, ScalarValue, Value};
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>std::{collections::BTreeMap, path::Path};
-<a href=#11 id=11 data-nosnippet>11</a>
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bin_widths(
-<a href=#13 id=13 data-nosnippet>13</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#14 id=14 data-nosnippet>14</a>    rows: <span class="kw-2">&amp;</span>[SelectedSolveRow],
-<a href=#15 id=15 data-nosnippet>15</a>    interval: <span class="prelude-ty">Option</span>&lt;BandpassFrequencyInterval&gt;,
-<a href=#16 id=16 data-nosnippet>16</a>) -&gt; <span class="prelude-ty">Result</span>&lt;BTreeMap&lt;i32, usize&gt;, BandpassSolveError&gt; {
-<a href=#17 id=17 data-nosnippet>17</a>    <span class="kw">match </span>interval {
-<a href=#18 id=18 data-nosnippet>18</a>        <span class="prelude-val">Some</span>(BandpassFrequencyInterval::Channels(count)) <span class="kw">if </span>count &gt; <span class="number">1.0 </span>=&gt; <span class="prelude-val">Ok</span>(rows
-<a href=#19 id=19 data-nosnippet>19</a>            .iter()
-<a href=#20 id=20 data-nosnippet>20</a>            .map(|row| (row.data_spw_id, count <span class="kw">as </span>usize))
-<a href=#21 id=21 data-nosnippet>21</a>            .collect()),
-<a href=#22 id=22 data-nosnippet>22</a>        <span class="prelude-val">Some</span>(BandpassFrequencyInterval::Hertz(hertz)) =&gt; bandwidth_bin_widths(ms, hertz),
-<a href=#23 id=23 data-nosnippet>23</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Ok</span>(BTreeMap::new()),
-<a href=#24 id=24 data-nosnippet>24</a>    }
-<a href=#25 id=25 data-nosnippet>25</a>}
-<a href=#26 id=26 data-nosnippet>26</a>
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">fn </span>bandwidth_bin_widths(
-<a href=#28 id=28 data-nosnippet>28</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#29 id=29 data-nosnippet>29</a>    hertz: f64,
-<a href=#30 id=30 data-nosnippet>30</a>) -&gt; <span class="prelude-ty">Result</span>&lt;BTreeMap&lt;i32, usize&gt;, BandpassSolveError&gt; {
-<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">let </span>fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
-<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">let </span>window = ms
-<a href=#33 id=33 data-nosnippet>33</a>        .spectral_window()
-<a href=#34 id=34 data-nosnippet>34</a>        .map_err(|error| fail(error.to_string()))<span class="question-mark">?</span>;
-<a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">let </span><span class="kw-2">mut </span>widths = BTreeMap::new();
-<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">for </span>spw <span class="kw">in </span><span class="number">0</span>..window.row_count() {
-<a href=#37 id=37 data-nosnippet>37</a>        <span class="kw">let </span>channels = window
-<a href=#38 id=38 data-nosnippet>38</a>            .chan_width(spw)
-<a href=#39 id=39 data-nosnippet>39</a>            .map_err(|error| fail(error.to_string()))<span class="question-mark">?</span>;
-<a href=#40 id=40 data-nosnippet>40</a>        <span class="kw">let </span>width = channels
-<a href=#41 id=41 data-nosnippet>41</a>            .first()
-<a href=#42 id=42 data-nosnippet>42</a>            .filter(|width| width.is_finite() &amp;&amp; <span class="kw-2">**</span>width != <span class="number">0.0</span>)
-<a href=#43 id=43 data-nosnippet>43</a>            .ok_or_else(|| fail(<span class="macro">format!</span>(<span class="string">"SPW {spw} has no valid first channel width"</span>)))<span class="question-mark">?</span>;
-<a href=#44 id=44 data-nosnippet>44</a>        widths.insert(spw <span class="kw">as </span>i32, (hertz / width.abs()).floor().max(<span class="number">1.0</span>) <span class="kw">as </span>usize);
-<a href=#45 id=45 data-nosnippet>45</a>    }
-<a href=#46 id=46 data-nosnippet>46</a>    <span class="comment">// Once the layer is installed, even windows with a width of one use
-<a href=#47 id=47 data-nosnippet>47</a>    // the frequency averager's scalar weights for the time centroid.
-<a href=#48 id=48 data-nosnippet>48</a>    </span><span class="kw">if </span>widths.values().all(|<span class="kw-2">&amp;</span>width| width == <span class="number">1</span>) {
-<a href=#49 id=49 data-nosnippet>49</a>        widths.clear();
-<a href=#50 id=50 data-nosnippet>50</a>    }
-<a href=#51 id=51 data-nosnippet>51</a>    <span class="prelude-val">Ok</span>(widths)
-<a href=#52 id=52 data-nosnippet>52</a>}
-<a href=#53 id=53 data-nosnippet>53</a>
-<a href=#54 id=54 data-nosnippet>54</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write(
-<a href=#55 id=55 data-nosnippet>55</a>    path: <span class="kw-2">&amp;</span>Path,
-<a href=#56 id=56 data-nosnippet>56</a>    request: <span class="kw-2">&amp;</span>BandpassSolveRequest,
-<a href=#57 id=57 data-nosnippet>57</a>    rows: <span class="kw-2">&amp;</span>[BandpassSolutionRow],
-<a href=#58 id=58 data-nosnippet>58</a>    channel_bin_widths: <span class="kw-2">&amp;</span>BTreeMap&lt;i32, usize&gt;,
-<a href=#59 id=59 data-nosnippet>59</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), BandpassSolveError&gt; {
-<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">let </span>fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">let </span><span class="kw-2">mut </span>table = Table::open(TableOptions::new(path)).map_err(|e| fail(e.to_string()))<span class="question-mark">?</span>;
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..table.row_count() {
-<a href=#63 id=63 data-nosnippet>63</a>        <span class="kw">let </span>present = rows.iter().any(|r| r.spw_id == row <span class="kw">as </span>i32);
-<a href=#64 id=64 data-nosnippet>64</a>        table
-<a href=#65 id=65 data-nosnippet>65</a>            .cell_accessor_mut(row, <span class="string">"FLAG_ROW"</span>)
-<a href=#66 id=66 data-nosnippet>66</a>            .and_then(|<span class="kw-2">mut </span>c| c.set(Value::Scalar(ScalarValue::Bool(!present))))
-<a href=#67 id=67 data-nosnippet>67</a>            .map_err(|e| fail(e.to_string()))<span class="question-mark">?</span>;
-<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">if </span>!present {
-<a href=#69 id=69 data-nosnippet>69</a>            <span class="kw">continue</span>;
-<a href=#70 id=70 data-nosnippet>70</a>        }
-<a href=#71 id=71 data-nosnippet>71</a>        <span class="kw">let </span>array = |column| -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f64&gt;, BandpassSolveError&gt; {
-<a href=#72 id=72 data-nosnippet>72</a>            <span class="kw">let </span>ArrayValue::Float64(values) = table
-<a href=#73 id=73 data-nosnippet>73</a>                .cell_accessor(row, column)
-<a href=#74 id=74 data-nosnippet>74</a>                .and_then(|c| c.array())
-<a href=#75 id=75 data-nosnippet>75</a>                .map_err(|e| fail(e.to_string()))<span class="question-mark">?
-<a href=#76 id=76 data-nosnippet>76</a>            </span><span class="kw">else </span>{
-<a href=#77 id=77 data-nosnippet>77</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(fail(<span class="macro">format!</span>(<span class="string">"SPW {row} {column} is not Float64"</span>)));
-<a href=#78 id=78 data-nosnippet>78</a>            };
-<a href=#79 id=79 data-nosnippet>79</a>            <span class="prelude-val">Ok</span>(values.iter().copied().collect())
-<a href=#80 id=80 data-nosnippet>80</a>        };
-<a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">let </span>frequencies = array(<span class="string">"CHAN_FREQ"</span>)<span class="question-mark">?</span>;
-<a href=#82 id=82 data-nosnippet>82</a>        <span class="kw">let </span>widths = array(<span class="string">"CHAN_WIDTH"</span>)<span class="question-mark">?</span>;
-<a href=#83 id=83 data-nosnippet>83</a>        <span class="kw">let </span>selection = request.selection.channel_selection_for_spw(row <span class="kw">as </span>i32);
-<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw">let </span>channels =
-<a href=#85 id=85 data-nosnippet>85</a>            <span class="kw">crate</span>::solve::grouping::selected_channels(selection.as_ref(), frequencies.len())<span class="question-mark">?</span>;
-<a href=#86 id=86 data-nosnippet>86</a>        <span class="kw">let </span><span class="kw-2">mut </span>selected_frequencies = Vec::new();
-<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">let </span><span class="kw-2">mut </span>selected_widths = Vec::new();
-<a href=#88 id=88 data-nosnippet>88</a>        <span class="kw">for </span>channel <span class="kw">in </span>channels {
-<a href=#89 id=89 data-nosnippet>89</a>            selected_frequencies.push(frequencies[channel]);
-<a href=#90 id=90 data-nosnippet>90</a>            selected_widths.push(
-<a href=#91 id=91 data-nosnippet>91</a>                widths
-<a href=#92 id=92 data-nosnippet>92</a>                    .get(channel)
-<a href=#93 id=93 data-nosnippet>93</a>                    .ok_or_else(|| fail(<span class="string">"SPW channel width shape mismatch"</span>.to_string()))<span class="question-mark">?
-<a href=#94 id=94 data-nosnippet>94</a>                    </span>.abs(),
-<a href=#95 id=95 data-nosnippet>95</a>            );
-<a href=#96 id=96 data-nosnippet>96</a>        }
-<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>width) = channel_bin_widths.get(<span class="kw-2">&amp;</span>(row <span class="kw">as </span>i32)) {
-<a href=#98 id=98 data-nosnippet>98</a>            selected_frequencies = selected_frequencies
-<a href=#99 id=99 data-nosnippet>99</a>                .chunks(width)
-<a href=#100 id=100 data-nosnippet>100</a>                .map(|bin| bin.iter().sum::&lt;f64&gt;() / bin.len() <span class="kw">as </span>f64)
-<a href=#101 id=101 data-nosnippet>101</a>                .collect();
-<a href=#102 id=102 data-nosnippet>102</a>            selected_widths = selected_widths
-<a href=#103 id=103 data-nosnippet>103</a>                .chunks(width)
-<a href=#104 id=104 data-nosnippet>104</a>                .map(|bin| bin.iter().sum())
-<a href=#105 id=105 data-nosnippet>105</a>                .collect();
-<a href=#106 id=106 data-nosnippet>106</a>        }
-<a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">let </span>count = selected_frequencies.len();
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">let </span>total: f64 = selected_frequencies.iter().sum();
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="comment">// SolvableVisCal::setCTFrequencies aliases resolution to frequency
-<a href=#110 id=110 data-nosnippet>110</a>        // and sums frequencies as bandwidth. CASA requires exact agreement
-<a href=#111 id=111 data-nosnippet>111</a>        // when appending; these fields are not used to apply the solutions.
-<a href=#112 id=112 data-nosnippet>112</a>        </span><span class="kw">for </span>(column, values) <span class="kw">in </span>[
-<a href=#113 id=113 data-nosnippet>113</a>            (<span class="string">"CHAN_FREQ"</span>, selected_frequencies.clone()),
-<a href=#114 id=114 data-nosnippet>114</a>            (<span class="string">"RESOLUTION"</span>, selected_frequencies),
-<a href=#115 id=115 data-nosnippet>115</a>            (<span class="string">"CHAN_WIDTH"</span>, selected_widths.clone()),
-<a href=#116 id=116 data-nosnippet>116</a>            (<span class="string">"EFFECTIVE_BW"</span>, selected_widths),
-<a href=#117 id=117 data-nosnippet>117</a>        ] {
-<a href=#118 id=118 data-nosnippet>118</a>            table
-<a href=#119 id=119 data-nosnippet>119</a>                .cell_accessor_mut(row, column)
-<a href=#120 id=120 data-nosnippet>120</a>                .and_then(|<span class="kw-2">mut </span>c| c.set(Value::Array(ArrayValue::from_f64_vec(values))))
-<a href=#121 id=121 data-nosnippet>121</a>                .map_err(|e| fail(e.to_string()))<span class="question-mark">?</span>;
-<a href=#122 id=122 data-nosnippet>122</a>        }
-<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">for </span>(column, value) <span class="kw">in </span>[
-<a href=#124 id=124 data-nosnippet>124</a>            (<span class="string">"NUM_CHAN"</span>, Value::Scalar(ScalarValue::Int32(count <span class="kw">as </span>i32))),
-<a href=#125 id=125 data-nosnippet>125</a>            (
-<a href=#126 id=126 data-nosnippet>126</a>                <span class="string">"TOTAL_BANDWIDTH"</span>,
-<a href=#127 id=127 data-nosnippet>127</a>                Value::Scalar(ScalarValue::Float64(total)),
-<a href=#128 id=128 data-nosnippet>128</a>            ),
-<a href=#129 id=129 data-nosnippet>129</a>        ] {
-<a href=#130 id=130 data-nosnippet>130</a>            table
-<a href=#131 id=131 data-nosnippet>131</a>                .cell_accessor_mut(row, column)
-<a href=#132 id=132 data-nosnippet>132</a>                .and_then(|<span class="kw-2">mut </span>c| c.set(value))
-<a href=#133 id=133 data-nosnippet>133</a>                .map_err(|e| fail(e.to_string()))<span class="question-mark">?</span>;
-<a href=#134 id=134 data-nosnippet>134</a>        }
-<a href=#135 id=135 data-nosnippet>135</a>    }
-<a href=#136 id=136 data-nosnippet>136</a>    table
-<a href=#137 id=137 data-nosnippet>137</a>        .save(TableOptions::new(path))
-<a href=#138 id=138 data-nosnippet>138</a>        .map_err(|e| fail(e.to_string()))
-<a href=#139 id=139 data-nosnippet>139</a>}
+<a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use super</span>::{BandpassFrequencyInterval, BandpassSolutionRow, BandpassSolveError};
+<a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span><span class="kw">crate</span>::solve::grouping::SelectedSolveRow;
+<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>casa_ms::{ChannelSelection, ms::MeasurementSet};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_tables::{Table, TableOptions};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_types::{ArrayValue, ScalarValue, Value};
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>std::{collections::BTreeMap, path::Path};
+<a href=#9 id=9 data-nosnippet>9</a>
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bin_widths(
+<a href=#11 id=11 data-nosnippet>11</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#12 id=12 data-nosnippet>12</a>    rows: <span class="kw-2">&amp;</span>[SelectedSolveRow],
+<a href=#13 id=13 data-nosnippet>13</a>    interval: <span class="prelude-ty">Option</span>&lt;BandpassFrequencyInterval&gt;,
+<a href=#14 id=14 data-nosnippet>14</a>) -&gt; <span class="prelude-ty">Result</span>&lt;BTreeMap&lt;i32, usize&gt;, BandpassSolveError&gt; {
+<a href=#15 id=15 data-nosnippet>15</a>    <span class="kw">match </span>interval {
+<a href=#16 id=16 data-nosnippet>16</a>        <span class="prelude-val">Some</span>(BandpassFrequencyInterval::Channels(count)) <span class="kw">if </span>count &gt; <span class="number">1.0 </span>=&gt; <span class="prelude-val">Ok</span>(rows
+<a href=#17 id=17 data-nosnippet>17</a>            .iter()
+<a href=#18 id=18 data-nosnippet>18</a>            .map(|row| (row.data_spw_id, count <span class="kw">as </span>usize))
+<a href=#19 id=19 data-nosnippet>19</a>            .collect()),
+<a href=#20 id=20 data-nosnippet>20</a>        <span class="prelude-val">Some</span>(BandpassFrequencyInterval::Hertz(hertz)) =&gt; bandwidth_bin_widths(ms, hertz),
+<a href=#21 id=21 data-nosnippet>21</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Ok</span>(BTreeMap::new()),
+<a href=#22 id=22 data-nosnippet>22</a>    }
+<a href=#23 id=23 data-nosnippet>23</a>}
+<a href=#24 id=24 data-nosnippet>24</a>
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">fn </span>bandwidth_bin_widths(
+<a href=#26 id=26 data-nosnippet>26</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#27 id=27 data-nosnippet>27</a>    hertz: f64,
+<a href=#28 id=28 data-nosnippet>28</a>) -&gt; <span class="prelude-ty">Result</span>&lt;BTreeMap&lt;i32, usize&gt;, BandpassSolveError&gt; {
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">let </span>fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">let </span>window = ms
+<a href=#31 id=31 data-nosnippet>31</a>        .spectral_window()
+<a href=#32 id=32 data-nosnippet>32</a>        .map_err(|error| fail(error.to_string()))<span class="question-mark">?</span>;
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span><span class="kw-2">mut </span>widths = BTreeMap::new();
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">for </span>spw <span class="kw">in </span><span class="number">0</span>..window.row_count() {
+<a href=#35 id=35 data-nosnippet>35</a>        <span class="kw">let </span>channels = window
+<a href=#36 id=36 data-nosnippet>36</a>            .chan_width(spw)
+<a href=#37 id=37 data-nosnippet>37</a>            .map_err(|error| fail(error.to_string()))<span class="question-mark">?</span>;
+<a href=#38 id=38 data-nosnippet>38</a>        <span class="kw">let </span>width = channels
+<a href=#39 id=39 data-nosnippet>39</a>            .first()
+<a href=#40 id=40 data-nosnippet>40</a>            .filter(|width| width.is_finite() &amp;&amp; <span class="kw-2">**</span>width != <span class="number">0.0</span>)
+<a href=#41 id=41 data-nosnippet>41</a>            .ok_or_else(|| fail(<span class="macro">format!</span>(<span class="string">"SPW {spw} has no valid first channel width"</span>)))<span class="question-mark">?</span>;
+<a href=#42 id=42 data-nosnippet>42</a>        widths.insert(spw <span class="kw">as </span>i32, (hertz / width.abs()).floor().max(<span class="number">1.0</span>) <span class="kw">as </span>usize);
+<a href=#43 id=43 data-nosnippet>43</a>    }
+<a href=#44 id=44 data-nosnippet>44</a>    <span class="comment">// Once the layer is installed, even windows with a width of one use
+<a href=#45 id=45 data-nosnippet>45</a>    // the frequency averager's scalar weights for the time centroid.
+<a href=#46 id=46 data-nosnippet>46</a>    </span><span class="kw">if </span>widths.values().all(|<span class="kw-2">&amp;</span>width| width == <span class="number">1</span>) {
+<a href=#47 id=47 data-nosnippet>47</a>        widths.clear();
+<a href=#48 id=48 data-nosnippet>48</a>    }
+<a href=#49 id=49 data-nosnippet>49</a>    <span class="prelude-val">Ok</span>(widths)
+<a href=#50 id=50 data-nosnippet>50</a>}
+<a href=#51 id=51 data-nosnippet>51</a>
+<a href=#52 id=52 data-nosnippet>52</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write(
+<a href=#53 id=53 data-nosnippet>53</a>    path: <span class="kw-2">&amp;</span>Path,
+<a href=#54 id=54 data-nosnippet>54</a>    rows: <span class="kw-2">&amp;</span>[BandpassSolutionRow],
+<a href=#55 id=55 data-nosnippet>55</a>    channel_bin_widths: <span class="kw-2">&amp;</span>BTreeMap&lt;i32, usize&gt;,
+<a href=#56 id=56 data-nosnippet>56</a>    selected_rows: <span class="kw-2">&amp;</span>[SelectedSolveRow],
+<a href=#57 id=57 data-nosnippet>57</a>    combine_windows: bool,
+<a href=#58 id=58 data-nosnippet>58</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), BandpassSolveError&gt; {
+<a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">let </span><span class="kw-2">mut </span>table = Table::open(TableOptions::new(path)).map_err(metadata_error)<span class="question-mark">?</span>;
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">let </span>selections = selected_rows
+<a href=#61 id=61 data-nosnippet>61</a>        .iter()
+<a href=#62 id=62 data-nosnippet>62</a>        .map(|row| (row.data_spw_id, row.channel_selection.as_ref()))
+<a href=#63 id=63 data-nosnippet>63</a>        .collect::&lt;BTreeMap&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;();
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">let </span>grid = |table: <span class="kw-2">&amp;</span>Table, spw| {
+<a href=#65 id=65 data-nosnippet>65</a>        select_grid(
+<a href=#66 id=66 data-nosnippet>66</a>            table,
+<a href=#67 id=67 data-nosnippet>67</a>            spw <span class="kw">as </span>usize,
+<a href=#68 id=68 data-nosnippet>68</a>            selections.get(<span class="kw-2">&amp;</span>spw).copied().flatten(),
+<a href=#69 id=69 data-nosnippet>69</a>            channel_bin_widths.get(<span class="kw-2">&amp;</span>spw).copied().unwrap_or(<span class="number">1</span>),
+<a href=#70 id=70 data-nosnippet>70</a>        )
+<a href=#71 id=71 data-nosnippet>71</a>    };
+<a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">let </span>aggregate = <span class="kw">if </span>combine_windows &amp;&amp; selections.len() &gt; <span class="number">1 </span>{
+<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">let </span><span class="kw-2">mut </span>selected = selections.keys().copied();
+<a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">let </span>reference = selected.next().expect(<span class="string">"nonempty windows"</span>);
+<a href=#75 id=75 data-nosnippet>75</a>        <span class="kw">let </span><span class="kw-2">mut </span>combined = grid(<span class="kw-2">&amp;</span>table, reference)<span class="question-mark">?</span>;
+<a href=#76 id=76 data-nosnippet>76</a>        <span class="kw">let </span>frequency_offset = combined.frequencies[<span class="number">0</span>];
+<a href=#77 id=77 data-nosnippet>77</a>        <span class="kw">let </span>width_scale = combined.widths[<span class="number">0</span>];
+<a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..combined.frequencies.len() {
+<a href=#79 id=79 data-nosnippet>79</a>            <span class="kw">let </span>width = combined.widths[index] / width_scale;
+<a href=#80 id=80 data-nosnippet>80</a>            combined.frequencies[index] = (combined.frequencies[index] - frequency_offset) * width;
+<a href=#81 id=81 data-nosnippet>81</a>            combined.effective_bandwidths[index] = width;
+<a href=#82 id=82 data-nosnippet>82</a>            combined.widths[index] = width * width;
+<a href=#83 id=83 data-nosnippet>83</a>        }
+<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw">for </span>spw <span class="kw">in </span>selected {
+<a href=#85 id=85 data-nosnippet>85</a>            combined.accumulate(<span class="kw-2">&amp;</span>grid(<span class="kw-2">&amp;</span>table, spw)<span class="question-mark">?</span>, frequency_offset, width_scale)<span class="question-mark">?</span>;
+<a href=#86 id=86 data-nosnippet>86</a>        }
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..combined.frequencies.len() {
+<a href=#88 id=88 data-nosnippet>88</a>            <span class="kw">let </span>bandwidth = combined.effective_bandwidths[index];
+<a href=#89 id=89 data-nosnippet>89</a>            <span class="kw">if </span>!bandwidth.is_finite() || bandwidth &lt;= <span class="number">0.0 </span>{
+<a href=#90 id=90 data-nosnippet>90</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(metadata_error(
+<a href=#91 id=91 data-nosnippet>91</a>                    <span class="string">"Cannot combine windows with invalid channel widths"</span>,
+<a href=#92 id=92 data-nosnippet>92</a>                ));
+<a href=#93 id=93 data-nosnippet>93</a>            }
+<a href=#94 id=94 data-nosnippet>94</a>            combined.frequencies[index] =
+<a href=#95 id=95 data-nosnippet>95</a>                combined.frequencies[index] / bandwidth + frequency_offset;
+<a href=#96 id=96 data-nosnippet>96</a>            combined.widths[index] = combined.widths[index] / bandwidth * width_scale;
+<a href=#97 id=97 data-nosnippet>97</a>            combined.effective_bandwidths[index] <span class="kw-2">*</span>= width_scale;
+<a href=#98 id=98 data-nosnippet>98</a>        }
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="prelude-val">Some</span>((reference, combined))
+<a href=#100 id=100 data-nosnippet>100</a>    } <span class="kw">else </span>{
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="prelude-val">None
+<a href=#102 id=102 data-nosnippet>102</a>    </span>};
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..table.row_count() {
+<a href=#104 id=104 data-nosnippet>104</a>        <span class="kw">let </span>spw = row <span class="kw">as </span>i32;
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="kw">let </span>present = rows.iter().any(|r| r.spw_id == spw);
+<a href=#106 id=106 data-nosnippet>106</a>        table
+<a href=#107 id=107 data-nosnippet>107</a>            .cell_accessor_mut(row, <span class="string">"FLAG_ROW"</span>)
+<a href=#108 id=108 data-nosnippet>108</a>            .and_then(|<span class="kw-2">mut </span>c| c.set(Value::Scalar(ScalarValue::Bool(!present))))
+<a href=#109 id=109 data-nosnippet>109</a>            .map_err(metadata_error)<span class="question-mark">?</span>;
+<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((reference, combined)) = <span class="kw-2">&amp;</span>aggregate {
+<a href=#111 id=111 data-nosnippet>111</a>            <span class="kw">if </span><span class="kw-2">*</span>reference == spw {
+<a href=#112 id=112 data-nosnippet>112</a>                combined.write(<span class="kw-2">&amp;mut </span>table, row)<span class="question-mark">?</span>;
+<a href=#113 id=113 data-nosnippet>113</a>            }
+<a href=#114 id=114 data-nosnippet>114</a>        } <span class="kw">else if </span>present {
+<a href=#115 id=115 data-nosnippet>115</a>            grid(<span class="kw-2">&amp;</span>table, spw)<span class="question-mark">?</span>.write(<span class="kw-2">&amp;mut </span>table, row)<span class="question-mark">?</span>;
+<a href=#116 id=116 data-nosnippet>116</a>        }
+<a href=#117 id=117 data-nosnippet>117</a>    }
+<a href=#118 id=118 data-nosnippet>118</a>    table.save(TableOptions::new(path)).map_err(metadata_error)
+<a href=#119 id=119 data-nosnippet>119</a>}
+<a href=#120 id=120 data-nosnippet>120</a>
+<a href=#121 id=121 data-nosnippet>121</a><span class="kw">struct </span>ChannelGrid {
+<a href=#122 id=122 data-nosnippet>122</a>    frequencies: Vec&lt;f64&gt;,
+<a href=#123 id=123 data-nosnippet>123</a>    widths: Vec&lt;f64&gt;,
+<a href=#124 id=124 data-nosnippet>124</a>    effective_bandwidths: Vec&lt;f64&gt;,
+<a href=#125 id=125 data-nosnippet>125</a>}
+<a href=#126 id=126 data-nosnippet>126</a>
+<a href=#127 id=127 data-nosnippet>127</a><span class="kw">fn </span>select_grid(
+<a href=#128 id=128 data-nosnippet>128</a>    table: <span class="kw-2">&amp;</span>Table,
+<a href=#129 id=129 data-nosnippet>129</a>    row: usize,
+<a href=#130 id=130 data-nosnippet>130</a>    selection: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ChannelSelection&gt;,
+<a href=#131 id=131 data-nosnippet>131</a>    bin_width: usize,
+<a href=#132 id=132 data-nosnippet>132</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ChannelGrid, BandpassSolveError&gt; {
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">let </span>array = |column| -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f64&gt;, BandpassSolveError&gt; {
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">let </span>ArrayValue::Float64(values) = table
+<a href=#135 id=135 data-nosnippet>135</a>            .cell_accessor(row, column)
+<a href=#136 id=136 data-nosnippet>136</a>            .and_then(|c| c.array())
+<a href=#137 id=137 data-nosnippet>137</a>            .map_err(metadata_error)<span class="question-mark">?
+<a href=#138 id=138 data-nosnippet>138</a>        </span><span class="kw">else </span>{
+<a href=#139 id=139 data-nosnippet>139</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(metadata_error(<span class="macro">format!</span>(<span class="string">"SPW {row} {column} is not Float64"</span>)));
+<a href=#140 id=140 data-nosnippet>140</a>        };
+<a href=#141 id=141 data-nosnippet>141</a>        <span class="prelude-val">Ok</span>(values.iter().copied().collect())
+<a href=#142 id=142 data-nosnippet>142</a>    };
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>frequencies = array(<span class="string">"CHAN_FREQ"</span>)<span class="question-mark">?</span>;
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="kw">let </span>widths = array(<span class="string">"CHAN_WIDTH"</span>)<span class="question-mark">?</span>;
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">if </span>frequencies.len() != widths.len() {
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(metadata_error(<span class="string">"SPW channel width shape mismatch"</span>));
+<a href=#147 id=147 data-nosnippet>147</a>    }
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">let </span>channels = <span class="kw">crate</span>::solve::grouping::selected_channels(selection, frequencies.len())<span class="question-mark">?</span>;
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">let </span>bins = channels.chunks(bin_width);
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">let </span>frequencies = bins
+<a href=#151 id=151 data-nosnippet>151</a>        .clone()
+<a href=#152 id=152 data-nosnippet>152</a>        .map(|bin| bin.iter().map(|<span class="kw-2">&amp;</span>channel| frequencies[channel]).sum::&lt;f64&gt;() / bin.len() <span class="kw">as </span>f64)
+<a href=#153 id=153 data-nosnippet>153</a>        .collect();
+<a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">let </span>widths = bins
+<a href=#155 id=155 data-nosnippet>155</a>        .map(|bin| bin.iter().map(|<span class="kw-2">&amp;</span>channel| widths[channel].abs()).sum())
+<a href=#156 id=156 data-nosnippet>156</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#157 id=157 data-nosnippet>157</a>    <span class="prelude-val">Ok</span>(ChannelGrid {
+<a href=#158 id=158 data-nosnippet>158</a>        frequencies,
+<a href=#159 id=159 data-nosnippet>159</a>        effective_bandwidths: widths.clone(),
+<a href=#160 id=160 data-nosnippet>160</a>        widths,
+<a href=#161 id=161 data-nosnippet>161</a>    })
+<a href=#162 id=162 data-nosnippet>162</a>}
+<a href=#163 id=163 data-nosnippet>163</a>
+<a href=#164 id=164 data-nosnippet>164</a><span class="kw">impl </span>ChannelGrid {
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">fn </span>accumulate(
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#167 id=167 data-nosnippet>167</a>        other: <span class="kw-2">&amp;</span><span class="self">Self</span>,
+<a href=#168 id=168 data-nosnippet>168</a>        frequency_offset: f64,
+<a href=#169 id=169 data-nosnippet>169</a>        width_scale: f64,
+<a href=#170 id=170 data-nosnippet>170</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), BandpassSolveError&gt; {
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="kw">if </span><span class="self">self</span>.frequencies.len() != other.frequencies.len() {
+<a href=#172 id=172 data-nosnippet>172</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(metadata_error(
+<a href=#173 id=173 data-nosnippet>173</a>                <span class="string">"Cannot combine spectral windows with different channel counts"</span>,
+<a href=#174 id=174 data-nosnippet>174</a>            ));
+<a href=#175 id=175 data-nosnippet>175</a>        }
+<a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..<span class="self">self</span>.frequencies.len() {
+<a href=#177 id=177 data-nosnippet>177</a>            <span class="kw">let </span>width = other.widths[index] / width_scale;
+<a href=#178 id=178 data-nosnippet>178</a>            <span class="self">self</span>.frequencies[index] += (other.frequencies[index] - frequency_offset) * width;
+<a href=#179 id=179 data-nosnippet>179</a>            <span class="self">self</span>.widths[index] += width * width;
+<a href=#180 id=180 data-nosnippet>180</a>            <span class="self">self</span>.effective_bandwidths[index] += width;
+<a href=#181 id=181 data-nosnippet>181</a>        }
+<a href=#182 id=182 data-nosnippet>182</a>        <span class="prelude-val">Ok</span>(())
+<a href=#183 id=183 data-nosnippet>183</a>    }
+<a href=#184 id=184 data-nosnippet>184</a>
+<a href=#185 id=185 data-nosnippet>185</a>    <span class="kw">fn </span>write(<span class="kw-2">&amp;</span><span class="self">self</span>, table: <span class="kw-2">&amp;mut </span>Table, row: usize) -&gt; <span class="prelude-ty">Result</span>&lt;(), BandpassSolveError&gt; {
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="kw">let </span>count = <span class="self">self</span>.frequencies.len();
+<a href=#187 id=187 data-nosnippet>187</a>        <span class="kw">let </span>total: f64 = <span class="self">self</span>.frequencies.iter().sum();
+<a href=#188 id=188 data-nosnippet>188</a>        <span class="comment">// SolvableVisCal::setCTFrequencies aliases resolution to frequency
+<a href=#189 id=189 data-nosnippet>189</a>        // and sums frequencies as bandwidth. CASA requires exact agreement
+<a href=#190 id=190 data-nosnippet>190</a>        // when appending; these fields are not used to apply the solutions.
+<a href=#191 id=191 data-nosnippet>191</a>        </span><span class="kw">for </span>(column, values) <span class="kw">in </span>[
+<a href=#192 id=192 data-nosnippet>192</a>            (<span class="string">"CHAN_FREQ"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.frequencies),
+<a href=#193 id=193 data-nosnippet>193</a>            (<span class="string">"RESOLUTION"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.frequencies),
+<a href=#194 id=194 data-nosnippet>194</a>            (<span class="string">"CHAN_WIDTH"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.widths),
+<a href=#195 id=195 data-nosnippet>195</a>            (<span class="string">"EFFECTIVE_BW"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.effective_bandwidths),
+<a href=#196 id=196 data-nosnippet>196</a>        ] {
+<a href=#197 id=197 data-nosnippet>197</a>            table
+<a href=#198 id=198 data-nosnippet>198</a>                .cell_accessor_mut(row, column)
+<a href=#199 id=199 data-nosnippet>199</a>                .and_then(|<span class="kw-2">mut </span>c| c.set(Value::Array(ArrayValue::from_f64_vec(values.clone()))))
+<a href=#200 id=200 data-nosnippet>200</a>                .map_err(metadata_error)<span class="question-mark">?</span>;
+<a href=#201 id=201 data-nosnippet>201</a>        }
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">for </span>(column, value) <span class="kw">in </span>[
+<a href=#203 id=203 data-nosnippet>203</a>            (<span class="string">"NUM_CHAN"</span>, Value::Scalar(ScalarValue::Int32(count <span class="kw">as </span>i32))),
+<a href=#204 id=204 data-nosnippet>204</a>            (
+<a href=#205 id=205 data-nosnippet>205</a>                <span class="string">"TOTAL_BANDWIDTH"</span>,
+<a href=#206 id=206 data-nosnippet>206</a>                Value::Scalar(ScalarValue::Float64(total)),
+<a href=#207 id=207 data-nosnippet>207</a>            ),
+<a href=#208 id=208 data-nosnippet>208</a>        ] {
+<a href=#209 id=209 data-nosnippet>209</a>            table
+<a href=#210 id=210 data-nosnippet>210</a>                .cell_accessor_mut(row, column)
+<a href=#211 id=211 data-nosnippet>211</a>                .and_then(|<span class="kw-2">mut </span>c| c.set(value))
+<a href=#212 id=212 data-nosnippet>212</a>                .map_err(metadata_error)<span class="question-mark">?</span>;
+<a href=#213 id=213 data-nosnippet>213</a>        }
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="prelude-val">Ok</span>(())
+<a href=#215 id=215 data-nosnippet>215</a>    }
+<a href=#216 id=216 data-nosnippet>216</a>}
+<a href=#217 id=217 data-nosnippet>217</a>
+<a href=#218 id=218 data-nosnippet>218</a><span class="kw">fn </span>metadata_error(error: <span class="kw">impl </span>std::fmt::Display) -&gt; BandpassSolveError {
+<a href=#219 id=219 data-nosnippet>219</a>    BandpassSolveError::UnsupportedConfiguration {
+<a href=#220 id=220 data-nosnippet>220</a>        reason: error.to_string(),
+<a href=#221 id=221 data-nosnippet>221</a>    }
+<a href=#222 id=222 data-nosnippet>222</a>}
 </code></pre></div></section></main></body></html>

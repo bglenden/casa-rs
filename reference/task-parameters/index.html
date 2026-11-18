@@ -5860,7 +5860,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>intent</code></td>
-<td><code>ms.selection.intent@r1</code></td>
+<td><code>ms.selection.intent@r3</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
@@ -5884,11 +5884,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>uvrange</code></td>
-<td><code>ms.selection.uvrange@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.uvrange@r4</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>UV range selector.</td>
+<td>Accepts a CASA variant and converts it to selector text during MeasurementSet selection.</td>
 </tr>
 <tr>
 <td><code>antenna</code></td>
@@ -5908,11 +5908,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>observation</code></td>
-<td><code>ms.selection.observation@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.observation@r4</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated OBSERVATION_ID integers</td>
+<td>Accepts selector text or an observation ID. Preserve the input type for HISTORY.</td>
 </tr>
 <tr>
 <td><code>msselect</code></td>
@@ -5942,7 +5942,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>refant</code></td>
 <td><code>parameter.refant@r1</code></td>
 <td><code>string</code></td>
-<td><code>""</code>; required</td>
+<td><code>""</code>; required when bandtype="BPOLY"</td>
 <td>Solve</td>
 <td>Reference antenna name or id for solve workflows</td>
 </tr>
