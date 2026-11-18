@@ -3360,6 +3360,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#bpoly-writes-nonfinite-coefficients-when-every-channel-is-masked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BPOLY writes nonfinite coefficients when every channel is masked
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bpoly-reads-a-second-channel-from-a-singleton-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BPOLY reads a second channel from a singleton selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#simulator-short-cubic-time-axes-can-alter-data-before-failing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9064,6 +9086,33 @@ isolated public task aborts. Casa-rs applies the field-independent BPOLY
 solutions for this input, as it does for explicit field selectors. The
 public oracle compares the result against an independent CASA run with
 the same polynomial table and default gainfield.</p>
+<h2 id="bpoly-writes-nonfinite-coefficients-when-every-channel-is-masked">BPOLY writes nonfinite coefficients when every channel is masked<a class="headerlink" href="#bpoly-writes-nonfinite-coefficients-when-every-channel-is-masked" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-18</li>
+<li>Status: corrected in the native polynomial solve (#31)</li>
+<li>Affected code: CASA 6.7.6.14 <code>BJonesPoly::selfSolveOne</code> and the CLIC
+  <code>POLYANT</code> normal equations.</li>
+</ul>
+<p>In a 12-channel window, <code>maskcenter=12</code> excludes the entire spectrum. CASA
+attempts the singular fit and reports the resulting table in <code>solve_tables</code>
+with nonfinite coefficients. The native task returns an empty <code>solve_tables</code>
+entry when no interval can be fitted. A singular interval is omitted when
+later intervals still produce valid solutions. Output creation and
+replacement use the shared calibration table lifecycle. The pinned BPOLY
+oracle checks the CASA product, the native return, and retained intervals.</p>
+<h2 id="bpoly-reads-a-second-channel-from-a-singleton-selection">BPOLY reads a second channel from a singleton selection<a class="headerlink" href="#bpoly-reads-a-second-channel-from-a-singleton-selection" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-18</li>
+<li>Status: corrected in the native polynomial grid (#31)</li>
+<li>Affected code: CASA 6.7.6.14 <code>BJonesPoly::selfSolveOne</code>.</li>
+</ul>
+<p>The grid spacing calculation indexes the second selected frequency even
+when a window contains only one selected channel. With one selected channel
+in each of two windows and <code>combine='spw'</code>, the tested CASA binary collapses
+the fit domain to the first frequency. The native grid uses the underlying
+window spacing, keeps both physical frequencies, and stores occupied grid
+points only. A degree-zero regression checks the fit against the normal
+equations for the two selected channels.</p>
 <h2 id="simulator-short-cubic-time-axes-can-alter-data-before-failing">Simulator short cubic time axes can alter DATA before failing<a class="headerlink" href="#simulator-short-cubic-time-axes-can-alter-data-before-failing" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-12</li>

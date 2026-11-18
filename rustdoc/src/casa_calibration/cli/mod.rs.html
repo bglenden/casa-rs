@@ -241,41 +241,50 @@
 <a href=#241 id=241 data-nosnippet>241</a>            <span class="kw-2">&amp;</span>report.solve_stats,
 <a href=#242 id=242 data-nosnippet>242</a>        ),
 <a href=#243 id=243 data-nosnippet>243</a>        (<span class="string">"bandpass"</span>, CalibrationTaskResult::SolveBandpass(report))
-<a href=#244 id=244 data-nosnippet>244</a>            <span class="kw">if </span>report.solve_stats.windows.is_empty() =&gt;
+<a href=#244 id=244 data-nosnippet>244</a>            <span class="kw">if </span>report.table_subtype == <span class="string">"BPOLY" </span>&amp;&amp; report.solution_row_count &gt; <span class="number">0 </span>=&gt;
 <a href=#245 id=245 data-nosnippet>245</a>        {
-<a href=#246 id=246 data-nosnippet>246</a>            <span class="kw">crate</span>::casa_return::skipped_solve_record(
-<a href=#247 id=247 data-nosnippet>247</a>                <span class="kw">if </span>report.selection_failed {
-<a href=#248 id=248 data-nosnippet>248</a>                    <span class="kw-2">&amp;</span>[]
-<a href=#249 id=249 data-nosnippet>249</a>                } <span class="kw">else </span>{
-<a href=#250 id=250 data-nosnippet>250</a>                    applied
-<a href=#251 id=251 data-nosnippet>251</a>                },
-<a href=#252 id=252 data-nosnippet>252</a>                (!report.selected_data.fields.is_empty()).then_some(<span class="kw-2">&amp;</span>report.selected_data),
-<a href=#253 id=253 data-nosnippet>253</a>            )
-<a href=#254 id=254 data-nosnippet>254</a>        }
-<a href=#255 id=255 data-nosnippet>255</a>        (<span class="string">"bandpass"</span>, CalibrationTaskResult::SolveBandpass(report)) =&gt; solve_record(
-<a href=#256 id=256 data-nosnippet>256</a>            applied,
-<a href=#257 id=257 data-nosnippet>257</a>            <span class="kw-2">&amp;</span>report.selected_data,
-<a href=#258 id=258 data-nosnippet>258</a>            <span class="kw-2">&amp;</span>report.output_table,
-<a href=#259 id=259 data-nosnippet>259</a>            <span class="kw-2">&amp;</span>report.solve_stats,
-<a href=#260 id=260 data-nosnippet>260</a>        ),
-<a href=#261 id=261 data-nosnippet>261</a>        (<span class="string">"fluxscale"</span>, CalibrationTaskResult::FluxScale(report)) =&gt; fluxscale_record(report),
-<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">_ </span>=&gt; CasaValue::None,
-<a href=#263 id=263 data-nosnippet>263</a>    }
-<a href=#264 id=264 data-nosnippet>264</a>}
-<a href=#265 id=265 data-nosnippet>265</a>
-<a href=#266 id=266 data-nosnippet>266</a><span class="kw">fn </span>refuse_existing_report(path: <span class="kw-2">&amp;</span>Path, overwrite: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">if </span>path.exists() &amp;&amp; !overwrite {
-<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::validation(<span class="macro">format!</span>(
-<a href=#269 id=269 data-nosnippet>269</a>            <span class="string">"refusing to overwrite existing output {}; set overwrite to replace it"</span>,
-<a href=#270 id=270 data-nosnippet>270</a>            path.display()
-<a href=#271 id=271 data-nosnippet>271</a>        ))
-<a href=#272 id=272 data-nosnippet>272</a>        .at(<span class="string">"output"</span>));
-<a href=#273 id=273 data-nosnippet>273</a>    }
-<a href=#274 id=274 data-nosnippet>274</a>    <span class="prelude-val">Ok</span>(())
-<a href=#275 id=275 data-nosnippet>275</a>}
-<a href=#276 id=276 data-nosnippet>276</a>
-<a href=#277 id=277 data-nosnippet>277</a><span class="attr">#[cfg(test)]
-<a href=#278 id=278 data-nosnippet>278</a></span><span class="kw">mod </span>casa_tests;
-<a href=#279 id=279 data-nosnippet>279</a><span class="attr">#[cfg(test)]
-<a href=#280 id=280 data-nosnippet>280</a></span><span class="kw">mod </span>tests;
+<a href=#246 id=246 data-nosnippet>246</a>            <span class="kw">crate</span>::casa_return::polynomial_solve_record(
+<a href=#247 id=247 data-nosnippet>247</a>                applied,
+<a href=#248 id=248 data-nosnippet>248</a>                <span class="kw-2">&amp;</span>report.selected_data,
+<a href=#249 id=249 data-nosnippet>249</a>                <span class="kw-2">&amp;</span>report.output_table,
+<a href=#250 id=250 data-nosnippet>250</a>            )
+<a href=#251 id=251 data-nosnippet>251</a>        }
+<a href=#252 id=252 data-nosnippet>252</a>        (<span class="string">"bandpass"</span>, CalibrationTaskResult::SolveBandpass(report))
+<a href=#253 id=253 data-nosnippet>253</a>            <span class="kw">if </span>report.solve_stats.windows.is_empty() =&gt;
+<a href=#254 id=254 data-nosnippet>254</a>        {
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw">crate</span>::casa_return::skipped_solve_record(
+<a href=#256 id=256 data-nosnippet>256</a>                <span class="kw">if </span>report.selection_failed {
+<a href=#257 id=257 data-nosnippet>257</a>                    <span class="kw-2">&amp;</span>[]
+<a href=#258 id=258 data-nosnippet>258</a>                } <span class="kw">else </span>{
+<a href=#259 id=259 data-nosnippet>259</a>                    applied
+<a href=#260 id=260 data-nosnippet>260</a>                },
+<a href=#261 id=261 data-nosnippet>261</a>                (!report.selected_data.fields.is_empty()).then_some(<span class="kw-2">&amp;</span>report.selected_data),
+<a href=#262 id=262 data-nosnippet>262</a>            )
+<a href=#263 id=263 data-nosnippet>263</a>        }
+<a href=#264 id=264 data-nosnippet>264</a>        (<span class="string">"bandpass"</span>, CalibrationTaskResult::SolveBandpass(report)) =&gt; solve_record(
+<a href=#265 id=265 data-nosnippet>265</a>            applied,
+<a href=#266 id=266 data-nosnippet>266</a>            <span class="kw-2">&amp;</span>report.selected_data,
+<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw-2">&amp;</span>report.output_table,
+<a href=#268 id=268 data-nosnippet>268</a>            <span class="kw-2">&amp;</span>report.solve_stats,
+<a href=#269 id=269 data-nosnippet>269</a>        ),
+<a href=#270 id=270 data-nosnippet>270</a>        (<span class="string">"fluxscale"</span>, CalibrationTaskResult::FluxScale(report)) =&gt; fluxscale_record(report),
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">_ </span>=&gt; CasaValue::None,
+<a href=#272 id=272 data-nosnippet>272</a>    }
+<a href=#273 id=273 data-nosnippet>273</a>}
+<a href=#274 id=274 data-nosnippet>274</a>
+<a href=#275 id=275 data-nosnippet>275</a><span class="kw">fn </span>refuse_existing_report(path: <span class="kw-2">&amp;</span>Path, overwrite: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">if </span>path.exists() &amp;&amp; !overwrite {
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::validation(<span class="macro">format!</span>(
+<a href=#278 id=278 data-nosnippet>278</a>            <span class="string">"refusing to overwrite existing output {}; set overwrite to replace it"</span>,
+<a href=#279 id=279 data-nosnippet>279</a>            path.display()
+<a href=#280 id=280 data-nosnippet>280</a>        ))
+<a href=#281 id=281 data-nosnippet>281</a>        .at(<span class="string">"output"</span>));
+<a href=#282 id=282 data-nosnippet>282</a>    }
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="prelude-val">Ok</span>(())
+<a href=#284 id=284 data-nosnippet>284</a>}
+<a href=#285 id=285 data-nosnippet>285</a>
+<a href=#286 id=286 data-nosnippet>286</a><span class="attr">#[cfg(test)]
+<a href=#287 id=287 data-nosnippet>287</a></span><span class="kw">mod </span>casa_tests;
+<a href=#288 id=288 data-nosnippet>288</a><span class="attr">#[cfg(test)]
+<a href=#289 id=289 data-nosnippet>289</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

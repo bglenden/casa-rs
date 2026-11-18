@@ -1440,7 +1440,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 625</li>
+<li>Concepts: 626</li>
 <li>Surfaces: 31 (31 task, 0 session)</li>
 <li>Surface bindings: 896</li>
 </ul>
@@ -5924,11 +5924,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>solint</code></td>
-<td><code>parameter.solint@r1</code></td>
-<td><code>string</code></td>
+<td><code>parameter.solint@r2</code></td>
+<td><code>variant</code></td>
 <td><code>"inf"</code>; optional</td>
 <td>Solve</td>
-<td>Gain solution interval such as inf, int, or 30s</td>
+<td>Gain solution interval specified as inf, int, a time such as 30s, or seconds as a number.</td>
 </tr>
 <tr>
 <td><code>combine</code></td>
@@ -5942,13 +5942,13 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>refant</code></td>
 <td><code>parameter.refant@r1</code></td>
 <td><code>string</code></td>
-<td><code>""</code>; required when bandtype="BPOLY"</td>
+<td><code>""</code>; optional</td>
 <td>Solve</td>
 <td>Reference antenna name or id for solve workflows</td>
 </tr>
 <tr>
 <td><code>minblperant</code></td>
-<td><code>parameter.minblperant@r1</code></td>
+<td><code>parameter.minblperant@r2</code></td>
 <td><code>integer</code></td>
 <td><code>4</code>; optional</td>
 <td>Solve</td>
