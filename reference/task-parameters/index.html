@@ -578,6 +578,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#predict-visibility-model-ft" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Predict Visibility Model (ft)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#clear-calibration-clearcal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1281,6 +1292,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#predict-visibility-model-ft" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Predict Visibility Model (ft)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#clear-calibration-clearcal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1506,9 +1528,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 627</li>
-<li>Surfaces: 34 (34 task, 0 session)</li>
-<li>Surface bindings: 907</li>
+<li>Concepts: 628</li>
+<li>Surfaces: 35 (35 task, 0 session)</li>
+<li>Surface bindings: 922</li>
 </ul>
 <table>
 <thead>
@@ -1649,6 +1671,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">2</td>
 <td>Subtract or restore the current visibility model in corrected data.</td>
+</tr>
+<tr>
+<td><a href="#surface-ft">Predict Visibility Model</a><br><code>ft</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">15</td>
+<td>Predict model visibilities from component lists and model images.</td>
 </tr>
 <tr>
 <td><a href="#surface-clearcal">Clear Calibration</a><br><code>clearcal</code></td>
@@ -6433,6 +6463,149 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>false</code>; optional</td>
 <td>Scratch columns</td>
 <td>Add the visibility model back to corrected data.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-ft"></a></p>
+<h2 id="predict-visibility-model-ft">Predict Visibility Model (<code>ft</code>)<a class="headerlink" href="#predict-visibility-model-ft" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Predict model visibilities from component lists and model images.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input MeasurementSet path or paths.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Applycal field selector text.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Applycal spw selector text.</td>
+</tr>
+<tr>
+<td><code>timerange</code></td>
+<td><code>ms.selection.timerange@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Applycal timerange selector text.</td>
+</tr>
+<tr>
+<td><code>uvrange</code></td>
+<td><code>ms.selection.uvrange@r4</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Accepts a CASA variant and converts it to selector text during MeasurementSet selection.</td>
+</tr>
+<tr>
+<td><code>antenna</code></td>
+<td><code>ms.selection.antenna@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Applycal antenna selector text.</td>
+</tr>
+<tr>
+<td><code>scan</code></td>
+<td><code>ms.selection.scan@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Applycal scan selector text.</td>
+</tr>
+<tr>
+<td><code>observation</code></td>
+<td><code>ms.selection.observation@r4</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Accepts selector text or an observation ID. Preserve the input type for HISTORY.</td>
+</tr>
+<tr>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Intent selector.</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td><code>ft.model@r2</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Model</td>
+<td>A model image name or a list of model image names.</td>
+</tr>
+<tr>
+<td><code>nterms</code></td>
+<td><code>parameter.nterms@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Model</td>
+<td>Number of Taylor terms.</td>
+</tr>
+<tr>
+<td><code>reffreq</code></td>
+<td><code>parameter.reffreq@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Model</td>
+<td>Reference frequency.</td>
+</tr>
+<tr>
+<td><code>complist</code></td>
+<td><code>parameter.complist@r1</code></td>
+<td><code>path (product)</code></td>
+<td><code>""</code>; optional</td>
+<td>Model</td>
+<td>Component list.</td>
+</tr>
+<tr>
+<td><code>incremental</code></td>
+<td><code>parameter.incremental@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Model</td>
+<td>Write incremental correction factors instead of absolute transfer gains</td>
+</tr>
+<tr>
+<td><code>usescratch</code></td>
+<td><code>parameter.usescratch@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Model</td>
+<td>Write MODEL_DATA.</td>
 </tr>
 </tbody>
 </table>

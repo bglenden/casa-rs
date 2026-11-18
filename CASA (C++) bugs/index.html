@@ -3915,6 +3915,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#replacing-one-multi-ms-model-can-remove-another-partitions-fourier-grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replacing one Multi-MS model can remove another partition's Fourier grid
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -10001,6 +10012,16 @@ uncontrolled path, not a policy.</p>
 is named twice; CASA 6.7.6.14 aborts on it</code> (crates/casa-images/src/analysis.rs,
 <code>parse_axes</code>), keeping every other axes form CASA accepts, including the
 minimum-forms <code>-1</code> for all axes (#977).</p>
+<h2 id="replacing-one-multi-ms-model-can-remove-another-partitions-fourier-grid">Replacing one Multi-MS model can remove another partition's Fourier grid<a class="headerlink" href="#replacing-one-multi-ms-model-can-remove-another-partitions-fourier-grid" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, split an MS with <code>partition(separationaxis='baseline', numsubms=2)</code>,
+then write an image with <code>ft(mms, field='0', model=...)</code>. The two physical
+SOURCE records can name the same Fourier image. Replacing the model on the
+first partition removes that image. A subsequent <code>uvsub</code> on the other
+partition fails to open the image its record names.</p>
+<p>casa-rs gives independent SOURCE or MAIN records their own Fourier grids.
+Replacing one record deletes the old grid that record owned. The other
+partition's recipe still opens in CASA and casa-rs. The standalone
+<code>calibration_ft_oracle.py</code> fixture exercises the replacement sequence.</p>
 
 
 

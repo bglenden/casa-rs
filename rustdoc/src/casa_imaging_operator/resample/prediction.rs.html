@@ -398,461 +398,509 @@
 <a href=#398 id=398 data-nosnippet>398</a>        scratch: <span class="kw-2">&amp;mut </span>PredictionScratch,
 <a href=#399 id=399 data-nosnippet>399</a>        out: <span class="kw-2">&amp;mut </span>[Complex32],
 <a href=#400 id=400 data-nosnippet>400</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt; {
-<a href=#401 id=401 data-nosnippet>401</a>        scratch.begin(operator.polarization().correlations().len());
-<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">let </span>placed = <span class="self">self</span>.place_prediction(operator, model, row, scratch)<span class="question-mark">?</span>;
-<a href=#403 id=403 data-nosnippet>403</a>        scratch.apply(backend, operator.cf(), model)<span class="question-mark">?</span>;
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="self">self</span>.finish_prediction(operator, row, placed, scratch, out)
-<a href=#405 id=405 data-nosnippet>405</a>    }
-<a href=#406 id=406 data-nosnippet>406</a>
-<a href=#407 id=407 data-nosnippet>407</a>    <span class="doccomment">/// The axis and order by which `row`'s prediction interpolates
-<a href=#408 id=408 data-nosnippet>408</a>    /// degridded output channels to its native channels, when it does (see
-<a href=#409 id=409 data-nosnippet>409</a>    /// [`Self::predict_row`]).
-<a href=#410 id=410 data-nosnippet>410</a>    </span><span class="kw">fn </span>interpolated_prediction(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;(<span class="kw-2">&amp;</span>SpectralAxis, Order)&gt; {
-<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.sampling {
-<a href=#412 id=412 data-nosnippet>412</a>            Sampling::Interpolated(axis, order)
-<a href=#413 id=413 data-nosnippet>413</a>                <span class="kw">if </span>axis.channels &gt; <span class="number">1 </span>&amp;&amp; row.frequencies_hz.len() &gt; <span class="number">1 </span>=&gt;
-<a href=#414 id=414 data-nosnippet>414</a>            {
-<a href=#415 id=415 data-nosnippet>415</a>                <span class="prelude-val">Some</span>((axis, <span class="kw-2">*</span>order))
-<a href=#416 id=416 data-nosnippet>416</a>            }
-<a href=#417 id=417 data-nosnippet>417</a>            Sampling::Direct | Sampling::Nearest(<span class="kw">_</span>) | Sampling::Interpolated(..) =&gt; <span class="prelude-val">None</span>,
-<a href=#418 id=418 data-nosnippet>418</a>        }
-<a href=#419 id=419 data-nosnippet>419</a>    }
-<a href=#420 id=420 data-nosnippet>420</a>
-<a href=#421 id=421 data-nosnippet>421</a>    <span class="doccomment">/// Add `row`'s degridded samples to the batch `scratch` began, as
-<a href=#422 id=422 data-nosnippet>422</a>    /// [`Self::predict_row`] degrids them; a flagged row adds none, nor an
-<a href=#423 id=423 data-nosnippet>423</a>    /// autocorrelation unless the resampler is
-<a href=#424 id=424 data-nosnippet>424</a>    /// [`Self::predicting_autocorrelations`].
-<a href=#425 id=425 data-nosnippet>425</a>    ///
-<a href=#426 id=426 data-nosnippet>426</a>    /// A sample that reads the same taps of the same model as the row's
-<a href=#427 id=427 data-nosnippet>427</a>    /// sample before it (the same kernel cell, location, plane, signs of w
-<a href=#428 id=428 data-nosnippet>428</a>    /// and pointing gradient, and Taylor variable for a model of several
-<a href=#429 id=429 data-nosnippet>429</a>    /// terms), at a phase-centre phase within 2⁻³⁰ rad of the first of
-<a href=#430 id=430 data-nosnippet>430</a>    /// their run, is not placed again:
-<a href=#431 id=431 data-nosnippet>431</a>    /// its channel reads that sample's prediction. A row's neighbouring
-<a href=#432 id=432 data-nosnippet>432</a>    /// channels sit a small fraction of a cell apart in uv, so they mostly
-<a href=#433 id=433 data-nosnippet>433</a>    /// share their kernel's fine offset, and a backend's degrid of a fine
-<a href=#434 id=434 data-nosnippet>434</a>    /// offset is the same for every sample at it, as CASA's gather reads
-<a href=#435 id=435 data-nosnippet>435</a>    /// the nearest one: an ALMA row of 4096 channels across 2 GHz placed
-<a href=#436 id=436 data-nosnippet>436</a>    /// one sample in 45 (#855).
-<a href=#437 id=437 data-nosnippet>437</a>    ///
-<a href=#438 id=438 data-nosnippet>438</a>    /// # Errors
-<a href=#439 id=439 data-nosnippet>439</a>    ///
-<a href=#440 id=440 data-nosnippet>440</a>    /// A row inconsistent with `operator`.
-<a href=#441 id=441 data-nosnippet>441</a>    </span><span class="kw">pub fn </span>place_prediction(
-<a href=#442 id=442 data-nosnippet>442</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#443 id=443 data-nosnippet>443</a>        operator: <span class="kw-2">&amp;</span>MeasurementOperator,
-<a href=#444 id=444 data-nosnippet>444</a>        model: <span class="kw-2">&amp;</span>PreparedModelGrids,
-<a href=#445 id=445 data-nosnippet>445</a>        row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#446 id=446 data-nosnippet>446</a>        scratch: <span class="kw-2">&amp;mut </span>PredictionScratch,
-<a href=#447 id=447 data-nosnippet>447</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;PlacedRow, OperatorError&gt; {
-<a href=#448 id=448 data-nosnippet>448</a>        <span class="kw">let </span>npol = operator.polarization().correlations().len();
-<a href=#449 id=449 data-nosnippet>449</a>        <span class="self">self</span>.validate_row(operator, row, npol)<span class="question-mark">?</span>;
-<a href=#450 id=450 data-nosnippet>450</a>        <span class="kw">let </span>PredictionScratch {
-<a href=#451 id=451 data-nosnippet>451</a>            placements,
-<a href=#452 id=452 data-nosnippet>452</a>            sources,
-<a href=#453 id=453 data-nosnippet>453</a>            ..
-<a href=#454 id=454 data-nosnippet>454</a>        } = scratch;
-<a href=#455 id=455 data-nosnippet>455</a>        <span class="kw">let </span>start = sources.len();
-<a href=#456 id=456 data-nosnippet>456</a>        <span class="kw">if </span>row.row_flag || (!<span class="self">self</span>.autocorrelations &amp;&amp; is_autocorrelation(row)) {
-<a href=#457 id=457 data-nosnippet>457</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(PlacedRow { start, end: start });
-<a href=#458 id=458 data-nosnippet>458</a>        }
-<a href=#459 id=459 data-nosnippet>459</a>        <span class="kw">let </span>native = row.frequencies_hz;
-<a href=#460 id=460 data-nosnippet>460</a>        <span class="kw">let </span>prepared = model.layout().planes();
-<a href=#461 id=461 data-nosnippet>461</a>        <span class="kw">let </span>terms = <span class="self">self</span>.basis.data_terms();
-<a href=#462 id=462 data-nosnippet>462</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>placing) = RowPlacing::new(operator.cf(), operator.geometry(), row)<span class="question-mark">? </span><span class="kw">else </span>{
-<a href=#463 id=463 data-nosnippet>463</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(PlacedRow { start, end: start });
-<a href=#464 id=464 data-nosnippet>464</a>        };
-<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.sampling, Sampling::Direct | Sampling::Nearest(<span class="kw">_</span>))
-<a href=#466 id=466 data-nosnippet>466</a>            &amp;&amp; terms == <span class="number">1
-<a href=#467 id=467 data-nosnippet>467</a>            </span>&amp;&amp; placing.uniform.is_some()
-<a href=#468 id=468 data-nosnippet>468</a>            &amp;&amp; monotonic(native)
-<a href=#469 id=469 data-nosnippet>469</a>        {
-<a href=#470 id=470 data-nosnippet>470</a>            <span class="self">self</span>.place_runs(operator, model, row, <span class="kw-2">&amp;mut </span>placing, placements, sources);
-<a href=#471 id=471 data-nosnippet>471</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(PlacedRow {
-<a href=#472 id=472 data-nosnippet>472</a>                start,
-<a href=#473 id=473 data-nosnippet>473</a>                end: sources.len(),
-<a href=#474 id=474 data-nosnippet>474</a>            });
-<a href=#475 id=475 data-nosnippet>475</a>        }
-<a href=#476 id=476 data-nosnippet>476</a>        <span class="comment">// The run of samples the last placement serves: what they read, the
-<a href=#477 id=477 data-nosnippet>477</a>        // first one's phase, and its batch index.
-<a href=#478 id=478 data-nosnippet>478</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>run: <span class="prelude-ty">Option</span>&lt;(Gathered, f64, u32)&gt; = <span class="prelude-val">None</span>;
-<a href=#479 id=479 data-nosnippet>479</a>        <span class="kw">let </span><span class="kw-2">mut </span>place = |plane: u32, frequency_hz: f64, slot: usize| {
-<a href=#480 id=480 data-nosnippet>480</a>            <span class="kw">if </span>!prepared.contains(plane) {
-<a href=#481 id=481 data-nosnippet>481</a>                <span class="kw">return</span>;
-<a href=#482 id=482 data-nosnippet>482</a>            }
-<a href=#483 id=483 data-nosnippet>483</a>            <span class="kw">let </span><span class="prelude-val">Some</span>((placement, location)) = locate_sample(
-<a href=#484 id=484 data-nosnippet>484</a>                operator.cf(),
-<a href=#485 id=485 data-nosnippet>485</a>                operator.geometry(),
-<a href=#486 id=486 data-nosnippet>486</a>                <span class="self">self</span>.basis,
-<a href=#487 id=487 data-nosnippet>487</a>                row,
-<a href=#488 id=488 data-nosnippet>488</a>                plane,
-<a href=#489 id=489 data-nosnippet>489</a>                frequency_hz,
-<a href=#490 id=490 data-nosnippet>490</a>                <span class="kw-2">&amp;mut </span>placing,
-<a href=#491 id=491 data-nosnippet>491</a>            ) <span class="kw">else </span>{
-<a href=#492 id=492 data-nosnippet>492</a>                <span class="kw">return</span>;
-<a href=#493 id=493 data-nosnippet>493</a>            };
-<a href=#494 id=494 data-nosnippet>494</a>            <span class="kw">let </span>gathered = Gathered::of(<span class="kw-2">&amp;</span>placement, location, terms);
-<a href=#495 id=495 data-nosnippet>495</a>            <span class="kw">let </span>placement_index = <span class="kw">match </span>run {
-<a href=#496 id=496 data-nosnippet>496</a>                <span class="prelude-val">Some</span>((first, phase, index))
-<a href=#497 id=497 data-nosnippet>497</a>                    <span class="kw">if </span>first == gathered &amp;&amp; (placement.phase - phase).abs() &lt;= SHARED_PHASE_RAD =&gt;
-<a href=#498 id=498 data-nosnippet>498</a>                {
-<a href=#499 id=499 data-nosnippet>499</a>                    index
-<a href=#500 id=500 data-nosnippet>500</a>                }
-<a href=#501 id=501 data-nosnippet>501</a>                <span class="kw">_ </span>=&gt; {
-<a href=#502 id=502 data-nosnippet>502</a>                    <span class="kw">let </span>index = u32::try_from(placements.len()).expect(<span class="string">"a batch fits u32 indices"</span>);
-<a href=#503 id=503 data-nosnippet>503</a>                    placements.push(placement);
-<a href=#504 id=504 data-nosnippet>504</a>                    run = <span class="prelude-val">Some</span>((gathered, placement.phase, index));
-<a href=#505 id=505 data-nosnippet>505</a>                    index
-<a href=#506 id=506 data-nosnippet>506</a>                }
-<a href=#507 id=507 data-nosnippet>507</a>            };
-<a href=#508 id=508 data-nosnippet>508</a>            <span class="kw">let </span>slot = u32::try_from(slot).expect(<span class="string">"a row's channels fit u32"</span>);
-<a href=#509 id=509 data-nosnippet>509</a>            <span class="kw">match </span>sources[start..].last_mut() {
-<a href=#510 id=510 data-nosnippet>510</a>                <span class="prelude-val">Some</span>(last)
-<a href=#511 id=511 data-nosnippet>511</a>                    <span class="kw">if </span>last.placement == placement_index &amp;&amp; last.slot + last.count == slot =&gt;
-<a href=#512 id=512 data-nosnippet>512</a>                {
-<a href=#513 id=513 data-nosnippet>513</a>                    last.count += <span class="number">1</span>;
-<a href=#514 id=514 data-nosnippet>514</a>                }
-<a href=#515 id=515 data-nosnippet>515</a>                <span class="kw">_ </span>=&gt; sources.push(Source {
-<a href=#516 id=516 data-nosnippet>516</a>                    slot,
-<a href=#517 id=517 data-nosnippet>517</a>                    count: <span class="number">1</span>,
-<a href=#518 id=518 data-nosnippet>518</a>                    placement: placement_index,
-<a href=#519 id=519 data-nosnippet>519</a>                }),
-<a href=#520 id=520 data-nosnippet>520</a>            }
-<a href=#521 id=521 data-nosnippet>521</a>        };
-<a href=#522 id=522 data-nosnippet>522</a>        <span class="kw">match </span><span class="self">self</span>.interpolated_prediction(row) {
-<a href=#523 id=523 data-nosnippet>523</a>            <span class="prelude-val">None </span>=&gt; {
-<a href=#524 id=524 data-nosnippet>524</a>                <span class="kw">for </span>(channel, frequency_hz) <span class="kw">in </span>native.iter().enumerate() {
-<a href=#525 id=525 data-nosnippet>525</a>                    <span class="kw">let </span>plane = <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.sampling {
-<a href=#526 id=526 data-nosnippet>526</a>                        Sampling::Direct =&gt; <span class="prelude-val">Some</span>(<span class="number">0</span>),
-<a href=#527 id=527 data-nosnippet>527</a>                        Sampling::Nearest(axis) | Sampling::Interpolated(axis, <span class="kw">_</span>) =&gt; {
-<a href=#528 id=528 data-nosnippet>528</a>                            axis.nearest_channel(<span class="kw-2">*</span>frequency_hz)
-<a href=#529 id=529 data-nosnippet>529</a>                        }
-<a href=#530 id=530 data-nosnippet>530</a>                    };
-<a href=#531 id=531 data-nosnippet>531</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(plane) = plane {
-<a href=#532 id=532 data-nosnippet>532</a>                        place(plane, <span class="kw-2">*</span>frequency_hz, channel);
-<a href=#533 id=533 data-nosnippet>533</a>                    }
-<a href=#534 id=534 data-nosnippet>534</a>                }
-<a href=#535 id=535 data-nosnippet>535</a>            }
-<a href=#536 id=536 data-nosnippet>536</a>            <span class="prelude-val">Some</span>(interpolation @ (axis, <span class="kw">_</span>)) =&gt; {
-<a href=#537 id=537 data-nosnippet>537</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(channels) = degridded_channels(interpolation, native) {
-<a href=#538 id=538 data-nosnippet>538</a>                    <span class="kw">for </span>channel <span class="kw">in </span>channels {
-<a href=#539 id=539 data-nosnippet>539</a>                        place(channel, axis.centre_hz(channel), channel <span class="kw">as </span>usize);
-<a href=#540 id=540 data-nosnippet>540</a>                    }
-<a href=#541 id=541 data-nosnippet>541</a>                }
-<a href=#542 id=542 data-nosnippet>542</a>            }
-<a href=#543 id=543 data-nosnippet>543</a>        }
-<a href=#544 id=544 data-nosnippet>544</a>        <span class="prelude-val">Ok</span>(PlacedRow {
-<a href=#545 id=545 data-nosnippet>545</a>            start,
-<a href=#546 id=546 data-nosnippet>546</a>            end: sources.len(),
-<a href=#547 id=547 data-nosnippet>547</a>        })
-<a href=#548 id=548 data-nosnippet>548</a>    }
-<a href=#549 id=549 data-nosnippet>549</a>
-<a href=#550 id=550 data-nosnippet>550</a>    <span class="doccomment">/// [`Self::place_prediction`] of `row`'s channels under direct or
-<a href=#551 id=551 data-nosnippet>551</a>    /// nearest sampling with one kernel cell and one term, in the runs the
-<a href=#552 id=552 data-nosnippet>552</a>    /// channel-by-channel placement finds, placing each run's first
-<a href=#553 id=553 data-nosnippet>553</a>    /// channel. A channel's plane, its location on the grid and its
-<a href=#554 id=554 data-nosnippet>554</a>    /// phase-centre phase move monotonically with its frequency, which
-<a href=#555 id=555 data-nosnippet>555</a>    /// `row`'s channels order, so once a channel reads other taps than its
-<a href=#556 id=556 data-nosnippet>556</a>    /// run's first, or its phase has moved past [`SHARED_PHASE_RAD`], every
-<a href=#557 id=557 data-nosnippet>557</a>    /// later one does too. A run's end is then found by locating a few
-<a href=#558 id=558 data-nosnippet>558</a>    /// channels rather than each: from the last run's length, then doubling
-<a href=#559 id=559 data-nosnippet>559</a>    /// and halving.
-<a href=#560 id=560 data-nosnippet>560</a>    </span><span class="kw">fn </span>place_runs(
-<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#562 id=562 data-nosnippet>562</a>        operator: <span class="kw-2">&amp;</span>MeasurementOperator,
-<a href=#563 id=563 data-nosnippet>563</a>        model: <span class="kw-2">&amp;</span>PreparedModelGrids,
-<a href=#564 id=564 data-nosnippet>564</a>        row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#565 id=565 data-nosnippet>565</a>        placing: <span class="kw-2">&amp;mut </span>RowPlacing,
-<a href=#566 id=566 data-nosnippet>566</a>        placements: <span class="kw-2">&amp;mut </span>Vec&lt;Placement&gt;,
-<a href=#567 id=567 data-nosnippet>567</a>        sources: <span class="kw-2">&amp;mut </span>Vec&lt;Source&gt;,
-<a href=#568 id=568 data-nosnippet>568</a>    ) {
-<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">let </span>native = row.frequencies_hz;
-<a href=#570 id=570 data-nosnippet>570</a>        <span class="kw">let </span>channels = native.len();
-<a href=#571 id=571 data-nosnippet>571</a>        <span class="kw">let </span>prepared = model.layout().planes();
-<a href=#572 id=572 data-nosnippet>572</a>        <span class="kw">let </span><span class="kw-2">mut </span>locate = |channel: usize| {
-<a href=#573 id=573 data-nosnippet>573</a>            <span class="kw">let </span>plane = <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.sampling {
-<a href=#574 id=574 data-nosnippet>574</a>                Sampling::Direct =&gt; <span class="prelude-val">Some</span>(<span class="number">0</span>),
-<a href=#575 id=575 data-nosnippet>575</a>                Sampling::Nearest(axis) | Sampling::Interpolated(axis, <span class="kw">_</span>) =&gt; {
-<a href=#576 id=576 data-nosnippet>576</a>                    axis.nearest_channel(native[channel])
-<a href=#577 id=577 data-nosnippet>577</a>                }
-<a href=#578 id=578 data-nosnippet>578</a>            }
-<a href=#579 id=579 data-nosnippet>579</a>            .filter(|plane| prepared.contains(<span class="kw-2">*</span>plane))<span class="question-mark">?</span>;
-<a href=#580 id=580 data-nosnippet>580</a>            locate_sample(
-<a href=#581 id=581 data-nosnippet>581</a>                operator.cf(),
-<a href=#582 id=582 data-nosnippet>582</a>                operator.geometry(),
-<a href=#583 id=583 data-nosnippet>583</a>                <span class="self">self</span>.basis,
-<a href=#584 id=584 data-nosnippet>584</a>                row,
-<a href=#585 id=585 data-nosnippet>585</a>                plane,
-<a href=#586 id=586 data-nosnippet>586</a>                native[channel],
-<a href=#587 id=587 data-nosnippet>587</a>                placing,
-<a href=#588 id=588 data-nosnippet>588</a>            )
-<a href=#589 id=589 data-nosnippet>589</a>        };
-<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>channel, <span class="kw-2">mut </span>length) = (<span class="number">0</span>, <span class="number">1</span>);
-<a href=#591 id=591 data-nosnippet>591</a>        <span class="kw">while </span>channel &lt; channels {
-<a href=#592 id=592 data-nosnippet>592</a>            <span class="kw">let </span><span class="prelude-val">Some</span>((placement, location)) = locate(channel) <span class="kw">else </span>{
-<a href=#593 id=593 data-nosnippet>593</a>                channel += <span class="number">1</span>;
-<a href=#594 id=594 data-nosnippet>594</a>                <span class="kw">continue</span>;
-<a href=#595 id=595 data-nosnippet>595</a>            };
-<a href=#596 id=596 data-nosnippet>596</a>            <span class="kw">let </span>(gathered, phase) = (Gathered::of(<span class="kw-2">&amp;</span>placement, location, <span class="number">1</span>), placement.phase);
-<a href=#597 id=597 data-nosnippet>597</a>            <span class="kw">let </span>index = u32::try_from(placements.len()).expect(<span class="string">"a batch fits u32 indices"</span>);
-<a href=#598 id=598 data-nosnippet>598</a>            placements.push(placement);
-<a href=#599 id=599 data-nosnippet>599</a>            <span class="kw">let </span><span class="kw-2">mut </span>shares = |probe: usize| {
-<a href=#600 id=600 data-nosnippet>600</a>                locate(probe).is_some_and(|(placement, location)| {
-<a href=#601 id=601 data-nosnippet>601</a>                    Gathered::of(<span class="kw-2">&amp;</span>placement, location, <span class="number">1</span>) == gathered
-<a href=#602 id=602 data-nosnippet>602</a>                        &amp;&amp; (placement.phase - phase).abs() &lt;= SHARED_PHASE_RAD
-<a href=#603 id=603 data-nosnippet>603</a>                })
-<a href=#604 id=604 data-nosnippet>604</a>            };
-<a href=#605 id=605 data-nosnippet>605</a>            <span class="comment">// The last channel known to share, and the first known not to.
-<a href=#606 id=606 data-nosnippet>606</a>            </span><span class="kw">let </span>(<span class="kw-2">mut </span>last, <span class="kw-2">mut </span>past) = (channel, channels);
-<a href=#607 id=607 data-nosnippet>607</a>            <span class="kw">let </span>expected = channel + length - <span class="number">1</span>;
-<a href=#608 id=608 data-nosnippet>608</a>            <span class="kw">if </span>expected &gt; channel &amp;&amp; expected &lt; channels {
-<a href=#609 id=609 data-nosnippet>609</a>                <span class="kw">if </span>shares(expected) {
-<a href=#610 id=610 data-nosnippet>610</a>                    last = expected;
-<a href=#611 id=611 data-nosnippet>611</a>                } <span class="kw">else </span>{
-<a href=#612 id=612 data-nosnippet>612</a>                    past = expected;
-<a href=#613 id=613 data-nosnippet>613</a>                }
-<a href=#614 id=614 data-nosnippet>614</a>            }
-<a href=#615 id=615 data-nosnippet>615</a>            <span class="kw">let </span><span class="kw-2">mut </span>step = <span class="number">1</span>;
-<a href=#616 id=616 data-nosnippet>616</a>            <span class="kw">while </span>past == channels &amp;&amp; last + step &lt; channels {
-<a href=#617 id=617 data-nosnippet>617</a>                <span class="kw">if </span>shares(last + step) {
-<a href=#618 id=618 data-nosnippet>618</a>                    last += step;
-<a href=#619 id=619 data-nosnippet>619</a>                    step <span class="kw-2">*</span>= <span class="number">2</span>;
-<a href=#620 id=620 data-nosnippet>620</a>                } <span class="kw">else </span>{
-<a href=#621 id=621 data-nosnippet>621</a>                    past = last + step;
-<a href=#622 id=622 data-nosnippet>622</a>                }
-<a href=#623 id=623 data-nosnippet>623</a>            }
-<a href=#624 id=624 data-nosnippet>624</a>            <span class="kw">while </span>past - last &gt; <span class="number">1 </span>{
-<a href=#625 id=625 data-nosnippet>625</a>                <span class="kw">let </span>middle = last + (past - last) / <span class="number">2</span>;
-<a href=#626 id=626 data-nosnippet>626</a>                <span class="kw">if </span>shares(middle) {
-<a href=#627 id=627 data-nosnippet>627</a>                    last = middle;
-<a href=#628 id=628 data-nosnippet>628</a>                } <span class="kw">else </span>{
-<a href=#629 id=629 data-nosnippet>629</a>                    past = middle;
-<a href=#630 id=630 data-nosnippet>630</a>                }
-<a href=#631 id=631 data-nosnippet>631</a>            }
-<a href=#632 id=632 data-nosnippet>632</a>            sources.push(Source {
-<a href=#633 id=633 data-nosnippet>633</a>                slot: u32::try_from(channel).expect(<span class="string">"a row's channels fit u32"</span>),
-<a href=#634 id=634 data-nosnippet>634</a>                count: u32::try_from(last + <span class="number">1 </span>- channel).expect(<span class="string">"a row's channels fit u32"</span>),
-<a href=#635 id=635 data-nosnippet>635</a>                placement: index,
-<a href=#636 id=636 data-nosnippet>636</a>            });
-<a href=#637 id=637 data-nosnippet>637</a>            length = last + <span class="number">1 </span>- channel;
-<a href=#638 id=638 data-nosnippet>638</a>            channel = last + <span class="number">1</span>;
-<a href=#639 id=639 data-nosnippet>639</a>        }
-<a href=#640 id=640 data-nosnippet>640</a>    }
-<a href=#641 id=641 data-nosnippet>641</a>
-<a href=#642 id=642 data-nosnippet>642</a>    <span class="doccomment">/// Add `row`'s native terms to the batch `scratch` began: one per native
-<a href=#643 id=643 data-nosnippet>643</a>    /// channel, the row's cells numbered from `first_cell`, interpolating
-<a href=#644 id=644 data-nosnippet>644</a>    /// its samples `placed` in the batch as [`Self::predict_row`] does. A
-<a href=#645 id=645 data-nosnippet>645</a>    /// cell whose channel is off the output axis and its halo, or whose row
-<a href=#646 id=646 data-nosnippet>646</a>    /// placed nothing, gets the zero model; a flagged correlation keeps it
-<a href=#647 id=647 data-nosnippet>647</a>    /// zero.
-<a href=#648 id=648 data-nosnippet>648</a>    </span><span class="kw">pub fn </span>native_terms(
-<a href=#649 id=649 data-nosnippet>649</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#650 id=650 data-nosnippet>650</a>        row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#651 id=651 data-nosnippet>651</a>        npol: usize,
-<a href=#652 id=652 data-nosnippet>652</a>        placed: PlacedRow,
-<a href=#653 id=653 data-nosnippet>653</a>        scratch: <span class="kw-2">&amp;mut </span>PredictionScratch,
-<a href=#654 id=654 data-nosnippet>654</a>        first_cell: u32,
-<a href=#655 id=655 data-nosnippet>655</a>    ) {
-<a href=#656 id=656 data-nosnippet>656</a>        <span class="kw">let </span>PredictionScratch {
-<a href=#657 id=657 data-nosnippet>657</a>            sources,
-<a href=#658 id=658 data-nosnippet>658</a>            slots,
-<a href=#659 id=659 data-nosnippet>659</a>            terms,
-<a href=#660 id=660 data-nosnippet>660</a>            ..
-<a href=#661 id=661 data-nosnippet>661</a>        } = scratch;
-<a href=#662 id=662 data-nosnippet>662</a>        <span class="kw">let </span>native = row.frequencies_hz;
-<a href=#663 id=663 data-nosnippet>663</a>        <span class="kw">let </span>sources = <span class="kw-2">&amp;</span>sources[placed.start..placed.end];
-<a href=#664 id=664 data-nosnippet>664</a>        <span class="comment">// A row without a flag packs no flag bits.
-<a href=#665 id=665 data-nosnippet>665</a>        </span><span class="kw">let </span>flagged = row.flags.contains(<span class="kw-2">&amp;</span><span class="bool-val">true</span>);
-<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span><span class="kw-2">mut </span>term = |channel: usize, points: <span class="kw-2">&amp;</span>[(u32, f64)]| {
-<a href=#667 id=667 data-nosnippet>667</a>            <span class="kw">let </span><span class="kw-2">mut </span>term = NativeTerm {
-<a href=#668 id=668 data-nosnippet>668</a>                cell: first_cell + channel <span class="kw">as </span>u32,
-<a href=#669 id=669 data-nosnippet>669</a>                points: [NO_CELL; STENCIL],
-<a href=#670 id=670 data-nosnippet>670</a>                factors: [<span class="number">0.0</span>; STENCIL],
-<a href=#671 id=671 data-nosnippet>671</a>                flags: <span class="kw">if </span>flagged {
-<a href=#672 id=672 data-nosnippet>672</a>                    flag_bits(row, npol, channel)
-<a href=#673 id=673 data-nosnippet>673</a>                } <span class="kw">else </span>{
-<a href=#674 id=674 data-nosnippet>674</a>                    <span class="number">0
-<a href=#675 id=675 data-nosnippet>675</a>                </span>},
-<a href=#676 id=676 data-nosnippet>676</a>            };
-<a href=#677 id=677 data-nosnippet>677</a>            <span class="kw">for </span>(slot, (point, factor)) <span class="kw">in </span>points.iter().enumerate() {
-<a href=#678 id=678 data-nosnippet>678</a>                term.points[slot] = <span class="kw-2">*</span>point;
-<a href=#679 id=679 data-nosnippet>679</a>                term.factors[slot] = <span class="kw-2">*</span>factor <span class="kw">as </span>f32;
-<a href=#680 id=680 data-nosnippet>680</a>            }
-<a href=#681 id=681 data-nosnippet>681</a>            terms.push(term);
-<a href=#682 id=682 data-nosnippet>682</a>        };
-<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((axis, order)) = <span class="self">self</span>.interpolated_prediction(row) <span class="kw">else </span>{
-<a href=#684 id=684 data-nosnippet>684</a>            <span class="comment">// Each native channel reads its source's placement, in slot
-<a href=#685 id=685 data-nosnippet>685</a>            // order; a channel no source covers reads nothing.
-<a href=#686 id=686 data-nosnippet>686</a>            </span><span class="kw">let </span><span class="kw-2">mut </span>channel = <span class="number">0</span>;
-<a href=#687 id=687 data-nosnippet>687</a>            <span class="kw">for </span>source <span class="kw">in </span>sources {
-<a href=#688 id=688 data-nosnippet>688</a>                <span class="macro">debug_assert!</span>(source.slot <span class="kw">as </span>usize &gt;= channel, <span class="string">"sources run in slot order"</span>);
-<a href=#689 id=689 data-nosnippet>689</a>                <span class="kw">for </span>unplaced <span class="kw">in </span>channel..source.slot <span class="kw">as </span>usize {
-<a href=#690 id=690 data-nosnippet>690</a>                    term(unplaced, <span class="kw-2">&amp;</span>[]);
-<a href=#691 id=691 data-nosnippet>691</a>                }
-<a href=#692 id=692 data-nosnippet>692</a>                <span class="kw">for </span>placed <span class="kw">in </span>source.slots() {
-<a href=#693 id=693 data-nosnippet>693</a>                    term(placed, <span class="kw-2">&amp;</span>[(source.placement, <span class="number">1.0</span>)]);
-<a href=#694 id=694 data-nosnippet>694</a>                }
-<a href=#695 id=695 data-nosnippet>695</a>                channel = source.slots().end;
-<a href=#696 id=696 data-nosnippet>696</a>            }
-<a href=#697 id=697 data-nosnippet>697</a>            <span class="kw">for </span>unplaced <span class="kw">in </span>channel..native.len() {
-<a href=#698 id=698 data-nosnippet>698</a>                term(unplaced, <span class="kw-2">&amp;</span>[]);
-<a href=#699 id=699 data-nosnippet>699</a>            }
-<a href=#700 id=700 data-nosnippet>700</a>            <span class="kw">return</span>;
-<a href=#701 id=701 data-nosnippet>701</a>        };
-<a href=#702 id=702 data-nosnippet>702</a>        <span class="kw">let </span><span class="kw-2">mut </span>index_slots = |count: usize| {
-<a href=#703 id=703 data-nosnippet>703</a>            slots.clear();
-<a href=#704 id=704 data-nosnippet>704</a>            slots.resize(count, NO_CELL);
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="self">self</span>.predict_row_with_coverage(operator, backend, model, row, scratch, (out, <span class="prelude-val">None</span>))
+<a href=#402 id=402 data-nosnippet>402</a>    }
+<a href=#403 id=403 data-nosnippet>403</a>
+<a href=#404 id=404 data-nosnippet>404</a>    <span class="doccomment">/// Predict a row and optionally mark the samples the gridder assigned.
+<a href=#405 id=405 data-nosnippet>405</a>    ///
+<a href=#406 id=406 data-nosnippet>406</a>    /// This distinguishes a sampled zero from an untouched cell in CASA's
+<a href=#407 id=407 data-nosnippet>407</a>    /// legacy imager, which degrids into the existing model visibility.
+<a href=#408 id=408 data-nosnippet>408</a>    /// # Errors
+<a href=#409 id=409 data-nosnippet>409</a>    /// The same errors as [`Self::predict_row`] and a mismatched coverage slice.
+<a href=#410 id=410 data-nosnippet>410</a>    </span><span class="kw">pub fn </span>predict_row_with_coverage(
+<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#412 id=412 data-nosnippet>412</a>        operator: <span class="kw-2">&amp;</span>MeasurementOperator,
+<a href=#413 id=413 data-nosnippet>413</a>        backend: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>GridBackend,
+<a href=#414 id=414 data-nosnippet>414</a>        model: <span class="kw-2">&amp;</span>PreparedModelGrids,
+<a href=#415 id=415 data-nosnippet>415</a>        row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#416 id=416 data-nosnippet>416</a>        scratch: <span class="kw-2">&amp;mut </span>PredictionScratch,
+<a href=#417 id=417 data-nosnippet>417</a>        output: (<span class="kw-2">&amp;mut </span>[Complex32], <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>[bool]&gt;),
+<a href=#418 id=418 data-nosnippet>418</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt; {
+<a href=#419 id=419 data-nosnippet>419</a>        scratch.begin(operator.polarization().correlations().len());
+<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">let </span>placed = <span class="self">self</span>.place_prediction(operator, model, row, scratch)<span class="question-mark">?</span>;
+<a href=#421 id=421 data-nosnippet>421</a>        scratch.apply(backend, operator.cf(), model)<span class="question-mark">?</span>;
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="self">self</span>.finish_prediction_with_coverage(operator, row, placed, scratch, output)
+<a href=#423 id=423 data-nosnippet>423</a>    }
+<a href=#424 id=424 data-nosnippet>424</a>
+<a href=#425 id=425 data-nosnippet>425</a>    <span class="doccomment">/// The axis and order by which `row`'s prediction interpolates
+<a href=#426 id=426 data-nosnippet>426</a>    /// degridded output channels to its native channels, when it does (see
+<a href=#427 id=427 data-nosnippet>427</a>    /// [`Self::predict_row`]).
+<a href=#428 id=428 data-nosnippet>428</a>    </span><span class="kw">fn </span>interpolated_prediction(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;(<span class="kw-2">&amp;</span>SpectralAxis, Order)&gt; {
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.sampling {
+<a href=#430 id=430 data-nosnippet>430</a>            Sampling::Interpolated(axis, order)
+<a href=#431 id=431 data-nosnippet>431</a>                <span class="kw">if </span>axis.channels &gt; <span class="number">1 </span>&amp;&amp; row.frequencies_hz.len() &gt; <span class="number">1 </span>=&gt;
+<a href=#432 id=432 data-nosnippet>432</a>            {
+<a href=#433 id=433 data-nosnippet>433</a>                <span class="prelude-val">Some</span>((axis, <span class="kw-2">*</span>order))
+<a href=#434 id=434 data-nosnippet>434</a>            }
+<a href=#435 id=435 data-nosnippet>435</a>            Sampling::Direct | Sampling::Nearest(<span class="kw">_</span>) | Sampling::Interpolated(..) =&gt; <span class="prelude-val">None</span>,
+<a href=#436 id=436 data-nosnippet>436</a>        }
+<a href=#437 id=437 data-nosnippet>437</a>    }
+<a href=#438 id=438 data-nosnippet>438</a>
+<a href=#439 id=439 data-nosnippet>439</a>    <span class="doccomment">/// Add `row`'s degridded samples to the batch `scratch` began, as
+<a href=#440 id=440 data-nosnippet>440</a>    /// [`Self::predict_row`] degrids them; a flagged row adds none, nor an
+<a href=#441 id=441 data-nosnippet>441</a>    /// autocorrelation unless the resampler is
+<a href=#442 id=442 data-nosnippet>442</a>    /// [`Self::predicting_autocorrelations`].
+<a href=#443 id=443 data-nosnippet>443</a>    ///
+<a href=#444 id=444 data-nosnippet>444</a>    /// A sample that reads the same taps of the same model as the row's
+<a href=#445 id=445 data-nosnippet>445</a>    /// sample before it (the same kernel cell, location, plane, signs of w
+<a href=#446 id=446 data-nosnippet>446</a>    /// and pointing gradient, and Taylor variable for a model of several
+<a href=#447 id=447 data-nosnippet>447</a>    /// terms), at a phase-centre phase within 2⁻³⁰ rad of the first of
+<a href=#448 id=448 data-nosnippet>448</a>    /// their run, is not placed again:
+<a href=#449 id=449 data-nosnippet>449</a>    /// its channel reads that sample's prediction. A row's neighbouring
+<a href=#450 id=450 data-nosnippet>450</a>    /// channels sit a small fraction of a cell apart in uv, so they mostly
+<a href=#451 id=451 data-nosnippet>451</a>    /// share their kernel's fine offset, and a backend's degrid of a fine
+<a href=#452 id=452 data-nosnippet>452</a>    /// offset is the same for every sample at it, as CASA's gather reads
+<a href=#453 id=453 data-nosnippet>453</a>    /// the nearest one: an ALMA row of 4096 channels across 2 GHz placed
+<a href=#454 id=454 data-nosnippet>454</a>    /// one sample in 45 (#855).
+<a href=#455 id=455 data-nosnippet>455</a>    ///
+<a href=#456 id=456 data-nosnippet>456</a>    /// # Errors
+<a href=#457 id=457 data-nosnippet>457</a>    ///
+<a href=#458 id=458 data-nosnippet>458</a>    /// A row inconsistent with `operator`.
+<a href=#459 id=459 data-nosnippet>459</a>    </span><span class="kw">pub fn </span>place_prediction(
+<a href=#460 id=460 data-nosnippet>460</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#461 id=461 data-nosnippet>461</a>        operator: <span class="kw-2">&amp;</span>MeasurementOperator,
+<a href=#462 id=462 data-nosnippet>462</a>        model: <span class="kw-2">&amp;</span>PreparedModelGrids,
+<a href=#463 id=463 data-nosnippet>463</a>        row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#464 id=464 data-nosnippet>464</a>        scratch: <span class="kw-2">&amp;mut </span>PredictionScratch,
+<a href=#465 id=465 data-nosnippet>465</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;PlacedRow, OperatorError&gt; {
+<a href=#466 id=466 data-nosnippet>466</a>        <span class="kw">let </span>npol = operator.polarization().correlations().len();
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="self">self</span>.validate_row(operator, row, npol)<span class="question-mark">?</span>;
+<a href=#468 id=468 data-nosnippet>468</a>        <span class="kw">let </span>PredictionScratch {
+<a href=#469 id=469 data-nosnippet>469</a>            placements,
+<a href=#470 id=470 data-nosnippet>470</a>            sources,
+<a href=#471 id=471 data-nosnippet>471</a>            ..
+<a href=#472 id=472 data-nosnippet>472</a>        } = scratch;
+<a href=#473 id=473 data-nosnippet>473</a>        <span class="kw">let </span>start = sources.len();
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="kw">if </span>row.row_flag || (!<span class="self">self</span>.autocorrelations &amp;&amp; is_autocorrelation(row)) {
+<a href=#475 id=475 data-nosnippet>475</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(PlacedRow { start, end: start });
+<a href=#476 id=476 data-nosnippet>476</a>        }
+<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">let </span>native = row.frequencies_hz;
+<a href=#478 id=478 data-nosnippet>478</a>        <span class="kw">let </span>prepared = model.layout().planes();
+<a href=#479 id=479 data-nosnippet>479</a>        <span class="kw">let </span>terms = <span class="self">self</span>.basis.data_terms();
+<a href=#480 id=480 data-nosnippet>480</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>placing) = RowPlacing::new(operator.cf(), operator.geometry(), row)<span class="question-mark">? </span><span class="kw">else </span>{
+<a href=#481 id=481 data-nosnippet>481</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(PlacedRow { start, end: start });
+<a href=#482 id=482 data-nosnippet>482</a>        };
+<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.sampling, Sampling::Direct | Sampling::Nearest(<span class="kw">_</span>))
+<a href=#484 id=484 data-nosnippet>484</a>            &amp;&amp; terms == <span class="number">1
+<a href=#485 id=485 data-nosnippet>485</a>            </span>&amp;&amp; placing.uniform.is_some()
+<a href=#486 id=486 data-nosnippet>486</a>            &amp;&amp; monotonic(native)
+<a href=#487 id=487 data-nosnippet>487</a>        {
+<a href=#488 id=488 data-nosnippet>488</a>            <span class="self">self</span>.place_runs(operator, model, row, <span class="kw-2">&amp;mut </span>placing, placements, sources);
+<a href=#489 id=489 data-nosnippet>489</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(PlacedRow {
+<a href=#490 id=490 data-nosnippet>490</a>                start,
+<a href=#491 id=491 data-nosnippet>491</a>                end: sources.len(),
+<a href=#492 id=492 data-nosnippet>492</a>            });
+<a href=#493 id=493 data-nosnippet>493</a>        }
+<a href=#494 id=494 data-nosnippet>494</a>        <span class="comment">// The run of samples the last placement serves: what they read, the
+<a href=#495 id=495 data-nosnippet>495</a>        // first one's phase, and its batch index.
+<a href=#496 id=496 data-nosnippet>496</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>run: <span class="prelude-ty">Option</span>&lt;(Gathered, f64, u32)&gt; = <span class="prelude-val">None</span>;
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">let </span><span class="kw-2">mut </span>place = |plane: u32, frequency_hz: f64, slot: usize| {
+<a href=#498 id=498 data-nosnippet>498</a>            <span class="kw">if </span>!prepared.contains(plane) {
+<a href=#499 id=499 data-nosnippet>499</a>                <span class="kw">return</span>;
+<a href=#500 id=500 data-nosnippet>500</a>            }
+<a href=#501 id=501 data-nosnippet>501</a>            <span class="kw">let </span><span class="prelude-val">Some</span>((placement, location)) = locate_sample(
+<a href=#502 id=502 data-nosnippet>502</a>                operator.cf(),
+<a href=#503 id=503 data-nosnippet>503</a>                operator.geometry(),
+<a href=#504 id=504 data-nosnippet>504</a>                <span class="self">self</span>.basis,
+<a href=#505 id=505 data-nosnippet>505</a>                row,
+<a href=#506 id=506 data-nosnippet>506</a>                plane,
+<a href=#507 id=507 data-nosnippet>507</a>                frequency_hz,
+<a href=#508 id=508 data-nosnippet>508</a>                <span class="kw-2">&amp;mut </span>placing,
+<a href=#509 id=509 data-nosnippet>509</a>            ) <span class="kw">else </span>{
+<a href=#510 id=510 data-nosnippet>510</a>                <span class="kw">return</span>;
+<a href=#511 id=511 data-nosnippet>511</a>            };
+<a href=#512 id=512 data-nosnippet>512</a>            <span class="kw">let </span>gathered = Gathered::of(<span class="kw-2">&amp;</span>placement, location, terms);
+<a href=#513 id=513 data-nosnippet>513</a>            <span class="kw">let </span>placement_index = <span class="kw">match </span>run {
+<a href=#514 id=514 data-nosnippet>514</a>                <span class="prelude-val">Some</span>((first, phase, index))
+<a href=#515 id=515 data-nosnippet>515</a>                    <span class="kw">if </span>first == gathered &amp;&amp; (placement.phase - phase).abs() &lt;= SHARED_PHASE_RAD =&gt;
+<a href=#516 id=516 data-nosnippet>516</a>                {
+<a href=#517 id=517 data-nosnippet>517</a>                    index
+<a href=#518 id=518 data-nosnippet>518</a>                }
+<a href=#519 id=519 data-nosnippet>519</a>                <span class="kw">_ </span>=&gt; {
+<a href=#520 id=520 data-nosnippet>520</a>                    <span class="kw">let </span>index = u32::try_from(placements.len()).expect(<span class="string">"a batch fits u32 indices"</span>);
+<a href=#521 id=521 data-nosnippet>521</a>                    placements.push(placement);
+<a href=#522 id=522 data-nosnippet>522</a>                    run = <span class="prelude-val">Some</span>((gathered, placement.phase, index));
+<a href=#523 id=523 data-nosnippet>523</a>                    index
+<a href=#524 id=524 data-nosnippet>524</a>                }
+<a href=#525 id=525 data-nosnippet>525</a>            };
+<a href=#526 id=526 data-nosnippet>526</a>            <span class="kw">let </span>slot = u32::try_from(slot).expect(<span class="string">"a row's channels fit u32"</span>);
+<a href=#527 id=527 data-nosnippet>527</a>            <span class="kw">match </span>sources[start..].last_mut() {
+<a href=#528 id=528 data-nosnippet>528</a>                <span class="prelude-val">Some</span>(last)
+<a href=#529 id=529 data-nosnippet>529</a>                    <span class="kw">if </span>last.placement == placement_index &amp;&amp; last.slot + last.count == slot =&gt;
+<a href=#530 id=530 data-nosnippet>530</a>                {
+<a href=#531 id=531 data-nosnippet>531</a>                    last.count += <span class="number">1</span>;
+<a href=#532 id=532 data-nosnippet>532</a>                }
+<a href=#533 id=533 data-nosnippet>533</a>                <span class="kw">_ </span>=&gt; sources.push(Source {
+<a href=#534 id=534 data-nosnippet>534</a>                    slot,
+<a href=#535 id=535 data-nosnippet>535</a>                    count: <span class="number">1</span>,
+<a href=#536 id=536 data-nosnippet>536</a>                    placement: placement_index,
+<a href=#537 id=537 data-nosnippet>537</a>                }),
+<a href=#538 id=538 data-nosnippet>538</a>            }
+<a href=#539 id=539 data-nosnippet>539</a>        };
+<a href=#540 id=540 data-nosnippet>540</a>        <span class="kw">match </span><span class="self">self</span>.interpolated_prediction(row) {
+<a href=#541 id=541 data-nosnippet>541</a>            <span class="prelude-val">None </span>=&gt; {
+<a href=#542 id=542 data-nosnippet>542</a>                <span class="kw">for </span>(channel, frequency_hz) <span class="kw">in </span>native.iter().enumerate() {
+<a href=#543 id=543 data-nosnippet>543</a>                    <span class="kw">let </span>plane = <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.sampling {
+<a href=#544 id=544 data-nosnippet>544</a>                        Sampling::Direct =&gt; <span class="prelude-val">Some</span>(<span class="number">0</span>),
+<a href=#545 id=545 data-nosnippet>545</a>                        Sampling::Nearest(axis) | Sampling::Interpolated(axis, <span class="kw">_</span>) =&gt; {
+<a href=#546 id=546 data-nosnippet>546</a>                            axis.nearest_channel(<span class="kw-2">*</span>frequency_hz)
+<a href=#547 id=547 data-nosnippet>547</a>                        }
+<a href=#548 id=548 data-nosnippet>548</a>                    };
+<a href=#549 id=549 data-nosnippet>549</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(plane) = plane {
+<a href=#550 id=550 data-nosnippet>550</a>                        place(plane, <span class="kw-2">*</span>frequency_hz, channel);
+<a href=#551 id=551 data-nosnippet>551</a>                    }
+<a href=#552 id=552 data-nosnippet>552</a>                }
+<a href=#553 id=553 data-nosnippet>553</a>            }
+<a href=#554 id=554 data-nosnippet>554</a>            <span class="prelude-val">Some</span>(interpolation @ (axis, <span class="kw">_</span>)) =&gt; {
+<a href=#555 id=555 data-nosnippet>555</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(channels) = degridded_channels(interpolation, native) {
+<a href=#556 id=556 data-nosnippet>556</a>                    <span class="kw">for </span>channel <span class="kw">in </span>channels {
+<a href=#557 id=557 data-nosnippet>557</a>                        place(channel, axis.centre_hz(channel), channel <span class="kw">as </span>usize);
+<a href=#558 id=558 data-nosnippet>558</a>                    }
+<a href=#559 id=559 data-nosnippet>559</a>                }
+<a href=#560 id=560 data-nosnippet>560</a>            }
+<a href=#561 id=561 data-nosnippet>561</a>        }
+<a href=#562 id=562 data-nosnippet>562</a>        <span class="prelude-val">Ok</span>(PlacedRow {
+<a href=#563 id=563 data-nosnippet>563</a>            start,
+<a href=#564 id=564 data-nosnippet>564</a>            end: sources.len(),
+<a href=#565 id=565 data-nosnippet>565</a>        })
+<a href=#566 id=566 data-nosnippet>566</a>    }
+<a href=#567 id=567 data-nosnippet>567</a>
+<a href=#568 id=568 data-nosnippet>568</a>    <span class="doccomment">/// [`Self::place_prediction`] of `row`'s channels under direct or
+<a href=#569 id=569 data-nosnippet>569</a>    /// nearest sampling with one kernel cell and one term, in the runs the
+<a href=#570 id=570 data-nosnippet>570</a>    /// channel-by-channel placement finds, placing each run's first
+<a href=#571 id=571 data-nosnippet>571</a>    /// channel. A channel's plane, its location on the grid and its
+<a href=#572 id=572 data-nosnippet>572</a>    /// phase-centre phase move monotonically with its frequency, which
+<a href=#573 id=573 data-nosnippet>573</a>    /// `row`'s channels order, so once a channel reads other taps than its
+<a href=#574 id=574 data-nosnippet>574</a>    /// run's first, or its phase has moved past [`SHARED_PHASE_RAD`], every
+<a href=#575 id=575 data-nosnippet>575</a>    /// later one does too. A run's end is then found by locating a few
+<a href=#576 id=576 data-nosnippet>576</a>    /// channels rather than each: from the last run's length, then doubling
+<a href=#577 id=577 data-nosnippet>577</a>    /// and halving.
+<a href=#578 id=578 data-nosnippet>578</a>    </span><span class="kw">fn </span>place_runs(
+<a href=#579 id=579 data-nosnippet>579</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#580 id=580 data-nosnippet>580</a>        operator: <span class="kw-2">&amp;</span>MeasurementOperator,
+<a href=#581 id=581 data-nosnippet>581</a>        model: <span class="kw-2">&amp;</span>PreparedModelGrids,
+<a href=#582 id=582 data-nosnippet>582</a>        row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#583 id=583 data-nosnippet>583</a>        placing: <span class="kw-2">&amp;mut </span>RowPlacing,
+<a href=#584 id=584 data-nosnippet>584</a>        placements: <span class="kw-2">&amp;mut </span>Vec&lt;Placement&gt;,
+<a href=#585 id=585 data-nosnippet>585</a>        sources: <span class="kw-2">&amp;mut </span>Vec&lt;Source&gt;,
+<a href=#586 id=586 data-nosnippet>586</a>    ) {
+<a href=#587 id=587 data-nosnippet>587</a>        <span class="kw">let </span>native = row.frequencies_hz;
+<a href=#588 id=588 data-nosnippet>588</a>        <span class="kw">let </span>channels = native.len();
+<a href=#589 id=589 data-nosnippet>589</a>        <span class="kw">let </span>prepared = model.layout().planes();
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">let </span><span class="kw-2">mut </span>locate = |channel: usize| {
+<a href=#591 id=591 data-nosnippet>591</a>            <span class="kw">let </span>plane = <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.sampling {
+<a href=#592 id=592 data-nosnippet>592</a>                Sampling::Direct =&gt; <span class="prelude-val">Some</span>(<span class="number">0</span>),
+<a href=#593 id=593 data-nosnippet>593</a>                Sampling::Nearest(axis) | Sampling::Interpolated(axis, <span class="kw">_</span>) =&gt; {
+<a href=#594 id=594 data-nosnippet>594</a>                    axis.nearest_channel(native[channel])
+<a href=#595 id=595 data-nosnippet>595</a>                }
+<a href=#596 id=596 data-nosnippet>596</a>            }
+<a href=#597 id=597 data-nosnippet>597</a>            .filter(|plane| prepared.contains(<span class="kw-2">*</span>plane))<span class="question-mark">?</span>;
+<a href=#598 id=598 data-nosnippet>598</a>            locate_sample(
+<a href=#599 id=599 data-nosnippet>599</a>                operator.cf(),
+<a href=#600 id=600 data-nosnippet>600</a>                operator.geometry(),
+<a href=#601 id=601 data-nosnippet>601</a>                <span class="self">self</span>.basis,
+<a href=#602 id=602 data-nosnippet>602</a>                row,
+<a href=#603 id=603 data-nosnippet>603</a>                plane,
+<a href=#604 id=604 data-nosnippet>604</a>                native[channel],
+<a href=#605 id=605 data-nosnippet>605</a>                placing,
+<a href=#606 id=606 data-nosnippet>606</a>            )
+<a href=#607 id=607 data-nosnippet>607</a>        };
+<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>channel, <span class="kw-2">mut </span>length) = (<span class="number">0</span>, <span class="number">1</span>);
+<a href=#609 id=609 data-nosnippet>609</a>        <span class="kw">while </span>channel &lt; channels {
+<a href=#610 id=610 data-nosnippet>610</a>            <span class="kw">let </span><span class="prelude-val">Some</span>((placement, location)) = locate(channel) <span class="kw">else </span>{
+<a href=#611 id=611 data-nosnippet>611</a>                channel += <span class="number">1</span>;
+<a href=#612 id=612 data-nosnippet>612</a>                <span class="kw">continue</span>;
+<a href=#613 id=613 data-nosnippet>613</a>            };
+<a href=#614 id=614 data-nosnippet>614</a>            <span class="kw">let </span>(gathered, phase) = (Gathered::of(<span class="kw-2">&amp;</span>placement, location, <span class="number">1</span>), placement.phase);
+<a href=#615 id=615 data-nosnippet>615</a>            <span class="kw">let </span>index = u32::try_from(placements.len()).expect(<span class="string">"a batch fits u32 indices"</span>);
+<a href=#616 id=616 data-nosnippet>616</a>            placements.push(placement);
+<a href=#617 id=617 data-nosnippet>617</a>            <span class="kw">let </span><span class="kw-2">mut </span>shares = |probe: usize| {
+<a href=#618 id=618 data-nosnippet>618</a>                locate(probe).is_some_and(|(placement, location)| {
+<a href=#619 id=619 data-nosnippet>619</a>                    Gathered::of(<span class="kw-2">&amp;</span>placement, location, <span class="number">1</span>) == gathered
+<a href=#620 id=620 data-nosnippet>620</a>                        &amp;&amp; (placement.phase - phase).abs() &lt;= SHARED_PHASE_RAD
+<a href=#621 id=621 data-nosnippet>621</a>                })
+<a href=#622 id=622 data-nosnippet>622</a>            };
+<a href=#623 id=623 data-nosnippet>623</a>            <span class="comment">// The last channel known to share, and the first known not to.
+<a href=#624 id=624 data-nosnippet>624</a>            </span><span class="kw">let </span>(<span class="kw-2">mut </span>last, <span class="kw-2">mut </span>past) = (channel, channels);
+<a href=#625 id=625 data-nosnippet>625</a>            <span class="kw">let </span>expected = channel + length - <span class="number">1</span>;
+<a href=#626 id=626 data-nosnippet>626</a>            <span class="kw">if </span>expected &gt; channel &amp;&amp; expected &lt; channels {
+<a href=#627 id=627 data-nosnippet>627</a>                <span class="kw">if </span>shares(expected) {
+<a href=#628 id=628 data-nosnippet>628</a>                    last = expected;
+<a href=#629 id=629 data-nosnippet>629</a>                } <span class="kw">else </span>{
+<a href=#630 id=630 data-nosnippet>630</a>                    past = expected;
+<a href=#631 id=631 data-nosnippet>631</a>                }
+<a href=#632 id=632 data-nosnippet>632</a>            }
+<a href=#633 id=633 data-nosnippet>633</a>            <span class="kw">let </span><span class="kw-2">mut </span>step = <span class="number">1</span>;
+<a href=#634 id=634 data-nosnippet>634</a>            <span class="kw">while </span>past == channels &amp;&amp; last + step &lt; channels {
+<a href=#635 id=635 data-nosnippet>635</a>                <span class="kw">if </span>shares(last + step) {
+<a href=#636 id=636 data-nosnippet>636</a>                    last += step;
+<a href=#637 id=637 data-nosnippet>637</a>                    step <span class="kw-2">*</span>= <span class="number">2</span>;
+<a href=#638 id=638 data-nosnippet>638</a>                } <span class="kw">else </span>{
+<a href=#639 id=639 data-nosnippet>639</a>                    past = last + step;
+<a href=#640 id=640 data-nosnippet>640</a>                }
+<a href=#641 id=641 data-nosnippet>641</a>            }
+<a href=#642 id=642 data-nosnippet>642</a>            <span class="kw">while </span>past - last &gt; <span class="number">1 </span>{
+<a href=#643 id=643 data-nosnippet>643</a>                <span class="kw">let </span>middle = last + (past - last) / <span class="number">2</span>;
+<a href=#644 id=644 data-nosnippet>644</a>                <span class="kw">if </span>shares(middle) {
+<a href=#645 id=645 data-nosnippet>645</a>                    last = middle;
+<a href=#646 id=646 data-nosnippet>646</a>                } <span class="kw">else </span>{
+<a href=#647 id=647 data-nosnippet>647</a>                    past = middle;
+<a href=#648 id=648 data-nosnippet>648</a>                }
+<a href=#649 id=649 data-nosnippet>649</a>            }
+<a href=#650 id=650 data-nosnippet>650</a>            sources.push(Source {
+<a href=#651 id=651 data-nosnippet>651</a>                slot: u32::try_from(channel).expect(<span class="string">"a row's channels fit u32"</span>),
+<a href=#652 id=652 data-nosnippet>652</a>                count: u32::try_from(last + <span class="number">1 </span>- channel).expect(<span class="string">"a row's channels fit u32"</span>),
+<a href=#653 id=653 data-nosnippet>653</a>                placement: index,
+<a href=#654 id=654 data-nosnippet>654</a>            });
+<a href=#655 id=655 data-nosnippet>655</a>            length = last + <span class="number">1 </span>- channel;
+<a href=#656 id=656 data-nosnippet>656</a>            channel = last + <span class="number">1</span>;
+<a href=#657 id=657 data-nosnippet>657</a>        }
+<a href=#658 id=658 data-nosnippet>658</a>    }
+<a href=#659 id=659 data-nosnippet>659</a>
+<a href=#660 id=660 data-nosnippet>660</a>    <span class="doccomment">/// Add `row`'s native terms to the batch `scratch` began: one per native
+<a href=#661 id=661 data-nosnippet>661</a>    /// channel, the row's cells numbered from `first_cell`, interpolating
+<a href=#662 id=662 data-nosnippet>662</a>    /// its samples `placed` in the batch as [`Self::predict_row`] does. A
+<a href=#663 id=663 data-nosnippet>663</a>    /// cell whose channel is off the output axis and its halo, or whose row
+<a href=#664 id=664 data-nosnippet>664</a>    /// placed nothing, gets the zero model; a flagged correlation keeps it
+<a href=#665 id=665 data-nosnippet>665</a>    /// zero.
+<a href=#666 id=666 data-nosnippet>666</a>    </span><span class="kw">pub fn </span>native_terms(
+<a href=#667 id=667 data-nosnippet>667</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#668 id=668 data-nosnippet>668</a>        row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#669 id=669 data-nosnippet>669</a>        npol: usize,
+<a href=#670 id=670 data-nosnippet>670</a>        placed: PlacedRow,
+<a href=#671 id=671 data-nosnippet>671</a>        scratch: <span class="kw-2">&amp;mut </span>PredictionScratch,
+<a href=#672 id=672 data-nosnippet>672</a>        first_cell: u32,
+<a href=#673 id=673 data-nosnippet>673</a>    ) {
+<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">let </span>PredictionScratch {
+<a href=#675 id=675 data-nosnippet>675</a>            sources,
+<a href=#676 id=676 data-nosnippet>676</a>            slots,
+<a href=#677 id=677 data-nosnippet>677</a>            terms,
+<a href=#678 id=678 data-nosnippet>678</a>            ..
+<a href=#679 id=679 data-nosnippet>679</a>        } = scratch;
+<a href=#680 id=680 data-nosnippet>680</a>        <span class="kw">let </span>native = row.frequencies_hz;
+<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">let </span>sources = <span class="kw-2">&amp;</span>sources[placed.start..placed.end];
+<a href=#682 id=682 data-nosnippet>682</a>        <span class="comment">// A row without a flag packs no flag bits.
+<a href=#683 id=683 data-nosnippet>683</a>        </span><span class="kw">let </span>flagged = row.flags.contains(<span class="kw-2">&amp;</span><span class="bool-val">true</span>);
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span><span class="kw-2">mut </span>term = |channel: usize, points: <span class="kw-2">&amp;</span>[(u32, f64)]| {
+<a href=#685 id=685 data-nosnippet>685</a>            <span class="kw">let </span><span class="kw-2">mut </span>term = NativeTerm {
+<a href=#686 id=686 data-nosnippet>686</a>                cell: first_cell + channel <span class="kw">as </span>u32,
+<a href=#687 id=687 data-nosnippet>687</a>                points: [NO_CELL; STENCIL],
+<a href=#688 id=688 data-nosnippet>688</a>                factors: [<span class="number">0.0</span>; STENCIL],
+<a href=#689 id=689 data-nosnippet>689</a>                flags: <span class="kw">if </span>flagged {
+<a href=#690 id=690 data-nosnippet>690</a>                    flag_bits(row, npol, channel)
+<a href=#691 id=691 data-nosnippet>691</a>                } <span class="kw">else </span>{
+<a href=#692 id=692 data-nosnippet>692</a>                    <span class="number">0
+<a href=#693 id=693 data-nosnippet>693</a>                </span>},
+<a href=#694 id=694 data-nosnippet>694</a>            };
+<a href=#695 id=695 data-nosnippet>695</a>            <span class="kw">for </span>(slot, (point, factor)) <span class="kw">in </span>points.iter().enumerate() {
+<a href=#696 id=696 data-nosnippet>696</a>                term.points[slot] = <span class="kw-2">*</span>point;
+<a href=#697 id=697 data-nosnippet>697</a>                term.factors[slot] = <span class="kw-2">*</span>factor <span class="kw">as </span>f32;
+<a href=#698 id=698 data-nosnippet>698</a>            }
+<a href=#699 id=699 data-nosnippet>699</a>            terms.push(term);
+<a href=#700 id=700 data-nosnippet>700</a>        };
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((axis, order)) = <span class="self">self</span>.interpolated_prediction(row) <span class="kw">else </span>{
+<a href=#702 id=702 data-nosnippet>702</a>            <span class="comment">// Each native channel reads its source's placement, in slot
+<a href=#703 id=703 data-nosnippet>703</a>            // order; a channel no source covers reads nothing.
+<a href=#704 id=704 data-nosnippet>704</a>            </span><span class="kw">let </span><span class="kw-2">mut </span>channel = <span class="number">0</span>;
 <a href=#705 id=705 data-nosnippet>705</a>            <span class="kw">for </span>source <span class="kw">in </span>sources {
-<a href=#706 id=706 data-nosnippet>706</a>                slots[source.slots()].fill(source.placement);
-<a href=#707 id=707 data-nosnippet>707</a>            }
-<a href=#708 id=708 data-nosnippet>708</a>        };
-<a href=#709 id=709 data-nosnippet>709</a>        <span class="comment">// `FTMachine::interpolateFrequencyFromgrid`: the output-channel
-<a href=#710 id=710 data-nosnippet>710</a>        // predictions on CASA's image-frequency grid, refined to
-<a href=#711 id=711 data-nosnippet>711</a>        // `floor(width ratio)` repeated points per channel when output
-<a href=#712 id=712 data-nosnippet>712</a>        // channels are wider than native ones, interpolated to every native
-<a href=#713 id=713 data-nosnippet>713</a>        // channel that maps to the axis or lies in its halo (`chanMap` 0… or
-<a href=#714 id=714 data-nosnippet>714</a>        // −2; −1 stays zero); the end points extrapolate (casacore
-<a href=#715 id=715 data-nosnippet>715</a>        // `InterpolateArray1D`, linear or cubic).
-<a href=#716 id=716 data-nosnippet>716</a>        </span>index_slots(axis.channels <span class="kw">as </span>usize);
-<a href=#717 id=717 data-nosnippet>717</a>        <span class="kw">let </span>width = (axis.increment_hz / (native[<span class="number">1</span>] - native[<span class="number">0</span>])).abs();
-<a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">let </span>per_channel = axis.fine_samples_per_plane(width);
-<a href=#719 id=719 data-nosnippet>719</a>        <span class="kw">let </span>fine_increment = axis.increment_hz / per_channel <span class="kw">as </span>f64;
-<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span>fine_start = <span class="kw">if </span>per_channel &gt; <span class="number">1 </span>{
-<a href=#721 id=721 data-nosnippet>721</a>            axis.first_hz - axis.increment_hz / <span class="number">2.0 </span>+ fine_increment / <span class="number">2.0
-<a href=#722 id=722 data-nosnippet>722</a>        </span>} <span class="kw">else </span>{
-<a href=#723 id=723 data-nosnippet>723</a>            axis.first_hz
-<a href=#724 id=724 data-nosnippet>724</a>        };
-<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">let </span>points = axis.channels <span class="kw">as </span>usize * per_channel;
-<a href=#726 id=726 data-nosnippet>726</a>        <span class="kw">let </span>point = |index: usize| {
-<a href=#727 id=727 data-nosnippet>727</a>            <span class="kw">if </span>width &lt;= <span class="number">1.0 </span>&amp;&amp; (axis.reporting_axis.is_some() || axis.tabular.is_some()) {
-<a href=#728 id=728 data-nosnippet>728</a>                axis.centre_hz(index <span class="kw">as </span>u32)
-<a href=#729 id=729 data-nosnippet>729</a>            } <span class="kw">else </span>{
-<a href=#730 id=730 data-nosnippet>730</a>                fine_start + index <span class="kw">as </span>f64 * fine_increment
-<a href=#731 id=731 data-nosnippet>731</a>            }
-<a href=#732 id=732 data-nosnippet>732</a>        };
-<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span>native_width_hz = native[<span class="number">1</span>] - native[<span class="number">0</span>];
-<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">for </span>(channel, frequency_hz) <span class="kw">in </span>native.iter().enumerate() {
-<a href=#735 id=735 data-nosnippet>735</a>            <span class="kw">if </span>axis.nearest_channel(<span class="kw-2">*</span>frequency_hz).is_none()
-<a href=#736 id=736 data-nosnippet>736</a>                &amp;&amp; !axis.in_halo(<span class="kw-2">*</span>frequency_hz, native_width_hz, order)
-<a href=#737 id=737 data-nosnippet>737</a>            {
-<a href=#738 id=738 data-nosnippet>738</a>                term(channel, <span class="kw-2">&amp;</span>[]);
-<a href=#739 id=739 data-nosnippet>739</a>                <span class="kw">continue</span>;
-<a href=#740 id=740 data-nosnippet>740</a>            }
-<a href=#741 id=741 data-nosnippet>741</a>            <span class="kw">let </span>position = <span class="kw">if </span>width &lt;= <span class="number">1.0 </span>{
-<a href=#742 id=742 data-nosnippet>742</a>                axis.tabular_pixel(<span class="kw-2">*</span>frequency_hz)
-<a href=#743 id=743 data-nosnippet>743</a>            } <span class="kw">else </span>{
-<a href=#744 id=744 data-nosnippet>744</a>                <span class="prelude-val">None
-<a href=#745 id=745 data-nosnippet>745</a>            </span>}
-<a href=#746 id=746 data-nosnippet>746</a>            .unwrap_or_else(|| (frequency_hz - fine_start) / fine_increment);
-<a href=#747 id=747 data-nosnippet>747</a>            <span class="kw">let </span>slot = |point: usize| slots[point / per_channel];
-<a href=#748 id=748 data-nosnippet>748</a>            <span class="kw">match </span>order {
-<a href=#749 id=749 data-nosnippet>749</a>                Order::Linear =&gt; {
-<a href=#750 id=750 data-nosnippet>750</a>                    <span class="kw">let </span>left = (position.floor().max(<span class="number">0.0</span>) <span class="kw">as </span>usize).min(points - <span class="number">2</span>);
-<a href=#751 id=751 data-nosnippet>751</a>                    <span class="kw">let </span>fraction = (frequency_hz - point(left)) / (point(left + <span class="number">1</span>) - point(left));
-<a href=#752 id=752 data-nosnippet>752</a>                    <span class="comment">// casacore's `y1 + frac·(y2 − y1)`, as two factors.
-<a href=#753 id=753 data-nosnippet>753</a>                    </span>term(
-<a href=#754 id=754 data-nosnippet>754</a>                        channel,
-<a href=#755 id=755 data-nosnippet>755</a>                        <span class="kw-2">&amp;</span>[(slot(left), <span class="number">1.0 </span>- fraction), (slot(left + <span class="number">1</span>), fraction)],
-<a href=#756 id=756 data-nosnippet>756</a>                    );
-<a href=#757 id=757 data-nosnippet>757</a>                }
-<a href=#758 id=758 data-nosnippet>758</a>                Order::Cubic =&gt; {
-<a href=#759 id=759 data-nosnippet>759</a>                    <span class="comment">// `binarySearchBrackets`: the point at the frequency,
-<a href=#760 id=760 data-nosnippet>760</a>                    // else the first beyond it.
-<a href=#761 id=761 data-nosnippet>761</a>                    </span><span class="kw">let </span>bracket = <span class="kw">if </span>position &lt;= <span class="number">0.0 </span>{
-<a href=#762 id=762 data-nosnippet>762</a>                        <span class="number">0
-<a href=#763 id=763 data-nosnippet>763</a>                    </span>} <span class="kw">else </span>{
-<a href=#764 id=764 data-nosnippet>764</a>                        (position.ceil() <span class="kw">as </span>usize).min(points)
-<a href=#765 id=765 data-nosnippet>765</a>                    };
-<a href=#766 id=766 data-nosnippet>766</a>                    <span class="kw">let </span>stencil = Stencil::cubic(points, bracket, <span class="kw-2">*</span>frequency_hz, point);
-<a href=#767 id=767 data-nosnippet>767</a>                    <span class="kw">let </span><span class="kw-2">mut </span>factors = [(NO_CELL, <span class="number">0.0</span>); STENCIL];
-<a href=#768 id=768 data-nosnippet>768</a>                    <span class="kw">for </span>(entry, (index, factor)) <span class="kw">in </span>factors.iter_mut().zip(stencil.terms()) {
-<a href=#769 id=769 data-nosnippet>769</a>                        <span class="kw-2">*</span>entry = (slot(index), factor);
-<a href=#770 id=770 data-nosnippet>770</a>                    }
-<a href=#771 id=771 data-nosnippet>771</a>                    term(channel, <span class="kw-2">&amp;</span>factors[..stencil.len]);
-<a href=#772 id=772 data-nosnippet>772</a>                }
-<a href=#773 id=773 data-nosnippet>773</a>            }
-<a href=#774 id=774 data-nosnippet>774</a>        }
-<a href=#775 id=775 data-nosnippet>775</a>    }
-<a href=#776 id=776 data-nosnippet>776</a>
-<a href=#777 id=777 data-nosnippet>777</a>    <span class="doccomment">/// Write `row`'s model visibilities to `out` as `[channel][correlation]`
-<a href=#778 id=778 data-nosnippet>778</a>    /// from its samples `placed` in the batch `scratch` applied, as
-<a href=#779 id=779 data-nosnippet>779</a>    /// [`Self::predict_row`] does.
-<a href=#780 id=780 data-nosnippet>780</a>    ///
-<a href=#781 id=781 data-nosnippet>781</a>    /// # Errors
-<a href=#782 id=782 data-nosnippet>782</a>    ///
-<a href=#783 id=783 data-nosnippet>783</a>    /// An `out` of another length than the row's values.
-<a href=#784 id=784 data-nosnippet>784</a>    </span><span class="kw">pub fn </span>finish_prediction(
-<a href=#785 id=785 data-nosnippet>785</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#786 id=786 data-nosnippet>786</a>        operator: <span class="kw-2">&amp;</span>MeasurementOperator,
-<a href=#787 id=787 data-nosnippet>787</a>        row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#788 id=788 data-nosnippet>788</a>        placed: PlacedRow,
-<a href=#789 id=789 data-nosnippet>789</a>        scratch: <span class="kw-2">&amp;mut </span>PredictionScratch,
-<a href=#790 id=790 data-nosnippet>790</a>        out: <span class="kw-2">&amp;mut </span>[Complex32],
-<a href=#791 id=791 data-nosnippet>791</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt; {
-<a href=#792 id=792 data-nosnippet>792</a>        <span class="kw">if </span>out.len() != row.values.len() {
-<a href=#793 id=793 data-nosnippet>793</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(OperatorError::NativeRow {
-<a href=#794 id=794 data-nosnippet>794</a>                reason: <span class="string">"the prediction holds one value per selected sample"</span>,
-<a href=#795 id=795 data-nosnippet>795</a>            });
-<a href=#796 id=796 data-nosnippet>796</a>        }
-<a href=#797 id=797 data-nosnippet>797</a>        <span class="kw">let </span>npol = operator.polarization().correlations().len();
-<a href=#798 id=798 data-nosnippet>798</a>        <span class="kw">let </span>first = scratch.terms.len();
-<a href=#799 id=799 data-nosnippet>799</a>        <span class="self">self</span>.native_terms(row, npol, placed, scratch, <span class="number">0</span>);
-<a href=#800 id=800 data-nosnippet>800</a>        interpolate_terms(
-<a href=#801 id=801 data-nosnippet>801</a>            <span class="kw-2">&amp;</span>scratch.predicted,
-<a href=#802 id=802 data-nosnippet>802</a>            npol,
-<a href=#803 id=803 data-nosnippet>803</a>            <span class="kw-2">&amp;</span>scratch.terms[first..],
-<a href=#804 id=804 data-nosnippet>804</a>            out,
-<a href=#805 id=805 data-nosnippet>805</a>            <span class="number">0</span>,
-<a href=#806 id=806 data-nosnippet>806</a>            <span class="bool-val">false</span>,
-<a href=#807 id=807 data-nosnippet>807</a>        );
-<a href=#808 id=808 data-nosnippet>808</a>        scratch.terms.truncate(first);
-<a href=#809 id=809 data-nosnippet>809</a>        <span class="prelude-val">Ok</span>(())
-<a href=#810 id=810 data-nosnippet>810</a>    }
-<a href=#811 id=811 data-nosnippet>811</a>}
+<a href=#706 id=706 data-nosnippet>706</a>                <span class="macro">debug_assert!</span>(source.slot <span class="kw">as </span>usize &gt;= channel, <span class="string">"sources run in slot order"</span>);
+<a href=#707 id=707 data-nosnippet>707</a>                <span class="kw">for </span>unplaced <span class="kw">in </span>channel..source.slot <span class="kw">as </span>usize {
+<a href=#708 id=708 data-nosnippet>708</a>                    term(unplaced, <span class="kw-2">&amp;</span>[]);
+<a href=#709 id=709 data-nosnippet>709</a>                }
+<a href=#710 id=710 data-nosnippet>710</a>                <span class="kw">for </span>placed <span class="kw">in </span>source.slots() {
+<a href=#711 id=711 data-nosnippet>711</a>                    term(placed, <span class="kw-2">&amp;</span>[(source.placement, <span class="number">1.0</span>)]);
+<a href=#712 id=712 data-nosnippet>712</a>                }
+<a href=#713 id=713 data-nosnippet>713</a>                channel = source.slots().end;
+<a href=#714 id=714 data-nosnippet>714</a>            }
+<a href=#715 id=715 data-nosnippet>715</a>            <span class="kw">for </span>unplaced <span class="kw">in </span>channel..native.len() {
+<a href=#716 id=716 data-nosnippet>716</a>                term(unplaced, <span class="kw-2">&amp;</span>[]);
+<a href=#717 id=717 data-nosnippet>717</a>            }
+<a href=#718 id=718 data-nosnippet>718</a>            <span class="kw">return</span>;
+<a href=#719 id=719 data-nosnippet>719</a>        };
+<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span><span class="kw-2">mut </span>index_slots = |count: usize| {
+<a href=#721 id=721 data-nosnippet>721</a>            slots.clear();
+<a href=#722 id=722 data-nosnippet>722</a>            slots.resize(count, NO_CELL);
+<a href=#723 id=723 data-nosnippet>723</a>            <span class="kw">for </span>source <span class="kw">in </span>sources {
+<a href=#724 id=724 data-nosnippet>724</a>                slots[source.slots()].fill(source.placement);
+<a href=#725 id=725 data-nosnippet>725</a>            }
+<a href=#726 id=726 data-nosnippet>726</a>        };
+<a href=#727 id=727 data-nosnippet>727</a>        <span class="comment">// `FTMachine::interpolateFrequencyFromgrid`: the output-channel
+<a href=#728 id=728 data-nosnippet>728</a>        // predictions on CASA's image-frequency grid, refined to
+<a href=#729 id=729 data-nosnippet>729</a>        // `floor(width ratio)` repeated points per channel when output
+<a href=#730 id=730 data-nosnippet>730</a>        // channels are wider than native ones, interpolated to every native
+<a href=#731 id=731 data-nosnippet>731</a>        // channel that maps to the axis or lies in its halo (`chanMap` 0… or
+<a href=#732 id=732 data-nosnippet>732</a>        // −2; −1 stays zero); the end points extrapolate (casacore
+<a href=#733 id=733 data-nosnippet>733</a>        // `InterpolateArray1D`, linear or cubic).
+<a href=#734 id=734 data-nosnippet>734</a>        </span>index_slots(axis.channels <span class="kw">as </span>usize);
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">let </span>width = (axis.increment_hz / (native[<span class="number">1</span>] - native[<span class="number">0</span>])).abs();
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">let </span>per_channel = axis.fine_samples_per_plane(width);
+<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">let </span>fine_increment = axis.increment_hz / per_channel <span class="kw">as </span>f64;
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="kw">let </span>fine_start = <span class="kw">if </span>per_channel &gt; <span class="number">1 </span>{
+<a href=#739 id=739 data-nosnippet>739</a>            axis.first_hz - axis.increment_hz / <span class="number">2.0 </span>+ fine_increment / <span class="number">2.0
+<a href=#740 id=740 data-nosnippet>740</a>        </span>} <span class="kw">else </span>{
+<a href=#741 id=741 data-nosnippet>741</a>            axis.first_hz
+<a href=#742 id=742 data-nosnippet>742</a>        };
+<a href=#743 id=743 data-nosnippet>743</a>        <span class="kw">let </span>points = axis.channels <span class="kw">as </span>usize * per_channel;
+<a href=#744 id=744 data-nosnippet>744</a>        <span class="kw">let </span>point = |index: usize| {
+<a href=#745 id=745 data-nosnippet>745</a>            <span class="kw">if </span>width &lt;= <span class="number">1.0 </span>&amp;&amp; (axis.reporting_axis.is_some() || axis.tabular.is_some()) {
+<a href=#746 id=746 data-nosnippet>746</a>                axis.centre_hz(index <span class="kw">as </span>u32)
+<a href=#747 id=747 data-nosnippet>747</a>            } <span class="kw">else </span>{
+<a href=#748 id=748 data-nosnippet>748</a>                fine_start + index <span class="kw">as </span>f64 * fine_increment
+<a href=#749 id=749 data-nosnippet>749</a>            }
+<a href=#750 id=750 data-nosnippet>750</a>        };
+<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw">let </span>native_width_hz = native[<span class="number">1</span>] - native[<span class="number">0</span>];
+<a href=#752 id=752 data-nosnippet>752</a>        <span class="kw">for </span>(channel, frequency_hz) <span class="kw">in </span>native.iter().enumerate() {
+<a href=#753 id=753 data-nosnippet>753</a>            <span class="kw">if </span>axis.nearest_channel(<span class="kw-2">*</span>frequency_hz).is_none()
+<a href=#754 id=754 data-nosnippet>754</a>                &amp;&amp; !axis.in_halo(<span class="kw-2">*</span>frequency_hz, native_width_hz, order)
+<a href=#755 id=755 data-nosnippet>755</a>            {
+<a href=#756 id=756 data-nosnippet>756</a>                term(channel, <span class="kw-2">&amp;</span>[]);
+<a href=#757 id=757 data-nosnippet>757</a>                <span class="kw">continue</span>;
+<a href=#758 id=758 data-nosnippet>758</a>            }
+<a href=#759 id=759 data-nosnippet>759</a>            <span class="kw">let </span>position = <span class="kw">if </span>width &lt;= <span class="number">1.0 </span>{
+<a href=#760 id=760 data-nosnippet>760</a>                axis.tabular_pixel(<span class="kw-2">*</span>frequency_hz)
+<a href=#761 id=761 data-nosnippet>761</a>            } <span class="kw">else </span>{
+<a href=#762 id=762 data-nosnippet>762</a>                <span class="prelude-val">None
+<a href=#763 id=763 data-nosnippet>763</a>            </span>}
+<a href=#764 id=764 data-nosnippet>764</a>            .unwrap_or_else(|| (frequency_hz - fine_start) / fine_increment);
+<a href=#765 id=765 data-nosnippet>765</a>            <span class="kw">let </span>slot = |point: usize| slots[point / per_channel];
+<a href=#766 id=766 data-nosnippet>766</a>            <span class="kw">match </span>order {
+<a href=#767 id=767 data-nosnippet>767</a>                Order::Linear =&gt; {
+<a href=#768 id=768 data-nosnippet>768</a>                    <span class="kw">let </span>left = (position.floor().max(<span class="number">0.0</span>) <span class="kw">as </span>usize).min(points - <span class="number">2</span>);
+<a href=#769 id=769 data-nosnippet>769</a>                    <span class="kw">let </span>fraction = (frequency_hz - point(left)) / (point(left + <span class="number">1</span>) - point(left));
+<a href=#770 id=770 data-nosnippet>770</a>                    <span class="comment">// casacore's `y1 + frac·(y2 − y1)`, as two factors.
+<a href=#771 id=771 data-nosnippet>771</a>                    </span>term(
+<a href=#772 id=772 data-nosnippet>772</a>                        channel,
+<a href=#773 id=773 data-nosnippet>773</a>                        <span class="kw-2">&amp;</span>[(slot(left), <span class="number">1.0 </span>- fraction), (slot(left + <span class="number">1</span>), fraction)],
+<a href=#774 id=774 data-nosnippet>774</a>                    );
+<a href=#775 id=775 data-nosnippet>775</a>                }
+<a href=#776 id=776 data-nosnippet>776</a>                Order::Cubic =&gt; {
+<a href=#777 id=777 data-nosnippet>777</a>                    <span class="comment">// `binarySearchBrackets`: the point at the frequency,
+<a href=#778 id=778 data-nosnippet>778</a>                    // else the first beyond it.
+<a href=#779 id=779 data-nosnippet>779</a>                    </span><span class="kw">let </span>bracket = <span class="kw">if </span>position &lt;= <span class="number">0.0 </span>{
+<a href=#780 id=780 data-nosnippet>780</a>                        <span class="number">0
+<a href=#781 id=781 data-nosnippet>781</a>                    </span>} <span class="kw">else </span>{
+<a href=#782 id=782 data-nosnippet>782</a>                        (position.ceil() <span class="kw">as </span>usize).min(points)
+<a href=#783 id=783 data-nosnippet>783</a>                    };
+<a href=#784 id=784 data-nosnippet>784</a>                    <span class="kw">let </span>stencil = Stencil::cubic(points, bracket, <span class="kw-2">*</span>frequency_hz, point);
+<a href=#785 id=785 data-nosnippet>785</a>                    <span class="kw">let </span><span class="kw-2">mut </span>factors = [(NO_CELL, <span class="number">0.0</span>); STENCIL];
+<a href=#786 id=786 data-nosnippet>786</a>                    <span class="kw">for </span>(entry, (index, factor)) <span class="kw">in </span>factors.iter_mut().zip(stencil.terms()) {
+<a href=#787 id=787 data-nosnippet>787</a>                        <span class="kw-2">*</span>entry = (slot(index), factor);
+<a href=#788 id=788 data-nosnippet>788</a>                    }
+<a href=#789 id=789 data-nosnippet>789</a>                    term(channel, <span class="kw-2">&amp;</span>factors[..stencil.len]);
+<a href=#790 id=790 data-nosnippet>790</a>                }
+<a href=#791 id=791 data-nosnippet>791</a>            }
+<a href=#792 id=792 data-nosnippet>792</a>        }
+<a href=#793 id=793 data-nosnippet>793</a>    }
+<a href=#794 id=794 data-nosnippet>794</a>
+<a href=#795 id=795 data-nosnippet>795</a>    <span class="doccomment">/// Write `row`'s model visibilities to `out` as `[channel][correlation]`
+<a href=#796 id=796 data-nosnippet>796</a>    /// from its samples `placed` in the batch `scratch` applied, as
+<a href=#797 id=797 data-nosnippet>797</a>    /// [`Self::predict_row`] does.
+<a href=#798 id=798 data-nosnippet>798</a>    ///
+<a href=#799 id=799 data-nosnippet>799</a>    /// # Errors
+<a href=#800 id=800 data-nosnippet>800</a>    ///
+<a href=#801 id=801 data-nosnippet>801</a>    /// An `out` of another length than the row's values.
+<a href=#802 id=802 data-nosnippet>802</a>    </span><span class="kw">pub fn </span>finish_prediction(
+<a href=#803 id=803 data-nosnippet>803</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#804 id=804 data-nosnippet>804</a>        operator: <span class="kw-2">&amp;</span>MeasurementOperator,
+<a href=#805 id=805 data-nosnippet>805</a>        row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#806 id=806 data-nosnippet>806</a>        placed: PlacedRow,
+<a href=#807 id=807 data-nosnippet>807</a>        scratch: <span class="kw-2">&amp;mut </span>PredictionScratch,
+<a href=#808 id=808 data-nosnippet>808</a>        out: <span class="kw-2">&amp;mut </span>[Complex32],
+<a href=#809 id=809 data-nosnippet>809</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt; {
+<a href=#810 id=810 data-nosnippet>810</a>        <span class="self">self</span>.finish_prediction_with_coverage(operator, row, placed, scratch, (out, <span class="prelude-val">None</span>))
+<a href=#811 id=811 data-nosnippet>811</a>    }
 <a href=#812 id=812 data-nosnippet>812</a>
-<a href=#813 id=813 data-nosnippet>813</a><span class="attr">#[cfg(test)]
-<a href=#814 id=814 data-nosnippet>814</a></span><span class="kw">mod </span>tests {
-<a href=#815 id=815 data-nosnippet>815</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#816 id=816 data-nosnippet>816</a>    <span class="kw">use crate</span>::{RowContext, SpectralKernel};
-<a href=#817 id=817 data-nosnippet>817</a>
-<a href=#818 id=818 data-nosnippet>818</a>    <span class="attr">#[test]
-<a href=#819 id=819 data-nosnippet>819</a>    </span><span class="kw">fn </span>tabular_model_prediction_refines_a_uniform_inverse_only_for_wider_image_planes() {
-<a href=#820 id=820 data-nosnippet>820</a>        <span class="kw">let </span>axis = SpectralAxis::tabular(<span class="kw-2">&amp;</span>[<span class="number">140.0</span>, <span class="number">120.0</span>, <span class="number">107.0</span>, <span class="number">100.0</span>], -<span class="number">20.0</span>).unwrap();
-<a href=#821 id=821 data-nosnippet>821</a>        <span class="kw">let </span>resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
-<a href=#822 id=822 data-nosnippet>822</a>        <span class="kw">for </span>(frequencies, factor) <span class="kw">in </span>[
-<a href=#823 id=823 data-nosnippet>823</a>            ([<span class="number">100.0</span>, <span class="number">110.0</span>, <span class="number">120.0</span>], <span class="number">0.5</span>),
-<a href=#824 id=824 data-nosnippet>824</a>            ([<span class="number">92.0</span>, <span class="number">119.0</span>, <span class="number">146.0</span>], <span class="number">1.0 </span>/ <span class="number">13.0</span>),
-<a href=#825 id=825 data-nosnippet>825</a>        ] {
-<a href=#826 id=826 data-nosnippet>826</a>            <span class="kw">let </span><span class="kw-2">mut </span>scratch = PredictionScratch::with_capacity(<span class="number">1</span>, <span class="number">4</span>, <span class="number">4</span>, <span class="number">3</span>);
-<a href=#827 id=827 data-nosnippet>827</a>            scratch.sources.extend((<span class="number">0</span>..<span class="number">4</span>).map(|slot| Source {
-<a href=#828 id=828 data-nosnippet>828</a>                slot,
-<a href=#829 id=829 data-nosnippet>829</a>                count: <span class="number">1</span>,
-<a href=#830 id=830 data-nosnippet>830</a>                placement: slot,
-<a href=#831 id=831 data-nosnippet>831</a>            }));
-<a href=#832 id=832 data-nosnippet>832</a>            <span class="kw">let </span>row = NativeRow {
-<a href=#833 id=833 data-nosnippet>833</a>                uvw_m: [<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#834 id=834 data-nosnippet>834</a>                phase_shift_m: <span class="number">0.0</span>,
-<a href=#835 id=835 data-nosnippet>835</a>                pointing_offset_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
-<a href=#836 id=836 data-nosnippet>836</a>                frequencies_hz: <span class="kw-2">&amp;</span>frequencies,
-<a href=#837 id=837 data-nosnippet>837</a>                values: <span class="kw-2">&amp;</span>[Complex32::default(); <span class="number">3</span>],
-<a href=#838 id=838 data-nosnippet>838</a>                weights: <span class="kw-2">&amp;</span>[<span class="number">1.0</span>; <span class="number">3</span>],
-<a href=#839 id=839 data-nosnippet>839</a>                flags: <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>; <span class="number">3</span>],
-<a href=#840 id=840 data-nosnippet>840</a>                row_flag: <span class="bool-val">false</span>,
-<a href=#841 id=841 data-nosnippet>841</a>                context: RowContext {
-<a href=#842 id=842 data-nosnippet>842</a>                    antennas: [<span class="number">0</span>, <span class="number">1</span>],
-<a href=#843 id=843 data-nosnippet>843</a>                    antenna_types: [<span class="number">0</span>, <span class="number">0</span>],
-<a href=#844 id=844 data-nosnippet>844</a>                    time_s: <span class="number">0.0</span>,
-<a href=#845 id=845 data-nosnippet>845</a>                    field: <span class="number">0</span>,
-<a href=#846 id=846 data-nosnippet>846</a>                    spectral_window: <span class="number">0</span>,
-<a href=#847 id=847 data-nosnippet>847</a>                    parallactic_angle_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
-<a href=#848 id=848 data-nosnippet>848</a>                    native_frequency_ratio: <span class="number">1.0</span>,
-<a href=#849 id=849 data-nosnippet>849</a>                    original_uvw_m: <span class="prelude-val">None</span>,
-<a href=#850 id=850 data-nosnippet>850</a>                },
-<a href=#851 id=851 data-nosnippet>851</a>            };
-<a href=#852 id=852 data-nosnippet>852</a>            resampler.native_terms(<span class="kw-2">&amp;</span>row, <span class="number">1</span>, PlacedRow { start: <span class="number">0</span>, end: <span class="number">4 </span>}, <span class="kw-2">&amp;mut </span>scratch, <span class="number">0</span>);
-<a href=#853 id=853 data-nosnippet>853</a>            <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>scratch.terms()[<span class="number">1</span>].points[..<span class="number">2</span>], [<span class="number">1</span>, <span class="number">2</span>]);
-<a href=#854 id=854 data-nosnippet>854</a>            <span class="macro">assert!</span>((scratch.terms()[<span class="number">1</span>].factors[<span class="number">1</span>] - factor).abs() &lt; <span class="number">2e-7</span>);
-<a href=#855 id=855 data-nosnippet>855</a>        }
-<a href=#856 id=856 data-nosnippet>856</a>    }
-<a href=#857 id=857 data-nosnippet>857</a>}
+<a href=#813 id=813 data-nosnippet>813</a>    <span class="kw">fn </span>finish_prediction_with_coverage(
+<a href=#814 id=814 data-nosnippet>814</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#815 id=815 data-nosnippet>815</a>        operator: <span class="kw-2">&amp;</span>MeasurementOperator,
+<a href=#816 id=816 data-nosnippet>816</a>        row: <span class="kw-2">&amp;</span>NativeRow&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#817 id=817 data-nosnippet>817</a>        placed: PlacedRow,
+<a href=#818 id=818 data-nosnippet>818</a>        scratch: <span class="kw-2">&amp;mut </span>PredictionScratch,
+<a href=#819 id=819 data-nosnippet>819</a>        (out, coverage): (<span class="kw-2">&amp;mut </span>[Complex32], <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>[bool]&gt;),
+<a href=#820 id=820 data-nosnippet>820</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt; {
+<a href=#821 id=821 data-nosnippet>821</a>        <span class="kw">if </span>out.len() != row.values.len() {
+<a href=#822 id=822 data-nosnippet>822</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(OperatorError::NativeRow {
+<a href=#823 id=823 data-nosnippet>823</a>                reason: <span class="string">"the prediction holds one value per selected sample"</span>,
+<a href=#824 id=824 data-nosnippet>824</a>            });
+<a href=#825 id=825 data-nosnippet>825</a>        }
+<a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">let </span>npol = operator.polarization().correlations().len();
+<a href=#827 id=827 data-nosnippet>827</a>        <span class="kw">let </span>first = scratch.terms.len();
+<a href=#828 id=828 data-nosnippet>828</a>        <span class="self">self</span>.native_terms(row, npol, placed, scratch, <span class="number">0</span>);
+<a href=#829 id=829 data-nosnippet>829</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(coverage) = coverage {
+<a href=#830 id=830 data-nosnippet>830</a>            <span class="kw">if </span>coverage.len() != out.len() {
+<a href=#831 id=831 data-nosnippet>831</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(OperatorError::NativeRow {
+<a href=#832 id=832 data-nosnippet>832</a>                    reason: <span class="string">"coverage holds one bit per selected sample"</span>,
+<a href=#833 id=833 data-nosnippet>833</a>                });
+<a href=#834 id=834 data-nosnippet>834</a>            }
+<a href=#835 id=835 data-nosnippet>835</a>            <span class="kw">let </span>polarization = operator.polarization().pol_map();
+<a href=#836 id=836 data-nosnippet>836</a>            <span class="kw">for </span>(term, covered) <span class="kw">in </span>scratch.terms[first..]
+<a href=#837 id=837 data-nosnippet>837</a>                .iter()
+<a href=#838 id=838 data-nosnippet>838</a>                .zip(coverage.chunks_exact_mut(npol))
+<a href=#839 id=839 data-nosnippet>839</a>            {
+<a href=#840 id=840 data-nosnippet>840</a>                <span class="kw">let </span>has_sample = term.points.iter().any(|<span class="kw-2">&amp;</span>point| point != NO_CELL);
+<a href=#841 id=841 data-nosnippet>841</a>                <span class="kw">for </span>(index, value) <span class="kw">in </span>covered.iter_mut().enumerate() {
+<a href=#842 id=842 data-nosnippet>842</a>                    <span class="kw-2">*</span>value = has_sample
+<a href=#843 id=843 data-nosnippet>843</a>                        &amp;&amp; polarization[index].is_some()
+<a href=#844 id=844 data-nosnippet>844</a>                        &amp;&amp; term.flags &amp; (<span class="number">1 </span>&lt;&lt; index) == <span class="number">0</span>;
+<a href=#845 id=845 data-nosnippet>845</a>                }
+<a href=#846 id=846 data-nosnippet>846</a>            }
+<a href=#847 id=847 data-nosnippet>847</a>        }
+<a href=#848 id=848 data-nosnippet>848</a>        interpolate_terms(
+<a href=#849 id=849 data-nosnippet>849</a>            <span class="kw-2">&amp;</span>scratch.predicted,
+<a href=#850 id=850 data-nosnippet>850</a>            npol,
+<a href=#851 id=851 data-nosnippet>851</a>            <span class="kw-2">&amp;</span>scratch.terms[first..],
+<a href=#852 id=852 data-nosnippet>852</a>            out,
+<a href=#853 id=853 data-nosnippet>853</a>            <span class="number">0</span>,
+<a href=#854 id=854 data-nosnippet>854</a>            <span class="bool-val">false</span>,
+<a href=#855 id=855 data-nosnippet>855</a>        );
+<a href=#856 id=856 data-nosnippet>856</a>        scratch.terms.truncate(first);
+<a href=#857 id=857 data-nosnippet>857</a>        <span class="prelude-val">Ok</span>(())
+<a href=#858 id=858 data-nosnippet>858</a>    }
+<a href=#859 id=859 data-nosnippet>859</a>}
+<a href=#860 id=860 data-nosnippet>860</a>
+<a href=#861 id=861 data-nosnippet>861</a><span class="attr">#[cfg(test)]
+<a href=#862 id=862 data-nosnippet>862</a></span><span class="kw">mod </span>tests {
+<a href=#863 id=863 data-nosnippet>863</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#864 id=864 data-nosnippet>864</a>    <span class="kw">use crate</span>::{RowContext, SpectralKernel};
+<a href=#865 id=865 data-nosnippet>865</a>
+<a href=#866 id=866 data-nosnippet>866</a>    <span class="attr">#[test]
+<a href=#867 id=867 data-nosnippet>867</a>    </span><span class="kw">fn </span>tabular_model_prediction_refines_a_uniform_inverse_only_for_wider_image_planes() {
+<a href=#868 id=868 data-nosnippet>868</a>        <span class="kw">let </span>axis = SpectralAxis::tabular(<span class="kw-2">&amp;</span>[<span class="number">140.0</span>, <span class="number">120.0</span>, <span class="number">107.0</span>, <span class="number">100.0</span>], -<span class="number">20.0</span>).unwrap();
+<a href=#869 id=869 data-nosnippet>869</a>        <span class="kw">let </span>resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
+<a href=#870 id=870 data-nosnippet>870</a>        <span class="kw">for </span>(frequencies, factor) <span class="kw">in </span>[
+<a href=#871 id=871 data-nosnippet>871</a>            ([<span class="number">100.0</span>, <span class="number">110.0</span>, <span class="number">120.0</span>], <span class="number">0.5</span>),
+<a href=#872 id=872 data-nosnippet>872</a>            ([<span class="number">92.0</span>, <span class="number">119.0</span>, <span class="number">146.0</span>], <span class="number">1.0 </span>/ <span class="number">13.0</span>),
+<a href=#873 id=873 data-nosnippet>873</a>        ] {
+<a href=#874 id=874 data-nosnippet>874</a>            <span class="kw">let </span><span class="kw-2">mut </span>scratch = PredictionScratch::with_capacity(<span class="number">1</span>, <span class="number">4</span>, <span class="number">4</span>, <span class="number">3</span>);
+<a href=#875 id=875 data-nosnippet>875</a>            scratch.sources.extend((<span class="number">0</span>..<span class="number">4</span>).map(|slot| Source {
+<a href=#876 id=876 data-nosnippet>876</a>                slot,
+<a href=#877 id=877 data-nosnippet>877</a>                count: <span class="number">1</span>,
+<a href=#878 id=878 data-nosnippet>878</a>                placement: slot,
+<a href=#879 id=879 data-nosnippet>879</a>            }));
+<a href=#880 id=880 data-nosnippet>880</a>            <span class="kw">let </span>row = NativeRow {
+<a href=#881 id=881 data-nosnippet>881</a>                uvw_m: [<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#882 id=882 data-nosnippet>882</a>                phase_shift_m: <span class="number">0.0</span>,
+<a href=#883 id=883 data-nosnippet>883</a>                pointing_offset_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
+<a href=#884 id=884 data-nosnippet>884</a>                frequencies_hz: <span class="kw-2">&amp;</span>frequencies,
+<a href=#885 id=885 data-nosnippet>885</a>                values: <span class="kw-2">&amp;</span>[Complex32::default(); <span class="number">3</span>],
+<a href=#886 id=886 data-nosnippet>886</a>                weights: <span class="kw-2">&amp;</span>[<span class="number">1.0</span>; <span class="number">3</span>],
+<a href=#887 id=887 data-nosnippet>887</a>                flags: <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>; <span class="number">3</span>],
+<a href=#888 id=888 data-nosnippet>888</a>                row_flag: <span class="bool-val">false</span>,
+<a href=#889 id=889 data-nosnippet>889</a>                context: RowContext {
+<a href=#890 id=890 data-nosnippet>890</a>                    antennas: [<span class="number">0</span>, <span class="number">1</span>],
+<a href=#891 id=891 data-nosnippet>891</a>                    antenna_types: [<span class="number">0</span>, <span class="number">0</span>],
+<a href=#892 id=892 data-nosnippet>892</a>                    time_s: <span class="number">0.0</span>,
+<a href=#893 id=893 data-nosnippet>893</a>                    field: <span class="number">0</span>,
+<a href=#894 id=894 data-nosnippet>894</a>                    spectral_window: <span class="number">0</span>,
+<a href=#895 id=895 data-nosnippet>895</a>                    parallactic_angle_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
+<a href=#896 id=896 data-nosnippet>896</a>                    native_frequency_ratio: <span class="number">1.0</span>,
+<a href=#897 id=897 data-nosnippet>897</a>                    original_uvw_m: <span class="prelude-val">None</span>,
+<a href=#898 id=898 data-nosnippet>898</a>                },
+<a href=#899 id=899 data-nosnippet>899</a>            };
+<a href=#900 id=900 data-nosnippet>900</a>            resampler.native_terms(<span class="kw-2">&amp;</span>row, <span class="number">1</span>, PlacedRow { start: <span class="number">0</span>, end: <span class="number">4 </span>}, <span class="kw-2">&amp;mut </span>scratch, <span class="number">0</span>);
+<a href=#901 id=901 data-nosnippet>901</a>            <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>scratch.terms()[<span class="number">1</span>].points[..<span class="number">2</span>], [<span class="number">1</span>, <span class="number">2</span>]);
+<a href=#902 id=902 data-nosnippet>902</a>            <span class="macro">assert!</span>((scratch.terms()[<span class="number">1</span>].factors[<span class="number">1</span>] - factor).abs() &lt; <span class="number">2e-7</span>);
+<a href=#903 id=903 data-nosnippet>903</a>        }
+<a href=#904 id=904 data-nosnippet>904</a>    }
+<a href=#905 id=905 data-nosnippet>905</a>}
 </code></pre></div></section></main></body></html>
