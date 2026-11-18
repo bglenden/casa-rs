@@ -573,10 +573,14 @@ fn model(
                 )
                 .at("smodel"));
             }
-            if polarized.iter().any(|stokes| *stokes != 0.0) {
+            if task.surface() == "bandpass" && polarized.iter().any(|stokes| *stokes != 0.0) {
                 return Err(not_yet("smodel", &format!("{smodel:?}")));
             }
-            Ok((GainSolveModelSource::PointSource, [i as f32, 0.0, 0.0, 0.0]))
+            let mut stokes = [0.0; 4];
+            for (value, input) in stokes.iter_mut().zip(smodel) {
+                *value = input as f32;
+            }
+            Ok((GainSolveModelSource::PointSource, stokes))
         }
         _ => Err(TaskFailure::validation(format!(
             "smodel takes [I, Q, U, V], or fewer with the rest zero, or [] for the MODEL_DATA \

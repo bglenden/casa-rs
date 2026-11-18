@@ -14,7 +14,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
     let options = SolveGroupOptions {
         gain_type: GainType::G,
         model_source: GainSolveModelSource::PointSource,
-        stokes_i: 1.0,
+        point_stokes: [1.0, 0.0, 0.0, 0.0],
         solve_interval: GainSolveInterval::Infinite,
         combine: GainSolveCombine::default(),
         channelized: true,
