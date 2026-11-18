@@ -453,3 +453,53 @@ def test_append_to_casa_tiled_column_extends_row_coordinate(tmp_path: Path) -> N
     np.testing.assert_array_equal(tool.getcell("VALUE", 1), [2.0, 3.0])
     np.testing.assert_array_equal(tool.getcell("VALUE", 2), [0.0, 0.0])
     tool.done()
+
+
+def test_packed_tiled_putcol_publishes_complete_tiles(tmp_path: Path) -> None:
+    path = tmp_path / "tiled-complex.table"
+    tool = tools.table()
+    assert tool.create(str(path), DESCRIPTION, nrow=6)
+    assert tool.addcols(
+        {"DATA": {"valueType": "complex", "ndim": 2, "shape": [4, 6], "option": 4}},
+        {
+            "TYPE": "TiledShapeStMan",
+            "NAME": "TiledData",
+            "SPEC": {"DEFAULTTILESHAPE": [2, 3, 2]},
+        },
+    )
+    assert tool.putcol("id", np.arange(6, dtype=np.int32))
+    assert tool.close()
+
+    # Keep a reader open across the write and prime its cell and tile caches.
+    reader = tools.table()
+    assert reader.open(str(path))
+    np.testing.assert_array_equal(reader.getcell("DATA", 2), np.zeros((4, 6)))
+    assert tool.open(str(path), nomodify=False)
+    np.testing.assert_array_equal(tool.getcell("DATA", 2), np.zeros((4, 6)))
+
+    values = np.arange(48, dtype=np.float32).reshape(4, 6, 2)
+    packed = np.asfortranarray(values - (values + 1) * np.complex64(1j))
+    assert tool.putcol("DATA", packed, startrow=2, nrow=2)
+    for handle in [tool, reader]:
+        np.testing.assert_array_equal(handle.getcell("DATA", 2), packed[..., 0])
+        all_rows = handle.getcol("DATA")
+        np.testing.assert_array_equal(all_rows[..., 2:4], packed)
+        np.testing.assert_array_equal(all_rows[..., [0, 1, 4, 5]], np.zeros((4, 6, 4)))
+        np.testing.assert_array_equal(handle.getcol("id"), np.arange(6))
+
+    # A Fortran-contiguous input can still require the partial-tile writer.
+    partial = np.asfortranarray(packed[..., :1] * np.complex64(2 - 3j))
+    assert tool.putcol("DATA", partial, startrow=3, nrow=1)
+    np.testing.assert_array_equal(
+        reader.getcol("DATA")[..., 2:4],
+        np.concatenate([packed[..., :1], partial], axis=2),
+    )
+
+    # A noncontiguous NumPy input also uses ordinary writes.
+    assert tool.putcol("DATA", packed[::-1, :, :1], startrow=3, nrow=1)
+    np.testing.assert_array_equal(reader.getcell("DATA", 3), packed[::-1, :, 0])
+    with pytest.raises(RuntimeError, match="conformance"):
+        tool.putcol("DATA", packed[:2].copy(order="F"), startrow=2, nrow=2)
+    np.testing.assert_array_equal(reader.getcell("DATA", 2), packed[..., 0])
+    assert tool.close()
+    assert reader.close()

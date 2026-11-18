@@ -509,6 +509,7 @@ pub(crate) struct TiledReadMetadata {
 }
 
 mod metadata_shapes;
+pub(crate) mod packed_update;
 
 impl TiledReadMetadata {
     pub(crate) fn open(

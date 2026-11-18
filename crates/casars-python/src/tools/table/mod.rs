@@ -987,7 +987,7 @@ impl PyTableTool {
         rowincr: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let column = text(columnname, "columnname")?;
-        let value = keyword_value(py, value)?;
+        let value = write_cells::ColumnInput::from_python(py, value)?;
         let rows = row_selection(startrow, nrow, rowincr)?;
         self.call(py, move |state, log| state.putcol(column, value, rows, log))
     }
