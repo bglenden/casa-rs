@@ -189,7 +189,7 @@ impl FitModel {
         )
         .map_err(invalid)?;
         let shape = self.shape_at(direction)?;
-        let mut spectrum = SpectralModel::constant(MFrequency::new(1.0e9, FrequencyRef::Lsrk));
+        let mut spectrum = SpectralModel::constant(MFrequency::new(1.0e9, FrequencyRef::LSRK));
         spectrum
             .set_frequency_unit(Unit::new("GHz").expect("GHz is a unit"))
             .map_err(invalid)?;

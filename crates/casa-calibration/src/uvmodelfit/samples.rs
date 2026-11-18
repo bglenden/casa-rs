@@ -182,11 +182,17 @@ impl Batch {
         let Some(ArrayValue::Float64(uvw)) = &self.uvw[index] else {
             return Err(invalid("UVW is not a Double array"));
         };
-        if weights.is_empty() || uvw.len() != 3 || data.shape().len() != 2 || flags.ndim() != 2 {
+        if weights.is_empty()
+            || weights.ndim() != 1
+            || uvw.ndim() != 1
+            || uvw.len() != 3
+            || data.shape().len() != 2
+            || flags.ndim() != 2
+        {
             return Err(invalid("a visibility fit row has an invalid cell shape"));
         }
-        let first = *weights.iter().next().expect("checked nonempty");
-        let last = *weights.iter().next_back().expect("checked nonempty");
+        let first = weights[[0]];
+        let last = weights[[weights.len() - 1]];
         let weight = f64::from((first + last) * 0.5);
         Ok(Sample {
             data,
