@@ -3860,6 +3860,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#gaincal-can-crash-while-opening-a-tracked-virtual-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaincal can crash while opening a tracked virtual image
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9877,6 +9888,18 @@ both self maps and the identical input MS/calibration table. That control
 matches native corrected data, flags and weight/sigma columns. Missing joint
 contexts still use the ordinary unavailable-calibration rules. No tolerance
 is relaxed, and this correction is separate from same-input task matches.</p>
+<h2 id="gaincal-can-crash-while-opening-a-tracked-virtual-image">Gaincal can crash while opening a tracked virtual image<a class="headerlink" href="#gaincal-can-crash-while-opening-a-tracked-virtual-image" title="Permanent link">&para;</a></h2>
+<p>On Linux, CASA 6.7.6.14 saved a virtual GridFT image with
+<code>tclean(phasecenter='TRACKFIELD', savemodel='virtual')</code> on an MS with an
+attached Uranus ephemeris. Calling <code>gaincal</code> on that MS terminated Python
+with signal 11. CASA wrote a nonconstant prediction to <code>MODEL_DATA</code> when
+<code>savemodel='modelcolumn'</code> used the same image settings and visibilities.</p>
+<p>casa-rs reads the saved source, tracking epoch and image direction and
+evaluates the tracked prediction in the visibility buffer. The
+<code>gaincal_oracle.py --case ephemeris</code> fixture compares native gains and
+downstream application from the virtual image to CASA gains and
+application from its scratch prediction. It also covers a tracked mosaic,
+an external ephemeris table and moving-field parallactic angles. See #30.</p>
 
 
 
