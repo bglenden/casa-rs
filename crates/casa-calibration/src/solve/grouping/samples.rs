@@ -310,12 +310,13 @@ impl SolveEdgeAccumulation {
         }
         let weight = sample.weight * model_norm_sqr;
         self.weighted_sum += if POINT
+            && sample.model.im == 0.0
             && power.is_finite()
             && model_norm_sqr.is_finite()
             && sample.weight.is_finite()
         {
-            // A point Stokes-I model is real. Keep the general expression for
-            // non-finite values so its existing propagation is preserved.
+            // Real point models need only a scalar multiply. Complex and
+            // non-finite values use the full expression.
             let scale = sample.weight * sample.model.re;
             Complex32::new(sample.data.re * scale, sample.data.im * scale)
         } else {
