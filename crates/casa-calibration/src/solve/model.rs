@@ -22,7 +22,7 @@ use num_complex::Complex64;
 
 use super::grouping::{BucketedRow, SelectedSolveRow, VisibilityBuffer};
 use super::{GainSolveCombine, GainSolveError, GainSolveModelSource, get_i32};
-use fourier::{FourierModel, FourierRow};
+use fourier::{FourierMerge, FourierModel, FourierRow};
 
 pub(super) struct ModelInputs {
     read_column: bool,
@@ -334,13 +334,20 @@ impl ModelInputs {
         }
         let shape = [correlations.len(), frequencies.len()];
         let mut model = match previous {
-            Some(model) if model.shape() == shape => model,
-            Some(_) => return Err(model_error("MODEL_DATA does not match its layout")),
+            Some(model) if model.shape() != shape => {
+                return Err(model_error("MODEL_DATA does not match its layout"));
+            }
+            Some(model) if model.t().is_standard_layout() => model,
+            Some(model) => ArrayD::from_shape_fn(IxDyn(&shape).f(), |index| model[index]),
             None => ArrayD::<Complex32>::zeros(IxDyn(&shape).f()),
         };
+        let mut components_written = false;
         for entry in matching {
             let components = match &entry.prediction {
-                Prediction::Components(components) => components,
+                Prediction::Components(components) => {
+                    components_written = true;
+                    components
+                }
                 Prediction::FourierGrid(grid) => {
                     grid.predict(
                         FourierRow {
@@ -358,8 +365,15 @@ impl ModelInputs {
                             focus_rows: &buffer.focus_rows,
                         },
                         &mut model,
-                        scratch_model,
+                        if !scratch_model {
+                            FourierMerge::VirtualSum
+                        } else if components_written {
+                            FourierMerge::ScratchReplaceComponents
+                        } else {
+                            FourierMerge::ScratchSum
+                        },
                     )?;
+                    components_written = false;
                     continue;
                 }
             };

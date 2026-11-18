@@ -44,6 +44,13 @@ struct FourierCache {
     layouts: BTreeMap<Option<i32>, BTreeMap<Vec<i32>, PreparedFourierModel>>,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum FourierMerge {
+    VirtualSum,
+    ScratchSum,
+    ScratchReplaceComponents,
+}
+
 pub(super) struct FourierRow<'a> {
     pub(super) ms: &'a MeasurementSet,
     pub(super) row: &'a SelectedSolveRow,
@@ -83,7 +90,7 @@ impl FourierModel {
         &self,
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
-        scratch_model: bool,
+        merge: FourierMerge,
     ) -> Result<(), GainSolveError> {
         let mut prepared = self
             .prepared
@@ -101,7 +108,7 @@ impl FourierModel {
         layouts
             .get_mut(row.correlations)
             .expect("correlation layout was prepared")
-            .predict(row, output, scratch_model)
+            .predict(row, output, merge)
     }
 }
 
@@ -243,7 +250,7 @@ impl PreparedFourierModel {
         &mut self,
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
-        scratch_model: bool,
+        merge: FourierMerge,
     ) -> Result<(), GainSolveError> {
         let shift = self
             .tracking
@@ -351,8 +358,8 @@ impl PreparedFourierModel {
                 spectral_window: row.row.data_spw_id as u32,
             },
         };
-        let keep_unvisited = self.legacy_flags && scratch_model;
-        let coverage = keep_unvisited.then(|| {
+        let is_scratch = self.legacy_flags && !matches!(merge, FourierMerge::VirtualSum);
+        let coverage = is_scratch.then(|| {
             self.covered.resize(cells, false);
             &mut self.covered[..]
         });
@@ -366,7 +373,7 @@ impl PreparedFourierModel {
                 (&mut self.output, coverage),
             )
             .map_err(model_error)?;
-        self.accumulate(row, output, lsrk_ratio, keep_unvisited);
+        self.accumulate(row, output, lsrk_ratio, is_scratch.then_some(merge));
         Ok(())
     }
 
@@ -375,13 +382,13 @@ impl PreparedFourierModel {
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
         lsrk_ratio: f64,
-        keep_unvisited: bool,
+        scratch: Option<FourierMerge>,
     ) {
         let correlations = row.correlations.len();
         let destination = output
             .as_slice_memory_order_mut()
             .expect("contiguous model output");
-        if !keep_unvisited && self.scale.is_none() && self.legacy_taylor.is_none() {
+        if scratch.is_none() && self.scale.is_none() && self.legacy_taylor.is_none() {
             for (value, &model) in destination.iter_mut().zip(&self.output) {
                 *value += model;
             }
@@ -399,14 +406,21 @@ impl PreparedFourierModel {
             });
             for correlation in 0..correlations {
                 let index = channel * correlations + correlation;
-                // SkyEquation adds the original model to GridFT's output.
-                // GridFT leaves flagged or unmapped samples in that output.
-                let sample = if keep_unvisited && !self.covered[index] {
-                    destination[index]
+                let assigned = scratch.is_none() || self.covered[index];
+                if matches!(scratch, Some(FourierMerge::ScratchReplaceComponents)) {
+                    if assigned {
+                        destination[index] = self.output[index] * (factor * taylor);
+                    }
                 } else {
-                    self.output[index]
-                };
-                destination[index] += sample * (factor * taylor);
+                    // An additive SkyEquation pass adds the original model
+                    // to GridFT's output, including samples it did not visit.
+                    let sample = if assigned {
+                        self.output[index]
+                    } else {
+                        destination[index]
+                    };
+                    destination[index] += sample * (factor * taylor);
+                }
             }
         }
     }

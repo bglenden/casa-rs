@@ -3,6 +3,7 @@
 """Compare the ft model records, visibility storage and consumers with CASA."""
 
 import argparse
+from datetime import UTC, datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import numpy as np
 
 from calibration_scratch_oracle import MAIN, prepare, state
 from bandpass_oracle import source_data
+from gaincal_oracle import relative_rms, solve
 
 
 def coordinates(ms):
@@ -151,11 +153,58 @@ def image_workflows(root, source, native, point, case=None):
     return outcomes
 
 
+def calibration_chain(root, source, native, component_path):
+    """Fit against the other engine's persisted virtual component recipe."""
+    cases = [(casa, casa, casa), (casa, native, native), (native, casa, casa),
+             (native, native, native)]
+    expected = None
+    errors = []
+    for index, (writer, solver, subtractor) in enumerate(cases):
+        path = root/f'chain-{index}.ms'
+        prepare(source, path)
+        writer.ft(str(path), field='0', complist=str(component_path))
+        before = state(path)
+        result = solve(solver, root, f'chain-{index}', path, field='0', gaintype='G',
+                       calmode='ap', solint='inf', minblperant=2)
+        subtractor.uvsub(str(path))
+        arrays, virtual = state(path)
+        np.testing.assert_equal(before[1], virtual)
+        for name in MAIN:
+            if name in before[0]:
+                np.testing.assert_equal(arrays[name], before[0][name])
+        if expected is None:
+            expected = result, arrays['CORRECTED_DATA']
+            assert not np.all(result['FLAG'])
+            continue
+        for name in ('FIELD_ID', 'ANTENNA1', 'ANTENNA2', 'SPECTRAL_WINDOW_ID', 'FLAG'):
+            np.testing.assert_array_equal(result[name], expected[0][name])
+        good = ~expected[0]['FLAG']
+        errors.append({
+            'gain_nrms': relative_rms(result['CPARAM'][good], expected[0]['CPARAM'][good]),
+            'corrected_nrms': relative_rms(arrays['CORRECTED_DATA'], expected[1]),
+        })
+        assert errors[-1]['gain_nrms'] < 1e-3
+        assert errors[-1]['corrected_nrms'] < 1e-5
+    return errors
+
+
+def initial_time_range(source):
+    tb = table()
+    tb.open(str(source))
+    try:
+        start = datetime(1858, 11, 17, tzinfo=UTC) + timedelta(seconds=float(tb.getcell('TIME', 0)))
+    finally:
+        tb.close()
+    fmt = '%Y/%m/%d/%H:%M:%S'
+    return f'{(start-timedelta(seconds=1)).strftime(fmt)}~{(start+timedelta(seconds=1)).strftime(fmt)}'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
     parser.add_argument('--images', action='store_true')
+    parser.add_argument('--chain', action='store_true')
     parser.add_argument('--case', help='Run cases containing this text')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
@@ -190,6 +239,7 @@ def main():
         ('scratch-selection-scan', point, dict(scan='1', usescratch=True), {}, False),
         ('scratch-selection-antenna', point, dict(antenna='0&1', usescratch=True), {}, False),
         ('scratch-selection-distance', point, dict(uvrange='>1m', usescratch=True), {}, False),
+        ('scratch-selection-time', point, dict(timerange=initial_time_range(source), usescratch=True), {}, False),
         ('scratch-selection-observation', point, dict(observation='0', usescratch=True), {}, False),
         ('scratch-empty-selection', point, dict(scan='999', usescratch=True), {}, True),
     ]
@@ -210,6 +260,14 @@ def main():
         print(label, flush=True)
     if args.images:
         evidence.update(image_workflows(root, source, tasks, point, args.case))
+    if args.chain:
+        spectral = root/'spectral-point.cl'
+        cl = componentlist()
+        assert cl.addcomponent(dir=f'J2000 {ra}rad {dec}rad', flux=2., fluxunit='Jy',
+                               freq='100GHz', spectrumtype='spectral index', index=-0.5)
+        assert cl.rename(str(spectral))
+        cl.done()
+        evidence['chain'] = calibration_chain(root, source, tasks, spectral)
     (root/'results.json').write_text(json.dumps(evidence, indent=2)+'\n')
 
 
