@@ -49,7 +49,8 @@ def test_matches_casa_or_preserves_component_after_unsafe_failure():
             expected=case['before'] if case['case'] in ('mismatch_frame','tab_none') else case['after']
         else:
             assert c.setstokesspectrum(which,**kwargs) is case['result'],case['case']
-            expected=case['before'] if case['case']=='plp_full' else case['after']
+            # CASA returns False for PLP but still changes the reference frequency.
+            expected=case['after']
         compare(snapshot(c),expected);assert c.done()
 
 

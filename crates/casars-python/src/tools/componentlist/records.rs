@@ -419,7 +419,9 @@ fn spectrum(input: &RecordValue, lines: &mut Vec<LogLine>) -> Result<RecordValue
 /// C++ throws these errors directly; failures returned by fromRecord carry
 /// the caller's add/fromrecord context instead.
 pub(super) fn import_error(message: String, adding: bool) -> ConvertError {
-    if message.starts_with("Unit::check ")
+    if message.starts_with("RecordRep::")
+        || message.starts_with("RecordInterface::")
+        || message.starts_with("Unit::check ")
         || message.ends_with("The errors must be non-negative angular quantities.")
     {
         ConvertError::runtime(message)

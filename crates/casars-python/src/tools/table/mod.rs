@@ -162,11 +162,7 @@ impl PyTableTool {
         work: impl FnOnce(&mut State, &mut Vec<LogLine>) -> Result<CasaValue, Fail> + Send,
     ) -> PyResult<Py<PyAny>> {
         let mut lines = Vec::new();
-        let result = py.detach(|| {
-            super::componentlist::flush_pending_keywords()
-                .map_err(|e| Fail::Runtime(e.to_string()))?;
-            work(&mut self.guard(), &mut lines)
-        });
+        let result = py.detach(|| work(&mut self.guard(), &mut lines));
         emit(py, LOGGER, &lines)?;
         result?.into_python(py)
     }

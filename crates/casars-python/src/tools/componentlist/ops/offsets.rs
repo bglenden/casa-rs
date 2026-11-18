@@ -109,6 +109,44 @@ fn field_mut<'a>(record: &'a mut CasaValue, name: &str) -> &'a mut CasaValue {
 }
 
 impl State {
+    pub(crate) fn getspectrum(&self, which: i64) -> crate::convert::ConvertResult<CasaValue> {
+        let mut spectrum = super::record(self.unchecked(which)?.spectrum().to_record())?;
+        if let Some(offset) = self
+            .offsets
+            .get(&(which as usize))
+            .and_then(|offsets| offsets.frequency.as_ref())
+        {
+            let CasaValue::Record(fields) = field_mut(&mut spectrum, "frequency") else {
+                unreachable!("frequency record")
+            };
+            fields.push(("offset".into(), CasaValue::from_record(offset)));
+        }
+        Ok(spectrum)
+    }
+
+    pub(super) fn spectral_records(
+        &self,
+    ) -> Result<std::collections::BTreeMap<usize, RecordValue>, String> {
+        let mut records = std::collections::BTreeMap::new();
+        for (&index, offsets) in &self.offsets {
+            if let Some(offset) = &offsets.frequency {
+                let mut record = self
+                    .list
+                    .get(index)
+                    .expect("offset component")
+                    .spectrum()
+                    .to_record()
+                    .map_err(|error| error.to_string())?;
+                let Some(Value::Record(frequency)) = record.get_mut("frequency") else {
+                    unreachable!("frequency record")
+                };
+                frequency.upsert("offset", Value::Record(offset.clone()));
+                records.insert(index, record);
+            }
+        }
+        Ok(records)
+    }
+
     pub(super) fn materialized(&self) -> Result<Cow<'_, ComponentList>, String> {
         if self.offsets.is_empty() {
             return Ok(Cow::Borrowed(&self.list));

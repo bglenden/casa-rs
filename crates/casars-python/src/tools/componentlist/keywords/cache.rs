@@ -18,6 +18,7 @@ static PENDING: AtomicUsize = AtomicUsize::new(0);
 pub(crate) struct Shared {
     pub(super) path: PathBuf,
     pub(super) cache: Mutex<Cache>,
+    epoch: Arc<AtomicU64>,
 }
 pub(super) struct Cache {
     pub(super) table: Table,
@@ -35,6 +36,7 @@ pub(crate) fn attach(path: &Path) -> ConvertResult<Arc<Shared>> {
     let table = super::open(path)?;
     let shared = Arc::new(Shared {
         path: path.to_path_buf(),
+        epoch: Arc::clone(&epoch),
         cache: Mutex::new(Cache {
             table,
             dirty: false,
@@ -50,28 +52,34 @@ pub(crate) fn attach(path: &Path) -> ConvertResult<Arc<Shared>> {
 
 /// Table tools read from disk. Publish pending component-list keywords before
 /// they take their own locks, without holding the registry while doing I/O.
-pub(crate) fn flush_pending() -> ConvertResult<()> {
-    flush_except(None)
-}
-pub(super) fn flush_except(own: Option<&Arc<Shared>>) -> ConvertResult<()> {
+pub(crate) fn flush_pending(path: &Path) -> ConvertResult<()> {
     if PENDING.load(Ordering::Acquire) == 0 {
         return Ok(());
     }
+    let epoch = crate::tools::table::component_keyword_epoch(path);
+    flush_matching(&epoch, None)
+}
+pub(super) fn flush_except(own: &Arc<Shared>) -> ConvertResult<()> {
+    if PENDING.load(Ordering::Acquire) == 0 {
+        return Ok(());
+    }
+    flush_matching(&own.epoch, Some(own))
+}
+fn flush_matching(epoch: &Arc<AtomicU64>, own: Option<&Arc<Shared>>) -> ConvertResult<()> {
     let tables = TABLES
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .iter()
         .filter_map(Weak::upgrade)
+        .filter(|table| {
+            Arc::ptr_eq(epoch, &table.epoch) && !own.is_some_and(|own| Arc::ptr_eq(own, table))
+        })
         .collect::<Vec<_>>();
     for table in tables {
-        if own.is_some_and(|own| Arc::ptr_eq(own, &table)) {
-            continue;
+        let mut cache = table.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        if cache.dirty {
+            cache.flush(&table.path)?;
         }
-        table
-            .cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .flush(&table.path)?;
     }
     Ok(())
 }

@@ -790,9 +790,7 @@ impl PyComponentList {
     /// Component `which`'s spectral model, as its `toRecord` writes it.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
     fn getspectrum(&self, py: Python<'_>, which: i64) -> PyResult<Py<PyAny>> {
-        self.call(py, move |state, _| {
-            ops::record(state.unchecked(which)?.spectrum().to_record())
-        })
+        self.call(py, move |state, _| state.getspectrum(which))
     }
 
     /// Whether the attached table has the named top-level keyword.

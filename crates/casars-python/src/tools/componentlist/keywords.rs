@@ -54,7 +54,7 @@ fn open(path: &Path) -> ConvertResult<Table> {
 
 /// `hasKeyword` tests the literal top-level field name, even when it has dots.
 pub(super) fn has(shared: &Arc<Shared>, name: &str) -> ConvertResult<CasaValue> {
-    cache::flush_except(Some(shared))?;
+    cache::flush_except(shared)?;
     let mut cache = shared.cache.lock().unwrap_or_else(PoisonError::into_inner);
     cache.read(&shared.path, |table| {
         Ok(CasaValue::Bool(table.keywords().get(name).is_some()))
@@ -63,7 +63,7 @@ pub(super) fn has(shared: &Arc<Shared>, name: &str) -> ConvertResult<CasaValue> 
 
 /// `getKeyword` resolves dotted names through records as TableProxy does.
 pub(super) fn get(shared: &Arc<Shared>, name: &str) -> ConvertResult<CasaValue> {
-    cache::flush_except(Some(shared))?;
+    cache::flush_except(shared)?;
     let mut cache = shared.cache.lock().unwrap_or_else(PoisonError::into_inner);
     cache.read(&shared.path, |table| {
         Ok(values::value(lookup(table.keywords(), name)?, &shared.path))
@@ -77,7 +77,7 @@ pub(super) fn put(
     name: &str,
     value: ComponentKeywordValue,
 ) -> ConvertResult<()> {
-    cache::flush_except(Some(shared))?;
+    cache::flush_except(shared)?;
     let mut cache = shared.cache.lock().unwrap_or_else(PoisonError::into_inner);
     cache.begin_write()?;
     let mut next = cache.table.keywords().clone();

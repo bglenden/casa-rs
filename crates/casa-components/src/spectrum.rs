@@ -143,6 +143,7 @@ pub struct TabularSpectrum {
     frame: FrequencyRef,
     frequencies_hz: Vec<f64>,
     stokes_flux: Vec<[f64; 4]>,
+    range_hz: (f64, f64),
 }
 
 impl TabularSpectrum {
@@ -167,10 +168,22 @@ impl TabularSpectrum {
                 ),
             });
         }
+        let range_hz = if frequencies_hz.is_empty() {
+            (0.0, 0.0)
+        } else {
+            (
+                frequencies_hz
+                    .iter()
+                    .copied()
+                    .fold(f64::NEG_INFINITY, f64::max),
+                frequencies_hz.iter().copied().fold(f64::INFINITY, f64::min),
+            )
+        };
         Ok(Self {
             frame,
             frequencies_hz,
             stokes_flux,
+            range_hz,
         })
     }
 
@@ -181,6 +194,7 @@ impl TabularSpectrum {
             frame: FrequencyRef::LSRK,
             frequencies_hz: Vec::new(),
             stokes_flux: Vec::new(),
+            range_hz: (0.0, 0.0),
         }
     }
 
@@ -200,23 +214,16 @@ impl TabularSpectrum {
         &self.stokes_flux
     }
 
-    /// The highest and lowest tabulated frequencies, Hz (`maxFreq`,
-    /// `minFreq`), or zeros for an empty tabulation as CASA's default.
+    /// The upper and lower frequency bounds, Hz (`maxFreq`, `minFreq`).
+    /// Constructors use the sample extrema (zeros for an empty tabulation);
+    /// imported CASA records retain their independently supplied bounds.
     pub fn frequency_range_hz(&self) -> (f64, f64) {
-        if self.frequencies_hz.is_empty() {
-            return (0.0, 0.0);
-        }
-        let max = self
-            .frequencies_hz
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
-        let min = self
-            .frequencies_hz
-            .iter()
-            .copied()
-            .fold(f64::INFINITY, f64::min);
-        (max, min)
+        self.range_hz
+    }
+
+    /// Imported records carry explicit bounds, which need not be sample extrema.
+    pub(crate) fn set_record_range_hz(&mut self, max: f64, min: f64) {
+        self.range_hz = (max, min);
     }
 
     /// The reference frequency expressed in the tabulation frame, Hz

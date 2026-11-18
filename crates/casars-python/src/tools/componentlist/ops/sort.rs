@@ -12,6 +12,10 @@ impl State {
                 "Bad sort criteria.\nAllowed values are: 'flux', 'position' & 'polarization'\nNo sorting done.",
             ));
         }
+        let order = self
+            .order
+            .take()
+            .unwrap_or_else(|| (0..self.list.len()).collect());
         let mut components = std::mem::take(&mut self.list)
             .into_components()
             .into_iter()
@@ -19,9 +23,9 @@ impl State {
             .map(|(index, mut component)| {
                 let key = if criterion == "position" {
                     let direction = component.shape().reference_direction();
-                    (direction.latitude_rad().cos() * direction.longitude_rad().cos())
-                        .clamp(-1.0, 1.0)
-                        .acos()
+                    let [x, y, z] = direction.cosines();
+                    let half_chord = ((x - 1.0).powi(2) + y * y + z * z).sqrt() / 2.0;
+                    2.0 * half_chord.min(1.0).asin()
                 } else {
                     let mut flux = component.flux().clone();
                     flux.convert_polarisation(Polarisation::Stokes);
@@ -38,13 +42,19 @@ impl State {
                 (key, index, component)
             })
             .collect::<Vec<_>>();
-        components.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        components.sort_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| order[a.1].cmp(&order[b.1]))
+        });
         if criterion != "position" {
             components.reverse();
         }
         let mut units = std::mem::take(&mut self.shape_units);
         let mut offsets = std::mem::take(&mut self.offsets);
+        let mut sorted_order = Vec::with_capacity(order.len());
         for (_, old, component) in components {
+            sorted_order.push(order[old]);
             if let Some(offsets) = offsets.remove(&old) {
                 self.offsets.insert(self.list.len(), offsets);
             }
@@ -53,6 +63,7 @@ impl State {
             }
             self.list.push(component);
         }
+        self.order = Some(sorted_order);
         Ok(true)
     }
 }

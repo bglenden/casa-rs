@@ -252,6 +252,7 @@ pub(super) fn write_root(
             Target::RowProxy => "TableRowProxy: the given TableRow is not writable".into(),
         });
     }
+    super::state::publish_component_keywords(&root.name)?;
     let named_memory = root.table.is_named_memory_manager();
     if root.table.is_memory() && !named_memory {
         change(&mut root.table, row_map)?;

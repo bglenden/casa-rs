@@ -118,10 +118,19 @@ fn shape(record: &RecordValue) -> Result<ComponentShape, ComponentError> {
 
 fn spectrum(record: &RecordValue) -> Result<SpectralModel, ComponentError> {
     let frequency_record = subrecord(record, "frequency")?;
-    let frequency =
+    let mut frequency =
         frequency_from_record(frequency_record).map_err(|error| invalid(error.to_string()))?;
     let mut kind = SpectralKind::casa_default(SpectralType::parse_casa(string(record, "type")?)?);
     crate::table::apply_spectral_record(&mut kind, record)?;
+    if matches!(kind, SpectralKind::Tabular(_)) {
+        let frame = frequency_from_record(subrecord(record, "freqRef")?)
+            .map_err(|error| invalid(error.to_string()))?
+            .refer();
+        let hz = number(record, "referenceFreq")?;
+        number(record, "minFreq")?;
+        number(record, "maxFreq")?;
+        frequency = casa_types::measures::frequency::MFrequency::new(hz, frame);
+    }
     let mut model = SpectralModel::new(frequency, kind);
     let unit = string(subrecord(frequency_record, "m0")?, "unit")?;
     let unit = Unit::new(unit).map_err(|error| invalid(error.to_string()))?;
@@ -145,14 +154,18 @@ fn string<'a>(record: &'a RecordValue, name: &str) -> Result<&'a str, ComponentE
     }
 }
 
+fn number(record: &RecordValue, name: &str) -> Result<f64, ComponentError> {
+    match record.get(name) {
+        Some(Value::Scalar(ScalarValue::Float64(value))) => Ok(*value),
+        Some(Value::Scalar(ScalarValue::Float32(value))) => Ok(f64::from(*value)),
+        Some(Value::Scalar(ScalarValue::Int32(value))) => Ok(f64::from(*value)),
+        _ => Err(invalid(name)),
+    }
+}
+
 fn quantity(record: &RecordValue) -> Result<Quantity, ComponentError> {
-    let value = match record.get("value") {
-        Some(Value::Scalar(ScalarValue::Float64(value))) => *value,
-        Some(Value::Scalar(ScalarValue::Float32(value))) => f64::from(*value),
-        Some(Value::Scalar(ScalarValue::Int32(value))) => f64::from(*value),
-        _ => return Err(invalid("quantity.value")),
-    };
-    Quantity::new(value, string(record, "unit")?).map_err(|error| invalid(error.to_string()))
+    Quantity::new(number(record, "value")?, string(record, "unit")?)
+        .map_err(|error| invalid(error.to_string()))
 }
 
 fn complex_values(value: Option<&Value>) -> Option<[Complex64; 4]> {

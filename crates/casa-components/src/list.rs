@@ -71,7 +71,7 @@ impl ComponentList {
     /// table with `NewNoReplace`), [`ComponentListError::Unwritable`] for a
     /// component CASA could not write, and the table system's failures.
     pub fn write_table(&self, path: impl AsRef<Path>) -> Result<(), ComponentListError> {
-        table::write_component_list(self, path.as_ref())
+        table::write_component_list(self, path.as_ref(), &std::collections::BTreeMap::new())
     }
 
     /// Rewrite the component-list table at `path` with this list, as CASA's
@@ -95,7 +95,42 @@ impl ComponentList {
     /// holds it, or waiting would deadlock) or the table cannot be saved,
     /// and [`Self::write_table`]'s errors for a new table.
     pub fn rewrite_table(&self, path: impl AsRef<Path>) -> Result<(), ComponentListError> {
-        table::rewrite_component_list(self, path.as_ref())
+        table::rewrite_component_list(self, path.as_ref(), &std::collections::BTreeMap::new())
+    }
+
+    /// Write a new table with supplied raw `Spectral_Record` cells.
+    ///
+    /// CASA retains relative frequency measures, including their offsets, in
+    /// these records while the scalar reference-frequency column stores the
+    /// absolute frequency. `self` supplies those absolute column values;
+    /// `records` supplies the original spectral records for the affected rows.
+    /// Other rows use their model's generated record.
+    ///
+    /// # Errors
+    ///
+    /// The same errors as [`Self::write_table`].
+    pub fn write_table_with_spectral_records(
+        &self,
+        path: impl AsRef<Path>,
+        records: &std::collections::BTreeMap<usize, casa_types::RecordValue>,
+    ) -> Result<(), ComponentListError> {
+        table::write_component_list(self, path.as_ref(), records)
+    }
+
+    /// Rewrite a table, preserving raw spectral records alongside absolute
+    /// frequency columns, as [`Self::write_table_with_spectral_records`] does.
+    ///
+    /// Locking, publication and failure behavior match [`Self::rewrite_table`].
+    ///
+    /// # Errors
+    ///
+    /// The same errors as [`Self::rewrite_table`].
+    pub fn rewrite_table_with_spectral_records(
+        &self,
+        path: impl AsRef<Path>,
+        records: &std::collections::BTreeMap<usize, casa_types::RecordValue>,
+    ) -> Result<(), ComponentListError> {
+        table::rewrite_component_list(self, path.as_ref(), records)
     }
 
     /// Append a component (`add`).

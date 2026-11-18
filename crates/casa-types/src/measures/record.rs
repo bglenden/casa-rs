@@ -243,9 +243,9 @@ pub fn direction_from_record(rec: &RecordValue) -> Result<MDirection, MeasureErr
     let refer: DirectionRef = refer_str.parse()?;
 
     let m0 = extract_sub_record(rec, "m0")?;
-    let lon = extract_quantity_value(m0)?;
+    let lon = angular_quantity(m0)?;
     let m1 = extract_sub_record(rec, "m1")?;
-    let lat = extract_quantity_value(m1)?;
+    let lat = angular_quantity(m1)?;
 
     let direction = MDirection::from_angles(lon, lat, refer);
     if let Some(offset) = rec.get("offset") {
@@ -416,6 +416,31 @@ fn angular_quantity(record: &RecordValue) -> Result<f64, MeasureError> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn direction_record_converts_literal_degrees_and_offsets() {
+        use super::*;
+        let literal = |lon, lat| {
+            RecordValue::new(vec![
+                RecordField::new(
+                    "type",
+                    Value::Scalar(ScalarValue::String("direction".into())),
+                ),
+                RecordField::new("refer", Value::Scalar(ScalarValue::String("J2000".into()))),
+                RecordField::new("m0", Value::Record(quantity_record(lon, "deg"))),
+                RecordField::new("m1", Value::Record(quantity_record(lat, "deg"))),
+            ])
+        };
+        let mut record = literal(10.0, 20.0);
+        let direction = direction_from_record(&record).unwrap();
+        assert!((direction.longitude_rad() - 10_f64.to_radians()).abs() < 1e-14);
+        assert!((direction.latitude_rad() - 20_f64.to_radians()).abs() < 1e-14);
+        record.push(RecordField::new("offset", Value::Record(literal(1.0, 2.0))));
+        let direction = direction_from_record(&record).unwrap();
+        // CASA 6.7.6.14: normalize the sum of the two unit vectors.
+        assert!((direction.longitude_rad() - 0.09357013859716576).abs() < 1e-14);
+        assert!((direction.latitude_rad() - 0.19256478004309824).abs() < 1e-14);
+    }
     use super::*;
 
     #[test]

@@ -72,5 +72,28 @@ fn tabular(record: &RecordValue) -> Result<(), String> {
             "The 'TabularSpectrum' record must have a 'maxFreq' and a 'minFreq' field\n".into(),
         );
     }
+    if let Some(value) = record.get("freqRef")
+        && !matches!(value, Value::Record(_))
+    {
+        return Err(format!(
+            "RecordRep::get_pointer - incorrect data type Record   used for field freqRef with type {}",
+            super::type_name(value)
+        ));
+    }
+    for name in ["referenceFreq", "maxFreq", "minFreq"] {
+        if record.get(name).and_then(scalar).is_none() {
+            return Err("RecordInterface::asDouble - invalid data type".into());
+        }
+    }
+    for name in ["tabFreqVal", "ival", "qval", "uval", "vval"] {
+        if let Some(value) = record.get(name)
+            && real_array(value).is_none()
+        {
+            return Err(format!(
+                "RecordRep::get_pointer - incorrect data type unknown  used for field {name} with type {}",
+                super::type_name(value)
+            ));
+        }
+    }
     Ok(())
 }

@@ -25,7 +25,7 @@ impl State {
         if !component.offsets.is_empty() {
             self.offsets.insert(self.list.len(), component.offsets);
         }
-        self.list.push(component.value);
+        self.push(component.value);
     }
     pub(crate) fn fromrecord(
         &mut self,
@@ -84,7 +84,7 @@ impl State {
                 if let Some(offsets) = source.offsets.get(&index) {
                     self.offsets.insert(self.list.len(), offsets.clone());
                 }
-                self.list.push(component.clone());
+                self.push(component.clone());
             } else {
                 lines.push(LogLine::error(format!(
                     "component {position}does not exist in this list "

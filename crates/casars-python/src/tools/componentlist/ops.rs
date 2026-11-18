@@ -58,6 +58,7 @@ struct Attached {
 pub(crate) struct State {
     list: ComponentList,
     selection: std::collections::BTreeSet<i64>,
+    order: Option<Vec<usize>>,
     shape_units: BTreeMap<usize, [Unit; 6]>,
     offsets: BTreeMap<usize, offsets::Offsets>,
     /// Removed components in request order; recovery appends them in reverse.
@@ -67,6 +68,13 @@ pub(crate) struct State {
 }
 
 impl State {
+    fn push(&mut self, component: SkyComponent) {
+        if let Some(order) = &mut self.order {
+            order.push(self.list.len());
+        }
+        self.list.push(component);
+    }
+
     /// Replace a spectrum only after preparing every supplied value.
     pub(crate) fn setstokesspectrum(
         &mut self,
@@ -88,12 +96,6 @@ impl State {
             .ok()
             .and_then(|index| self.list.get_mut(index))
             .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
-        if plan.refused {
-            lines.push(LogLine::error(
-                "Could not parse the spectral parameters; spectrum not changed",
-            ));
-            return Ok(false);
-        }
         if let SpectralKind::Tabular(table) = &plan.kind
             && table
                 .reference_frequency_in_frame(component.spectrum().reference_frequency())
@@ -114,6 +116,17 @@ impl State {
                 .set_frequency_unit(Unit::new("GHz").expect("GHz is a unit"))
                 .map_err(|e| ConvertError::runtime(e.to_string()))?;
             spectrum.set_reference_frequency(MFrequency::new(hz, frame));
+        }
+        if plan.reference.is_some()
+            && let Some(offsets) = self.offsets.get_mut(&(which as usize))
+        {
+            offsets.clear_frequency();
+        }
+        if plan.refused {
+            lines.push(LogLine::error(
+                "Could not parse the spectral parameters; spectrum not changed",
+            ));
+            return Ok(false);
         }
         *spectrum.kind_mut() = plan.kind;
         Ok(true)
@@ -178,7 +191,7 @@ impl State {
             SpectralModel::constant(MFrequency::new(1e9, FrequencyRef::LSRK)),
         );
         for _ in 0..howmany {
-            self.list.push(component.clone());
+            self.push(component.clone());
         }
         Ok(true)
     }
@@ -493,6 +506,12 @@ impl State {
     ///
     /// The table could not be rewritten; the state is reset all the same.
     pub(crate) fn release(&mut self) -> Result<(), String> {
+        if let Some(table) = &self.table {
+            // A sibling may retain the process's keyword write lock.
+            // Publish it before consuming this list or attempting its rewrite.
+            super::keywords::flush_pending(&table.path).map_err(|e| e.to_string())?;
+        }
+        let spectral_records = self.spectral_records()?;
         let mut list = std::mem::take(&mut self.list);
         let resolved =
             std::mem::take(&mut self.offsets)
@@ -502,6 +521,7 @@ impl State {
                 });
 
         self.selection.clear();
+        self.order = None;
         self.shape_units.clear();
         self.removed.clear();
         let attached = self.table.take();
@@ -515,9 +535,10 @@ impl State {
                 ..
             }) => {
                 resolved?;
-                list.rewrite_table(&path).map_err(|error| {
-                    format!("componentlist could not write {}: {error}", path.display())
-                })
+                list.rewrite_table_with_spectral_records(&path, &spectral_records)
+                    .map_err(|error| {
+                        format!("componentlist could not write {}: {error}", path.display())
+                    })
             }
             _ => Ok(()),
         }
@@ -537,7 +558,7 @@ impl State {
             return Err(not_a_list());
         }
         let path = absolute(filename)?;
-        super::keywords::flush_pending()?;
+        super::keywords::flush_pending(&path)?;
         if !is_component_list(&path) {
             return Err(not_a_list());
         }
@@ -595,7 +616,10 @@ impl State {
             None => self
                 .materialized()
                 .map_err(ConvertError::runtime)?
-                .write_table(&path)
+                .write_table_with_spectral_records(
+                    &path,
+                    &self.spectral_records().map_err(ConvertError::runtime)?,
+                )
                 .map_err(|error| ConvertError::runtime(error.to_string()))?,
         }
         self.table = Some(Attached {
@@ -666,6 +690,10 @@ impl State {
                 return Err(ConvertError::runtime(message));
             }
             for &index in indices {
+                let index = self
+                    .order
+                    .as_ref()
+                    .map_or(index, |order| order[index as usize] as i64);
                 if select {
                     self.selection.insert(index);
                 } else {
@@ -720,6 +748,20 @@ impl State {
             }
         }
         let sorted: Vec<usize> = removed.into_iter().collect();
+        let mut removed_ids = sorted
+            .iter()
+            .map(|&i| self.order.as_ref().map_or(i, |order| order[i]))
+            .collect::<Vec<_>>();
+        removed_ids.sort_unstable();
+        if let Some(order) = &mut self.order {
+            *order = order
+                .iter()
+                .filter_map(|&id| match removed_ids.binary_search(&id) {
+                    Ok(_) => None,
+                    Err(before) => Some(id - before),
+                })
+                .collect();
+        }
         let mut components = std::mem::take(&mut self.list).into_components();
         let mut index = 0;
         components.retain(|_| {
@@ -736,7 +778,10 @@ impl State {
         };
         self.selection = std::mem::take(&mut self.selection)
             .into_iter()
-            .filter_map(|index| remap(index as usize).map(|new| new as i64))
+            .filter_map(|index| match removed_ids.binary_search(&(index as usize)) {
+                Ok(_) => None,
+                Err(before) => Some(index - before as i64),
+            })
             .collect();
         self.offsets = std::mem::take(&mut self.offsets)
             .into_iter()
@@ -758,7 +803,7 @@ impl State {
             if let Some(units) = units {
                 self.shape_units.insert(self.list.len(), units);
             }
-            self.list.push(component);
+            self.push(component);
         }
         false // CASA returns false even on success.
     }
@@ -794,7 +839,7 @@ impl State {
             ];
             self.shape_units.insert(self.list.len(), units);
         }
-        self.list.push(component);
+        self.push(component);
         Ok(true)
     }
 

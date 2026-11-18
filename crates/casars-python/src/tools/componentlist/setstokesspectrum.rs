@@ -65,7 +65,7 @@ pub(super) fn prepare(request: &Request) -> ConvertResult<Option<Plan>> {
         // CASA returns false after changing the reference frequency.
         return Ok(Some(Plan {
             kind: SpectralKind::Constant,
-            reference: None,
+            reference: Some((hz, frame)),
             refused: true,
         }));
     }
