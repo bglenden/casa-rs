@@ -50,6 +50,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
                 weights: weights.view(),
                 model: None,
                 point_model: None,
+                centroid_weight: None,
             };
             group
                 .observe_samples(&row, &samples, &[5, 8], &[0], &options)

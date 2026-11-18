@@ -34,16 +34,14 @@ pub(super) fn solve(
         validate_smodel(request.smodel, true)?;
     }
     let cross_hand = request.gain_type == GainType::KCross;
-    let rotate_model = request.parang
-        && (request.model_source != GainSolveModelSource::PointSource
-            || request.smodel[1..].iter().any(|value| *value != 0.0));
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
-        request.parang && !rotate_model,
+        false,
+        true,
         true,
     )?;
     let windows = delay_windows(ms, &context.rows, cross_hand)?;
@@ -59,7 +57,7 @@ pub(super) fn solve(
             } else {
                 [1., 0., 0., 0.]
             },
-            rotate_model,
+            rotate_model: request.parang,
             solve_interval: request.solve_interval,
             combine: request.combine,
             preaverage_max_span: averaging_span(request),
@@ -298,7 +296,14 @@ fn group_cross_hand(
     transform: &mut DelayTransform,
 ) -> Result<BTreeMap<i32, [Option<f32>; 2]>, GainSolveError> {
     let mut sum = vec![(Complex32::default(), 0.); transform.channels];
-    for spectrum in spectra.iter().filter(|spectrum| !spectrum.parallel_hand) {
+    // CASA accumulates both hands of each averaged baseline consecutively.
+    // For a rotated Stokes I model, their opposite signs can cancel exactly.
+    let mut cross_hands = spectra
+        .iter()
+        .filter(|spectrum| !spectrum.parallel_hand)
+        .collect::<Vec<_>>();
+    cross_hands.sort_unstable_by_key(|spectrum| (spectrum.antennas, spectrum.correlation));
+    for spectrum in cross_hands {
         for ((total, weights), (value, weight)) in sum.iter_mut().zip(spectrum.channels()) {
             let (value, weight) = constrain(value, weight, mode);
             let value = if spectrum.correlation == 1 {

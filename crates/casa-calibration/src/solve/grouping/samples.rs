@@ -3,7 +3,7 @@
 
 use casa_ms::{ChannelSelection, MeasurementSet};
 use casa_types::Complex32;
-use ndarray::{ArrayD, ArrayView2, Axis, Ix2, IxDyn};
+use ndarray::{ArrayD, ArrayView2, Axis, Ix2, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -47,6 +47,7 @@ impl SolveRowInputs<'_> {
                 .expect("checked two-dimensional"),
             model: self.model.map(two_dimensional),
             point_model: None,
+            centroid_weight: None,
         }
     }
 }
@@ -184,6 +185,26 @@ pub(super) fn point_visibility([i, q, u, v]: [f32; 4], code: i32, first_code: i3
         2 => Complex32::new(cross.0, -cross.1),
         _ => Complex32::new(i - parallel, 0.0),
     }
+}
+
+pub(super) fn corrupt_model(
+    gains: &ArrayD<Complex32>,
+    model: Option<&ArrayD<Complex32>>,
+    rotated_point: Option<&[Complex32]>,
+    correlations: &[i32],
+    stokes: [f32; 4],
+) -> ArrayD<Complex32> {
+    ArrayD::from_shape_fn(gains.raw_dim().f(), |index| {
+        let correlation = index[0];
+        let visibility = if let Some(model) = model {
+            model[&index]
+        } else if let Some(point) = rotated_point {
+            point[correlation]
+        } else {
+            point_visibility(stokes, correlations[correlation], correlations[0])
+        };
+        gains[index] * visibility
+    })
 }
 
 pub(super) fn rotate_model(

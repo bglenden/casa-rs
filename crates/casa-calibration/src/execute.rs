@@ -67,8 +67,10 @@ use gain_validity::correcting_gain;
 mod bandpass;
 mod channels;
 pub(crate) mod parang;
+mod solve_priors;
 mod weights;
 use channels::{DataChannelGrid, apply_row};
+pub(crate) use solve_priors::evaluate_delay_priors;
 
 const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
 const PERF_DIR_ENV: &str = "CASA_RS_CALIBRATION_PERF_DIR";
@@ -408,6 +410,8 @@ pub struct ApplyExecutionTimings {
 pub(crate) struct EvaluatedApplyRow {
     pub(crate) corrected_data: ArrayValue,
     pub(crate) flags: ArrayValue,
+    /// Forward diagonal gains for the sky model in a delay solve.
+    pub(crate) model_gains: Option<ArrayD<Complex32>>,
     /// `[correlation, channel]` factors the `calwt` tables scale weights by,
     /// when any table applies with `calwt`.
     pub(crate) weight_factors: Option<ArrayD<f32>>,
@@ -537,7 +541,7 @@ pub(crate) fn evaluate_apply_rows(
     plan: &ApplyPlan,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
     let mut rows = HashMap::new();
-    for_each_apply_row(ms, plan, |index, row| {
+    for_each_apply_row(ms, plan, false, |index, row| {
         rows.insert(index, row);
     })?;
     Ok(rows)
@@ -548,6 +552,7 @@ pub(crate) fn evaluate_apply_rows(
 fn for_each_apply_row(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
+    unit_visibilities: bool,
     mut consume: impl FnMut(usize, EvaluatedApplyRow),
 ) -> Result<(), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
@@ -580,17 +585,20 @@ fn for_each_apply_row(
             .iter()
             .zip(&loaded_tables)
             .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
+    let columns: &[&str] = if unit_visibilities {
+        &["FLAG"]
+    } else {
+        &[VisibilityDataColumn::Data.name(), "FLAG"]
+    };
     let mut main_rows = ms
         .main_table()
         .row_accessor()
-        .prepare(&[VisibilityDataColumn::Data.name(), "FLAG"])
+        .prepare(columns)
         .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
             path: ms_path.clone(),
             source: MsError::from(source),
         })?;
-    let data_index = main_rows
-        .column_index(VisibilityDataColumn::Data.name())
-        .expect("prepared apply reader includes DATA");
+    let data_index = main_rows.column_index(VisibilityDataColumn::Data.name());
     let flag_index = main_rows
         .column_index("FLAG")
         .expect("prepared apply reader includes FLAG");
@@ -608,18 +616,27 @@ fn for_each_apply_row(
                 source: MsError::from(source),
             }
         })?;
-        let data = main_rows.array_at(data_index).map_err(|source| {
-            ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
-            }
-        })?;
         let original_flags = main_rows.array_at(flag_index).map_err(|source| {
             ApplyExecutionError::MutateMeasurementSet {
                 path: ms_path.clone(),
                 source: MsError::from(source),
             }
         })?;
+        let units;
+        let data = if let Some(index) = data_index {
+            main_rows.array_at(index).map_err(|source| {
+                ApplyExecutionError::MutateMeasurementSet {
+                    path: ms_path.clone(),
+                    source: MsError::from(source),
+                }
+            })?
+        } else {
+            units = ArrayValue::Complex32(ArrayD::from_elem(
+                IxDyn(original_flags.shape()).f(),
+                Complex32::new(1., 0.),
+            ));
+            &units
+        };
         if !availability::available(row, plan) {
             if plan.apply_mode == ApplyMode::Trial {
                 continue;
@@ -632,6 +649,7 @@ fn for_each_apply_row(
                 EvaluatedApplyRow {
                     corrected_data: data.clone(),
                     flags: ArrayValue::Bool(ArrayD::from_elem(shape.clone(), true)),
+                    model_gains: None,
                     weight_factors: Some(ArrayD::zeros(shape)),
                 },
             );
@@ -665,6 +683,7 @@ fn for_each_apply_row(
             row.row_index,
             EvaluatedApplyRow {
                 corrected_data: result.corrected_data,
+                model_gains: None,
                 flags: result
                     .updated_flags
                     .unwrap_or_else(|| original_flags.clone()),
@@ -737,7 +756,7 @@ pub(crate) fn execute_apply_with_preparation_error(
         if plan.apply_mode == ApplyMode::Trial {
             // Calibrater::correct2 still runs the calibration operators in
             // trial mode, including their input/basis validation.
-            for_each_apply_row(&ms, &plan, |_, _| {})?;
+            for_each_apply_row(&ms, &plan, false, |_, _| {})?;
             return Ok(ApplyExecutionReport {
                 plan,
                 created_corrected_data_column: false,
@@ -834,7 +853,7 @@ pub fn execute_apply(
     let (plan, plan_timings) = plan_apply_with_timings(ms, request)?;
     let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
     if plan.apply_mode == ApplyMode::Trial {
-        for_each_apply_row(ms, &plan, |_, _| {})?;
+        for_each_apply_row(ms, &plan, false, |_, _| {})?;
         return Ok(ApplyExecutionReport {
             plan,
             created_corrected_data_column: false,

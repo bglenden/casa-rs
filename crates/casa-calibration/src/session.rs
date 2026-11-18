@@ -161,6 +161,7 @@ pub(crate) fn prepare_calibration_solve(
     prior_calibration_tables: &[ApplyCalibrationTableSpec],
     parang: bool,
     full_selection: bool,
+    delay_solve: bool,
 ) -> Result<CalibrationSolveContext, GainSolveError> {
     let refants = resolve_refants(measurement_set, refant)?;
     let refant_id = refants.first().copied().unwrap_or(-1);
@@ -182,6 +183,7 @@ pub(crate) fn prepare_calibration_solve(
             selection,
             prior_calibration_tables,
             parang,
+            delay_solve,
         )?,
     })
 }

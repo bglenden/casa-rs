@@ -112,6 +112,7 @@ fn observe(
                     weights: weights.slice(s![sample, .., ..]).reversed_axes(),
                     model: None,
                     point_model: None,
+                    centroid_weight: None,
                 },
                 &codes,
                 &channels,

@@ -99,7 +99,8 @@ def solutions(path):
         tool.close()
 
 
-def compare(root, vis, native, family, mode, combined, *, interchange=False, **overrides):
+def compare(root, vis, native, family, mode, combined, *, interchange=False,
+            delay_atol=None, **overrides):
     products, corrected, returns = [], [], []
     selection = '0,1' if combined else '0'
     options = dict(gaintype=family, calmode=mode, field='0', spw=selection,
@@ -133,7 +134,9 @@ def compare(root, vis, native, family, mode, combined, *, interchange=False, **o
         np.testing.assert_array_equal(actual[column], expected[column], err_msg=column)
     np.testing.assert_allclose(actual['TIME'], expected['TIME'], rtol=0., atol=1e-4)
     delays = actual['FPARAM']
-    if mode == 'a':
+    if delay_atol is not None:
+        np.testing.assert_allclose(delays, expected['FPARAM'], rtol=0., atol=delay_atol)
+    elif mode == 'a':
         # The Fourier peak of amplitude-only data has zero delay.
         np.testing.assert_allclose(delays, expected['FPARAM'], rtol=0., atol=1e-6)
     else:
@@ -242,13 +245,36 @@ def workflow_and_ambiguity(root, native, family, priors, library):
             tool.putcol('FLAG', flags)
     finally:
         tool.close()
+    prior_delay = str(root/f'{family}-single-ap'/'casa.cal')
+    stored = root/f'{family}-scratch-model.ms'
+    copy_ms(source, stored)
+    casa.clearcal(str(stored), addmodel=True)
+    tool.open(str(stored), nomodify=False)
+    try:
+        model = tool.getcol('MODEL_DATA')
+        for correlation, visibility in enumerate([1.13, .31 + .05j, .31 - .05j, .87]):
+            model[correlation] = visibility
+        model[1:3, 1::2] = 0
+        tool.putcol('MODEL_DATA', model)
+    finally:
+        tool.close()
     cases = [
         ('traditional', source, dict(gaintable=priors, gainfield=['0','0'],
                                      interp=['nearest','nearest'], spwmap=[[0],[0]])),
         ('callib', source, dict(docallib=True, callib=library)),
+        # CASA puts both K and KCROSS priors on the model side of a delay
+        # solve. A zero cross-hand model must leave that visibility's phase
+        # slope intact. Nonzero model terms are divided out as usual.
+        ('delay-prior', source, dict(gaintable=[prior_delay], delay_atol=1e-6)),
+        ('delay-prior-polarized', source, dict(gaintable=[prior_delay], delay_atol=1e-6,
+                                               smodel=[1., .16, -.31, .22])),
+        ('delay-prior-scratch-model', stored, dict(gaintable=[prior_delay], delay_atol=1e-6,
+                                                  smodel=[])),
         ('circular', circular, dict(append=True, interchange=True)),
         ('polarized', source, dict(smodel=[1., .16, -.31, .22])),
+        ('zero-receptor', source, dict(smodel=[1., 1., 0., 0.])),
         ('parang', source, dict(smodel=[1., .16, -.31, .22], parang=True)),
+        ('parang-unpolarized', source, dict(parang=True)),
         ('inactive-controls', source, dict(refant='A3,A2', refantmode='strict', solnorm=True,
                                           normtype='median', solmode='L1R', rmsthresh=[.9],
                                           splinetime=30., npointaver=5, phasewrap=90.)),

@@ -20,7 +20,7 @@ use super::{
     GainType, RefAntSelector, correlation_receptors, get_f64, get_i32, stokes_name,
 };
 use crate::ApplyCalibrationTableSpec;
-use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
+use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows, evaluate_delay_priors};
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
 use crate::solve::kernel::{RobustSample, SolveGraph};
@@ -37,6 +37,7 @@ pub(crate) fn load_preapplied_rows(
     selection: &MsSelection,
     prior_calibration_tables: &[ApplyCalibrationTableSpec],
     parang: bool,
+    delay_solve: bool,
 ) -> Result<Option<HashMap<usize, EvaluatedApplyRow>>, GainSolveError> {
     if prior_calibration_tables.is_empty() && !parang {
         return Ok(None);
@@ -53,11 +54,16 @@ pub(crate) fn load_preapplied_rows(
     .map_err(|source| GainSolveError::PriorCalibrationPlan {
         source: Box::new(source),
     })?;
-    evaluate_apply_rows(ms, &plan).map(Some).map_err(|source| {
-        GainSolveError::PriorCalibrationApply {
+    let preapplied = if delay_solve {
+        evaluate_delay_priors(ms, plan)
+    } else {
+        evaluate_apply_rows(ms, &plan)
+    };
+    preapplied
+        .map(Some)
+        .map_err(|source| GainSolveError::PriorCalibrationApply {
             source: Box::new(source),
-        }
-    })
+        })
 }
 
 pub(crate) fn build_solve_groups(
@@ -128,6 +134,7 @@ pub(crate) fn build_solve_groups(
                 .iter()
                 .map(|row| spectral_weights.contains(row))
                 .collect(),
+            options.gain_type.is_delay(),
         )
     };
     let mut consume = |batch: &[BucketedRow<'_>], inputs: SolveInputBatch| {
@@ -219,13 +226,14 @@ fn read_input_batch(
     (read_visibilities, read_model_flags): (bool, bool),
     read_model_column: bool,
     spectral_weights: Vec<bool>,
+    read_scalar_sigma: bool,
 ) -> Result<SolveInputBatch, GainSolveError> {
     let schema = ms.main_table().schema();
     let mut columns = Vec::new();
     if spectral_weights.contains(&true) {
         columns.push("SIGMA_SPECTRUM");
     }
-    if spectral_weights.contains(&false) {
+    if read_scalar_sigma || spectral_weights.contains(&false) {
         columns.push("SIGMA");
     }
     if read_visibilities {
@@ -604,6 +612,7 @@ pub(crate) struct SolveSamples<'a> {
     pub(crate) weights: ArrayView2<'a, f32>,
     pub(crate) model: Option<ArrayView2<'a, Complex32>>,
     pub(crate) point_model: Option<&'a [Complex32]>,
+    pub(crate) centroid_weight: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -817,6 +826,32 @@ impl SolveAccumulator {
             .transpose()?
             .flatten();
         let mut samples = inputs.samples();
+        if options.gain_type.is_delay() {
+            // With no channel-averaging layer, CASA's VbAvg reads the
+            // scalar SIGMA weights. Model division changes only the spectrum.
+            samples.centroid_weight = Some(weights::delay_centroid_weight(
+                ms,
+                row.row_index,
+                samples.data.nrows(),
+                batch,
+            )?);
+        }
+        if let Some(gains) = preapplied_row.and_then(|row| row.model_gains.as_ref()) {
+            let model = predicted.as_ref().or(inputs.model);
+            if model.is_some_and(|model| model.shape() != gains.shape()) {
+                return Err(GainSolveError::UnsupportedParameterShape {
+                    path: "<pre-applied sky model>".into(),
+                    shape: model.expect("checked model").shape().to_vec(),
+                });
+            }
+            predicted = Some(samples::corrupt_model(
+                gains,
+                model,
+                rotated.as_deref(),
+                &layout.correlations,
+                options.point_stokes,
+            ));
+        }
         if let Some(predicted) = &predicted {
             if predicted.shape() != samples.data.shape() {
                 return Err(GainSolveError::UnsupportedParameterShape {
@@ -949,7 +984,7 @@ impl SolveAccumulator {
                 GainType::G | GainType::K => receptors.0,
                 GainType::T | GainType::KCross => 0,
             };
-            let point = if options.channelized {
+            let point = if options.channelized && !options.gain_type.is_delay() {
                 Complex32::new(options.point_stokes[0], 0.0)
             } else if let Some(rotated) = samples.point_model {
                 rotated[corr_index]
@@ -963,8 +998,9 @@ impl SolveAccumulator {
             if !parallel_hand && matches!(options.gain_type, GainType::G | GainType::K) {
                 // CASA can use cross-hand weights for the averaged baseline's
                 // time even though only parallel hands enter these solves.
-                if options.rotate_model
-                    || (!options.channelized && options.gain_type == GainType::G)
+                if samples.centroid_weight.is_none()
+                    && (options.rotate_model
+                        || (!options.channelized && options.gain_type == GainType::G))
                 {
                     row_weight += samples::centroid_weight(
                         samples,
@@ -989,7 +1025,8 @@ impl SolveAccumulator {
                 values: accumulations,
                 attempted: &mut self.attempted,
                 channelized: options.channelized,
-                retain_zero_model: matches!(options.gain_type, GainType::T | GainType::KCross)
+                retain_zero_model: options.gain_type.is_delay()
+                    || options.gain_type == GainType::T
                     || (!options.channelized
                         && (samples.model.is_some() || point.norm_sqr() == 0.0)),
             }
@@ -1001,6 +1038,15 @@ impl SolveAccumulator {
                 point,
                 all_channels,
             );
+        }
+        if let Some(weight) = samples.centroid_weight {
+            let unflagged = channels.iter().any(|&channel| {
+                shared_flags.as_ref().map_or_else(
+                    || samples.flags.column(channel).iter().any(|flag| !*flag),
+                    |flags| !flags[channel],
+                )
+            });
+            row_weight = if unflagged { weight } else { 0. };
         }
         if row_weight > 0.0 {
             self.baseline_centroids

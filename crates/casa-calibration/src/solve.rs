@@ -455,6 +455,7 @@ pub(crate) fn solve_gain_rows(
         &request.prior_calibration_tables,
         request.parang && !rotate_model,
         true,
+        false,
     )?;
     let requested_preaverage = request.preaverage_seconds as f32;
     let preaverage = (requested_preaverage > f32::EPSILON && requested_preaverage.is_finite())
