@@ -7,9 +7,12 @@ import inspect
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
+import time
 
 import casatasks as casa
-from casatools import table
+from casatools import calibrater, table
 import numpy as np
 
 from applycal_oracle import copy_ms
@@ -21,7 +24,8 @@ SCRATCH = ('CORRECTED_DATA', 'MODEL_DATA')
 MAIN = ('DATA', 'FLOAT_DATA', 'FLAG', 'FLAG_ROW', 'WEIGHT', 'SIGMA')
 
 
-def prepare(source, target, corrected=False, model=False, virtual=False, float_data=None):
+def prepare(source, target, corrected=False, model=False, virtual=False, float_data=None,
+            direct_scratch=False):
     copy_ms(source, target)
     tool = table()
     tool.open(str(target), nomodify=False)
@@ -30,7 +34,13 @@ def prepare(source, target, corrected=False, model=False, virtual=False, float_d
             if column in tool.colnames():
                 tool.removecols([column])
             if present:
-                tool.addcols({column: tool.getcoldesc('DATA')})
+                description = tool.getcoldesc('DATA')
+                if direct_scratch:
+                    manager = next(dm for dm in tool.getdminfo().values()
+                                   if dm['TYPE'] == 'StandardStMan')
+                    description.update(option=5, shape=list(tool.getcell('DATA', 0).shape),
+                                       dataManagerType=manager['TYPE'], dataManagerGroup=manager['NAME'])
+                tool.addcols({column: description})
                 tool.putcol(column, np.full_like(tool.getcol('DATA'), 13+7j))
         weights = tool.getcol('WEIGHT')
         tool.putcol('WEIGHT', np.full_like(weights, 13.))
@@ -136,6 +146,110 @@ def compare_mms(root, source, native, name, task, fixture, options):
     return {'partition_history_entries': [int(count) for _, count in results[1]]}
 
 
+def storage_layout(path):
+    tool = table()
+    tool.open(str(path))
+    try:
+        return {str(manager['NAME']): manager for manager in tool.getdminfo().values()}
+    finally:
+        tool.close()
+
+
+def deletion_layouts(root, source, native):
+    outputs = {}
+    for layout in ('shared', 'compressed'):
+        states = []
+        for engine, api in [('casa', casa), ('native', native)]:
+            path = root/f'delete-{layout}-{engine}.ms'
+            prepare(source, path)
+            if layout == 'compressed':
+                cb = calibrater()
+                assert cb.open(str(path), compress=True, addcorr=True, addmodel=True)
+                assert cb.close()
+            else:
+                tool = table()
+                tool.open(str(path), nomodify=False)
+                try:
+                    manager = next(dm for dm in tool.getdminfo().values()
+                                   if dm['TYPE'] == 'StandardStMan')
+                    description = tool.getcoldesc('DATA')
+                    description.update(dataManagerType=manager['TYPE'], dataManagerGroup=manager['NAME'])
+                    tool.addcols({'MODEL_DATA': description})
+                    tool.putcol('MODEL_DATA', np.full_like(tool.getcol('DATA'), 13+7j))
+                finally:
+                    tool.close()
+            before = storage_layout(path)
+            unrelated = {name: manager for name, manager in before.items() if
+                         not any(column.startswith('MODEL_DATA') for column in manager['COLUMNS'])}
+            prefixes = tuple(f'table.f{manager["SEQNR"]}' for manager in unrelated.values())
+            untouched_files = {file: file.read_bytes() for file in path.iterdir() if file.is_file()
+                               and any(file.name == prefix or file.name == prefix+'i'
+                                       or file.name.startswith(prefix+'_') for prefix in prefixes)}
+            assert api.delmod(str(path), otf=False, scr=True) is None
+            after = storage_layout(path)
+            assert all(not column.startswith('MODEL_DATA') for manager in after.values()
+                       for column in manager['COLUMNS'])
+            for name, manager in unrelated.items():
+                np.testing.assert_equal(after[name], manager)
+            for file, initial in untouched_files.items():
+                assert file.read_bytes() == initial, file
+            states.append(state(path))
+        np.testing.assert_equal(*states)
+        outputs[f'delete-{layout}-layout'] = {'untouched_managers_and_values': True}
+    return outputs
+
+
+def retained_lock_and_concurrent_cleanup(root, source):
+    lock_code = """
+import sys
+from casatools import table
+tool = table()
+tool.open(sys.argv[1], lockoptions={'option': 'user'}, nomodify=True)
+tool.lock(write=False)
+assert tool.haslock(write=False)
+print('held', flush=True)
+sys.stdin.readline()
+tool.close()
+"""
+    task_code = """
+import sys
+from casars import tasks
+field = sys.argv[2]
+print('started', flush=True)
+tasks.delmod(sys.argv[1], field=field, otf=bool(field), scr=not field)
+"""
+    results = {}
+    for label, required_fields in [('retained-reader', ['']), ('concurrent-removal', ['0', '1'])]:
+        path = root/f'{label}.ms'
+        prepare(source, path, model=True, virtual=bool(required_fields[0]))
+        lock = subprocess.Popen([sys.executable, '-c', lock_code, str(path)], text=True,
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        writers = []
+        try:
+            assert lock.stdout.readline().strip() == 'held', lock.stderr.read()
+            for field in required_fields:
+                writer = subprocess.Popen([sys.executable, '-c', task_code, str(path), field],
+                                          text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                writers.append(writer)
+                assert writer.stdout.readline().strip() == 'started', writer.stderr.read()
+            time.sleep(.25)
+            assert all(writer.poll() is None for writer in writers)
+        finally:
+            if lock.poll() is None:
+                lock.communicate('\n', timeout=15)
+            for writer in writers:
+                _, error = writer.communicate(timeout=25)
+                assert writer.returncode == 0, error
+        arrays, virtual = state(path)
+        if required_fields[0]:
+            assert virtual[0] == {} and virtual[1] == {}
+            assert 'MODEL_DATA' in arrays
+        else:
+            assert 'MODEL_DATA' not in arrays
+        results[label] = {'waited_for_reader_and_completed': True}
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -173,6 +287,8 @@ def main():
         ('create-both', {}, dict(field='MISSING', addmodel=True), False),
         ('keep-existing-model', dict(model=True), dict(addmodel=False), False),
         ('selected-reset', virtual, dict(field='0', spw='0:2~4'), False),
+        ('selected-direct-standard-manager', {**scratch, 'direct_scratch': True},
+         dict(field='0', spw='0:2~4'), False),
         ('channel-envelope', scratch, dict(field='0', spw='0:0~2;7~9'), False),
         ('strided-channels', scratch, dict(field='0', spw='0:0~9^2'), False),
         ('selected-intent', scratch, dict(intent='CALIBRATE_PHASE*'), False),
@@ -210,6 +326,8 @@ def main():
         ('mms-invalid-field', 'delmod', scratch, dict(field='MISSING', scr=True)),
     ]:
         results[name] = compare_mms(root, source, native, name, task, fixture, arguments)
+    results.update(deletion_layouts(root, source, native))
+    results.update(retained_lock_and_concurrent_cleanup(root, source))
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
 
 

@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Replace indirect array cells without decoding untouched SSM columns.
+//! Replace array cells without decoding untouched StandardStMan columns.
 
 use super::*;
 
 type ArrayColumns = Vec<Option<Vec<(usize, Option<ArrayValue>)>>>;
+
+struct ArrayMutation {
+    offset: usize,
+    data_type: CasacoreDataType,
+    direct_elements: Option<usize>,
+    value: Option<Value>,
+}
 
 #[cfg(test)]
 mod tests;
@@ -27,11 +34,17 @@ pub(crate) fn save_ssm_array_rows_in_place(
     if columns.iter().all(Option::is_none) {
         return Ok(false);
     }
+    let mut has_indirect = false;
     for (desc, values) in descs.iter().zip(&columns) {
         if let Some(values) = values {
-            if !is_ssm_array_file_indirect(desc) || desc.is_record() {
+            let indirect = is_ssm_array_file_indirect(desc) && !desc.is_record();
+            let direct = !is_ssm_indirect(desc)
+                && desc.is_array
+                && desc.data_type == CasacoreDataType::TpComplex;
+            if !indirect && !direct {
                 return Ok(false);
             }
+            has_indirect |= indirect;
             for (_, value) in values {
                 if let Some(value) = value
                     && Some(value.primitive_type()) != desc.primitive_type
@@ -47,7 +60,7 @@ pub(crate) fn save_ssm_array_rows_in_place(
     let mut array_path = path.as_os_str().to_os_string();
     array_path.push("i");
     let array_path = std::path::PathBuf::from(array_path);
-    if array_path.exists() {
+    if has_indirect && array_path.exists() {
         let mut version = [0; 4];
         File::open(&array_path)?.read_exact(&mut version)?;
         // Zero is the same in either byte order.
@@ -65,8 +78,7 @@ pub(crate) fn save_ssm_array_rows_in_place(
     let dm = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
     // Complete layout validation before appending or modifying any bucket.
-    type Mutation = (usize, CasacoreDataType, Option<Value>);
-    let mut buckets: BTreeMap<u32, Vec<Mutation>> = BTreeMap::new();
+    let mut buckets: BTreeMap<u32, Vec<ArrayMutation>> = BTreeMap::new();
     for (column, values) in columns.into_iter().enumerate() {
         let Some(values) = values else { continue };
         let (Some(&offset), Some(&index)) =
@@ -79,27 +91,33 @@ pub(crate) fn save_ssm_array_rows_in_place(
         let index = indices
             .get(index as usize)
             .ok_or_else(|| StorageError::FormatMismatch("SSM missing array column index".into()))?;
+        let desc = &descs[column];
+        let data_type =
+            CasacoreDataType::from_primitive_type(desc.require_primitive_type()?, false);
+        let direct_elements = (!is_ssm_indirect(desc)).then(|| ssm_cell_element_count(desc));
+        let width = direct_elements.map_or(8, |elements| {
+            elements.saturating_mul(canonical_element_size(data_type).0)
+        });
         for (row, value) in values {
             let (bucket, start, _) = index.find_bucket(row as u64).ok_or_else(|| {
                 StorageError::FormatMismatch(format!("SSM missing array row {row}"))
             })?;
-            let at = offset as usize + (row as u64 - start) as usize * 8;
+            let at = (offset as usize)
+                .saturating_add(((row as u64 - start) as usize).saturating_mul(width));
             if at
-                .checked_add(8)
+                .checked_add(width)
                 .is_none_or(|end| end > header.bucket_size as usize)
             {
                 return Err(StorageError::FormatMismatch(
                     "SSM array offset outside bucket".into(),
                 ));
             }
-            buckets.entry(bucket).or_default().push((
-                at,
-                CasacoreDataType::from_primitive_type(
-                    descs[column].require_primitive_type()?,
-                    false,
-                ),
-                value.map(Value::Array),
-            ));
+            buckets.entry(bucket).or_default().push(ArrayMutation {
+                offset: at,
+                data_type,
+                direct_elements,
+                value: value.map(Value::Array),
+            });
         }
     }
     let file_length = file.metadata()?.len();
@@ -111,11 +129,28 @@ pub(crate) fn save_ssm_array_rows_in_place(
             )));
         }
     }
-    let mut writer = if array_path.exists() {
-        StManArrayFileWriter::open_append(&array_path, big_endian)?
-    } else {
-        StManArrayFileWriter::create(&array_path, big_endian, 0)?
-    };
+    let mut writer = has_indirect
+        .then(|| {
+            if array_path.exists() {
+                StManArrayFileWriter::open_append(&array_path, big_endian)
+            } else {
+                StManArrayFileWriter::create(&array_path, big_endian, 0)
+            }
+        })
+        .transpose()?;
+    write_buckets(&mut file, &header, buckets, writer.as_mut())?;
+    if let Some(mut writer) = writer {
+        writer.finish()?;
+    }
+    Ok(true)
+}
+
+fn write_buckets(
+    file: &mut File,
+    header: &SsmHeader,
+    buckets: BTreeMap<u32, Vec<ArrayMutation>>,
+    mut writer: Option<&mut StManArrayFileWriter>,
+) -> Result<(), StorageError> {
     // Patch adjacent touched buckets together, without rewriting a bucket
     // outside the selection. The buffer never grows beyond 64 KiB or one
     // stored bucket, whichever is larger.
@@ -148,21 +183,34 @@ pub(crate) fn save_ssm_array_rows_in_place(
         file.read_exact(&mut buffer)?;
         for (slot, (_, mutations)) in batch.drain(..).enumerate() {
             let bucket = &mut buffer[slot * bucket_size..(slot + 1) * bucket_size];
-            for (at, data_type, value) in mutations {
-                let offset = match value {
-                    Some(value) => writer.write_array(&value, data_type)?,
+            for mutation in mutations {
+                let destination = &mut bucket[mutation.offset..];
+                if let Some(elements) = mutation.direct_elements {
+                    encode_fixed_cell(
+                        destination,
+                        mutation.value.as_ref().into(),
+                        mutation.data_type,
+                        elements,
+                        header.big_endian,
+                    );
+                    continue;
+                }
+                let offset = match mutation.value {
+                    Some(value) => writer
+                        .as_mut()
+                        .expect("indirect arrays have a writer")
+                        .write_array(&value, mutation.data_type)?,
                     None => 0,
                 };
-                if big_endian {
-                    write_i64_be(&mut bucket[at..], offset);
+                if header.big_endian {
+                    write_i64_be(destination, offset);
                 } else {
-                    write_i64_le(&mut bucket[at..], offset);
+                    write_i64_le(destination, offset);
                 }
             }
         }
         file.seek(SeekFrom::Start(start))?;
         file.write_all(&buffer)?;
     }
-    writer.finish()?;
-    Ok(true)
+    Ok(())
 }
