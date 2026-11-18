@@ -158,6 +158,7 @@ fn unsolved(refant: i32) -> SolvedGains {
         rows: Vec::new(),
         refant_id: refant,
         attempted_spw_ids: BTreeSet::new(),
+        channel_selections: Default::default(),
         selected_data: crate::SelectedData::default(),
         solve_stats: crate::SolveStats::default(),
     }
