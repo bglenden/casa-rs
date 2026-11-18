@@ -12,6 +12,7 @@ import casatasks as casa
 from casatools import componentlist, image, table
 import numpy as np
 
+from applycal_mms_oracle import referenced_tables
 from calibration_scratch_oracle import MAIN, prepare, state
 from bandpass_oracle import source_data
 from gaincal_oracle import relative_rms, solve
@@ -48,6 +49,48 @@ def compare_outputs(actual, expected):
             scale = max(1., float(np.max(np.abs(b[col]))))
             np.testing.assert_allclose(a[col], b[col], atol=3e-5*scale, rtol=0, err_msg=col)
     np.testing.assert_equal(native_model, casa_model)
+
+
+def history_trace(path):
+    tb = table()
+    tb.open(str(path/'HISTORY'))
+    try:
+        messages = tb.getcol('MESSAGE')
+        origin = tb.getcol('ORIGIN')
+    finally:
+        tb.close()
+    indices = np.flatnonzero((messages == 'taskname = ft') & (origin == 'ft'))
+    if not len(indices):
+        return []
+    return [line for line in messages[indices[-1]:] if not line.startswith('vis ')][:12]
+
+
+def validation_paths(root, source, native, point):
+    failures = [
+        ('no-model', {'usescratch': True}, ValueError, True, 'specify a model image or component list'),
+        ('unknown-image', {'model': str(root/'missing.image')}, ValueError, False, 'cannot be found'),
+        ('restriction', {'scan': '1', 'complist': str(point)}, ValueError, False, 'usescratch must be set to True'),
+        ('invalid-nterms', {'nterms': 0, 'complist': str(point)}, ValueError, False, 'greater than or equal to 1'),
+        ('missing-terms', {'nterms': 2, 'complist': str(point)}, ValueError, False, 'nterms model-image names'),
+    ]
+    outcomes = {}
+    for label, arguments, exception, added, text in failures:
+        outputs = []
+        for tool, engine in [(casa, 'casa'), (native, 'native')]:
+            path = root/f'refused-{label}-{engine}.ms'
+            prepare(source, path)
+            try:
+                tool.ft(str(path), **arguments)
+            except exception as error:
+                assert text in str(error)
+            else:
+                raise AssertionError(f'ft accepted {label}')
+            state_after = state(path)
+            assert ('MODEL_DATA' in state_after[0]) == added
+            outputs.append(state_after)
+        compare_outputs(outputs[1], outputs[0])
+        outcomes[f'refused-{label}'] = {'scratch_initialized': added}
+    return outcomes
 
 
 def make_images(root, source):
@@ -150,7 +193,46 @@ def image_workflows(root, source, native, point, case=None):
             results.append((actual, actual[column], record))
         outcomes[label] = {'paired_writes_and_cross_reads': True}
         print(label, flush=True)
+    if case is None or case in 'fits-model':
+        outcomes['fits-model'] = fits_model(root, source, native, images)
     return outcomes
+
+
+def mms_workflows(root, source, native, point):
+    result = {}
+    for scratch in (False, True):
+        engine_states = []
+        for label, api in [('casa', casa), ('native', native)]:
+            dataset = root/f'mms-{scratch}-{label}.ms'
+            path = root/f'mms-{scratch}-{label}.mms'
+            prepare(source, dataset)
+            casa.partition(str(dataset), str(path), separationaxis='scan', numsubms=2,
+                           disableparallel=True, flagbackup=False, datacolumn='all')
+            assert api.ft(str(path), field='0', complist=str(point), usescratch=scratch) is None
+            parts = referenced_tables(path)
+            assert len(parts) == 2
+            engine_states.append([state(part) for part in parts])
+        for native_state, casa_state in zip(engine_states[1], engine_states[0]):
+            compare_outputs(native_state, casa_state)
+        result[f'mms-scratch-{scratch}'] = {'two_partitions_match': True}
+    return result
+
+
+def fits_model(root, source, native, images):
+    path = root/'existing-model.fits'
+    tool = image()
+    assert tool.open(images['point'])
+    assert tool.tofits(outfile=str(path))
+    tool.done()
+    for scratch in (False, True):
+        states = []
+        for label, api in [('casa', casa), ('native', native)]:
+            dataset = root/f'fits-model-{scratch}-{label}.ms'
+            prepare(source, dataset)
+            assert api.ft(str(dataset), usescratch=scratch, model=str(path)) is None
+            states.append(state(dataset))
+        compare_outputs(states[1], states[0])
+    return {'same_model_and_scratch_state': True}
 
 
 def calibration_chain(root, source, native, component_path):
@@ -205,6 +287,7 @@ def main():
     parser.add_argument('--native-bin', type=Path, required=True)
     parser.add_argument('--images', action='store_true')
     parser.add_argument('--chain', action='store_true')
+    parser.add_argument('--mms', action='store_true')
     parser.add_argument('--case', help='Run cases containing this text')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
@@ -254,12 +337,18 @@ def main():
             if initial:
                 casa.ft(str(ms), field='0', complist=str(point))
             assert api.ft(str(ms), complist=str(cl), **options) is None
-            states.append(state(ms))
-        compare_outputs(states[1], states[0])
+            states.append((state(ms), history_trace(ms)))
+        compare_outputs(states[1][0], states[0][0])
+        assert len(states[1][1]) == 12
+        np.testing.assert_equal(states[1][1], states[0][1])
         evidence[label] = {'paired': True}
         print(label, flush=True)
     if args.images:
         evidence.update(image_workflows(root, source, tasks, point, args.case))
+    if args.mms:
+        evidence.update(mms_workflows(root, source, tasks, point))
+    if args.case is None:
+        evidence.update(validation_paths(root, source, tasks, point))
     if args.chain:
         spectral = root/'spectral-point.cl'
         cl = componentlist()
