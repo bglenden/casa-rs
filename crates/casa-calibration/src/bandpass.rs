@@ -509,7 +509,7 @@ fn solve_bandpass_group(
     } else {
         vec![group.field_id]
     };
-    let scan_number = *group.scan_numbers.iter().next().unwrap_or(&0);
+    let scan_number = group.scan_number();
     let interval_seconds = group.total_interval / group.sample_rows.max(1) as f64;
 
     let mut solution_rows = Vec::new();

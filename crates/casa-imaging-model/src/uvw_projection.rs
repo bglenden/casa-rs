@@ -62,6 +62,25 @@ impl GridFtProjection {
         })
     }
 
+    /// A faceted GridFT rotation onto the observation tangent plane, with
+    /// conversion into the image direction frame.
+    ///
+    /// # Errors
+    /// The reference conversion is unavailable or lacks required context.
+    pub fn faceted_between_directions_with_frame(
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        frame: &MeasFrame,
+    ) -> Result<Self, MeasureError> {
+        Ok(Self {
+            machine: Reprojection::Faceted(UvwMachine::with_frame(
+                tangent_point,
+                phase_centre,
+                frame,
+            )?),
+        })
+    }
+
     /// MosaicFT's two-stage reprojection into a native image frame.
     /// The correlator direction is first converted to that frame, as
     /// `FTMachine::girarUVW` does before constructing its two UVW machines.

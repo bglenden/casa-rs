@@ -20,8 +20,8 @@ use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 
-use super::grouping::SelectedSolveRow;
-use super::{GainSolveError, GainSolveModelSource, get_i32};
+use super::grouping::{BucketedRow, SelectedSolveRow, VisibilityBuffer};
+use super::{GainSolveCombine, GainSolveError, GainSolveModelSource, get_i32};
 use fourier::{FourierModel, FourierRow};
 
 pub(super) struct ModelInputs {
@@ -31,6 +31,18 @@ pub(super) struct ModelInputs {
     geometry: Option<MsCalEngine>,
     dynamic_fields: BTreeSet<i32>,
     pub(super) phase_times: BTreeMap<usize, f64>,
+    finite_fields: BTreeSet<i32>,
+    model_buffers: BTreeMap<usize, Arc<ModelBuffer>>,
+}
+
+struct ModelBuffer {
+    selection: [i32; 4],
+    focus_rows: Vec<FocusSample>,
+}
+
+struct FocusSample {
+    index: usize,
+    antennas: [i32; 2],
 }
 
 struct Entry {
@@ -78,6 +90,8 @@ impl ModelInputs {
             geometry: None,
             dynamic_fields: BTreeSet::new(),
             phase_times: BTreeMap::new(),
+            finite_fields: BTreeSet::new(),
+            model_buffers: BTreeMap::new(),
         };
         if source != GainSolveModelSource::FromMeasurementSet {
             return Ok(inputs);
@@ -97,6 +111,9 @@ impl ModelInputs {
                 inputs.virtual_models.insert(field, Arc::clone(entries));
             }
         }
+        inputs.finite_fields = inputs.virtual_models.iter().filter_map(|(&field, models)| {
+            models.iter().any(|entry| matches!(&entry.prediction, Prediction::FourierGrid(grid) if grid.needs_refocus())).then_some(field)
+        }).collect();
         if inputs
             .virtual_models
             .values()
@@ -155,6 +172,55 @@ impl ModelInputs {
         })
     }
 
+    pub(super) fn needs_buffers(&self) -> bool {
+        !self.virtual_models.is_empty()
+    }
+
+    pub(super) fn bind_buffers(
+        &mut self,
+        ms: &MeasurementSet,
+        rows: &[BucketedRow<'_>],
+        combine: GainSolveCombine,
+    ) -> Result<(), GainSolveError> {
+        if !self.needs_buffers() {
+            return Ok(());
+        }
+        let mut buffers = BTreeMap::<VisibilityBuffer, Vec<&SelectedSolveRow>>::new();
+        for row in rows
+            .iter()
+            .filter(|(row, _, _)| self.virtual_models.contains_key(&row.field_id))
+        {
+            buffers
+                .entry(VisibilityBuffer::new(row, combine))
+                .or_default()
+                .push(row.0);
+        }
+        for rows in buffers.into_values() {
+            let first = rows[0];
+            let state = get_i32(ms.main_table(), first.row_index, "STATE_ID")?;
+            let selection = [first.field_id, first.data_spw_id, first.scan_number, state];
+            let focus_rows = if self.finite_fields.contains(&first.field_id) {
+                rows.iter()
+                    .map(|row| FocusSample {
+                        index: row.row_index,
+                        antennas: [row.antenna1, row.antenna2],
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let buffer = Arc::new(ModelBuffer {
+                selection,
+                focus_rows,
+            });
+            for row in rows {
+                self.model_buffers
+                    .insert(row.row_index, Arc::clone(&buffer));
+            }
+        }
+        Ok(())
+    }
+
     /// A defined virtual model overrides MODEL_DATA. CASA uses a unit point
     /// model if none of the field's entries matches this visibility buffer.
     pub(super) fn predict(
@@ -170,11 +236,10 @@ impl ModelInputs {
         if entries.is_empty() {
             return Ok(None);
         }
-        let state = get_i32(ms.main_table(), row.row_index, "STATE_ID")?;
-        let combination = [row.field_id, row.data_spw_id, row.scan_number, state];
+        let buffer = &self.model_buffers[&row.row_index];
         let mut matching = entries
             .iter()
-            .filter(|entry| entry.selection.matches(combination))
+            .filter(|entry| entry.selection.matches(buffer.selection))
             .peekable();
         if matching.peek().is_none() {
             return Ok(None);
@@ -234,6 +299,7 @@ impl ModelInputs {
                             field: &field,
                             frame: &frame,
                             uvw,
+                            focus_rows: &buffer.focus_rows,
                         },
                         &mut model,
                     )?;

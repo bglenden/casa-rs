@@ -29,6 +29,7 @@ use samples::{
     two_dimensional,
 };
 use time::{AveragedBaseline, FirstTBuffer, WeightedTime, bucketed_rows, first_t_buffers};
+pub(super) use weights::VisibilityBuffer;
 use weights::{SpectralWeights, solve_weights};
 
 pub(crate) fn load_preapplied_rows(
@@ -75,20 +76,27 @@ pub(crate) fn build_solve_groups(
             || options.combine.observations);
     let needs_first_buffer =
         options.gain_type == GainType::T || options.robust_seed || seed_combined_g;
+    let include_autocorrelations =
+        needs_first_buffer || models.needs_buffers() || options.combine.scans;
     let mut ordered = bucketed_rows(
         rows,
         options.solve_interval,
         options.combine,
-        needs_first_buffer,
+        include_autocorrelations,
     );
-    let seed_buffers =
-        if needs_first_buffer || options.combine.observations || options.combine.spectral_windows {
-            let buffers = first_t_buffers(&ordered, options.preaverage_max_span);
-            ordered.retain(|(row, _, _)| row.antenna1 != row.antenna2);
-            buffers
-        } else {
-            BTreeMap::new()
-        };
+    let seed_buffers = if needs_first_buffer
+        || options.combine.observations
+        || options.combine.spectral_windows
+        || options.combine.scans
+    {
+        first_t_buffers(&ordered, options.preaverage_max_span)
+    } else {
+        BTreeMap::new()
+    };
+    models.bind_buffers(ms, &ordered, options.combine)?;
+    if include_autocorrelations {
+        ordered.retain(|(row, _, _)| row.antenna1 != row.antenna2);
+    }
     models.phase_times =
         weights::chunk_phase_times(&ordered, options.combine, models.dynamic_fields());
     let mut layouts = SolveRowLayouts::new(ms, options.rotate_model, &models)?;
@@ -183,7 +191,7 @@ pub(crate) fn build_solve_groups(
     Ok(groups)
 }
 
-type BucketedRow<'a> = (&'a SelectedSolveRow, SolveBaseKey, SolveBucketKey);
+pub(super) type BucketedRow<'a> = (&'a SelectedSolveRow, SolveBaseKey, SolveBucketKey);
 
 /// One reader and the calling accumulation thread, within the CPU budget.
 fn overlap_inputs(rows: usize) -> bool {
@@ -599,6 +607,7 @@ pub(crate) struct SolveSamples<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SolveBaseKey {
+    pub(crate) array_id: i32,
     pub(crate) field_id: i32,
     pub(crate) spw_id: i32,
     pub(crate) data_desc_id: i32,
@@ -668,6 +677,13 @@ impl SolveEdgeStats {
 }
 
 impl SolveAccumulator {
+    pub(crate) fn scan_number(&self) -> i32 {
+        self.first_t_buffer.map_or_else(
+            || self.scan_numbers.first().copied().unwrap_or(0),
+            |first| first.scan_number,
+        )
+    }
+
     pub(crate) fn new(field_id: i32, spw_id: i32, observation_id: i32) -> Self {
         Self {
             field_id,

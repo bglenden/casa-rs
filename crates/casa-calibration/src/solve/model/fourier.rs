@@ -2,6 +2,10 @@
 //! Read an already transformed CASA virtual GridFT model and degrid it
 //! using the same measurement operator as imaging.
 
+mod focus;
+mod mosaic;
+mod setjy;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -23,17 +27,20 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
 
-use super::{GainSolveError, SelectedSolveRow, model_error};
+use super::{FocusSample, GainSolveError, SelectedSolveRow, model_error};
+use mosaic::MosaicLayout;
 
 pub(super) struct FourierModel {
     record: RecordValue,
+    mosaic: bool,
+    refocus: bool,
     prepared: Mutex<FourierCache>,
 }
 
 #[derive(Default)]
 struct FourierCache {
     grids: Option<Arc<PreparedModelGrids>>,
-    layouts: BTreeMap<Vec<i32>, PreparedFourierModel>,
+    layouts: BTreeMap<Option<i32>, BTreeMap<Vec<i32>, PreparedFourierModel>>,
 }
 
 pub(super) struct FourierRow<'a> {
@@ -47,14 +54,27 @@ pub(super) struct FourierRow<'a> {
     pub(super) field: &'a MDirection,
     pub(super) frame: &'a MeasFrame,
     pub(super) uvw: [f64; 3],
+    pub(super) focus_rows: &'a [FocusSample],
 }
 
 impl FourierModel {
     pub(super) fn new(record: RecordValue) -> Self {
+        let first_term = match record.get("subftm_0") {
+            Some(Value::Record(term)) => term,
+            _ => &record,
+        };
+        let mosaic = mosaic::is_mosaic(first_term);
+        let refocus = record_number(first_term, "distance").is_some_and(|distance| distance != 0.0);
         Self {
             record,
+            mosaic,
+            refocus,
             prepared: Mutex::default(),
         }
+    }
+
+    pub(super) fn needs_refocus(&self) -> bool {
+        self.refocus
     }
 
     pub(super) fn predict(
@@ -66,18 +86,16 @@ impl FourierModel {
             .prepared
             .lock()
             .expect("solve model is single consumer");
-        if !prepared.layouts.contains_key(row.correlations) {
-            let model = PreparedFourierModel::load(
-                &self.record,
-                row.ms,
-                row.correlations,
-                prepared.grids.clone(),
-            )?;
-            prepared.grids = Some(Arc::clone(&model.grids));
-            prepared.layouts.insert(row.correlations.to_vec(), model);
+        let FourierCache { grids, layouts } = &mut *prepared;
+        let layouts = layouts
+            .entry(self.mosaic.then_some(row.row.data_spw_id))
+            .or_default();
+        if !layouts.contains_key(row.correlations) {
+            let model = PreparedFourierModel::load(&self.record, &row, grids.clone())?;
+            *grids = Some(Arc::clone(&model.grids));
+            layouts.insert(row.correlations.to_vec(), model);
         }
-        prepared
-            .layouts
+        layouts
             .get_mut(row.correlations)
             .expect("correlation layout was prepared")
             .predict(row, output)
@@ -89,6 +107,10 @@ struct PreparedFourierModel {
     resampler: SpectralResampler,
     grids: Arc<PreparedModelGrids>,
     phase_centre: MDirection,
+    project: bool,
+    refocus: Option<focus::Refocus>,
+    mosaic: Option<MosaicLayout>,
+    scale: Option<setjy::FluxScale>,
     continuum_axis: Option<SpectralAxis>,
     convert_frequencies: bool,
     backend: CpuBackend,
@@ -103,14 +125,13 @@ struct PreparedFourierModel {
 impl PreparedFourierModel {
     fn load(
         record: &RecordValue,
-        ms: &MeasurementSet,
-        correlations: &[i32],
+        row: &FourierRow<'_>,
         cached_grids: Option<Arc<PreparedModelGrids>>,
     ) -> Result<Self, GainSolveError> {
         let (terms, continuum_basis) = grid_terms(record)?;
         let images = terms
             .iter()
-            .map(|term| open_grid(term, ms))
+            .map(|term| open_grid(term, row.ms))
             .collect::<Result<Vec<_>, _>>()?;
         let image = &images[0];
         let [nx, ny, npol, channels] = *image.shape() else {
@@ -140,7 +161,7 @@ impl PreparedFourierModel {
             grid_padding(terms[0])?,
         )
         .map_err(model_error)?;
-        let polarization = grid_polarization(image, correlations)?;
+        let polarization = grid_polarization(image, row.correlations)?;
         if polarization.grid_pols() != npol {
             return Err(model_error(
                 "virtual grid polarization axis does not match its planes",
@@ -148,18 +169,46 @@ impl PreparedFourierModel {
         }
         let axis = image_spectral_axis(image, channels)?;
         let (basis, resampler) = spectral_layout(record, &axis, continuum_basis)?;
-        let kernels = grid_kernel(terms[0], &geometry, &polarization)?;
+        let (kernels, mosaic) = if mosaic::is_mosaic(terms[0]) {
+            let (kernels, layout) = MosaicLayout::load(
+                terms[0],
+                row,
+                direction,
+                &geometry,
+                &polarization,
+                axis.first_hz(),
+                matches!(
+                    record.get("freqframevalid"),
+                    Some(Value::Scalar(ScalarValue::Bool(true)))
+                ),
+            )?;
+            (kernels, Some(layout))
+        } else {
+            (grid_kernel(terms[0], &geometry, &polarization)?, None)
+        };
         let operator =
             MeasurementOperator::new(geometry, basis, polarization, kernels, GridPrecision::F32);
         let grids = match cached_grids {
             Some(grids) => grids,
             None => Arc::new(load_grids(&operator, &images)?),
         };
+        let scale = if record_text(terms[0], "name")? == "SetJyGridFT" {
+            setjy::FluxScale::from_record(terms[0])?
+        } else {
+            None
+        };
+        let project = uses_projected_tangent(terms[0], row.ms)?;
         Ok(Self {
             operator,
             resampler,
             grids,
             phase_centre,
+            project,
+            refocus: focus::Refocus::from_distance(
+                record_number(terms[0], "distance").unwrap_or(0.0),
+            )?,
+            mosaic,
+            scale,
             continuum_axis: (channels == 1).then_some(axis),
             convert_frequencies: matches!(
                 record.get("freqframevalid"),
@@ -180,13 +229,40 @@ impl PreparedFourierModel {
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
     ) -> Result<(), GainSolveError> {
-        let projection = GridFtProjection::between_directions_with_frame(
-            row.field,
-            &self.phase_centre,
-            row.frame,
-        )
-        .map_err(model_error)?;
-        let (uvw_m, phase_shift_m) = projection.apply(row.uvw);
+        let (projection, pointing_offset_rad, antenna_types) = match &self.mosaic {
+            Some(layout) => (
+                GridFtProjection::mosaic_between_directions_with_frame(
+                    row.field,
+                    &self.phase_centre,
+                    row.frame,
+                ),
+                layout.pointing_offset(&row)?,
+                layout.antenna_types(&row)?,
+            ),
+            None if self.project => (
+                GridFtProjection::faceted_between_directions_with_frame(
+                    row.field,
+                    &self.phase_centre,
+                    row.frame,
+                ),
+                [0.0; 2],
+                [0; 2],
+            ),
+            None => (
+                GridFtProjection::between_directions_with_frame(
+                    row.field,
+                    &self.phase_centre,
+                    row.frame,
+                ),
+                [0.0; 2],
+                [0; 2],
+            ),
+        };
+        let projection = projection.map_err(model_error)?;
+        let (uvw_m, phase_shift_m) = match &mut self.refocus {
+            Some(focus) => focus.apply(&row, &projection)?,
+            None => projection.apply(row.uvw),
+        };
         if row.raw_flags.shape() != [row.correlations.len(), row.frequencies.len()] {
             return Err(model_error(
                 "virtual Fourier prediction flags do not match the visibility layout",
@@ -197,18 +273,13 @@ impl PreparedFourierModel {
         self.output.resize(cells, Complex32::new(0.0, 0.0));
         self.weights.resize(cells, 1.0);
         self.flags.resize(cells, false);
-        let ratio = if self.convert_frequencies && row.frequency_ref != FrequencyRef::LSRK {
-            let reference = row.frequencies[0];
-            convert_frequency_to_frame(
-                row.frequency_ref,
-                FrequencyRef::LSRK,
-                reference,
-                row.row.time_seconds,
-                row.row.field_id as usize,
-                row.engine,
-            )
-            .map_err(model_error)?
-                / reference
+        let lsrk_ratio = if self.convert_frequencies || self.scale.is_some() {
+            lsrk_frequency_ratio(&row)?
+        } else {
+            1.0
+        };
+        let ratio = if self.convert_frequencies {
+            lsrk_ratio
         } else {
             1.0
         };
@@ -232,7 +303,7 @@ impl PreparedFourierModel {
         let native = NativeRow {
             uvw_m,
             phase_shift_m,
-            pointing_offset_rad: [0.0; 2],
+            pointing_offset_rad,
             frequencies_hz: &self.frequencies,
             values: &self.data,
             weights: &self.weights,
@@ -243,7 +314,7 @@ impl PreparedFourierModel {
                 original_uvw_m: None,
                 time_s: row.row.time_seconds,
                 antennas: [row.row.antenna1 as u32, row.row.antenna2 as u32],
-                antenna_types: [0, 0],
+                antenna_types,
                 parallactic_angle_rad: [0.0, 0.0],
                 field: row.row.field_id as u32,
                 spectral_window: row.row.data_spw_id as u32,
@@ -259,6 +330,18 @@ impl PreparedFourierModel {
                 &mut self.output,
             )
             .map_err(model_error)?;
+        if let Some(scale) = &self.scale {
+            for (samples, frequency) in self
+                .output
+                .chunks_exact_mut(row.correlations.len())
+                .zip(row.frequencies)
+            {
+                let factor = scale.at(*frequency * lsrk_ratio);
+                for sample in samples {
+                    *sample *= factor;
+                }
+            }
+        }
         for (destination, &value) in output
             .as_slice_memory_order_mut()
             .expect("virtual model output is contiguous")
@@ -269,6 +352,42 @@ impl PreparedFourierModel {
         }
         Ok(())
     }
+}
+
+fn lsrk_frequency_ratio(row: &FourierRow<'_>) -> Result<f64, GainSolveError> {
+    if row.frequency_ref == FrequencyRef::LSRK {
+        return Ok(1.0);
+    }
+    let reference = row.frequencies[0];
+    let converted = convert_frequency_to_frame(
+        row.frequency_ref,
+        FrequencyRef::LSRK,
+        reference,
+        row.row.time_seconds,
+        row.row.field_id as usize,
+        row.engine,
+    )
+    .map_err(model_error)?;
+    Ok(converted / reference)
+}
+
+fn uses_projected_tangent(
+    record: &RecordValue,
+    ms: &MeasurementSet,
+) -> Result<bool, GainSolveError> {
+    if !matches!(
+        record.get("tangentspecified"),
+        Some(Value::Scalar(ScalarValue::Bool(true)))
+    ) {
+        return Ok(false);
+    }
+    let telescope = ms
+        .observation()
+        .map_err(model_error)?
+        .string(0, "TELESCOPE_NAME")
+        .map_err(model_error)?;
+    // FTMachine::rotateUVW uses unprojected rotation for these telescopes.
+    Ok(!telescope.contains("ATCA") && !telescope.contains("WSRT"))
 }
 
 fn spectral_layout(
@@ -336,7 +455,9 @@ fn image_spectral_axis(
 
 fn grid_terms(record: &RecordValue) -> Result<(Vec<&RecordValue>, Basis), GainSolveError> {
     match record_text(record, "name")? {
-        "GridFT" | "WProjectFT" => Ok((vec![record], Basis::Constant)),
+        "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT" => {
+            Ok((vec![record], Basis::Constant))
+        }
         "MultiTermFTNew" => {
             let Some(Value::Scalar(ScalarValue::UInt32(terms))) = record.get("nterms") else {
                 return Err(model_error(
@@ -379,20 +500,20 @@ fn open_grid(
     record: &RecordValue,
     ms: &MeasurementSet,
 ) -> Result<PagedImage<Complex32>, GainSolveError> {
-    if !matches!(record_text(record, "name")?, "GridFT" | "WProjectFT") {
+    if !matches!(
+        record_text(record, "name")?,
+        "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT"
+    ) {
         return Err(model_error(
-            "virtual Taylor models require GridFT or WProjectFT terms",
+            "unsupported Fourier image type in virtual model",
         ));
     }
-    if ["tangentspecified", "fixmovingsource"].iter().any(|field| {
-        matches!(
-            record.get(field),
-            Some(Value::Scalar(ScalarValue::Bool(true)))
-        )
-    }) || matches!(record.get("distance"), Some(Value::Scalar(ScalarValue::Float64(distance))) if *distance != 0.0)
-    {
+    if matches!(
+        record.get("fixmovingsource"),
+        Some(Value::Scalar(ScalarValue::Bool(true)))
+    ) {
         return Err(model_error(
-            "virtual GridFT facet, tracking or finite-distance geometry is unsupported",
+            "virtual Fourier tracking geometry is unsupported",
         ));
     }
     let recorded = Path::new(record_text(record, "diskimage")?);
@@ -476,11 +597,23 @@ fn grid_polarization(
             _ => None,
         })
         .ok_or_else(|| model_error("virtual grid image has no Stokes coordinate"))?;
-    if stokes != [StokesType::I] {
-        return Err(model_error(
-            "virtual GridFT currently requires a Stokes I grid",
-        ));
-    }
+    let coordinates = stokes
+        .iter()
+        .map(|stokes| match stokes {
+            StokesType::I => PolarizationCoordinate::StokesI,
+            StokesType::Q => PolarizationCoordinate::StokesQ,
+            StokesType::U => PolarizationCoordinate::StokesU,
+            StokesType::V => PolarizationCoordinate::StokesV,
+            StokesType::XX => PolarizationCoordinate::LinearXx,
+            StokesType::XY => PolarizationCoordinate::LinearXy,
+            StokesType::YX => PolarizationCoordinate::LinearYx,
+            StokesType::YY => PolarizationCoordinate::LinearYy,
+            StokesType::RR => PolarizationCoordinate::CircularRr,
+            StokesType::RL => PolarizationCoordinate::CircularRl,
+            StokesType::LR => PolarizationCoordinate::CircularLr,
+            StokesType::LL => PolarizationCoordinate::CircularLl,
+        })
+        .collect::<Vec<_>>();
     let correlations = correlations
         .iter()
         .map(|&code| {
@@ -488,8 +621,7 @@ fn grid_polarization(
                 .ok_or_else(|| model_error(format!("invalid virtual grid correlation {code}")))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    PolarizationRouting::compile(&correlations, &[PolarizationCoordinate::StokesI])
-        .map_err(model_error)
+    PolarizationRouting::from_saved_planes(&correlations, &coordinates).map_err(model_error)
 }
 
 fn load_grids(
