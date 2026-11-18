@@ -124,13 +124,19 @@ pub enum GainSolveInterval {
     Seconds(f64),
 }
 
-/// Supported first-wave `gaincal` combine axes.
+/// Data axes omitted as boundaries when forming `gaincal` solution intervals.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GainSolveCombine {
     /// Extend solves across scan boundaries.
     pub scans: bool,
     /// Extend solves across field boundaries.
     pub fields: bool,
+    /// Extend solves across observation boundaries.
+    #[serde(default)]
+    pub observations: bool,
+    /// Solve jointly across selected spectral windows.
+    #[serde(default)]
+    pub spectral_windows: bool,
 }
 
 /// Reference antenna selector for solve requests.

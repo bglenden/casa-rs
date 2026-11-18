@@ -994,6 +994,7 @@ fn solve_phase_gain_with_combine_scan_matches_casa_gaincal_downstream() {
             combine: GainSolveCombine {
                 scans: true,
                 fields: false,
+                ..GainSolveCombine::default()
             },
             refant: RefAntSelector::AntennaName("VA15".to_string()),
             prior_calibration_tables: Vec::new(),
@@ -1165,6 +1166,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
             combine: GainSolveCombine {
                 scans: true,
                 fields: true,
+                ..GainSolveCombine::default()
             },
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),

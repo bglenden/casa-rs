@@ -313,6 +313,7 @@ pub(crate) fn solve_bandpass(
             combine: GainSolveCombine {
                 scans: request.combine.scans,
                 fields: request.combine.fields,
+                ..GainSolveCombine::default()
             },
             channelized: true,
             preaverage_max_span: None,

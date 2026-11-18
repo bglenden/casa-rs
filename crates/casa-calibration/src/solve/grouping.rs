@@ -78,6 +78,11 @@ pub(crate) fn build_solve_groups(
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut layouts_by_ddid = HashMap::new();
+    let combined_spw = options
+        .combine
+        .spectral_windows
+        .then(|| rows.iter().map(|row| row.data_spw_id).min())
+        .flatten();
     let needs_first_buffer = options.gain_type == GainType::T || options.robust_seed;
     let mut ordered = bucketed_rows(
         rows,
@@ -113,8 +118,11 @@ pub(crate) fn build_solve_groups(
         let _accumulate_phase = crate::timing::Phase::start("solve_accumulate");
         for (index, &(row, base_key, bucket_key)) in batch.iter().enumerate() {
             let group = groups.entry((base_key, bucket_key)).or_insert_with(|| {
-                let mut group =
-                    SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id);
+                let mut group = SolveAccumulator::new(
+                    row.field_id,
+                    combined_spw.unwrap_or(row.data_spw_id),
+                    row.observation_id,
+                );
                 group.first_t_buffer = seed_buffers.get(&(base_key, bucket_key)).copied();
                 group
             });
@@ -1447,6 +1455,7 @@ mod tests {
         let combined = buckets(GainSolveCombine {
             scans: true,
             fields: true,
+            ..GainSolveCombine::default()
         });
         let times = combined.iter().map(|(time, ..)| *time).collect::<Vec<_>>();
         assert_eq!(times, [100.0, 101.0, 102.0, 130.0, 131.0, 132.0]);

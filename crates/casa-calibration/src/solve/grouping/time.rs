@@ -26,8 +26,16 @@ pub(super) fn bucketed_rows(
         .map(|row| {
             let base_key = SolveBaseKey {
                 field_id: if combine.fields { 0 } else { row.field_id },
-                spw_id: row.data_spw_id,
-                observation_id: row.observation_id,
+                spw_id: if combine.spectral_windows {
+                    0
+                } else {
+                    row.data_spw_id
+                },
+                observation_id: if combine.observations {
+                    0
+                } else {
+                    row.observation_id
+                },
                 scan_number: if combine.scans { 0 } else { row.scan_number },
             };
             (row, base_key)

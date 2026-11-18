@@ -1065,6 +1065,7 @@ fn solve_gain_phase_g_combine_scans_writes_one_solution_group_across_scans() {
             combine: GainSolveCombine {
                 scans: true,
                 fields: false,
+                ..GainSolveCombine::default()
             },
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
@@ -1145,6 +1146,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
             combine: GainSolveCombine {
                 scans: true,
                 fields: true,
+                ..GainSolveCombine::default()
             },
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
