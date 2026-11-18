@@ -245,7 +245,7 @@ fn export_all_corrected_data_by_copy(
     output_ms: &Path,
 ) -> Result<(), ExportCorrectedDataError> {
     prepare_output_root(output_ms)?;
-    copy_dir_recursive(input_ms, output_ms).map_err(|error| {
+    crate::paths::copy_dir_recursive(input_ms, output_ms).map_err(|error| {
         ExportCorrectedDataError::PrepareOutput {
             path: output_ms.display().to_string(),
             reason: error.to_string(),
@@ -465,25 +465,6 @@ fn prepare_output_root(path: &Path) -> Result<(), ExportCorrectedDataError> {
             path: path.display().to_string(),
             reason: error.to_string(),
         })?;
-    }
-    Ok(())
-}
-
-fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            copy_dir_recursive(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&source_path, &destination_path)?;
-        } else if file_type.is_symlink() {
-            let target = fs::read_link(&source_path)?;
-            std::os::unix::fs::symlink(target, destination_path)?;
-        }
     }
     Ok(())
 }

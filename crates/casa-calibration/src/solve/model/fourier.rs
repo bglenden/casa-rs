@@ -11,9 +11,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, StokesType};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType};
 use casa_images::PagedImage;
-use casa_imaging_model::{GridFtProjection, PolarizationCoordinate};
+use casa_imaging_model::GridFtProjection;
 use casa_imaging_operator::{
     Basis, Boxcar, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
     ImageExtent, MeasurementOperator, NativeRow, PaddingFactor, PlaneRange, PolarizationRouting,
@@ -25,7 +25,7 @@ use casa_ms::{MeasurementSet, convert_frequency_to_frame};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{Complex32, Correlation, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
 
 use super::{FocusSample, GainSolveError, SelectedSolveRow, model_error};
@@ -44,6 +44,13 @@ struct FourierCache {
     layouts: BTreeMap<Option<i32>, BTreeMap<Vec<i32>, PreparedFourierModel>>,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum FourierMerge {
+    VirtualSum,
+    ScratchSum,
+    ScratchReplaceComponents,
+}
+
 pub(super) struct FourierRow<'a> {
     pub(super) ms: &'a MeasurementSet,
     pub(super) row: &'a SelectedSolveRow,
@@ -57,11 +64,12 @@ pub(super) struct FourierRow<'a> {
     pub(super) frame: &'a MeasFrame,
     pub(super) uvw: [f64; 3],
     pub(super) focus_rows: &'a [FocusSample],
+    pub(super) scratch_channels: Option<[i32; 4]>,
 }
 
 impl FourierModel {
     pub(super) fn new(record: RecordValue) -> Self {
-        let first_term = match record.get("subftm_0") {
+        let first_term = match record.get("subftm_0").or_else(|| record.get("subftm")) {
             Some(Value::Record(term)) => term,
             _ => &record,
         };
@@ -83,6 +91,7 @@ impl FourierModel {
         &self,
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
+        merge: FourierMerge,
     ) -> Result<(), GainSolveError> {
         let mut prepared = self
             .prepared
@@ -100,7 +109,7 @@ impl FourierModel {
         layouts
             .get_mut(row.correlations)
             .expect("correlation layout was prepared")
-            .predict(row, output)
+            .predict(row, output, merge)
     }
 }
 
@@ -115,12 +124,16 @@ struct PreparedFourierModel {
     refocus: Option<focus::Refocus>,
     mosaic: Option<MosaicLayout>,
     scale: Option<setjy::FluxScale>,
+    legacy_taylor: Option<(i32, f64)>,
+    legacy_flags: bool,
+    channel_mask: Option<ArrayD<i32>>,
     continuum_axis: Option<SpectralAxis>,
     convert_frequencies: bool,
     backend: CpuBackend,
     scratch: PredictionScratch,
     data: Vec<Complex32>,
     output: Vec<Complex32>,
+    covered: Vec<bool>,
     weights: Vec<f32>,
     flags: Vec<bool>,
     frequencies: Vec<f64>,
@@ -203,6 +216,11 @@ impl PreparedFourierModel {
             None
         };
         let project = uses_projected_tangent(terms[0], row.ms)?;
+        let legacy_flags = terms[0].get("doconversion").is_some();
+        let channel_mask = match terms[0].get("spwchanselflag") {
+            Some(Value::Array(ArrayValue::Int32(mask))) if !mask.is_empty() => Some(mask.clone()),
+            _ => None,
+        };
         Ok(Self {
             operator,
             resampler,
@@ -216,6 +234,9 @@ impl PreparedFourierModel {
             )?,
             mosaic,
             scale,
+            legacy_taylor: legacy_taylor_term(record)?,
+            legacy_flags,
+            channel_mask,
             continuum_axis: (channels == 1).then_some(axis),
             convert_frequencies: matches!(
                 record.get("freqframevalid"),
@@ -225,6 +246,7 @@ impl PreparedFourierModel {
             scratch: PredictionScratch::default(),
             data: Vec::new(),
             output: Vec::new(),
+            covered: Vec::new(),
             weights: Vec::new(),
             flags: Vec::new(),
             frequencies: Vec::new(),
@@ -235,6 +257,7 @@ impl PreparedFourierModel {
         &mut self,
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
+        merge: FourierMerge,
     ) -> Result<(), GainSolveError> {
         let shift = self
             .tracking
@@ -302,19 +325,41 @@ impl PreparedFourierModel {
         self.frequencies.clear();
         self.frequencies
             .extend(row.frequencies.iter().map(|frequency| frequency * ratio));
-        // Reopened GridFT uses the original flag cube and the channel-wide
-        // flag from setSpectralFlag, before any solve pre-calibration.
-        for ((flags, raw), &frequency) in self
+        for (channel, ((flags, raw), &frequency)) in self
             .flags
             .chunks_exact_mut(row.correlations.len())
             .zip(row.raw_flags.axis_iter(Axis(1)))
             .zip(&self.frequencies)
+            .enumerate()
         {
             let outside = self
                 .continuum_axis
                 .as_ref()
                 .is_some_and(|axis| axis.nearest_channel(frequency).is_none());
-            flags.fill(outside || raw.iter().any(|flag| *flag));
+            if self.legacy_flags {
+                // Legacy GridFT restores VisBuffer's per-correlation flags.
+                // FTMachine::fromRecord discards the original channel mask.
+                let masked = self
+                    .channel_mask
+                    .as_ref()
+                    .zip(row.scratch_channels)
+                    .is_some_and(|(mask, [spw, start, count, stride])| {
+                        let Some(relative) = channel.checked_sub(start as usize) else {
+                            return true;
+                        };
+                        let compact = relative / stride as usize;
+                        compact >= count as usize
+                            || !relative.is_multiple_of(stride as usize)
+                            || mask
+                                .get([0, spw as usize, compact].as_slice())
+                                .is_some_and(|&value| value != 1)
+                    });
+                for (value, &raw_flag) in flags.iter_mut().zip(raw) {
+                    *value = outside || masked || raw_flag;
+                }
+            } else {
+                flags.fill(outside || raw.iter().any(|flag| *flag));
+            }
         }
         let native = NativeRow {
             uvw_m,
@@ -336,37 +381,71 @@ impl PreparedFourierModel {
                 spectral_window: row.row.data_spw_id as u32,
             },
         };
+        let is_scratch = self.legacy_flags && !matches!(merge, FourierMerge::VirtualSum);
+        let coverage = is_scratch.then(|| {
+            self.covered.resize(cells, false);
+            &mut self.covered[..]
+        });
         self.resampler
-            .predict_row(
+            .predict_row_with_coverage(
                 &self.operator,
                 &mut self.backend,
                 &self.grids,
                 &native,
                 &mut self.scratch,
-                &mut self.output,
+                (&mut self.output, coverage),
             )
             .map_err(model_error)?;
-        if let Some(scale) = &self.scale {
-            for (samples, frequency) in self
-                .output
-                .chunks_exact_mut(row.correlations.len())
-                .zip(row.frequencies)
-            {
-                let factor = scale.at(*frequency * lsrk_ratio);
-                for sample in samples {
-                    *sample *= factor;
+        self.accumulate(row, output, lsrk_ratio, is_scratch.then_some(merge));
+        Ok(())
+    }
+
+    fn accumulate(
+        &self,
+        row: FourierRow<'_>,
+        output: &mut ArrayD<Complex32>,
+        lsrk_ratio: f64,
+        scratch: Option<FourierMerge>,
+    ) {
+        let correlations = row.correlations.len();
+        let destination = output
+            .as_slice_memory_order_mut()
+            .expect("contiguous model output");
+        if scratch.is_none() && self.scale.is_none() && self.legacy_taylor.is_none() {
+            for (value, &model) in destination.iter_mut().zip(&self.output) {
+                *value += model;
+            }
+            return;
+        }
+        for (channel, &frequency) in row.frequencies.iter().enumerate() {
+            let factor = self
+                .scale
+                .as_ref()
+                .map_or(1.0, |scale| scale.at(frequency * lsrk_ratio));
+            let taylor = self.legacy_taylor.map_or(1.0, |(term, reference)| {
+                // Legacy MultiTermFT rounds the raw frequency to Float.
+                let offset = ((f64::from(frequency as f32) - reference) / reference) as f32;
+                offset.powi(term)
+            });
+            for correlation in 0..correlations {
+                let index = channel * correlations + correlation;
+                let assigned = scratch.is_none() || self.covered[index];
+                if matches!(scratch, Some(FourierMerge::ScratchReplaceComponents)) {
+                    if assigned {
+                        destination[index] = self.output[index] * (factor * taylor);
+                    }
+                } else {
+                    // An additive SkyEquation pass adds the original model
+                    // to GridFT's output, including samples it did not visit.
+                    let sample = if assigned {
+                        self.output[index]
+                    } else {
+                        destination[index]
+                    };
+                    destination[index] += sample * (factor * taylor);
                 }
             }
         }
-        for (destination, &value) in output
-            .as_slice_memory_order_mut()
-            .expect("virtual model output is contiguous")
-            .iter_mut()
-            .zip(&self.output)
-        {
-            *destination += value;
-        }
-        Ok(())
     }
 }
 
@@ -474,6 +553,10 @@ fn grid_terms(record: &RecordValue) -> Result<(Vec<&RecordValue>, Basis), GainSo
         "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT" => {
             Ok((vec![record], Basis::Constant))
         }
+        "MultiTermFT" => match record.get("subftm") {
+            Some(Value::Record(term)) => Ok((vec![term], Basis::Constant)),
+            _ => Err(model_error("virtual MultiTermFT has no subftm record")),
+        },
         "MultiTermFTNew" => {
             let Some(Value::Scalar(ScalarValue::UInt32(terms))) = record.get("nterms") else {
                 return Err(model_error(
@@ -510,6 +593,26 @@ fn grid_terms(record: &RecordValue) -> Result<(Vec<&RecordValue>, Basis), GainSo
             "unsupported virtual Fourier machine {name}"
         ))),
     }
+}
+
+/// Legacy ft stores each Taylor grid in a separate model entry. Its machine
+/// contains one term and scales that term after degridding.
+fn legacy_taylor_term(record: &RecordValue) -> Result<Option<(i32, f64)>, GainSolveError> {
+    if record_text(record, "name")? != "MultiTermFT" {
+        return Ok(None);
+    }
+    let Some(Value::Scalar(ScalarValue::Int32(term))) = record.get("thisterm") else {
+        return Err(model_error("virtual MultiTermFT has no Taylor term index"));
+    };
+    let Some(reference) = record_number(record, "reffreq") else {
+        return Err(model_error(
+            "virtual MultiTermFT has no reference frequency",
+        ));
+    };
+    if *term < 0 || !reference.is_finite() || reference <= 0.0 {
+        return Err(model_error("invalid virtual MultiTermFT Taylor term"));
+    }
+    Ok((*term > 0).then_some((*term, reference)))
 }
 
 fn open_grid(
@@ -607,20 +710,8 @@ fn grid_polarization(
         .ok_or_else(|| model_error("virtual grid image has no Stokes coordinate"))?;
     let coordinates = stokes
         .iter()
-        .map(|stokes| match stokes {
-            StokesType::I => PolarizationCoordinate::StokesI,
-            StokesType::Q => PolarizationCoordinate::StokesQ,
-            StokesType::U => PolarizationCoordinate::StokesU,
-            StokesType::V => PolarizationCoordinate::StokesV,
-            StokesType::XX => PolarizationCoordinate::LinearXx,
-            StokesType::XY => PolarizationCoordinate::LinearXy,
-            StokesType::YX => PolarizationCoordinate::LinearYx,
-            StokesType::YY => PolarizationCoordinate::LinearYy,
-            StokesType::RR => PolarizationCoordinate::CircularRr,
-            StokesType::RL => PolarizationCoordinate::CircularRl,
-            StokesType::LR => PolarizationCoordinate::CircularLr,
-            StokesType::LL => PolarizationCoordinate::CircularLl,
-        })
+        .copied()
+        .map(crate::ft::image::polarization_coordinate)
         .collect::<Vec<_>>();
     let correlations = correlations
         .iter()

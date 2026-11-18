@@ -106,11 +106,16 @@ fn spectrum(record: &RecordValue) -> Result<SpectralModel, ComponentError> {
     let frequency_record = subrecord(record, "frequency")?;
     let frequency =
         frequency_from_record(frequency_record).map_err(|error| invalid(error.to_string()))?;
+    let measure = quantity(subrecord(frequency_record, "m0")?)?;
+    let hertz = Unit::new("Hz").expect("Hz is a unit");
+    let hertz = measure
+        .get_value_in(&hertz)
+        .map_err(|error| invalid(error.to_string()))?;
+    let frequency = casa_types::measures::frequency::MFrequency::new(hertz, frequency.refer());
     let mut kind = SpectralKind::casa_default(SpectralType::parse_casa(string(record, "type")?)?);
     crate::table::apply_spectral_record(&mut kind, record)?;
     let mut model = SpectralModel::new(frequency, kind);
-    let unit = string(subrecord(frequency_record, "m0")?, "unit")?;
-    model.set_frequency_unit(Unit::new(unit).map_err(|error| invalid(error.to_string()))?)?;
+    model.set_frequency_unit(measure.unit().clone())?;
     Ok(model)
 }
 

@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use casa_ms::ChannelSelection;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
-use casa_ms::{MsError, ResolvedMsSelectionRow, scratch_columns};
+use casa_ms::{MsError, ResolvedMsSelectionRow, VirtualModelEntry, scratch_columns};
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, ArrayView2};
 
@@ -379,8 +379,29 @@ impl VisibilityModels {
             .filter(|row| virtual_fields.contains(&row.field_id))
             .map(|row| selected_solve_row(ms, row, None))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut models =
+        let models =
             super::model::ModelInputs::new(ms, &rows, GainSolveModelSource::FromMeasurementSet)?;
+        Self::with_models(ms, rows, models)
+    }
+
+    pub(crate) fn from_entries(
+        ms: &MeasurementSet,
+        rows: &[ResolvedMsSelectionRow],
+        entries: &[VirtualModelEntry],
+    ) -> Result<Self, GainSolveError> {
+        let rows = rows
+            .iter()
+            .map(|row| selected_solve_row(ms, row, None))
+            .collect::<Result<Vec<_>, _>>()?;
+        let models = super::model::ModelInputs::from_entries(ms, &rows, entries)?;
+        Self::with_models(ms, rows, models)
+    }
+
+    fn with_models(
+        ms: &MeasurementSet,
+        rows: Vec<SelectedSolveRow>,
+        mut models: super::model::ModelInputs,
+    ) -> Result<Self, GainSolveError> {
         let combine = GainSolveCombine {
             scans: true,
             observations: true,
@@ -424,6 +445,22 @@ impl VisibilityModels {
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
         match self.rows.get(&row) {
             Some(row) => self.models.predict(ms, row, correlations, flags),
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) fn predict_scratch(
+        &self,
+        ms: &MeasurementSet,
+        row: usize,
+        correlations: &[i32],
+        flags: &ArrayD<bool>,
+        previous: Option<ArrayD<Complex32>>,
+    ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
+        match self.rows.get(&row) {
+            Some(row) => self
+                .models
+                .predict_model(ms, row, correlations, (flags, previous), true),
             None => Ok(None),
         }
     }

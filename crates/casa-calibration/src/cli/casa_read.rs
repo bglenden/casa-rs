@@ -356,7 +356,7 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
     Ok(selection)
 }
 
-fn selector_text(value: Option<&ParameterValue>) -> Option<String> {
+pub(super) fn selector_text(value: Option<&ParameterValue>) -> Option<String> {
     let text = match value? {
         ParameterValue::String(text) => text.clone(),
         ParameterValue::NumpyScalar { value, .. } | ParameterValue::ScalarArray(value) => {

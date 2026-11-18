@@ -30,7 +30,7 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// The surfaces `calibrate` hosts, with the default surface first.
-pub const CALIBRATION_SURFACES: [&str; 9] = [
+pub const CALIBRATION_SURFACES: [&str; 10] = [
     "calibrate",
     "applycal",
     "gaincal",
@@ -40,6 +40,7 @@ pub const CALIBRATION_SURFACES: [&str; 9] = [
     "clearcal",
     "delmod",
     "uvsub",
+    "ft",
 ];
 
 /// Build the current shared calibration protocol descriptor.
@@ -685,6 +686,7 @@ mod tests {
                 "clearcal",
                 "delmod",
                 "uvsub",
+                "ft",
             ]
         );
         assert!(
@@ -698,7 +700,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            9
+            bundle.parameter_surfaces.len()
         );
         assert!(
             bundle
