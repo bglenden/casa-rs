@@ -132,7 +132,7 @@ fn invalid_selectors_leave_both_model_representations_in_place() {
     drop(ms);
     let mut lock = TableWriteLock::acquire_to_reread(&path, 0).unwrap();
     let mut ms = MeasurementSet::open(&path).unwrap();
-    for (field, spw) in [("999", None), ("0", Some("999"))] {
+    for (field, spw) in [("999", None), ("0", Some("999")), (" ", Some("999"))] {
         assert!(
             delete_calibration_model(&mut ms, Some(field), spw, true, true, &mut lock).is_err()
         );
@@ -146,5 +146,42 @@ fn invalid_selectors_leave_both_model_representations_in_place() {
             .schema()
             .unwrap()
             .contains_column("MODEL_DATA")
+    );
+}
+
+#[test]
+fn a_write_lock_on_another_ms_cannot_clear_models() {
+    let first = TempDir::new().unwrap();
+    let second = TempDir::new().unwrap();
+    let path = common::create_apply_fixture_ms(first.path(), true);
+    let other = common::create_apply_fixture_ms(second.path(), true);
+    let mut ms = MeasurementSet::open(&path).unwrap();
+    add_scratch_model(&mut ms);
+    populate_model(&mut ms);
+    drop(ms);
+    let mut ms = MeasurementSet::open(&path).unwrap();
+    let mut lock = TableWriteLock::acquire(&other, 0).unwrap();
+    assert!(delete_calibration_model(&mut ms, None, None, true, true, &mut lock).is_err());
+    let failure = reset_calibration_set(&mut ms, &MsSelection::default(), 1, false, lock);
+    assert!(
+        failure
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("is not on MAIN")
+    );
+    let reopened = MeasurementSet::open(&path).unwrap();
+    assert!(virtual_model(&reopened, 0).unwrap().is_some());
+    assert!(
+        reopened
+            .main_table()
+            .schema()
+            .unwrap()
+            .contains_column("MODEL_DATA")
+    );
+    assert!(
+        virtual_model(&MeasurementSet::open(&other).unwrap(), 0)
+            .unwrap()
+            .is_none()
     );
 }

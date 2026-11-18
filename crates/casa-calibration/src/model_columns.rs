@@ -73,6 +73,7 @@ pub fn reset_calibration_set(
     old_iterator: bool,
     mut lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
+    check_main_lock(ms, &lock)?;
     let clear_virtual = calset == 1;
     if !old_iterator || !has_column(ms, CORRECTED) {
         if clear_virtual {
@@ -136,6 +137,7 @@ pub fn delete_calibration_model(
     scratch: bool,
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
+    check_main_lock(ms, lock)?;
     if virtual_model {
         let field = field.filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("false"));
         let spw = spw.filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("false"));
@@ -160,6 +162,20 @@ pub fn delete_calibration_model(
     }
     if scratch {
         scratch_columns::remove_scratch_model_holding(ms, lock)?;
+    }
+    Ok(())
+}
+
+fn check_main_lock(ms: &MeasurementSet, lock: &TableWriteLock) -> MsResult<()> {
+    let path = ms
+        .path()
+        .ok_or_else(|| invalid("the MeasurementSet has no on-disk MAIN table"))?;
+    if path.canonicalize().map_err(invalid)? != lock.path().canonicalize().map_err(invalid)? {
+        return Err(invalid(format!(
+            "the write lock held on {} is not on MAIN of {}",
+            lock.path().display(),
+            path.display()
+        )));
     }
     Ok(())
 }
