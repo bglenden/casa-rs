@@ -249,6 +249,29 @@ pub fn put_virtual_model(
     entry: &VirtualModelEntry,
     incremental: bool,
 ) -> MsResult<()> {
+    put_model(ms, entry, incremental, None)
+}
+
+/// File a model after resolving its selection under the MAIN write lock.
+///
+/// This has the same persistence and errors as [`put_virtual_model`]. The
+/// caller retains the lock until the new record is ready for other readers.
+#[doc(hidden)]
+pub fn put_virtual_model_holding(
+    ms: &mut MeasurementSet,
+    entry: &VirtualModelEntry,
+    incremental: bool,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    put_model(ms, entry, incremental, Some(lock))
+}
+
+fn put_model(
+    ms: &mut MeasurementSet,
+    entry: &VirtualModelEntry,
+    incremental: bool,
+    lock: Option<&mut TableWriteLock>,
+) -> MsResult<()> {
     let fields = entry.fields();
     let Some(&first) = fields.first() else {
         return Err(invalid("a virtual model entry names no field"));
@@ -290,7 +313,7 @@ pub fn put_virtual_model(
         images = record_images(&state.record(ms, &key)?);
     }
     state.put_model_record(ms, &fields, &key, record)?;
-    state.write(ms)?;
+    state.write_holding(ms, lock)?;
     delete_images(ms, &images);
     Ok(())
 }
@@ -1125,10 +1148,6 @@ impl ModelState {
 
     /// Write SOURCE in full and MAIN's metadata, each only when it changed,
     /// under casacore's write lock on each.
-    fn write(self, ms: &mut MeasurementSet) -> MsResult<()> {
-        self.write_holding(ms, None)
-    }
-
     fn write_holding(
         self,
         ms: &mut MeasurementSet,

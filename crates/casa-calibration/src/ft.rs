@@ -1,0 +1,235 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Publish CASA's virtual source recipes or their sampled scratch visibilities.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
+
+use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_ms::virtual_model::{put_virtual_model_holding, virtual_model_index_combination};
+use casa_ms::write_session::{
+    MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession,
+};
+use casa_ms::{
+    MeasurementSet, MsError, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow,
+    VirtualModelEntry,
+};
+use casa_tables::TableWriteLock;
+use casa_types::{ArrayValue, Complex32};
+use ndarray::{ArrayD, Axis, IxDyn};
+
+use crate::model_columns::{ScratchDestination, scratch_write_plan};
+use crate::solve::grouping::VisibilityModels;
+
+const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
+
+pub(crate) fn model_entry(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    kind: casa_ms::VirtualModelKind,
+    container: casa_types::RecordValue,
+) -> MsResult<VirtualModelEntry> {
+    let windows: BTreeSet<_> = selected
+        .selected_rows
+        .iter()
+        .map(|row| row.spectral_window_id)
+        .collect();
+    let spectral_window = ms.spectral_window()?;
+    let mut channel_selection = Vec::new();
+    for spw in windows {
+        match selected.channel_selections.get(&spw) {
+            None => channel_selection.push([spw, 0, spectral_window.num_chan(spw as usize)?, 1]),
+            Some(selection) => {
+                // The old VI uses one stride for a single range, and the
+                // inclusive envelope when the request contains several.
+                let (span, step) = channel_span(selection);
+                let count = span.len().div_ceil(step);
+                channel_selection.push([spw, span.start as i32, count as i32, step as i32]);
+            }
+        }
+    }
+    Ok(VirtualModelEntry {
+        kind,
+        index_combination: virtual_model_index_combination(ms, &selected.request)?
+            .index_combination,
+        channel_selection,
+        container,
+    })
+}
+
+pub(crate) fn publish_models(
+    ms: &mut MeasurementSet,
+    selected: &ResolvedMsSelection,
+    entries: &[VirtualModelEntry],
+    scratch: bool,
+    incremental: bool,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    if entries.is_empty() || selected.selected_rows.is_empty() {
+        return Ok(());
+    }
+    if !scratch {
+        for entry in entries {
+            // The legacy SkyEquation asks the VI to append each component
+            // list even for a task invocation with incremental=False.
+            put_virtual_model_holding(ms, entry, true, lock)?;
+        }
+        return Ok(());
+    }
+    let models =
+        VisibilityModels::from_entries(ms, &selected.selected_rows, entries).map_err(invalid)?;
+    let polarizations = ms.polarization()?;
+    let correlations = (0..polarizations.row_count())
+        .map(|id| Ok((id as i32, polarizations.corr_type(id)?)))
+        .collect::<MsResult<_>>()?;
+    let (plan, destinations) =
+        scratch_write_plan(ms, selected.row_indices().collect(), &[MODEL], false, lock)?;
+    let batch_rows = plan.batch_rows().max(1);
+    let destination = &destinations[0];
+    let channels: BTreeMap<_, _> = selected
+        .channel_selections
+        .iter()
+        .map(|(&spw, selection)| (spw, channel_span(selection)))
+        .collect();
+    let prediction = Prediction {
+        models,
+        destination,
+        channels,
+        correlations,
+        incremental,
+    };
+    MeasurementSetWriteSession::mutate_selected_rows_with_lock(ms, plan, lock, |session, ms| {
+        for rows in selected.selected_rows.chunks(batch_rows) {
+            let batch = prediction
+                .batch(ms, rows)
+                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+            session.write_mutation_batch(ms, batch)?;
+        }
+        Ok(())
+    })
+    .map_err(invalid)?;
+    Ok(())
+}
+
+struct Prediction<'a> {
+    models: VisibilityModels,
+    destination: &'a ScratchDestination,
+    channels: BTreeMap<i32, (Range<usize>, usize)>,
+    correlations: BTreeMap<i32, Vec<i32>>,
+    incremental: bool,
+}
+
+impl Prediction<'_> {
+    fn batch(
+        &self,
+        ms: &MeasurementSet,
+        rows: &[ResolvedMsSelectionRow],
+    ) -> MsResult<MeasurementSetMutationBatch> {
+        let row_indices: Vec<_> = rows.iter().map(|row| row.row_index).collect();
+        let main = ms.main_table();
+        let mut existing = (self.incremental
+            || rows
+                .iter()
+                .any(|row| self.channels.contains_key(&row.spectral_window_id)))
+        .then(|| {
+            main.column_accessor(MODEL.name())?
+                .array_cells_owned_uncached(&row_indices)
+        })
+        .transpose()?;
+        let flags = rows
+            .iter()
+            .any(|row| self.models.uses_fourier(row.field_id))
+            .then(|| {
+                main.column_accessor("FLAG")?
+                    .array_cells_owned_uncached(&row_indices)
+            })
+            .transpose()?;
+        let mut ranges = BTreeMap::new();
+        let mut values = Vec::with_capacity(rows.len());
+        for (offset, row) in rows.iter().enumerate() {
+            let correlation = &self.correlations[&row.polarization_id];
+            let no_flags = ArrayD::from_elem(IxDyn(&[0, 0]), false);
+            let flags = match flags.as_ref().and_then(|flags| flags[offset].as_ref()) {
+                Some(ArrayValue::Bool(flags)) => flags,
+                None => &no_flags,
+                _ => return Err(invalid("FLAG is not a Bool array")),
+            };
+            let sampled = self
+                .models
+                .predict(ms, row.row_index, correlation, flags)
+                .map_err(invalid)?
+                .ok_or_else(|| invalid("the selected row is absent from the prediction"))?;
+            let slice = self.channels.get(&row.spectral_window_id);
+            let value = if self.incremental || slice.is_some() {
+                let Some(ArrayValue::Complex32(mut previous)) =
+                    existing.as_mut().and_then(|cells| cells[offset].take())
+                else {
+                    return Err(invalid("MODEL_DATA is not a defined Complex array"));
+                };
+                let full = 0..sampled.shape()[1];
+                let (span, step) = slice
+                    .map(|(span, step)| (span, *step))
+                    .unwrap_or((&full, 1));
+                ranges.insert(row.spectral_window_id, span.clone());
+                update_channels(&mut previous, &sampled, span, step, self.incremental)?;
+                previous
+            } else {
+                sampled
+            };
+            values.push(ArrayValue::Complex32(value));
+        }
+        Ok(MeasurementSetMutationBatch {
+            columns: self
+                .destination
+                .batch(ms, &row_indices, rows, &ranges, values)?,
+            row_indices,
+        })
+    }
+}
+
+fn channel_span(selection: &casa_ms::ChannelSelection) -> (Range<usize>, usize) {
+    let first = selection
+        .segments
+        .iter()
+        .map(|part| part.start.min(part.end))
+        .min()
+        .unwrap_or(0);
+    let last = selection
+        .segments
+        .iter()
+        .map(|part| part.start.max(part.end))
+        .max()
+        .unwrap_or(-1);
+    let step = match selection.segments.as_slice() {
+        [segment] => segment.stride,
+        _ => 1,
+    };
+    (first as usize..(last + 1) as usize, step)
+}
+
+fn update_channels(
+    previous: &mut ArrayD<Complex32>,
+    current: &ArrayD<Complex32>,
+    span: &Range<usize>,
+    stride: usize,
+    incremental: bool,
+) -> MsResult<()> {
+    if previous.shape() != current.shape() || span.end > current.shape()[1] {
+        return Err(invalid(
+            "visibility channel selection does not fit MODEL_DATA",
+        ));
+    }
+    for channel in span.clone().step_by(stride) {
+        let mut destination = previous.index_axis_mut(Axis(1), channel);
+        let source = current.index_axis(Axis(1), channel);
+        if incremental {
+            destination += &source;
+        } else {
+            destination.assign(&source);
+        }
+    }
+    Ok(())
+}
+
+fn invalid(error: impl std::fmt::Display) -> MsError {
+    MsError::InvalidInput(error.to_string())
+}

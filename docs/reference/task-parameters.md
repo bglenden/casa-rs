@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 627
-- Surfaces: 34 (34 task, 0 session)
-- Surface bindings: 907
+- Concepts: 628
+- Surfaces: 35 (35 task, 0 session)
+- Surface bindings: 922
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -32,6 +32,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 7 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
 | [Subtract Visibility Model](#surface-uvsub)<br><code>uvsub</code> | task | 1 | <code>calibration</code> | 2 | Subtract or restore the current visibility model in corrected data. |
+| [Predict Visibility Model](#surface-ft)<br><code>ft</code> | task | 1 | <code>calibration</code> | 15 | Predict model visibilities from component lists and model images. |
 | [Clear Calibration](#surface-clearcal)<br><code>clearcal</code> | task | 1 | <code>calibration</code> | 5 | Initialize or reset scratch visibility columns. |
 | [Delete Model](#surface-delmod)<br><code>delmod</code> | task | 1 | <code>calibration</code> | 4 | Remove scratch or virtual model visibilities. |
 | [Gencal](#surface-gencal)<br><code>gencal</code> | task | 6 | <code>calibration</code> | 18 | Generate a calibration table such as antpos, gceff, or opac. |
@@ -792,6 +793,34 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
 | <code>reverse</code> | <code>parameter.reverse@r1</code> | <code>bool</code> | <code>false</code>; optional | Scratch columns | Add the visibility model back to corrected data. |
+
+<a id="surface-ft"></a>
+
+## Predict Visibility Model (<code>ft</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Predict model visibilities from component lists and model images.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | CASA field selector. |
+| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Comma-separated SPECTRAL_WINDOW_ID integers |
+| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Inclusive TIME range in MJD seconds |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | UV range selector. |
+| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Comma-separated scan numbers |
+| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Comma-separated OBSERVATION_ID integers |
+| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Data selection | Intent selector. |
+| <code>model</code> | <code>ft.model@r2</code> | <code>variant</code> | <code>""</code>; optional | Model | A model image name or a list of model image names. |
+| <code>nterms</code> | <code>parameter.nterms@r1</code> | <code>integer</code> | <code>1</code>; optional | Model | Number of Taylor terms. |
+| <code>reffreq</code> | <code>parameter.reffreq@r1</code> | <code>string</code> | <code>""</code>; optional | Model | Reference frequency. |
+| <code>complist</code> | <code>parameter.complist@r1</code> | <code>path (product)</code> | <code>""</code>; optional | Model | Component list. |
+| <code>incremental</code> | <code>parameter.incremental@r1</code> | <code>bool</code> | <code>false</code>; optional | Model | Write incremental correction factors instead of absolute transfer gains |
+| <code>usescratch</code> | <code>parameter.usescratch@r1</code> | <code>bool</code> | <code>false</code>; optional | Model | Write MODEL_DATA. |
 
 <a id="surface-clearcal"></a>
 
