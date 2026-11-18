@@ -987,7 +987,7 @@
 <a href=#987 id=987 data-nosnippet>987</a>        rowincr: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
 <a href=#988 id=988 data-nosnippet>988</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
 <a href=#989 id=989 data-nosnippet>989</a>        <span class="kw">let </span>column = text(columnname, <span class="string">"columnname"</span>)<span class="question-mark">?</span>;
-<a href=#990 id=990 data-nosnippet>990</a>        <span class="kw">let </span>value = keyword_value(py, value)<span class="question-mark">?</span>;
+<a href=#990 id=990 data-nosnippet>990</a>        <span class="kw">let </span>value = write_cells::ColumnInput::from_python(py, value)<span class="question-mark">?</span>;
 <a href=#991 id=991 data-nosnippet>991</a>        <span class="kw">let </span>rows = row_selection(startrow, nrow, rowincr)<span class="question-mark">?</span>;
 <a href=#992 id=992 data-nosnippet>992</a>        <span class="self">self</span>.call(py, <span class="kw">move </span>|state, log| state.putcol(column, value, rows, log))
 <a href=#993 id=993 data-nosnippet>993</a>    }
