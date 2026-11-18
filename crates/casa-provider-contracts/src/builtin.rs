@@ -131,7 +131,6 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 31);
         assert!(
             catalog
                 .surfaces
@@ -143,6 +142,7 @@ mod tests {
             .iter()
             .map(|surface| surface.id())
             .collect::<BTreeSet<_>>();
+        assert_eq!(ids.len(), catalog.surfaces.len());
         assert!(ids.contains("msexplore"));
         assert!(ids.contains("msconvert"));
         assert!(ids.contains("imstat"));

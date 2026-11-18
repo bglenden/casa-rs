@@ -162,7 +162,19 @@ mod tests {
     #[test]
     fn builtin_catalog_covers_every_surface_with_one_task_each() {
         let catalog = builtin_application_catalog().expect("valid application catalog");
-        assert_eq!(catalog.applications.len(), 31);
+        let surfaces = crate::builtin_surface_catalog().expect("valid parameter catalog");
+        let expected: std::collections::BTreeSet<_> = surfaces
+            .surfaces
+            .iter()
+            .map(|surface| surface.id())
+            .collect();
+        let launched: std::collections::BTreeSet<_> = catalog
+            .applications
+            .iter()
+            .map(|application| application.id.as_str())
+            .collect();
+        assert_eq!(launched, expected);
+        assert_eq!(launched.len(), catalog.applications.len());
         for application in &catalog.applications {
             assert_eq!(
                 application.surface_bundle().unwrap().surface.id(),

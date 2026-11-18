@@ -34,6 +34,7 @@ mod lookup;
 mod lookup_frequency;
 mod managed_output;
 mod model;
+mod model_columns;
 mod output;
 mod output_merge;
 mod paths;

@@ -1949,6 +1949,46 @@ pub(crate) fn rewrite_ssm_rows(
     )
 }
 
+/// Replace one manager from retained cells, preserving its bucket layout options.
+pub(crate) fn rewrite_ssm_columns(
+    original: &Path,
+    destination: &Path,
+    columns: &[ColumnDescContents],
+    row_count: usize,
+    name: &str,
+    cell: impl Fn(usize, usize) -> Result<Option<Value>, StorageError>,
+) -> Result<Vec<u8>, StorageError> {
+    struct Cells<F> {
+        row_count: usize,
+        cell: F,
+    }
+    impl<F: Fn(usize, usize) -> Result<Option<Value>, StorageError>> column_writer::SsmCells
+        for Cells<F>
+    {
+        fn row_count(&self) -> usize {
+            self.row_count
+        }
+
+        fn cell(
+            &self,
+            column: usize,
+            row: usize,
+        ) -> Result<Option<std::borrow::Cow<'_, Value>>, StorageError> {
+            Ok((self.cell)(column, row)?.map(std::borrow::Cow::Owned))
+        }
+    }
+    let header = parse_ssm_header(&mut File::open(original)?)?;
+    column_writer::write_ssm_file_columns_with_layout(
+        destination,
+        columns,
+        &Cells { row_count, cell },
+        header.big_endian,
+        false,
+        name,
+        Some((Some(header.bucket_size), header.pers_cache_size)),
+    )
+}
+
 pub(super) fn write_ssm_with_bucket(
     destination: &Path,
     columns: &[ColumnDescContents],

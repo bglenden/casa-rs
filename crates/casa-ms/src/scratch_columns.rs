@@ -93,6 +93,33 @@ pub fn prepare_write(
     prepare(ms, column, adds, None)
 }
 
+/// Remove the scratch model and its compression columns under the MAIN lock.
+#[doc(hidden)]
+pub fn remove_scratch_model_holding(
+    ms: &mut MeasurementSet,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    let table = ms.main_table_mut();
+    let columns: Vec<_> = [
+        "MODEL_DATA",
+        "MODEL_DATA_COMPRESSED",
+        "MODEL_DATA_SCALE",
+        "MODEL_DATA_OFFSET",
+    ]
+    .into_iter()
+    .filter(|name| {
+        table
+            .schema()
+            .is_some_and(|schema| schema.contains_column(name))
+    })
+    .collect();
+    if !columns.is_empty() {
+        table.remove_columns_preserving_managers(&columns)?;
+        lock.record_write();
+    }
+    Ok(())
+}
+
 /// [`prepare_write`] for a caller that holds MAIN's write lock through
 /// `main_lock`, a [`TableWriteLock`] on the MAIN of `ms` (opened without
 /// locking), as a writer of several mutation sessions in turn holds it:

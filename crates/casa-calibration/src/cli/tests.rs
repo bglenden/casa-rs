@@ -697,8 +697,15 @@ fn a_solve_needs_its_reference_antenna() {
 }
 
 #[test]
-fn the_report_controls_are_read_on_every_surface() {
-    for surface in super::CALIBRATION_SURFACES {
+fn the_report_controls_are_read_on_reporting_surfaces() {
+    for surface in [
+        "calibrate",
+        "applycal",
+        "gaincal",
+        "bandpass",
+        "fluxscale",
+        "gencal",
+    ] {
         assert_eq!(
             reading(
                 surface,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The CASA task applies each referenced Multi-MS partition independently.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_ms::{MeasurementSet, save_next_partition_flag_backup};
 use casa_provider_contracts::ParameterValue;
@@ -18,25 +18,9 @@ pub(super) fn execute(
     request: &ExecuteApplyTaskRequest,
 ) -> Result<Option<ApplyMultiMsReport>, TaskFailure> {
     let path = &request.measurement_set;
-    let Ok(text) = std::fs::read_to_string(path.join("table.info")) else {
+    let Some(parts) = partition_paths(path)? else {
         return Ok(None);
     };
-    if TableInfo::parse(&text).sub_type != "CONCATENATED" {
-        return Ok(None);
-    }
-    let parts = Table::concatenated_source_paths(path)
-        .map_err(|error| TaskFailure::execution(error.to_string()))?
-        .ok_or_else(|| TaskFailure::execution("Multi-MS has no concatenation"))?;
-    // CASA opens the aggregate before dispatch. A broken reference must
-    // fail before any partition receives CORRECTED_DATA or HISTORY.
-    for part in &parts {
-        MeasurementSet::open(part).map_err(|error| {
-            TaskFailure::execution(format!(
-                "open Multi-MS partition {}: {error}",
-                part.display()
-            ))
-        })?;
-    }
     let backup = if request.flagbackup && request.apply_mode.writes_flags() {
         Some(
             save_next_partition_flag_backup(path, &parts, "applycal")
@@ -91,6 +75,29 @@ pub(super) fn execute(
         flag_backup_version: backup,
         partitions,
     }))
+}
+
+pub(super) fn partition_paths(path: &Path) -> Result<Option<Vec<PathBuf>>, TaskFailure> {
+    let Ok(text) = std::fs::read_to_string(path.join("table.info")) else {
+        return Ok(None);
+    };
+    if TableInfo::parse(&text).sub_type != "CONCATENATED" {
+        return Ok(None);
+    }
+    let parts = Table::concatenated_source_paths(path)
+        .map_err(|error| TaskFailure::execution(error.to_string()))?
+        .ok_or_else(|| TaskFailure::execution("Multi-MS has no concatenation"))?;
+    // CASA opens the aggregate before dispatch, so a broken reference
+    // fails before any partition receives changes.
+    for part in &parts {
+        MeasurementSet::open(part).map_err(|error| {
+            TaskFailure::execution(format!(
+                "open Multi-MS partition {}: {error}",
+                part.display()
+            ))
+        })?;
+    }
+    Ok(Some(parts))
 }
 
 fn run_partition(task: &TaskInvocation<'_>, path: &Path) -> Result<ApplyExecutionReport, String> {

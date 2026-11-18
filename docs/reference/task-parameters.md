@@ -11,8 +11,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
 - Concepts: 626
-- Surfaces: 31 (31 task, 0 session)
-- Surface bindings: 896
+- Surfaces: 33 (33 task, 0 session)
+- Surface bindings: 905
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -31,6 +31,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 6 | <code>calibration</code> | 42 | Solve antenna gain calibration for a MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 7 | <code>calibration</code> | 18 | Scale gain solutions using reference calibrator fields. |
+| [Clear Calibration](#surface-clearcal)<br><code>clearcal</code> | task | 1 | <code>calibration</code> | 5 | Initialize or reset scratch visibility columns. |
+| [Delete Model](#surface-delmod)<br><code>delmod</code> | task | 1 | <code>calibration</code> | 4 | Remove scratch or virtual model visibilities. |
 | [Gencal](#surface-gencal)<br><code>gencal</code> | task | 6 | <code>calibration</code> | 18 | Generate a calibration table such as antpos, gceff, or opac. |
 | [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 7 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 5 | <code>flagdata</code> | 76 | Run native CASA-style MeasurementSet flagging. |
@@ -774,6 +776,41 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>""</code>; optional | Output | Optional destination for a calibration task report. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 | <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
+
+<a id="surface-clearcal"></a>
+
+## Clear Calibration (<code>clearcal</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Initialize or reset scratch visibility columns.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Input | Applycal field selector text. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Input | Applycal spw selector text. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Input | Intent selector. |
+| <code>addmodel</code> | <code>parameter.addmodel@r1</code> | <code>bool</code> | <code>false</code>; optional | Scratch columns | Create MODEL_DATA column. |
+
+<a id="surface-delmod"></a>
+
+## Delete Model (<code>delmod</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Remove scratch or virtual model visibilities.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>otf</code> | <code>parameter.otf@r1</code> | <code>bool</code> | <code>true</code>; optional | Scratch columns | Delete OTF model. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Input | Applycal field selector text. |
+| <code>scr</code> | <code>parameter.scr@r1</code> | <code>bool</code> | <code>false</code>; optional | Scratch columns | Delete scratch model. |
 
 <a id="surface-gencal"></a>
 
