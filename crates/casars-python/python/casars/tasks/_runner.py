@@ -231,6 +231,9 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         iterations = arguments["niter"]
         if isinstance(iterations, bool):
             values["niter"] = int(iterations)
+        source = arguments["sourcepar"]
+        if isinstance(source, (list, tuple)) and any(isinstance(item, bool) for item in source):
+            values["sourcepar"] = [float(item) if isinstance(item, bool) else item for item in source]
         try:
             return run(name, **values).value
         except (TypeError, ValueError) as error:

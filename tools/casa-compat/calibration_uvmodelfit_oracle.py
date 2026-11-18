@@ -250,6 +250,7 @@ def main():
         ('negative-iterations', all_flagged, dict(field='0', sourcepar=[1.2, .13, -.12], niter=-1)),
         ('initial', point, dict(field='0', sourcepar=[1.2, .13, -.12], niter=0)),
         ('boolean-iterations', point, dict(field='0', sourcepar=[1.2, .13, -.12], niter=False)),
+        ('boolean-source-parameters', point, dict(field='0', sourcepar=[True, False, False], niter=0)),
         ('phase-polynomial', polynomial, dict(field='0', niter=0)),
         ('small-weights', small_weights, dict(field='0', sourcepar=[1., .13, -.12],
                                              varypar=[True, False, False])),
