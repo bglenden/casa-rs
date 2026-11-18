@@ -165,6 +165,12 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         cuts: Some(BandpassSolveCuts {
             min_baselines_per_antenna: count(task, "minblperant")?,
             min_snr: min_snr(task)?,
+            fill_gaps: match band_type {
+                BandpassType::B => {
+                    usize::try_from(task.integer("fillgaps")?.max(0)).unwrap_or(usize::MAX)
+                }
+                BandpassType::BPoly => 0,
+            },
             mask_edge_percent,
         }),
         measurement_set,

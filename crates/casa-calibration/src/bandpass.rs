@@ -84,6 +84,9 @@ pub struct BandpassSolveCuts {
     /// A channel solution whose SNR is not above this is flagged
     /// (`minsnr`).
     pub min_snr: f32,
+    /// Largest interior flagged gap to interpolate in a channelized B table.
+    #[serde(default)]
+    pub fill_gaps: usize,
     /// The percentage of a window's channels at each edge a `BPOLY` fit
     /// leaves out (`maskedge`).
     pub mask_edge_percent: f32,
@@ -95,6 +98,7 @@ impl BandpassSolveCuts {
     pub const CASA_DEFAULTS: Self = Self {
         min_baselines_per_antenna: 4,
         min_snr: 3.0,
+        fill_gaps: 0,
         mask_edge_percent: 5.0,
     };
 
@@ -390,6 +394,11 @@ pub(crate) fn solve_bandpass(
     }
     let report = match request.band_type {
         BandpassType::B => {
+            if let Some(cuts) = request.cuts.filter(|cuts| cuts.fill_gaps > 0) {
+                for row in &mut solution_rows {
+                    fill_bandpass_gaps(row, cuts.fill_gaps);
+                }
+            }
             write_bandpass_caltable(ms, request, context.refant_id, &solution_rows, mode)
         }
         BandpassType::BPoly => {
@@ -616,6 +625,33 @@ fn normalize_bandpass_row(row: &mut BandpassSolutionRow, channel_count: usize) {
         for channel in 0..channel_count {
             let index = receptor + 2 * channel;
             row.gains[index] /= normalization;
+        }
+    }
+}
+
+fn fill_bandpass_gaps(row: &mut BandpassSolutionRow, maximum: usize) {
+    for receptor in 0..2 {
+        let mut last_good = None;
+        for channel in 0..row.channel_count {
+            let right = receptor + 2 * channel;
+            if row.flags[right] {
+                continue;
+            }
+            if let Some(left) = last_good {
+                let span = channel - left;
+                if span > 1 && span - 1 <= maximum {
+                    let lower = row.gains[receptor + 2 * left];
+                    let upper = row.gains[right];
+                    for gap in left + 1..channel {
+                        let fraction = (gap - left) as f32 / span as f32;
+                        let index = receptor + 2 * gap;
+                        row.gains[index] =
+                            crate::lookup::interpolate_gain_amplitude_phase(lower, upper, fraction);
+                        row.flags[index] = false;
+                    }
+                }
+            }
+            last_good = Some(channel);
         }
     }
 }

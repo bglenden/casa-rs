@@ -675,8 +675,8 @@ def bandpass(
 
     CASA's ``bandpass``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #979:
-    ``intent``, ``uvrange``, ``solint``, ``corrdepflags``, ``fillgaps``,
-    ``visnorm``, ``maskcenter``.
+    ``intent``, ``uvrange``, ``solint``, ``corrdepflags``, ``visnorm``,
+    ``maskcenter``.
     """
     return _call_casa(bandpass, locals())
 

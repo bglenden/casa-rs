@@ -708,12 +708,12 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
         values[name] = value;
         values
     };
-    for (surface, name, value) in [
-        ("bandpass", "solint", json!("int")),
-        ("bandpass", "fillgaps", json!(2)),
-    ] {
-        refused_naming_979(dir.path(), surface, with(&solve, name, value), name);
-    }
+    refused_naming_979(
+        dir.path(),
+        "bandpass",
+        with(&solve, "solint", json!("int")),
+        "solint",
+    );
     // Fluxscale's former fitorder/time/scan refusals are replaced by the
     // positive scientific check above now that those behaviors are implemented.
     // gencal reads infile only for the caltypes CASA's task XML shows it

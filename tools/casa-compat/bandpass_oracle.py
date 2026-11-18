@@ -18,7 +18,7 @@ from record_casa_returns import make_cal_ms
 
 
 def source_data(path):
-    make_cal_ms(str(path))
+    make_cal_ms(str(path), channels=12)
     rng = np.random.default_rng(719)
     tool = table()
     tool.open(str(path), nomodify=False)
@@ -38,19 +38,39 @@ def source_data(path):
         tool.close()
 
 
-def compare(root, source, native, normalize):
+def gapped_data(source, target):
+    copy_ms(source, target)
+    tool = table()
+    tool.open(str(target), nomodify=False)
+    try:
+        data = tool.getcol('DATA')
+        a, b = (tool.getcol(key) for key in ('ANTENNA1', 'ANTENNA2'))
+        # The bounded single-channel gap crosses the phase wrap for A4.
+        data *= np.exp(.24j * np.arange(data.shape[1])[:, None] * (a-b))
+        tool.putcol('DATA', data)
+        flags = tool.getcol('FLAG')
+        flags[:, [0, 3, 6, 7, 11]] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+
+
+def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None):
     products = []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
         copy_ms(source, ms)
         engine.bandpass(str(ms), str(output), field='0', refant='A0',
-                        smodel=[1.], minsnr=0., solnorm=normalize)
+                        smodel=[1.], minsnr=0., solnorm=normalize, fillgaps=fillgaps)
         products.append(contents(output))
     expected, actual = products
     for column in ('FLAG', 'ANTENNA1', 'ANTENNA2', 'FIELD_ID', 'SPECTRAL_WINDOW_ID'):
         np.testing.assert_array_equal(actual[column], expected[column], err_msg=column)
     np.testing.assert_allclose(actual['TIME'], expected['TIME'], rtol=0., atol=1e-4)
-    assert np.all(expected['PARAMERR'][~expected['FLAG']] > 0.)
+    if remaining_flags is None:
+        assert np.all(expected['PARAMERR'][~expected['FLAG']] > 0.)
+    else:
+        np.testing.assert_array_equal(np.flatnonzero(actual['FLAG'].all(axis=(0, 2))), remaining_flags)
     return {key: relative_rms(actual[key], expected[key]) for key in ('CPARAM', 'PARAMERR', 'SNR')}
 
 
@@ -68,11 +88,17 @@ def main():
     root.mkdir(parents=True)
     source = root/'source.ms'
     source_data(source)
+    gapped = root/'gapped.ms'
+    gapped_data(source, gapped)
     results = {}
     for label, normalize in [('standard', False), ('normalized', True)]:
         folder = root/label
         folder.mkdir()
         results[label] = compare(folder, source, native, normalize)
+    for gaps, flags in [(-1, [0, 3, 6, 7, 11]), (1, [0, 6, 7, 11]), (2, [0, 11])]:
+        folder = root/f'fill-{gaps}'
+        folder.mkdir()
+        results[folder.name] = compare(folder, gapped, native, False, gaps, flags)
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, report in results.items():
         assert max(report.values()) < 1e-3, (name, report)

@@ -209,7 +209,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #979: `intent`, `uvrange`, `solint`, `corrdepflags`, `fillgaps`, `visnorm`, `maskcenter`
+- Accepted only at CASA's default until #979: `intent`, `uvrange`, `solint`, `corrdepflags`, `visnorm`, `maskcenter`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 35, in CASA's order: yes
 - Defaults that differ: none
