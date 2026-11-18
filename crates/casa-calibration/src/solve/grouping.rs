@@ -623,7 +623,7 @@ pub(crate) struct SolveSamples<'a> {
 struct SelectedChannels<'a> {
     indices: &'a [usize],
     all_channels: bool,
-    bin_width: usize,
+    bin_width: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -870,11 +870,7 @@ impl SolveAccumulator {
             SelectedChannels {
                 indices: &layout.channels,
                 all_channels: layout.all_channels,
-                bin_width: layouts
-                    .channel_bin_widths
-                    .get(&row.data_spw_id)
-                    .copied()
-                    .unwrap_or(1),
+                bin_width: layouts.channel_bin_widths.get(&row.data_spw_id).copied(),
             },
             options,
         )
@@ -900,7 +896,7 @@ impl SolveAccumulator {
             SelectedChannels {
                 indices: channels,
                 all_channels: channels.iter().copied().eq(0..samples.data.ncols()),
-                bin_width: 1,
+                bin_width: None,
             },
             options,
         )
@@ -915,7 +911,10 @@ impl SolveAccumulator {
         options: &SolveGroupOptions,
     ) -> Result<(), GainSolveError> {
         if options.channelized {
-            let channel_count = channels.indices.len().div_ceil(channels.bin_width);
+            let channel_count = channels
+                .indices
+                .len()
+                .div_ceil(channels.bin_width.unwrap_or(1));
             if !options.gain_type.is_delay()
                 && self.sample_rows > 0
                 && self.solution_channels != channel_count

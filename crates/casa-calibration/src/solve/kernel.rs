@@ -170,6 +170,7 @@ pub(crate) struct SolvedGraphs {
 pub(crate) enum SolveStart<'a> {
     Guess,
     PreviousChannel(Option<&'a SolvedGraphs>),
+    LegacyChannel(&'a SolvedGraphs),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -338,7 +339,7 @@ pub(crate) fn solve_graphs(
     if solved_antennas.iter().all(BTreeSet::is_empty) {
         return None;
     }
-    let first = if let SolveStart::PreviousChannel(previous) = start {
+    let mut first = if let SolveStart::PreviousChannel(previous) = start {
         solved_antennas
             .iter()
             .enumerate()
@@ -389,6 +390,15 @@ pub(crate) fn solve_graphs(
     } else {
         first_guess(&active, &solved_antennas, gain_type, refant_id)
     };
+    if let SolveStart::LegacyChannel(previous) = start {
+        for (guess, receptor) in first.iter_mut().zip(&previous.receptors) {
+            for (antenna_id, value) in guess.iter_mut() {
+                if receptor.solved.contains(antenna_id) {
+                    *value = complex32_to_64(receptor.gains[antenna_id]);
+                }
+            }
+        }
+    }
     let (gains, active) = if let Some(robustness) = options.robustness {
         robust::solve(active, &mut solved_antennas, first, refant_id, robustness)?
     } else {

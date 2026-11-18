@@ -61,7 +61,7 @@ pub enum BandpassType {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum BandpassFrequencyInterval {
     /// Number of selected channels per solution.
-    Channels(usize),
+    Channels(f64),
     /// Bandwidth divided by the first input channel's absolute width in each SPW.
     Hertz(f64),
 }
@@ -528,7 +528,11 @@ fn solve_bandpass_group(
                 defer_reference: band_type == BandpassType::B,
                 robustness: None,
             },
-            if channel + 1 == channel_count {
+            if band_type == BandpassType::BPoly {
+                start
+                    .as_ref()
+                    .map_or(SolveStart::Guess, SolveStart::LegacyChannel)
+            } else if channel + 1 == channel_count {
                 SolveStart::Guess
             } else {
                 SolveStart::PreviousChannel(start.as_ref())

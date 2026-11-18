@@ -7,45 +7,46 @@ use crate::solve::grouping::SelectedSolveRow;
 use casa_ms::ms::MeasurementSet;
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, ScalarValue, Value};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::{collections::BTreeMap, path::Path};
 
 pub(super) fn bin_widths(
     ms: &MeasurementSet,
     rows: &[SelectedSolveRow],
     interval: Option<BandpassFrequencyInterval>,
 ) -> Result<BTreeMap<i32, usize>, BandpassSolveError> {
-    let Some(interval) = interval else {
-        return Ok(BTreeMap::new());
-    };
+    match interval {
+        Some(BandpassFrequencyInterval::Channels(count)) if count > 1.0 => Ok(rows
+            .iter()
+            .map(|row| (row.data_spw_id, count as usize))
+            .collect()),
+        Some(BandpassFrequencyInterval::Hertz(hertz)) => bandwidth_bin_widths(ms, hertz),
+        _ => Ok(BTreeMap::new()),
+    }
+}
+
+fn bandwidth_bin_widths(
+    ms: &MeasurementSet,
+    hertz: f64,
+) -> Result<BTreeMap<i32, usize>, BandpassSolveError> {
     let fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
+    let window = ms
+        .spectral_window()
+        .map_err(|error| fail(error.to_string()))?;
     let mut widths = BTreeMap::new();
-    for spw in rows
-        .iter()
-        .map(|row| row.data_spw_id)
-        .collect::<BTreeSet<_>>()
-    {
-        let count = match interval {
-            BandpassFrequencyInterval::Channels(count) => count,
-            BandpassFrequencyInterval::Hertz(hertz) => {
-                let window = ms
-                    .spectral_window()
-                    .map_err(|error| fail(error.to_string()))?;
-                let widths = window
-                    .chan_width(spw as usize)
-                    .map_err(|error| fail(error.to_string()))?;
-                let width = widths
-                    .first()
-                    .filter(|width| width.is_finite() && **width != 0.0)
-                    .ok_or_else(|| fail(format!("SPW {spw} has no valid first channel width")))?;
-                (hertz / width.abs()).floor() as usize
-            }
-        };
-        if count > 1 {
-            widths.insert(spw, count);
-        }
+    for spw in 0..window.row_count() {
+        let channels = window
+            .chan_width(spw)
+            .map_err(|error| fail(error.to_string()))?;
+        let width = channels
+            .first()
+            .filter(|width| width.is_finite() && **width != 0.0)
+            .ok_or_else(|| fail(format!("SPW {spw} has no valid first channel width")))?;
+        widths.insert(spw as i32, (hertz / width.abs()).floor().max(1.0) as usize);
+    }
+    // Once the layer is installed, even windows with a width of one use
+    // the frequency averager's scalar weights for the time centroid.
+    if widths.values().all(|&width| width == 1) {
+        widths.clear();
     }
     Ok(widths)
 }

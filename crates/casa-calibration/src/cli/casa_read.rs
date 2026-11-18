@@ -733,8 +733,7 @@ fn parse_frequency_solint(text: &str) -> Result<Option<BandpassFrequencyInterval
         if !count.is_finite() {
             return Err(invalid());
         }
-        let count = count as usize;
-        Ok((count > 1).then_some(BandpassFrequencyInterval::Channels(count)))
+        Ok((count > 1.0).then_some(BandpassFrequencyInterval::Channels(count)))
     };
     if let Some((count, _)) = upper.split_once("CH") {
         return channels(count.trim().parse::<f64>().map_err(|_| invalid())?);

@@ -277,10 +277,10 @@ pub(super) fn centroid_weight(
             samples.weights[[correlation, channel]] * scale
         }
     };
-    if channels.bin_width > 1 {
+    if let Some(width) = channels.bin_width {
         let weights = channels
             .indices
-            .chunks(channels.bin_width)
+            .chunks(width)
             .filter(|bin| bin.iter().any(|&channel| !flagged(channel)))
             .map(|bin| bin.iter().map(weight).sum::<f32>());
         mean_weights(weights)
@@ -352,14 +352,14 @@ impl SampleAccumulation<'_> {
             weight: weights[channel],
             flagged: flags[channel],
         };
-        if channels.bin_width > 1 {
+        if let Some(width) = channels.bin_width {
             let weights = self
                 .values
                 .iter_mut()
-                .zip(channels.indices.chunks(channels.bin_width))
+                .zip(channels.indices.chunks(width))
                 .filter_map(|(value, bin)| {
                     let (average, unflagged) =
-                        average_channels::<false>(self.attempted, bin.iter().map(selected));
+                        average_channels::<false, true>(self.attempted, bin.iter().map(selected));
                     value.merge(average);
                     unflagged.then_some(average.weight)
                 });
@@ -433,7 +433,7 @@ impl SampleAccumulation<'_> {
         let mut count = 0;
         let mut rejected = 0;
         for (channel, sample) in samples.enumerate() {
-            let actual_weight = self.values[channel].add_sample::<true>(
+            let actual_weight = self.values[channel].add_sample::<true, false>(
                 self.attempted,
                 sample,
                 self.retain_zero_model,
@@ -466,7 +466,7 @@ impl SampleAccumulation<'_> {
         let mut summed_weight = 0.0_f64;
         for (channel, sample) in samples.enumerate() {
             let output = if CHANNELIZED { channel } else { 0 };
-            let weight = self.values[output].add_sample::<POINT>(
+            let weight = self.values[output].add_sample::<POINT, false>(
                 self.attempted,
                 sample,
                 self.retain_zero_model,
@@ -485,13 +485,13 @@ impl SampleAccumulation<'_> {
     }
 
     fn add_scalar_row<const POINT: bool>(&mut self, samples: impl Iterator<Item = Sample>) -> f64 {
-        let (average, _) = average_channels::<POINT>(self.attempted, samples);
+        let (average, _) = average_channels::<POINT, false>(self.attempted, samples);
         self.values[0].merge(average);
         f64::from(average.weight)
     }
 }
 
-fn average_channels<const POINT: bool>(
+fn average_channels<const POINT: bool, const KEEP_ZERO_DATA: bool>(
     attempted: &mut bool,
     samples: impl Iterator<Item = Sample>,
 ) -> (SolveEdgeAccumulation, bool) {
@@ -503,7 +503,7 @@ fn average_channels<const POINT: bool>(
             channel_count += 1;
             model_channels += usize::from(sample.model.norm_sqr() > 0.0);
         }
-        average.add_sample::<POINT>(attempted, sample, true);
+        average.add_sample::<POINT, KEEP_ZERO_DATA>(attempted, sample, true);
     }
     if channel_count > 0 {
         // ChannelAverageTVI averages the normalized model with flags
@@ -540,7 +540,7 @@ impl SolveEdgeAccumulation {
 
     /// Accumulate w |M|² (D/M) = w D conj(M), with power w |D|².
     /// Cancelling the model division avoids two scalar divides per sample.
-    fn add_sample<const POINT: bool>(
+    fn add_sample<const POINT: bool, const KEEP_ZERO_DATA: bool>(
         &mut self,
         attempted: &mut bool,
         sample: Sample,
@@ -556,7 +556,7 @@ impl SolveEdgeAccumulation {
         }
         *attempted = true;
         let power = sample.data.norm_sqr();
-        if !zero_model && power <= f32::EPSILON * f32::EPSILON * model_norm_sqr {
+        if !KEEP_ZERO_DATA && !zero_model && power <= f32::EPSILON * f32::EPSILON * model_norm_sqr {
             return 0.0;
         }
         // CASA keeps data and nominal weight for zero model cells. After

@@ -162,12 +162,20 @@ def frequency_cases(root, source, native):
         model = tool.getcol('MODEL_DATA')
         model[:, 4, ::2] = 0.
         tool.putcol('MODEL_DATA', model)
+        data = tool.getcol('DATA')
+        data[:, 10, ::3] = 0.
+        tool.putcol('DATA', data)
     finally:
         tool.close()
     folder = root/'bins-weights-and-model'
     folder.mkdir()
     results[folder.name] = compare(folder, weighted, native, False, remaining_flags=[3], s_model=(),
                                    solint='inf,2ch', spw='0', bins=cases[0][4])
+    folder = root/'bins-fractional'
+    folder.mkdir()
+    results[folder.name] = compare(folder, weighted, native, False, remaining_flags=[0, 3, 6, 7, 11],
+                                   s_model=(), solint='inf,1.5ch', spw='0',
+                                   bins=[[channel] for channel in range(12)])
     return results
 
 
