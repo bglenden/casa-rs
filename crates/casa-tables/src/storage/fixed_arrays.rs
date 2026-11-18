@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Fixed-shape whole-cell typed reads share the selected-row storage routes.
+//! Typed whole-cell I/O for uniform array columns.
+
+use std::ops::Range;
 
 use super::*;
 use crate::table::SelectedArray2DCells;
+use tiled_stman::packed_update::PackedComplexUpdate;
 
 impl CompositeStorage {
     pub(crate) fn load_uniform_2d_from_plain(
@@ -53,6 +56,48 @@ impl CompositeStorage {
             &table.table_desc,
             bound_index,
             rows,
+        )
+    }
+
+    pub(crate) fn prepare_packed_complex_update(
+        &self,
+        path: &Path,
+        table: &TableDatContents,
+        column: &str,
+        rows: Range<usize>,
+        cell_shape: [usize; 2],
+    ) -> Result<Option<PackedComplexUpdate>, StorageError> {
+        let set = &table.column_set;
+        let Some(entry) = set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+        else {
+            return Ok(None);
+        };
+        if !entry.is_array
+            || set
+                .data_managers
+                .iter()
+                .any(|dm| is_virtual_engine(&dm.type_name))
+            || !set
+                .data_managers
+                .iter()
+                .any(|dm| dm.seq_nr == entry.dm_seq_nr && dm.type_name == "TiledShapeStMan")
+            || set
+                .columns
+                .iter()
+                .filter(|other| other.dm_seq_nr == entry.dm_seq_nr)
+                .count()
+                != 1
+        {
+            return Ok(None);
+        }
+        tiled_stman::packed_update::prepare_packed_complex_update(
+            path,
+            entry.dm_seq_nr,
+            rows,
+            cell_shape,
         )
     }
 

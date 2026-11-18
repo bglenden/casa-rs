@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Packed whole-cell access without retaining per-cell ndarray values.
 
+use std::path::Path;
+
 use super::*;
 
 impl TableImpl {
@@ -24,6 +26,15 @@ impl TableImpl {
         CompositeStorage
             .load_uniform_2d_from_plain(&source.path, metadata, column, rows)
             .map_err(TableError::from)
+    }
+
+    pub(crate) fn can_save_packed_complex_rows(&self, path: &Path, column: &str) -> bool {
+        !self.rows_are_loaded()
+            && !self.rows_reshaped()
+            && !self.pending_array_cells.by_column.contains_key(column)
+            // A loaded array column can contain edits outside the selection.
+            && !self.loaded_array_columns.get(column).is_some_and(|cache| cache.get().is_some())
+            && self.lazy_rows.as_ref().is_some_and(|source| source.path == path)
     }
 
     pub(crate) fn fixed_2d_cells_uncached(

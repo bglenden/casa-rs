@@ -11,7 +11,9 @@
 //! manager is touched. The lock handling is [`State::write_with`]'s.
 
 use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table};
-use casa_types::{PrimitiveType, Value};
+use casa_types::{Complex32, Complex64, PrimitiveType, Value};
+use numpy::{PyArray3, PyArrayDescrMethods, PyArrayMethods, PyUntypedArrayMethods};
+use pyo3::prelude::*;
 
 use super::keyword_value::{Data, Incoming, Wide};
 use super::read::{rows, rows_stepping};
@@ -230,6 +232,57 @@ pub(super) fn split_rows(
         .collect())
 }
 
+pub(super) enum ColumnInput {
+    Normal(Incoming),
+    PackedComplex {
+        shape: [usize; 3],
+        values: Vec<Complex32>,
+    },
+}
+
+impl ColumnInput {
+    pub(super) fn from_python(py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        if let Some(value) = value
+            && let Ok(array) = value.cast::<PyArray3<Complex32>>()
+            && value.get_type().is(py.get_type::<PyArray3<Complex32>>())
+            && array.dtype().is_native_byteorder() == Some(true)
+            && array.is_fortran_contiguous()
+            && let Ok(array) = array.try_readonly()
+            && let Ok(values) = array.as_slice()
+        {
+            return Ok(Self::PackedComplex {
+                shape: array.shape().try_into().expect("rank checked"),
+                // Detach from NumPy storage before releasing the GIL.
+                values: values.to_vec(),
+            });
+        }
+        super::keyword_value(py, value).map(Self::Normal)
+    }
+
+    fn into_incoming(self) -> Incoming {
+        match self {
+            Self::Normal(value) => value,
+            Self::PackedComplex {
+                shape: [width, channels, rows],
+                values,
+            } => {
+                let reversed = ndarray::ArrayView3::from_shape((rows, channels, width), &values)
+                    .expect("shape of the original NumPy array");
+                Incoming::Wide(Wide {
+                    shape: Some(vec![width, channels, rows]),
+                    data: Data::Complexes(
+                        reversed
+                            .reversed_axes()
+                            .iter()
+                            .map(|value| Complex64::new(f64::from(value.re), f64::from(value.im)))
+                            .collect(),
+                    ),
+                })
+            }
+        }
+    }
+}
+
 impl State {
     /// `putcell(columnname, rownr, thevalue)`: one row number, or several,
     /// each given the value. A row that does not exist refuses the call
@@ -280,7 +333,7 @@ impl State {
     pub(super) fn putcol(
         &mut self,
         column: String,
-        value: Incoming,
+        value: ColumnInput,
         selection: (i64, i64, i64),
         log: &mut Vec<LogLine>,
     ) -> Reply {
@@ -303,7 +356,23 @@ impl State {
                 .into_iter()
                 .map(|row| row_map.map_or(row, |map| map[row]))
                 .collect();
-            let cells = match (value, ty) {
+            if let ColumnInput::PackedComplex { shape, values } = &value
+                && array
+                && ty == Some(PrimitiveType::Complex32)
+                && row_map.is_none()
+                && selection.2 == 1
+                && shape[2] == selected.len()
+                && let (Some(first), Some(last)) = (selected.first(), selected.last())
+                && table.prepare_write().try_save_packed_complex_rows(
+                    &column,
+                    *first..*last + 1,
+                    [shape[0], shape[1]],
+                    values,
+                )?
+            {
+                return Ok(Persist::Done);
+            }
+            let cells = match (value.into_incoming(), ty) {
                 (Incoming::Wide(wide), Some(_)) => {
                     split_rows(wide, array, &column, selected.len())?
                 }

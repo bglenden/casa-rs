@@ -32,6 +32,7 @@ mod io;
 mod locking;
 mod memory_manager;
 mod mutation;
+mod packed_write;
 mod persisted_rows;
 mod query;
 mod reference_writes;
