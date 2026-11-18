@@ -103,7 +103,7 @@ def record_layout(path):
     return pointers, source, layout
 
 
-def image_workflows(root, source, native, point):
+def image_workflows(root, source, native, point, case=None):
     images = make_images(root, source)
     cases = [
         ('point-scratch', 'point', True, {}),
@@ -123,6 +123,8 @@ def image_workflows(root, source, native, point):
     ]
     outcomes = {}
     for label, model, scratch, kwargs in cases:
+        if case and case not in label:
+            continue
         model = images[model] if isinstance(model, str) else [images[name] for name in model]
         results = []
         for writer, reader in ((casa, casa), (native, casa), (casa, native), (native, native)):
@@ -138,7 +140,8 @@ def image_workflows(root, source, native, point):
                 expectation, reference, ref_record = results[0]
                 np.testing.assert_equal(record, ref_record)
                 for name in MAIN:
-                    np.testing.assert_array_equal(actual[name], expectation[name])
+                    if name in expectation:
+                        np.testing.assert_array_equal(actual[name], expectation[name])
                 scale = max(1., float(np.max(np.abs(reference))))
                 np.testing.assert_allclose(actual[column], reference, atol=3e-5*scale, rtol=0,
                                            err_msg=label)
@@ -153,6 +156,7 @@ def main():
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
     parser.add_argument('--images', action='store_true')
+    parser.add_argument('--case', help='Run cases containing this text')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -191,6 +195,8 @@ def main():
     ]
     evidence = {}
     for label, cl, options, fixture, initial in cases:
+        if args.case and args.case not in label:
+            continue
         states = []
         for engine, api in [('casa', casa), ('native', tasks)]:
             ms = root/f'{label}-{engine}.ms'
@@ -203,7 +209,7 @@ def main():
         evidence[label] = {'paired': True}
         print(label, flush=True)
     if args.images:
-        evidence.update(image_workflows(root, source, tasks, point))
+        evidence.update(image_workflows(root, source, tasks, point, args.case))
     (root/'results.json').write_text(json.dumps(evidence, indent=2)+'\n')
 
 

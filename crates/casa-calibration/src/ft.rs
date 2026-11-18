@@ -198,7 +198,12 @@ fn channel_span(selection: &casa_ms::ChannelSelection) -> (Range<usize>, usize) 
     let last = selection
         .segments
         .iter()
-        .map(|part| part.start.max(part.end))
+        .map(|part| {
+            let lower = part.start.min(part.end);
+            let upper = part.start.max(part.end);
+            let stride = part.stride as i32;
+            lower + (upper - lower) / stride * stride
+        })
         .max()
         .unwrap_or(-1);
     let step = match selection.segments.as_slice() {
