@@ -158,6 +158,21 @@
     "fitorder": "cInt",
     "display": "cBool"
   },
+  "ft": {
+    "field": "cStr",
+    "spw": "cStr",
+    "timerange": "cStr",
+    "uvrange": "cStr",
+    "antenna": "cStr",
+    "scan": "cStr",
+    "observation": "cStr",
+    "intent": "cStr",
+    "nterms": "cInt",
+    "reffreq": "cStr",
+    "complist": "cStr",
+    "incremental": "cBool",
+    "usescratch": "cBool"
+  },
   "gaincal": {
     "caltable": "cStr",
     "field": "cStr",

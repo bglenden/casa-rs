@@ -16728,6 +16728,611 @@
     },
     {
       "kind": "task",
+      "id": "ft",
+      "contract_version": 1,
+      "display_name": "Predict Visibility Model",
+      "category": "Calibration",
+      "summary": "Predict model visibilities from component lists and model images.",
+      "provider_family": "calibration",
+      "casa_task": "ft",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "ft"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "field",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "spw",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 4
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ]
+            },
+            "provider": {
+              "field": "timerange"
+            },
+            "python": {
+              "name": "timerange"
+            },
+            "presentation": {
+              "label": "timerange",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "uvrange",
+          "concept": {
+            "id": "ms.selection.uvrange",
+            "semantic_revision": 3
+          },
+          "reviewed_homonym": {
+            "review_id": "#1520",
+            "reason": "The pinned public ft wrapper requires scalar selector text and forwards it unchanged to imager.selectvis."
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--uvrange"
+              ]
+            },
+            "provider": {
+              "field": "uvrange"
+            },
+            "python": {
+              "name": "uvrange"
+            },
+            "presentation": {
+              "label": "uvrange",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ]
+            },
+            "provider": {
+              "field": "antenna"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "antenna",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "scan",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "observation",
+          "concept": {
+            "id": "ms.selection.observation",
+            "semantic_revision": 3
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--observation"
+              ]
+            },
+            "provider": {
+              "field": "observation"
+            },
+            "python": {
+              "name": "observation"
+            },
+            "presentation": {
+              "label": "observation",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ]
+            },
+            "provider": {
+              "field": "intent"
+            },
+            "python": {
+              "name": "intent"
+            },
+            "presentation": {
+              "label": "intent",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "model",
+          "concept": {
+            "id": "ft.model",
+            "semantic_revision": 2
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--model"
+              ]
+            },
+            "provider": {
+              "field": "model"
+            },
+            "python": {
+              "name": "model",
+              "type_hint": "str | list[str]"
+            },
+            "presentation": {
+              "label": "model",
+              "group": "Model"
+            }
+          }
+        },
+        {
+          "name": "nterms",
+          "concept": {
+            "id": "parameter.nterms",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--nterms"
+              ]
+            },
+            "provider": {
+              "field": "nterms"
+            },
+            "python": {
+              "name": "nterms"
+            },
+            "presentation": {
+              "label": "nterms",
+              "group": "Model"
+            }
+          }
+        },
+        {
+          "name": "reffreq",
+          "concept": {
+            "id": "parameter.reffreq",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--reffreq"
+              ]
+            },
+            "provider": {
+              "field": "reffreq"
+            },
+            "python": {
+              "name": "reffreq"
+            },
+            "presentation": {
+              "label": "reffreq",
+              "group": "Model"
+            }
+          }
+        },
+        {
+          "name": "complist",
+          "concept": {
+            "id": "parameter.complist",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--complist"
+              ]
+            },
+            "provider": {
+              "field": "complist"
+            },
+            "python": {
+              "name": "complist"
+            },
+            "presentation": {
+              "label": "complist",
+              "group": "Model"
+            }
+          }
+        },
+        {
+          "name": "incremental",
+          "concept": {
+            "id": "parameter.incremental",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--incremental"
+              ]
+            },
+            "provider": {
+              "field": "incremental"
+            },
+            "python": {
+              "name": "incremental"
+            },
+            "presentation": {
+              "label": "incremental",
+              "group": "Model"
+            }
+          }
+        },
+        {
+          "name": "usescratch",
+          "concept": {
+            "id": "parameter.usescratch",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--usescratch"
+              ]
+            },
+            "provider": {
+              "field": "usescratch"
+            },
+            "python": {
+              "name": "usescratch"
+            },
+            "presentation": {
+              "label": "usescratch",
+              "group": "Model"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
       "id": "clearcal",
       "contract_version": 1,
       "display_name": "Clear Calibration",

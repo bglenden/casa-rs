@@ -207,10 +207,23 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         if not _is_default(value, defaults.get(name, _MISSING))
     }
     name = wrapper.__name__
-    if name in ("applycal", "clearcal", "delmod", "uvsub"):
+    if name in ("applycal", "clearcal", "delmod", "ft", "uvsub"):
         _validate_required_vis(values, arguments["vis"])
     if name == "applycal":
         return _call_applycal(values)
+    if name == "ft":
+        for selector in ("uvrange", "observation"):
+            if not isinstance(arguments[selector], str):
+                raise AssertionError(str({selector: ["must be of cStr type"]}))
+        terms = arguments["nterms"]
+        if isinstance(terms, bool):
+            values["nterms"] = int(terms)
+        try:
+            return run(name, **values).value
+        except TaskParameterError:
+            raise
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
     return run(name, **values).value
 
 

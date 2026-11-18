@@ -2728,5 +2728,13 @@
       "result": "..............................                                           [100%]\n30 passed in 0.23s",
       "scope": "Regenerated files only; no task contract or componentlist runtime change."
     }
+  },
+  "ft_merge_resolution": {
+    "incoming_main": "fcc823c384",
+    "reason": "The concurrent ft change added local GHz reparsing to record_decode. The underlying frequency_from_record implementation in this PR already converts units and resolves offsets; the second reparse would discard offsets and reject CASA frequency-equivalent units.",
+    "resolution": "Retain the existing offset-aware decoder. Its source is byte-identical to the accepted pre-merge implementation; preserve all other ft changes.",
+    "command": "CARGO_TARGET_DIR=target-1252/build CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test -q -p casa-components --lib record_decode::tests",
+    "result": "running 2 tests\n..\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s",
+    "checks": "Regenerated inventories/parameter references/wrappers; docs-check passes. Unchanged componentlist scientific/performance evidence is reused."
   }
 }

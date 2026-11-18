@@ -64,6 +64,18 @@ pub(crate) fn reset_scratch_columns(
     Ok(lock)
 }
 
+/// Add the imager's model scratch column before data selection.
+pub(crate) fn initialize_model_column(
+    ms: &mut MeasurementSet,
+    lock: TableWriteLock,
+) -> MsResult<TableWriteLock> {
+    if has_column(ms, MODEL) {
+        return Ok(lock);
+    }
+    let all = resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
+    reset(ms, all, &[MODEL], true, lock)
+}
+
 pub(crate) fn delete_model(
     ms: &mut MeasurementSet,
     field: Option<&str>,

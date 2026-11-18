@@ -62,6 +62,9 @@ fn value(task: &TaskInvocation<'_>, name: &str) -> Option<ParameterValue> {
 }
 
 fn messages(task: &TaskInvocation<'_>) -> Vec<String> {
+    if task.surface() == "ft" {
+        return ft_messages(task);
+    }
     let mut messages = vec![
         format!("taskname={}", task.surface()),
         format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
@@ -83,6 +86,37 @@ fn messages(task: &TaskInvocation<'_>) -> Vec<String> {
             };
             messages.push(format!("{:<11} = {text}", binding.name));
         }
+    }
+    messages
+}
+
+fn ft_messages(task: &TaskInvocation<'_>) -> Vec<String> {
+    let mut messages = vec!["taskname = ft".into()];
+    for name in [
+        "vis",
+        "field",
+        "spw",
+        "timerange",
+        "uvrange",
+        "antenna",
+        "scan",
+        "observation",
+        "intent",
+        "model",
+        "complist",
+        "incremental",
+    ] {
+        let Some(value) = effective(task, name) else {
+            continue;
+        };
+        let text = match value {
+            ParameterValue::String(text) if name == "model" => {
+                python_repr(&ParameterValue::Array(vec![ParameterValue::String(text)]))
+            }
+            ParameterValue::String(text) => text,
+            other => python_repr(&other),
+        };
+        messages.push(format!("{name:<12}= \"{text}\""));
     }
     messages
 }

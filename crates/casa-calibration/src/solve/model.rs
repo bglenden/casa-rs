@@ -22,7 +22,7 @@ use num_complex::Complex64;
 
 use super::grouping::{BucketedRow, SelectedSolveRow, VisibilityBuffer};
 use super::{GainSolveCombine, GainSolveError, GainSolveModelSource, get_i32};
-use fourier::{FourierModel, FourierRow};
+use fourier::{FourierMerge, FourierModel, FourierRow};
 
 pub(super) struct ModelInputs {
     read_column: bool,
@@ -48,6 +48,7 @@ struct FocusSample {
 struct Entry {
     selection: EntrySelection,
     prediction: Prediction,
+    scratch_channels: Vec<[i32; 4]>,
 }
 
 enum EntrySelection {
@@ -83,16 +84,7 @@ impl ModelInputs {
                     .main_table()
                     .schema()
                     .is_some_and(|schema| schema.contains_column("MODEL_DATA")));
-        let mut inputs = Self {
-            read_column,
-            virtual_models: BTreeMap::new(),
-            frequencies: BTreeMap::new(),
-            geometry: None,
-            dynamic_fields: BTreeSet::new(),
-            phase_times: BTreeMap::new(),
-            finite_fields: BTreeSet::new(),
-            model_buffers: BTreeMap::new(),
-        };
+        let mut inputs = Self::empty(read_column);
         if source != GainSolveModelSource::FromMeasurementSet {
             return Ok(inputs);
         }
@@ -111,10 +103,63 @@ impl ModelInputs {
                 inputs.virtual_models.insert(field, Arc::clone(entries));
             }
         }
-        inputs.finite_fields = inputs.virtual_models.iter().filter_map(|(&field, models)| {
+        inputs.load_geometry(ms, rows)?;
+        Ok(inputs)
+    }
+
+    pub(super) fn from_entries(
+        ms: &MeasurementSet,
+        rows: &[SelectedSolveRow],
+        entries: &[VirtualModelEntry],
+    ) -> Result<Self, GainSolveError> {
+        let mut inputs = Self::empty(false);
+        let entries: Arc<[Entry]> = entries
+            .iter()
+            .map(|entry| {
+                decode_entry(
+                    entry.kind,
+                    EntrySelection::Rows(entry.index_combination.clone()),
+                    &entry.container,
+                )
+                .map(|mut model| {
+                    model.scratch_channels = entry.channel_selection.clone();
+                    model
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into();
+        for row in rows {
+            inputs
+                .virtual_models
+                .entry(row.field_id)
+                .or_insert_with(|| Arc::clone(&entries));
+        }
+        inputs.load_geometry(ms, rows)?;
+        Ok(inputs)
+    }
+
+    fn empty(read_column: bool) -> Self {
+        Self {
+            read_column,
+            virtual_models: BTreeMap::new(),
+            frequencies: BTreeMap::new(),
+            geometry: None,
+            dynamic_fields: BTreeSet::new(),
+            phase_times: BTreeMap::new(),
+            finite_fields: BTreeSet::new(),
+            model_buffers: BTreeMap::new(),
+        }
+    }
+
+    fn load_geometry(
+        &mut self,
+        ms: &MeasurementSet,
+        rows: &[SelectedSolveRow],
+    ) -> Result<(), GainSolveError> {
+        self.finite_fields = self.virtual_models.iter().filter_map(|(&field, models)| {
             models.iter().any(|entry| matches!(&entry.prediction, Prediction::FourierGrid(grid) if grid.needs_refocus())).then_some(field)
         }).collect();
-        if inputs
+        if self
             .virtual_models
             .values()
             .any(|entries| !entries.is_empty())
@@ -124,7 +169,7 @@ impl ModelInputs {
                 .map_err(|source| read_error(ms, source))?;
             let windows: BTreeSet<_> = rows
                 .iter()
-                .filter(|row| inputs.virtual_models.contains_key(&row.field_id))
+                .filter(|row| self.virtual_models.contains_key(&row.field_id))
                 .map(|row| row.data_spw_id)
                 .collect();
             for window in windows {
@@ -134,13 +179,13 @@ impl ModelInputs {
                 let reference = spectral_window
                     .frequency_reference(window as usize)
                     .map_err(|source| read_error(ms, source))?;
-                inputs.frequencies.insert(window, (frequencies, reference));
+                self.frequencies.insert(window, (frequencies, reference));
             }
             let engine = MsCalEngine::new(ms)
                 .and_then(|engine| engine.with_field_ephemerides(ms))
                 .map_err(|source| read_error(ms, source))?;
             let field = ms.field().map_err(|source| read_error(ms, source))?;
-            for &id in inputs.virtual_models.keys() {
+            for &id in self.virtual_models.keys() {
                 let index = id as usize;
                 if engine.field_moves(index)
                     || field
@@ -148,12 +193,12 @@ impl ModelInputs {
                         .map_err(|source| read_error(ms, source))?
                         > 0
                 {
-                    inputs.dynamic_fields.insert(id);
+                    self.dynamic_fields.insert(id);
                 }
             }
-            inputs.geometry = Some(engine);
+            self.geometry = Some(engine);
         }
-        Ok(inputs)
+        Ok(())
     }
 
     pub(super) fn reads_column(&self, field: i32) -> bool {
@@ -230,6 +275,17 @@ impl ModelInputs {
         correlations: &[i32],
         raw_flags: &ArrayD<bool>,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
+        self.predict_model(ms, row, correlations, (raw_flags, None), false)
+    }
+
+    pub(super) fn predict_model(
+        &self,
+        ms: &MeasurementSet,
+        row: &SelectedSolveRow,
+        correlations: &[i32],
+        (raw_flags, previous): (&ArrayD<bool>, Option<ArrayD<Complex32>>),
+        scratch_model: bool,
+    ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
         let Some(entries) = self.virtual_models.get(&row.field_id) else {
             return Ok(None);
         };
@@ -281,11 +337,22 @@ impl ModelInputs {
                 "virtual component prediction requires one correlation basis",
             ));
         }
-        let mut model =
-            ArrayD::<Complex32>::zeros(IxDyn(&[correlations.len(), frequencies.len()]).f());
+        let shape = [correlations.len(), frequencies.len()];
+        let mut model = match previous {
+            Some(model) if model.shape() != shape => {
+                return Err(model_error("MODEL_DATA does not match its layout"));
+            }
+            Some(model) if model.t().is_standard_layout() => model,
+            Some(model) => ArrayD::from_shape_fn(IxDyn(&shape).f(), |index| model[index]),
+            None => ArrayD::<Complex32>::zeros(IxDyn(&shape).f()),
+        };
+        let mut components_written = false;
         for entry in matching {
             let components = match &entry.prediction {
-                Prediction::Components(components) => components,
+                Prediction::Components(components) => {
+                    components_written = true;
+                    components
+                }
                 Prediction::FourierGrid(grid) => {
                     grid.predict(
                         FourierRow {
@@ -301,9 +368,22 @@ impl ModelInputs {
                             frame: &frame,
                             uvw,
                             focus_rows: &buffer.focus_rows,
+                            scratch_channels: entry
+                                .scratch_channels
+                                .iter()
+                                .find(|channels| channels[0] == row.data_spw_id)
+                                .copied(),
                         },
                         &mut model,
+                        if !scratch_model {
+                            FourierMerge::VirtualSum
+                        } else if components_written {
+                            FourierMerge::ScratchReplaceComponents
+                        } else {
+                            FourierMerge::ScratchSum
+                        },
                     )?;
+                    components_written = false;
                     continue;
                 }
             };
@@ -391,6 +471,7 @@ fn decode_entry(
     Ok(Entry {
         selection,
         prediction,
+        scratch_channels: Vec::new(),
     })
 }
 

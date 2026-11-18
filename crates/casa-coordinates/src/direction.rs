@@ -265,6 +265,14 @@ impl DirectionCoordinate {
         self
     }
 
+    /// Set the celestial reference value in radians and recompute the
+    /// projection's native pole, keeping the reference pixel.
+    pub fn with_reference_value(mut self, longitude_latitude: [f64; 2]) -> Self {
+        self.crval = longitude_latitude;
+        let longpole = self.longpole;
+        self.with_longpole(longpole)
+    }
+
     /// Sets the increments, rad per pixel, as the coordsys tool's
     /// `setincrement(type='direction')` does. Returns `self` for chaining.
     pub fn with_increment(mut self, cdelt: [f64; 2]) -> Self {

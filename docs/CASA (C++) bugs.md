@@ -6586,3 +6586,16 @@ casa-rs refuses a duplicated axis with `Invalid cursor axes: [0, 0]: an axis
 is named twice; CASA 6.7.6.14 aborts on it` (crates/casa-images/src/analysis.rs,
 `parse_axes`), keeping every other axes form CASA accepts, including the
 minimum-forms `-1` for all axes (#977).
+
+## Replacing one Multi-MS model can remove another partition's Fourier grid
+
+In CASA 6.7.6.14, split an MS with `partition(separationaxis='baseline', numsubms=2)`,
+then write an image with `ft(mms, field='0', model=...)`. The two physical
+SOURCE records can name the same Fourier image. Replacing the model on the
+first partition removes that image. A subsequent `uvsub` on the other
+partition fails to open the image its record names.
+
+casa-rs gives independent SOURCE or MAIN records their own Fourier grids.
+Replacing one record deletes the old grid that record owned. The other
+partition's recipe still opens in CASA and casa-rs. The standalone
+`calibration_ft_oracle.py` fixture exercises the replacement sequence.

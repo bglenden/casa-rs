@@ -41,6 +41,9 @@
 //! never deletes anything else. A multi-MS is written as one table, where
 //! CASA writes each part.
 
+#[doc(hidden)]
+pub mod ft_record;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -249,6 +252,53 @@ pub fn put_virtual_model(
     entry: &VirtualModelEntry,
     incremental: bool,
 ) -> MsResult<()> {
+    put_model(ms, entry, incremental, None)
+}
+
+/// The table in which this entry's record will be filed. CASA chooses
+/// SOURCE when the first field has a source defined there, or MAIN when
+/// SOURCE has no rows or the field's SOURCE_ID is -1.
+#[doc(hidden)]
+pub fn virtual_model_target<'a>(
+    ms: &'a MeasurementSet,
+    entry: &VirtualModelEntry,
+) -> MsResult<&'a Path> {
+    let fields = entry.fields();
+    let Some(&first) = fields.first() else {
+        return Err(invalid("a virtual model entry names no field"));
+    };
+    let state = ModelState::read(ms)?;
+    let table = if state.first_row_of_source(ms, first)?.is_some() {
+        ms.subtable(SubtableId::Source)
+            .expect("the model is written to SOURCE")
+    } else {
+        ms.main_table()
+    };
+    table
+        .path()
+        .ok_or_else(|| invalid("the model table is not on disk"))
+}
+
+/// File a model after resolving its selection under the MAIN write lock.
+///
+/// This has the same persistence and errors as [`put_virtual_model`]. The
+/// caller retains the lock until the new record is ready for other readers.
+#[doc(hidden)]
+pub fn put_virtual_model_holding(
+    ms: &mut MeasurementSet,
+    entry: &VirtualModelEntry,
+    incremental: bool,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    put_model(ms, entry, incremental, Some(lock))
+}
+
+fn put_model(
+    ms: &mut MeasurementSet,
+    entry: &VirtualModelEntry,
+    incremental: bool,
+    lock: Option<&mut TableWriteLock>,
+) -> MsResult<()> {
     let fields = entry.fields();
     let Some(&first) = fields.first() else {
         return Err(invalid("a virtual model entry names no field"));
@@ -257,9 +307,11 @@ pub fn put_virtual_model(
     let mut state = ModelState::read(ms)?;
     let mut record = RecordValue::default();
     let mut adds = false;
+    let mut images = Vec::new();
     if state.is_defined(&key) {
         record = state.record(ms, &key)?;
         if !incremental {
+            images = record_images(&record);
             adds = add_to_record(&mut record, &entry.index_combination)?;
         }
     } else if let Some(held) = state.first_source_row_record(ms, first)?
@@ -285,12 +337,12 @@ pub fn put_virtual_model(
         format!("{}{counter}", entry.kind.prefix()),
         Value::Record(entry.to_record()),
     );
-    let mut images = Vec::new();
-    if !incremental && state.is_defined(&key) {
-        images = record_images(&state.record(ms, &key)?);
+    if !images.is_empty() {
+        let retained = record_images(&record);
+        images.retain(|path| !retained.contains(path));
     }
     state.put_model_record(ms, &fields, &key, record)?;
-    state.write(ms)?;
+    state.write_holding(ms, lock)?;
     delete_images(ms, &images);
     Ok(())
 }
@@ -521,8 +573,20 @@ pub fn virtual_model_index_combination(
     ms: &MeasurementSet,
     selection: &MsSelection,
 ) -> MsResult<VirtualModelSelection> {
-    const CHUNK_ROWS: usize = 65_536;
     let rows = selection.compile(ms)?.apply(ms)?;
+    selected_model_combinations(ms, &rows)
+}
+
+/// Recover the virtual-model keys for a selection's resolved physical rows.
+///
+/// This preserves the selection semantics of the caller, including the
+/// task-specific CASA selection grammar and any in-memory changes to rows.
+#[doc(hidden)]
+pub fn selected_model_combinations(
+    ms: &MeasurementSet,
+    rows: &[usize],
+) -> MsResult<VirtualModelSelection> {
+    const CHUNK_ROWS: usize = 65_536;
     let main = ms.main_table();
     let mut combinations = VirtualModelCombinations::new(ms)?;
     for chunk in rows.chunks(CHUNK_ROWS) {
@@ -657,20 +721,28 @@ fn matrix_rows(value: Option<&Value>) -> Option<Vec<[i32; 4]>> {
 /// (`ft_<k>.container.diskimage`), which CASA deletes with the record
 /// (`VisModelData::deleteDiskImage`).
 fn record_images(record: &RecordValue) -> Vec<PathBuf> {
-    (0..count(record, VirtualModelKind::FtMachine))
-        .filter_map(|index| {
-            let Some(Value::Record(entry)) = record.get(&format!("ft_{index}")) else {
-                return None;
-            };
-            let Some(Value::Record(container)) = entry.get("container") else {
-                return None;
-            };
-            match container.get("diskimage") {
-                Some(Value::Scalar(ScalarValue::String(path))) => Some(PathBuf::from(path)),
-                _ => None,
-            }
-        })
-        .collect()
+    let mut paths = Vec::new();
+    for index in 0..count(record, VirtualModelKind::FtMachine) {
+        if let Some(Value::Record(entry)) = record.get(&format!("ft_{index}"))
+            && let Some(Value::Record(container)) = entry.get("container")
+        {
+            machine_images(container, &mut paths);
+        }
+    }
+    paths
+}
+
+fn machine_images(machine: &RecordValue, paths: &mut Vec<PathBuf>) {
+    if let Some(Value::Scalar(ScalarValue::String(path))) = machine.get("diskimage") {
+        paths.push(PathBuf::from(path));
+    }
+    for field in machine.fields() {
+        if (field.name == "subftm" || field.name.starts_with("subftm_"))
+            && let Value::Record(term) = &field.value
+        {
+            machine_images(term, paths);
+        }
+    }
 }
 
 /// Delete each of `images` that is an `FT_MODEL*` table in the
@@ -859,7 +931,7 @@ fn remove_entry(record: &mut RecordValue, kind: VirtualModelKind, name: &str, re
 }
 
 /// The keywords and model cells CASA's model functions read and write,
-/// changed in memory and written once ([`Self::write`]).
+/// changed in memory and written once ([`Self::write_holding`]).
 struct ModelState {
     main: RecordValue,
     main_changed: bool,
@@ -1125,10 +1197,6 @@ impl ModelState {
 
     /// Write SOURCE in full and MAIN's metadata, each only when it changed,
     /// under casacore's write lock on each.
-    fn write(self, ms: &mut MeasurementSet) -> MsResult<()> {
-        self.write_holding(ms, None)
-    }
-
     fn write_holding(
         self,
         ms: &mut MeasurementSet,

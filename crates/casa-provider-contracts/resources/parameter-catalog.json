@@ -511,6 +511,28 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ft.model",
+      "semantic_revision": 2,
+      "casa_name": "model",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "A model image name or a list of model image names.",
+        "details": null,
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "imfit.model",
       "semantic_revision": 1,
       "casa_name": "model",
