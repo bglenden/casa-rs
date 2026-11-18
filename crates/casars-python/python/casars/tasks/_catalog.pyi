@@ -647,7 +647,7 @@ def uvmodelfit(
     spw: str = ...,
     selectdata: bool = ...,
     timerange: str = ...,
-    uvrange: ParameterData = ...,
+    uvrange: str | int | float | list[str] = ...,
     antenna: str = ...,
     scan: str = ...,
     msselect: str = ...,

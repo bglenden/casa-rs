@@ -2,7 +2,6 @@
 //! CASA ft task selection, prediction and provenance.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use casa_components::ComponentList;
 use casa_ms::schema::main_table::VisibilityDataColumn;

@@ -11,7 +11,7 @@ use casa_components::{
 };
 use casa_ms::columns::direction_columns::DirectionColumn;
 use casa_ms::derived::engine::raw_field_phase_direction;
-use casa_ms::{MeasurementSet, MsError, MsResult, ResolvedMsSelection};
+use casa_ms::{MeasurementSet, MsError, MsResult, ResolvedMsSelection, SubTable};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::ephemeris::offset_true_angle;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};

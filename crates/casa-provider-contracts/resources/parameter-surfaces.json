@@ -17593,7 +17593,8 @@
               "field": "uvrange"
             },
             "python": {
-              "name": "uvrange"
+              "name": "uvrange",
+              "type_hint": "str | int | float | list[str]"
             },
             "presentation": {
               "label": "uvrange",
