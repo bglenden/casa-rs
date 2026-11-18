@@ -46,7 +46,7 @@ use crate::writer::{
     set_measinfo_keyword,
 };
 use casa_numerics::solve_weighted_least_squares;
-use postprocess::{bandpass_reference_phases, fill_bandpass_gaps, normalize_bandpass_rows};
+use postprocess::{fill_bandpass_gaps, normalize_bandpass_rows, reference_bandpass_rows};
 
 const LEGACY_CAL_HISTORY_KEYWORD: &str = "CAL_HISTORY";
 
@@ -383,7 +383,7 @@ pub(crate) fn solve_bandpass(
             request.band_type,
             request.correlation_dependent_flags,
         );
-        if request.normalize_average_amplitude {
+        if request.band_type == BandpassType::BPoly && request.normalize_average_amplitude {
             normalize_bandpass_rows(&mut rows, group.solution_channels);
         }
         let solutions = rows
@@ -395,11 +395,11 @@ pub(crate) fn solve_bandpass(
                     .collect(),
             })
             .collect::<Vec<_>>();
-        // A bandpass keeps each channel's reference antenna; no flex choice
-        // follows.
-        for solution in &solutions {
-            if refants.contains(&solution.antenna_id) && solution.passed.contains(&true) {
-                solve_stats.used_as_refant(group.spw_id, solution.antenna_id);
+        if request.band_type == BandpassType::BPoly {
+            for solution in &solutions {
+                if refants.contains(&solution.antenna_id) && solution.passed.contains(&true) {
+                    solve_stats.used_as_refant(group.spw_id, solution.antenna_id);
+                }
             }
         }
         solve_stats.solutions(group.spw_id, solutions);
@@ -426,6 +426,31 @@ pub(crate) fn solve_bandpass(
     }
     let report = match request.band_type {
         BandpassType::B => {
+            if context.refant_id >= 0 {
+                let strict = matches!(
+                    request.refant,
+                    RefAntSelector::Expression { strict: true, .. }
+                );
+                let mut alternates = context.refant_alternates;
+                if !strict {
+                    let last = alternates.last().copied().unwrap_or(context.refant_id);
+                    let mut nearby = crate::solve::refant_distance_order(ms, last)?;
+                    nearby.retain(|id| *id != context.refant_id && !alternates.contains(id));
+                    alternates.extend(nearby);
+                }
+                reference_bandpass_rows(
+                    &mut solution_rows,
+                    context.refant_id,
+                    &alternates,
+                    strict,
+                    &mut solve_stats,
+                );
+            }
+            if request.normalize_average_amplitude {
+                for row in &mut solution_rows {
+                    postprocess::normalize_bandpass_row(row, row.channel_count);
+                }
+            }
             if let Some(cuts) = request.cuts.filter(|cuts| cuts.fill_gaps > 0) {
                 for row in &mut solution_rows {
                     fill_bandpass_gaps(row, cuts.fill_gaps);
@@ -460,10 +485,12 @@ fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), Bandp
             reason: "frequency intervals require bandtype='B'".to_string(),
         });
     }
-    if matches!(
-        request.refant,
-        RefAntSelector::Unspecified | RefAntSelector::Expression { .. }
-    ) {
+    if request.band_type == BandpassType::BPoly
+        && matches!(
+            request.refant,
+            RefAntSelector::Unspecified | RefAntSelector::Expression { .. }
+        )
+    {
         return Err(BandpassSolveError::UnsupportedConfiguration {
             reason: "bandpass requires one reference antenna by ID or name".to_string(),
         });
@@ -485,6 +512,7 @@ struct BandpassSolutionRow {
     field_id: i32,
     spw_id: i32,
     antenna_id: i32,
+    refant_id: i32,
     scan_number: i32,
     observation_id: i32,
     channel_count: usize,
@@ -583,7 +611,9 @@ fn solve_bandpass_group(
 
     let mut antenna_ids = available_antennas.clone();
     antenna_ids.extend(group.antenna_ids.iter().copied());
-    antenna_ids.insert(refant_id);
+    if refant_id >= 0 {
+        antenna_ids.insert(refant_id);
+    }
     let output_field_ids = if combine.fields && !combine.scans {
         group.field_ids.iter().copied().collect::<Vec<_>>()
     } else {
@@ -591,7 +621,6 @@ fn solve_bandpass_group(
     };
     let scan_number = group.scan_number();
     let interval_seconds = group.total_interval / group.sample_rows.max(1) as f64;
-    let reference_phases = bandpass_reference_phases(&solved_channels, refant_id, cuts, band_type);
 
     let mut solution_rows = Vec::new();
     for field_id in output_field_ids {
@@ -600,23 +629,18 @@ fn solve_bandpass_group(
             let mut flags = Vec::with_capacity(2 * channel_count);
             let mut param_errors = Vec::with_capacity(2 * channel_count);
             let mut snrs = Vec::with_capacity(2 * channel_count);
-            for ((solved, estimates), phases) in solved_channels
-                .iter()
-                .zip(&channel_errors)
-                .zip(&reference_phases)
-            {
-                for (receptor_index, phase) in phases.iter().enumerate() {
+            for (solved, estimates) in solved_channels.iter().zip(&channel_errors) {
+                for receptor_index in 0..2 {
                     let receptor = solved
                         .as_ref()
                         .and_then(|solved| solved.receptors.get(receptor_index));
                     let snr = receptor.and_then(|fit| fit.snr.get(&antenna_id)).copied();
-                    let solution = receptor
-                        .filter(|fit| fit.solved.contains(&antenna_id))
-                        .map(|fit| fit.gains[&antenna_id]);
+                    let solution = receptor.and_then(|fit| fit.gains.get(&antenna_id));
+                    let solved = receptor.is_some_and(|fit| fit.solved.contains(&antenna_id));
                     let above_min_snr =
                         cuts.is_none_or(|cuts| snr.is_some_and(|snr| snr > cuts.min_snr));
-                    gains.push(solution.map_or(Complex32::new(1.0, 0.0), |gain| gain / *phase));
-                    flags.push(solution.is_none() || !above_min_snr);
+                    gains.push(solution.copied().unwrap_or(Complex32::new(1.0, 0.0)));
+                    flags.push(!solved || !above_min_snr);
                     let estimates = estimates.and_then(|fit| fit.receptors.get(receptor_index));
                     param_errors.push(
                         estimates
@@ -638,6 +662,7 @@ fn solve_bandpass_group(
                 field_id,
                 spw_id: group.spw_id,
                 antenna_id,
+                refant_id: -1,
                 scan_number,
                 observation_id: group.observation_id,
                 channel_count,
@@ -716,7 +741,10 @@ fn write_bandpass_caltable(
                 COL_ANTENNA1,
                 Value::Scalar(ScalarValue::Int32(row.antenna_id)),
             ),
-            RecordField::new(COL_ANTENNA2, Value::Scalar(ScalarValue::Int32(refant_id))),
+            RecordField::new(
+                COL_ANTENNA2,
+                Value::Scalar(ScalarValue::Int32(row.refant_id)),
+            ),
             // CASA writes every solution's INTERVAL as 0 (`SolvableVisCal::keepNCT`).
             RecordField::new(COL_INTERVAL, Value::Scalar(ScalarValue::Float64(0.0))),
             RecordField::new(

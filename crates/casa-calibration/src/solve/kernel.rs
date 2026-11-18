@@ -349,10 +349,8 @@ pub(crate) fn solve_graphs(
                     .iter()
                     .map(|&antenna| {
                         let gain = fit
-                            .filter(|fit| fit.solved.contains(&antenna))
-                            .map_or(Complex64::new(1.0, 0.0), |fit| {
-                                complex32_to_64(fit.gains[&antenna])
-                            });
+                            .and_then(|fit| fit.gains.get(&antenna))
+                            .map_or(Complex64::new(1.0, 0.0), |gain| complex32_to_64(*gain));
                         (antenna, gain)
                     })
                     .collect()
@@ -436,6 +434,17 @@ pub(crate) fn solve_graphs(
         })
         .collect::<Vec<_>>();
     apply_group_reduced_chi_square(&mut receptors);
+    if let SolveStart::PreviousChannel(Some(previous)) = start {
+        // A constrained antenna with one unmeasured receptor keeps that
+        // receptor's parameter. CASA flags it when its Hessian is zero.
+        for (receptor, prior) in receptors.iter_mut().zip(&previous.receptors) {
+            for &antenna in &constrained {
+                if let Some(&gain) = prior.gains.get(&antenna) {
+                    receptor.gains.entry(antenna).or_insert(gain);
+                }
+            }
+        }
+    }
     Some(SolvedGraphs {
         refant_id,
         receptors,

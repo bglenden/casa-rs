@@ -58,12 +58,12 @@ def gapped_data(source, target):
 
 def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,),
             solint='inf', interval_count=None, parang=False, minsnr=0., spw='', bins=None,
-            apply_spwmap=None, **solve_options):
+            apply_spwmap=None, refant='A0', **solve_options):
     products, corrected, returns, windows = [], [], [], []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
         copy_ms(source, ms)
-        result = engine.bandpass(str(ms), str(output), field='0', spw=spw, refant='A0',
+        result = engine.bandpass(str(ms), str(output), field='0', spw=spw, refant=refant,
                                  smodel=list(s_model), minsnr=minsnr, solnorm=normalize,
                                  fillgaps=fillgaps, solint=solint, parang=parang, **solve_options)
         if interval_count is not None:
@@ -363,6 +363,37 @@ def combination_cases(root, source, native):
     return results
 
 
+def reference_cases(root, source, native):
+    intermittently_flagged = root/'intermittent-reference.ms'
+    copy_ms(source, intermittently_flagged)
+    tool = table()
+    tool.open(str(intermittently_flagged), nomodify=False)
+    try:
+        time = tool.getcol('TIME')
+        second = np.unique(time)[1]
+        first, last = (tool.getcol(key) for key in ('ANTENNA1', 'ANTENNA2'))
+        flags = tool.getcol('FLAG')
+        flags[..., (time == second) & ((first == 0) | (last == 0))] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    cases = [
+        ('no-reference', '', [-1]*6),
+        ('nearest-reference', 'A0', [0, 2, 2, 0, 0, 0]),
+        ('ranked-reference', 'A0,A3', [0, 3, 3, 0, 0, 0]),
+        ('reference-range', '0~2', [0, 1, 1, 0, 0, 0]),
+    ]
+    results = {}
+    for label, selector, references in cases:
+        folder = root/label
+        folder.mkdir()
+        results[label] = compare(folder, intermittently_flagged, native, False, refant=selector,
+                                 solint='int', interval_count=6, minblperant=3)
+        actual = contents(folder/'native.B')
+        np.testing.assert_array_equal(actual['ANTENNA2'][::5], references)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -400,6 +431,7 @@ def main():
     results.update(frequency_cases(root, source, native))
     results.update(selection_cases(root, source, native))
     results.update(combination_cases(root, source, native))
+    results.update(reference_cases(root, source, native))
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, report in results.items():
         assert max(report.values()) < 1e-3, (name, report)

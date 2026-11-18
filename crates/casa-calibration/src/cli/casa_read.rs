@@ -155,7 +155,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         append: task.flag("append")?,
         selection: selection(task)?,
         output_table: PathBuf::from(task.required_text("caltable")?),
-        refant: refant(&task.required_text("refant")?)?,
+        refant: bandpass_refant(&task.required_text("refant")?, band_type)?,
         prior_calibration_tables: chain(task, Chain::Solve)?,
         parang: task.flag("parang")?,
         combine: BandpassSolveCombine {
@@ -770,10 +770,17 @@ fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
     })
 }
 
-/// CASA's `refant`: one antenna, by name or id. CASA's ranked lists, and
-/// its default `''`, a solve with no reference antenna, are not
-/// implemented yet.
-fn refant(text: &str) -> Result<RefAntSelector, TaskFailure> {
+fn bandpass_refant(text: &str, band_type: BandpassType) -> Result<RefAntSelector, TaskFailure> {
+    if band_type == BandpassType::B {
+        return Ok(if text.trim().is_empty() {
+            RefAntSelector::Unspecified
+        } else {
+            RefAntSelector::Expression {
+                selection: text.trim().to_string(),
+                strict: false,
+            }
+        });
+    }
     if text.trim().is_empty() {
         return Err(not_yet("refant", text));
     }
