@@ -17030,10 +17030,6 @@
             "id": "ms.selection.observation",
             "semantic_revision": 3
           },
-          "reviewed_homonym": {
-            "review_id": "#1520",
-            "reason": "The pinned public ft wrapper requires scalar selector text and forwards it unchanged to imager.selectvis."
-          },
           "order": 7,
           "default": {
             "kind": "literal",
