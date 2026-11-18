@@ -27,7 +27,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         root.reload(&path)?
     };
     let ms = &root.measurement_set;
-    let selected = resolve_casa_calibration_selection(&ms, &selection(task)?).map_err(execution)?;
+    let selected = resolve_casa_calibration_selection(ms, &selection(task)?).map_err(execution)?;
     let shape = VisibilityFitShape::parse(&task.text("comptype")?.unwrap_or_default())
         .map_err(failed_fit)?;
     let parameters = task.numbers("sourcepar")?;
