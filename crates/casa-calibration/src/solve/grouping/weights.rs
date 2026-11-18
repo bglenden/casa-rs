@@ -211,6 +211,13 @@ pub(super) fn solve_weights(
     shape: &[usize],
     inputs: (&SolveInputBatch, usize),
 ) -> Result<ArrayD<f32>, GainSolveError> {
+    let inverse_square = |sigma: f32| {
+        if sigma > 0.0 {
+            1.0 / (sigma * sigma)
+        } else {
+            0.0
+        }
+    };
     if inputs.0.spectral_weights[inputs.1] {
         let sigma = input_cell(ms, row_index, inputs, "SIGMA_SPECTRUM")?;
         return match sigma {
@@ -218,46 +225,15 @@ pub(super) fn solve_weights(
             other => Err(unsupported_shape("SIGMA_SPECTRUM", other)),
         };
     }
-    Ok(scalar_sigma(ms, row_index, shape[0], inputs)?
-        .mapv(inverse_square)
-        .insert_axis(Axis(1)))
-}
-
-pub(super) fn delay_centroid_weight(
-    ms: &MeasurementSet,
-    row_index: usize,
-    correlations: usize,
-    inputs: (&SolveInputBatch, usize),
-) -> Result<f64, GainSolveError> {
-    Ok(scalar_sigma(ms, row_index, correlations, inputs)?
-        .iter()
-        .map(|&sigma| f64::from(inverse_square(sigma)))
-        .sum())
-}
-
-fn scalar_sigma<'a>(
-    ms: &'a MeasurementSet,
-    row_index: usize,
-    correlations: usize,
-    inputs: (&'a SolveInputBatch, usize),
-) -> Result<&'a ArrayD<f32>, GainSolveError> {
     let sigma = input_cell(ms, row_index, inputs, "SIGMA")?;
     let ArrayValue::Float32(sigma) = sigma else {
         return Err(unsupported_shape("SIGMA", sigma));
     };
-    if sigma.ndim() != 1 || sigma.shape()[0] != correlations {
+    if sigma.ndim() != 1 || sigma.shape()[0] != shape[0] {
         return Err(GainSolveError::UnsupportedParameterShape {
             path: "<measurement-set SIGMA>".to_string(),
             shape: sigma.shape().to_vec(),
         });
     }
-    Ok(sigma)
-}
-
-fn inverse_square(sigma: f32) -> f32 {
-    if sigma > 0.0 {
-        1.0 / (sigma * sigma)
-    } else {
-        0.0
-    }
+    Ok(sigma.mapv(inverse_square).insert_axis(Axis(1)))
 }

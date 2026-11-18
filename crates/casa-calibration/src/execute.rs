@@ -539,9 +539,10 @@ impl From<ApplyPlanError> for ApplyExecutionError {
 pub(crate) fn evaluate_apply_rows(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
+    share_input_flags: bool,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
     let mut rows = HashMap::new();
-    for_each_apply_row(ms, plan, false, |index, row| {
+    for_each_apply_row(ms, plan, false, share_input_flags, |index, row| {
         rows.insert(index, row);
     })?;
     Ok(rows)
@@ -552,7 +553,8 @@ pub(crate) fn evaluate_apply_rows(
 fn for_each_apply_row(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
-    unit_visibilities: bool,
+    forward_model: bool,
+    share_input_flags: bool,
     mut consume: impl FnMut(usize, EvaluatedApplyRow),
 ) -> Result<(), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
@@ -585,7 +587,7 @@ fn for_each_apply_row(
             .iter()
             .zip(&loaded_tables)
             .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
-    let columns: &[&str] = if unit_visibilities {
+    let columns: &[&str] = if forward_model {
         &["FLAG"]
     } else {
         &[VisibilityDataColumn::Data.name(), "FLAG"]
@@ -616,12 +618,28 @@ fn for_each_apply_row(
                 source: MsError::from(source),
             }
         })?;
-        let original_flags = main_rows.array_at(flag_index).map_err(|source| {
+        let input_flags = main_rows.array_at(flag_index).map_err(|source| {
             ApplyExecutionError::MutateMeasurementSet {
                 path: ms_path.clone(),
                 source: MsError::from(source),
             }
         })?;
+        let shared;
+        let original_flags = if share_input_flags
+            && let ArrayValue::Bool(flags) = input_flags
+            && flags.ndim() == 2
+        {
+            let mut flags = flags.clone();
+            for mut channel in flags.axis_iter_mut(ndarray::Axis(1)) {
+                if channel.iter().any(|&flag| flag) {
+                    channel.fill(true);
+                }
+            }
+            shared = ArrayValue::Bool(flags);
+            &shared
+        } else {
+            input_flags
+        };
         let units;
         let data = if let Some(index) = data_index {
             main_rows.array_at(index).map_err(|source| {
@@ -672,6 +690,7 @@ fn for_each_apply_row(
                 preserved_corrected_data: None,
                 preserved_weight_spectrum: None,
                 channel_grid: None,
+                forward_model,
             },
             plan,
             &loaded_tables,
@@ -756,7 +775,7 @@ pub(crate) fn execute_apply_with_preparation_error(
         if plan.apply_mode == ApplyMode::Trial {
             // Calibrater::correct2 still runs the calibration operators in
             // trial mode, including their input/basis validation.
-            for_each_apply_row(&ms, &plan, false, |_, _| {})?;
+            for_each_apply_row(&ms, &plan, false, false, |_, _| {})?;
             return Ok(ApplyExecutionReport {
                 plan,
                 created_corrected_data_column: false,
@@ -853,7 +872,7 @@ pub fn execute_apply(
     let (plan, plan_timings) = plan_apply_with_timings(ms, request)?;
     let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
     if plan.apply_mode == ApplyMode::Trial {
-        for_each_apply_row(ms, &plan, false, |_, _| {})?;
+        for_each_apply_row(ms, &plan, false, false, |_, _| {})?;
         return Ok(ApplyExecutionReport {
             plan,
             created_corrected_data_column: false,
@@ -1447,6 +1466,7 @@ struct ExecutionRowInputs<'a> {
     preserved_corrected_data: Option<&'a ArrayValue>,
     preserved_weight_spectrum: Option<&'a ArrayValue>,
     channel_grid: Option<DataChannelGrid<'a>>,
+    forward_model: bool,
 }
 
 struct PrefetchedExecutionRowInputs {
@@ -1867,6 +1887,7 @@ fn apply_row_all_channels(
         original_weight_spectrum,
         has_weight_spectrum,
         channel_grid,
+        forward_model,
         ..
     } = inputs;
     let ArrayValue::Complex32(data) = data else {
@@ -2134,7 +2155,8 @@ fn apply_row_all_channels(
         };
 
         let materialize_started_at = compute_profile.as_ref().map(|_| Instant::now());
-        if !(calibrate_weights)
+        if !forward_model
+            && !calibrate_weights
             && let Some(pair) = build_fast_gain_pair(
                 table_index,
                 &ant1,
@@ -2186,8 +2208,9 @@ fn apply_row_all_channels(
             profile.row_dependent_materialized_pairs += 1;
         }
 
-        if let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) =
-            (ant1.as_ref(), ant2.as_ref())
+        if !forward_model
+            && let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) =
+                (ant1.as_ref(), ant2.as_ref())
         {
             let scalar_weights =
                 !is_bandpass && first.channel_count == 1 && second.channel_count == 1;
@@ -2261,8 +2284,13 @@ fn apply_row_all_channels(
                     &sampling_context,
                 )?;
 
-                let (value1, flag1) = correcting_gain(gain1.value, gain1.flagged);
-                let (value2, flag2) = correcting_gain(gain2.value, gain2.flagged);
+                let gain = if forward_model {
+                    gain_validity::forward_gain
+                } else {
+                    correcting_gain
+                };
+                let (value1, flag1) = gain(gain1.value, gain1.flagged);
+                let (value2, flag2) = gain(gain2.value, gain2.flagged);
                 if (flag1 || flag2)
                     && plan.apply_mode.writes_flags()
                     && !flags[[corr_index, chan_index]]
@@ -2271,8 +2299,12 @@ fn apply_row_all_channels(
                     newly_flagged_samples += 1;
                 }
 
-                let denom = value1 * value2.conj();
-                corrected[[corr_index, chan_index]] /= denom;
+                let factor = value1 * value2.conj();
+                if forward_model {
+                    corrected[[corr_index, chan_index]] *= factor;
+                } else {
+                    corrected[[corr_index, chan_index]] /= factor;
+                }
                 if calibrate_weights {
                     let factor = bandpass_weights.as_ref().map_or_else(
                         || value1.norm_sqr() * value2.norm_sqr(),
@@ -3051,6 +3083,7 @@ fn apply_row_prefetched(
             preserved_corrected_data: inputs.preserved_corrected_data.as_ref(),
             preserved_weight_spectrum: inputs.preserved_weight_spectrum.as_ref(),
             channel_grid: None,
+            forward_model: false,
         },
         plan,
         loaded_tables,

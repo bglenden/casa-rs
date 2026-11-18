@@ -225,6 +225,53 @@ def make_priors(root, source):
     return [gains, bandpass], str(library)
 
 
+def prior_flag_and_centroid_cases(root, native, source, gain_table):
+    results = {}
+    tool = table()
+    for label in ('flagged-prior-receptor', 'zero-prior-receptor'):
+        prior = root/f'{label}.G'
+        copy_ms(Path(gain_table), prior)
+        tool.open(str(prior), nomodify=False)
+        try:
+            gains = np.ones_like(tool.getcol('CPARAM'))
+            flags = np.zeros_like(tool.getcol('FLAG'))
+            reference = tool.getcol('ANTENNA1') == 0
+            if label == 'flagged-prior-receptor':
+                flags[0, :, reference] = True
+            else:
+                gains[0, :, reference] = 0
+            tool.putcol('CPARAM', gains)
+            tool.putcol('FLAG', flags)
+        finally:
+            tool.close()
+        folder = root/label
+        folder.mkdir()
+        results[label] = compare(folder, source, native, 'K', 'ap', False,
+                                 gaintable=[str(prior)], corrdepflags=False)
+
+    varying = root/'varying-model.ms'
+    copy_ms(source, varying)
+    casa.clearcal(str(varying), addmodel=True)
+    tool.open(str(varying), nomodify=False)
+    try:
+        model = np.ones_like(tool.getcol('MODEL_DATA'))
+        field0 = tool.getcol('FIELD_ID') == 0
+        times = tool.getcol('TIME_CENTROID')
+        last = times[field0].max()
+        model[:, :, field0 & (times == last)] = 4
+        tool.putcol('MODEL_DATA', model)
+        tool.putcol('SIGMA', np.ones_like(tool.getcol('SIGMA')))
+    finally:
+        tool.close()
+    folder = root/'varying-model-centroid'
+    folder.mkdir()
+    results[folder.name] = compare(folder, varying, native, 'K', 'ap', False, smodel=[])
+    # Six equally spaced integrations. The last has sixteen times the weight.
+    expected_time = last - (50. + 40. + 30. + 20. + 10.) / 21.
+    np.testing.assert_allclose(solutions(folder/'casa.cal')['TIME'], expected_time, rtol=0., atol=1e-4)
+    return results
+
+
 def workflow_and_ambiguity(root, native, family, priors, library):
     source = root/f'{family}-single.ms'
     circular = root/f'{family}-circular.ms'
@@ -313,6 +360,7 @@ def main():
             if width is None:
                 results.update(selection_and_averaging(root, source, native, family))
     priors, library = make_priors(root, root/'K-single.ms')
+    results.update(prior_flag_and_centroid_cases(root, native, root/'K-single.ms', priors[0]))
     for family in ('K', 'KCROSS'):
         results.update(workflow_and_ambiguity(root, native, family, priors, library))
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

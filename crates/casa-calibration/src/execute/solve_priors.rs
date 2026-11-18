@@ -2,13 +2,14 @@
 //! Place diagonal prior calibration on the correct side of a delay solve.
 
 use super::{
-    ApplyExecutionError, ApplyPlan, ArrayValue, Complex32, EvaluatedApplyRow, HashMap,
-    MeasurementSet, evaluate_apply_rows, for_each_apply_row,
+    ApplyExecutionError, ApplyPlan, ArrayValue, EvaluatedApplyRow, HashMap, MeasurementSet,
+    evaluate_apply_rows, for_each_apply_row,
 };
 
 pub(crate) fn evaluate_delay_priors(
     ms: &MeasurementSet,
     mut plan: ApplyPlan,
+    share_input_flags: bool,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
     // VisEquation::collapse2 corrects DATA with earlier terms and corrupts
     // MODEL_DATA with terms at or after K. This distinction matters even for
@@ -23,7 +24,7 @@ pub(crate) fn evaluate_delay_priors(
                 )
             });
     plan.calibration_tables = data_tables;
-    let mut rows = evaluate_apply_rows(ms, &plan)?;
+    let mut rows = evaluate_apply_rows(ms, &plan, share_input_flags)?;
     if model_tables.is_empty() {
         return Ok(rows);
     }
@@ -32,7 +33,7 @@ pub(crate) fn evaluate_delay_priors(
     }
     plan.calibration_tables = model_tables;
     plan.parang = false;
-    for_each_apply_row(ms, &plan, true, |index, row| {
+    for_each_apply_row(ms, &plan, true, share_input_flags, |index, row| {
         let data = rows.get_mut(&index).expect("same selection for both sides");
         let ArrayValue::Bool(data_flags) = &mut data.flags else {
             unreachable!("apply flags are boolean")
@@ -41,13 +42,10 @@ pub(crate) fn evaluate_delay_priors(
             unreachable!("model calibration flags are boolean")
         };
         data_flags.zip_mut_with(&model_flags, |data, &model| *data |= model);
-        let ArrayValue::Complex32(mut inverse) = row.corrected_data else {
+        let ArrayValue::Complex32(gains) = row.corrected_data else {
             unreachable!("unit visibilities are complex")
         };
-        // Correction of a unit visibility yields the inverse diagonal
-        // factor. Forward application to the model uses its reciprocal.
-        inverse.mapv_inplace(|value| Complex32::new(1., 0.) / value);
-        data.model_gains = Some(inverse);
+        data.model_gains = Some(gains);
     })?;
     Ok(rows)
 }

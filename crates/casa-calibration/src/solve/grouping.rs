@@ -32,12 +32,17 @@ use time::{AveragedBaseline, FirstTBuffer, WeightedTime, bucketed_rows, first_t_
 pub(super) use weights::VisibilityBuffer;
 use weights::{SpectralWeights, solve_weights};
 
+pub(crate) enum PriorCalibrationMode {
+    Data,
+    Delay { share_input_flags: bool },
+}
+
 pub(crate) fn load_preapplied_rows(
     ms: &MeasurementSet,
     selection: &MsSelection,
     prior_calibration_tables: &[ApplyCalibrationTableSpec],
     parang: bool,
-    delay_solve: bool,
+    mode: PriorCalibrationMode,
 ) -> Result<Option<HashMap<usize, EvaluatedApplyRow>>, GainSolveError> {
     if prior_calibration_tables.is_empty() && !parang {
         return Ok(None);
@@ -54,10 +59,11 @@ pub(crate) fn load_preapplied_rows(
     .map_err(|source| GainSolveError::PriorCalibrationPlan {
         source: Box::new(source),
     })?;
-    let preapplied = if delay_solve {
-        evaluate_delay_priors(ms, plan)
-    } else {
-        evaluate_apply_rows(ms, &plan)
+    let preapplied = match mode {
+        PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false),
+        PriorCalibrationMode::Delay { share_input_flags } => {
+            evaluate_delay_priors(ms, plan, share_input_flags)
+        }
     };
     preapplied
         .map(Some)
@@ -134,7 +140,6 @@ pub(crate) fn build_solve_groups(
                 .iter()
                 .map(|row| spectral_weights.contains(row))
                 .collect(),
-            options.gain_type.is_delay(),
         )
     };
     let mut consume = |batch: &[BucketedRow<'_>], inputs: SolveInputBatch| {
@@ -226,14 +231,13 @@ fn read_input_batch(
     (read_visibilities, read_model_flags): (bool, bool),
     read_model_column: bool,
     spectral_weights: Vec<bool>,
-    read_scalar_sigma: bool,
 ) -> Result<SolveInputBatch, GainSolveError> {
     let schema = ms.main_table().schema();
     let mut columns = Vec::new();
     if spectral_weights.contains(&true) {
         columns.push("SIGMA_SPECTRUM");
     }
-    if read_scalar_sigma || spectral_weights.contains(&false) {
+    if spectral_weights.contains(&false) {
         columns.push("SIGMA");
     }
     if read_visibilities {
@@ -612,7 +616,6 @@ pub(crate) struct SolveSamples<'a> {
     pub(crate) weights: ArrayView2<'a, f32>,
     pub(crate) model: Option<ArrayView2<'a, Complex32>>,
     pub(crate) point_model: Option<&'a [Complex32]>,
-    pub(crate) centroid_weight: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -826,16 +829,6 @@ impl SolveAccumulator {
             .transpose()?
             .flatten();
         let mut samples = inputs.samples();
-        if options.gain_type.is_delay() {
-            // With no channel-averaging layer, CASA's VbAvg reads the
-            // scalar SIGMA weights. Model division changes only the spectrum.
-            samples.centroid_weight = Some(weights::delay_centroid_weight(
-                ms,
-                row.row_index,
-                samples.data.nrows(),
-                batch,
-            )?);
-        }
         if let Some(gains) = preapplied_row.and_then(|row| row.model_gains.as_ref()) {
             let model = predicted.as_ref().or(inputs.model);
             if model.is_some_and(|model| model.shape() != gains.shape()) {
@@ -964,6 +957,7 @@ impl SolveAccumulator {
         });
         baseline.start_bits = start_bits;
         let solution_channels = self.solution_channels;
+        let delay = options.gain_type.is_delay();
         let mut row_weight = 0.0_f64;
         for (corr_index, &correlation_type) in correlation_types.iter().enumerate() {
             let Some(receptors) = correlation_receptors(correlation_type) else {
@@ -995,19 +989,27 @@ impl SolveAccumulator {
                     correlation_types[0],
                 )
             };
+            if delay {
+                row_weight += samples::centroid_weight(
+                    samples,
+                    corr_index,
+                    channels,
+                    shared_flags.as_deref(),
+                    point,
+                    true,
+                );
+            }
             if !parallel_hand && matches!(options.gain_type, GainType::G | GainType::K) {
                 // CASA can use cross-hand weights for the averaged baseline's
                 // time even though only parallel hands enter these solves.
-                if samples.centroid_weight.is_none()
-                    && (options.rotate_model
-                        || (!options.channelized && options.gain_type == GainType::G))
-                {
+                if !delay && (options.rotate_model || !options.channelized) {
                     row_weight += samples::centroid_weight(
                         samples,
                         corr_index,
                         channels,
                         shared_flags.as_deref(),
                         point,
+                        false,
                     );
                 }
                 continue;
@@ -1021,7 +1023,7 @@ impl SolveAccumulator {
                     parallel_hand,
                 })
                 .or_insert_with(|| vec![SolveEdgeAccumulation::default(); solution_channels]);
-            row_weight += samples::SampleAccumulation {
+            let accumulated_weight = samples::SampleAccumulation {
                 values: accumulations,
                 attempted: &mut self.attempted,
                 channelized: options.channelized,
@@ -1038,15 +1040,9 @@ impl SolveAccumulator {
                 point,
                 all_channels,
             );
-        }
-        if let Some(weight) = samples.centroid_weight {
-            let unflagged = channels.iter().any(|&channel| {
-                shared_flags.as_ref().map_or_else(
-                    || samples.flags.column(channel).iter().any(|flag| !*flag),
-                    |flags| !flags[channel],
-                )
-            });
-            row_weight = if unflagged { weight } else { 0. };
+            if !delay {
+                row_weight += accumulated_weight;
+            }
         }
         if row_weight > 0.0 {
             self.baseline_centroids

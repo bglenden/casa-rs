@@ -10,8 +10,8 @@ use casa_ms::MeasurementSet;
 use casa_types::Complex32;
 
 use super::grouping::{
-    DelaySpectrum, SelectedSolveRow, SolveAccumulator, SolveGroupOptions, build_solve_groups,
-    correlation_types_for_ddid, selected_channels,
+    DelaySpectrum, PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions,
+    build_solve_groups, correlation_types_for_ddid, selected_channels,
 };
 use super::kernel::SolutionRow;
 use super::{
@@ -42,7 +42,9 @@ pub(super) fn solve(
         &request.prior_calibration_tables,
         false,
         true,
-        true,
+        PriorCalibrationMode::Delay {
+            share_input_flags: !request.correlation_dependent_flags,
+        },
     )?;
     let windows = delay_windows(ms, &context.rows, cross_hand)?;
     let groups = build_solve_groups(
@@ -61,7 +63,10 @@ pub(super) fn solve(
             solve_interval: request.solve_interval,
             combine: request.combine,
             preaverage_max_span: averaging_span(request),
-            correlation_dependent_flags: request.correlation_dependent_flags,
+            // Prior evaluation has already combined raw input flags when
+            // needed. New flags from priors stay per correlation.
+            correlation_dependent_flags: request.correlation_dependent_flags
+                || context.preapplied_rows.is_some(),
             robust_seed: false,
             channelized: true,
         },

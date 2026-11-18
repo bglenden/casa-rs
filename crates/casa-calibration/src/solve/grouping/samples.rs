@@ -47,7 +47,6 @@ impl SolveRowInputs<'_> {
                 .expect("checked two-dimensional"),
             model: self.model.map(two_dimensional),
             point_model: None,
-            centroid_weight: None,
         }
     }
 }
@@ -255,26 +254,31 @@ pub(super) fn centroid_weight(
     channels: &[usize],
     shared_flags: Option<&[bool]>,
     point: Complex32,
+    channelized: bool,
 ) -> f64 {
-    channels
-        .iter()
-        .map(|&channel| {
-            let flagged = shared_flags.map_or_else(
-                || samples.flags[[correlation, channel]],
-                |flags| flags[channel],
-            );
-            if flagged {
-                0.0
-            } else {
-                let model = samples
-                    .model
-                    .map_or(point, |model| model[[correlation, channel]]);
-                let power = model.norm_sqr();
-                let scale = if power == 0.0 { 1.0 } else { power };
-                f64::from(samples.weights[[correlation, channel]] * scale)
-            }
-        })
-        .sum()
+    let weights = channels.iter().map(|&channel| {
+        let flagged = shared_flags.map_or_else(
+            || samples.flags[[correlation, channel]],
+            |flags| flags[channel],
+        );
+        if flagged {
+            0.0
+        } else {
+            let model = samples
+                .model
+                .map_or(point, |model| model[[correlation, channel]]);
+            let power = model.norm_sqr();
+            let scale = if power == 0.0 { 1.0 } else { power };
+            samples.weights[[correlation, channel]] * scale
+        }
+    });
+    if channelized {
+        // VisEquation::divideCorrByModel replaces each scalar row weight
+        // by the median of the channel weights after model normalization.
+        f64::from(median_with_even_mean(&mut weights.collect::<Vec<_>>()))
+    } else {
+        weights.map(f64::from).sum()
+    }
 }
 
 /// CASA's correlation-independent flags are shared by every receptor.
