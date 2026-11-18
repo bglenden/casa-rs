@@ -69,6 +69,7 @@ fn solved_antennas(group: &SolveAccumulator, cuts: BandpassSolveCuts) -> BTreeSe
         BandpassSolveCombine::default(),
         false,
         Some(cuts),
+        BandpassType::B,
     );
     rows.iter()
         .filter(|row| !row.flags[0])

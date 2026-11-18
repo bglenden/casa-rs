@@ -798,7 +798,7 @@ fn find_flex_refant(
         .find_map(|&antenna_id| Some((usable(current, antenna_id)?, usable(previous, antenna_id)?)))
 }
 
-fn phase_only(gain: Complex32) -> Complex32 {
+pub(crate) fn phase_only(gain: Complex32) -> Complex32 {
     let norm = gain.norm();
     if norm > f32::EPSILON {
         gain / Complex32::new(norm, 0.0)

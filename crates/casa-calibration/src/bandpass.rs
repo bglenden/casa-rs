@@ -355,6 +355,7 @@ pub(crate) fn solve_bandpass(
             request.combine,
             request.normalize_average_amplitude,
             request.cuts,
+            request.band_type,
         );
         let solutions = rows
             .iter()
@@ -480,6 +481,7 @@ fn solve_bandpass_group(
     combine: BandpassSolveCombine,
     normalize_average_amplitude: bool,
     cuts: Option<BandpassSolveCuts>,
+    band_type: BandpassType,
 ) -> (Vec<BandpassSolutionRow>, BTreeSet<i32>) {
     let channel_count = group.solution_channels;
     // CASA solves the last channel first and starts each channel from the
@@ -496,7 +498,7 @@ fn solve_bandpass_group(
                 min_baselines_per_antenna: cuts.map_or(0, |cuts| cuts.min_baselines_per_antenna),
                 group_seed: None,
                 correlation_dependent_flags: false,
-                defer_reference: false,
+                defer_reference: band_type == BandpassType::B,
                 robustness: None,
             },
             start.as_ref(),
@@ -539,6 +541,7 @@ fn solve_bandpass_group(
     };
     let scan_number = group.scan_number();
     let interval_seconds = group.total_interval / group.sample_rows.max(1) as f64;
+    let reference_phases = bandpass_reference_phases(&solved_channels, refant_id, cuts, band_type);
 
     let mut solution_rows = Vec::new();
     for field_id in output_field_ids {
@@ -547,7 +550,9 @@ fn solve_bandpass_group(
             let mut flags = Vec::with_capacity(2 * channel_count);
             let mut param_errors = Vec::with_capacity(2 * channel_count);
             let mut snrs = Vec::with_capacity(2 * channel_count);
-            for (solved, estimates) in solved_channels.iter().zip(&channel_errors) {
+            for (channel, (solved, estimates)) in
+                solved_channels.iter().zip(&channel_errors).enumerate()
+            {
                 for receptor_index in 0..2 {
                     let receptor = solved
                         .as_ref()
@@ -558,7 +563,9 @@ fn solve_bandpass_group(
                         .map(|fit| fit.gains[&antenna_id]);
                     let above_min_snr =
                         cuts.is_none_or(|cuts| snr.is_some_and(|snr| snr > cuts.min_snr));
-                    gains.push(solution.unwrap_or(Complex32::new(1.0, 0.0)));
+                    gains.push(solution.map_or(Complex32::new(1.0, 0.0), |gain| {
+                        gain / reference_phases[channel][receptor_index]
+                    }));
                     flags.push(solution.is_none() || !above_min_snr);
                     let estimates = estimates.and_then(|fit| fit.receptors.get(receptor_index));
                     param_errors.push(
@@ -598,6 +605,31 @@ fn solve_bandpass_group(
         solution_rows
     };
     (rows, refants)
+}
+
+fn bandpass_reference_phases(
+    solved_channels: &[Option<SolvedGraphs>],
+    refant_id: i32,
+    cuts: Option<BandpassSolveCuts>,
+    band_type: BandpassType,
+) -> Vec<[Complex32; 2]> {
+    solved_channels
+        .iter()
+        .map(|solved| {
+            std::array::from_fn(|receptor| {
+                let unity = Complex32::new(1.0, 0.0);
+                if band_type == BandpassType::BPoly {
+                    return unity;
+                }
+                solved
+                    .as_ref()
+                    .and_then(|solved| solved.receptors.get(receptor))
+                    .filter(|fit| fit.solved.contains(&refant_id))
+                    .filter(|fit| cuts.is_none_or(|cuts| fit.snr[&refant_id] > cuts.min_snr))
+                    .map_or(unity, |fit| crate::solve::phase_only(fit.gains[&refant_id]))
+            })
+        })
+        .collect()
 }
 
 fn normalize_bandpass_rows(
