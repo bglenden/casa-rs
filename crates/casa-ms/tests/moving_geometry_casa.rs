@@ -12,7 +12,7 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 struct GeometryCase {
     ms: String,
-    epochs: Vec<(f64, [f64; 11])>,
+    epochs: Vec<(f64, i32, [f64; 11])>,
 }
 
 #[test]
@@ -26,7 +26,7 @@ fn moving_columns_match_casa_at_each_selected_epoch() {
     let root = PathBuf::from(root);
     let cases: BTreeMap<String, GeometryCase> =
         serde_json::from_slice(&std::fs::read(root.join("derived.json")).unwrap()).unwrap();
-    assert_eq!(cases.len(), 2);
+    assert_eq!(cases.len(), 3);
     for (mount, case) in cases {
         let ms = MeasurementSet::open(root.join(case.ms)).unwrap();
         let derived = DerivedColumns::from_measurement_set(&ms).unwrap();
@@ -37,21 +37,20 @@ fn moving_columns_match_casa_at_each_selected_epoch() {
         let second = main.column_accessor("ANTENNA2").unwrap();
         let mut largest_angle = 0.0_f64;
         let mut largest_uvw = 0.0_f64;
-        for (epoch, expected) in case.epochs {
+        for (epoch, antenna, expected) in case.epochs {
             let row = (0..main.row_count())
                 .find(|&row| {
                     time.scalar_cell(row).unwrap() == &ScalarValue::Float64(epoch)
                         && field.scalar_cell(row).unwrap() == &ScalarValue::Int32(0)
-                        && first.scalar_cell(row).unwrap() == &ScalarValue::Int32(0)
-                        && second.scalar_cell(row).unwrap() == &ScalarValue::Int32(1)
+                        && first.scalar_cell(row).unwrap() == &ScalarValue::Int32(antenna)
+                        && second.scalar_cell(row).unwrap() == &ScalarValue::Int32(antenna + 1)
                 })
                 .expect("the sampled field, baseline and epoch");
             let (az, el) = derived.azel1(row).unwrap();
             let (ha, dec) = derived.hadec1(row).unwrap();
             let pa = derived.pa1(row).unwrap();
-            let engine = derived.engine();
-            let (array_az, array_el) = engine.azel_observatory(epoch, 0).unwrap();
-            let array_ha = engine.hour_angle_observatory(epoch, 0).unwrap();
+            let (array_az, array_el) = derived.azel(row).unwrap();
+            let array_ha = derived.ha(row).unwrap();
             for (index, actual) in [az, el, ha, dec, pa, array_az, array_el, array_ha]
                 .into_iter()
                 .enumerate()

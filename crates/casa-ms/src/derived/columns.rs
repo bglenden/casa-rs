@@ -50,7 +50,7 @@ impl<'a> DerivedColumns<'a> {
     ///
     /// Returns an error if antenna, time or field metadata cannot be opened.
     pub fn from_measurement_set(ms: &'a MeasurementSet) -> MsResult<Self> {
-        let engine = MsCalEngine::new(ms)?.with_field_ephemerides(ms)?;
+        let engine = MsCalEngine::for_calibration(ms)?;
         Ok(Self::new(ms.main_table(), engine))
     }
 
@@ -102,8 +102,13 @@ impl<'a> DerivedColumns<'a> {
 
     /// Hour angle (radians) using the observatory position.
     pub fn ha(&self, row: usize) -> MsResult<f64> {
-        // Use antenna 0 as the reference
-        self.ha1(row)
+        let time = self.time(row)?;
+        let field = self.field_id(row)?;
+        if self.engine.field_moves(field) {
+            self.engine.hour_angle_observatory(time, field)
+        } else {
+            self.engine.hour_angle(time, field, self.antenna1(row)?)
+        }
     }
 
     // ---- Parallactic angle ----
@@ -142,9 +147,15 @@ impl<'a> DerivedColumns<'a> {
         self.engine.azel(time, field, ant)
     }
 
-    /// Azimuth and elevation (radians) using ANTENNA1 as reference.
+    /// Azimuth and elevation (radians) at the field's reference position.
     pub fn azel(&self, row: usize) -> MsResult<(f64, f64)> {
-        self.azel1(row)
+        let time = self.time(row)?;
+        let field = self.field_id(row)?;
+        if self.engine.field_moves(field) {
+            self.engine.azel_observatory(time, field)
+        } else {
+            self.engine.azel(time, field, self.antenna1(row)?)
+        }
     }
 
     // ---- Local Apparent Sidereal Time ----

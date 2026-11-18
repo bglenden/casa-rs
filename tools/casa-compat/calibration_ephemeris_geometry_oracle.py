@@ -52,24 +52,27 @@ def snapshot_angles(root, dataset, epochs):
             finally:
                 tb.close()
             assert tb.open(str(snapshot))
+            by_baseline = []
             try:
-                rows = tb.query(f'FIELD_ID==0 AND ANTENNA1==0 AND ANTENNA2==1 '
-                                f'AND abs(TIME-{stamp:.17g})<0.001',
-                                columns='mscal.azel1() AS AZEL, mscal.hadec1() AS HADEC, '
-                                        'mscal.pa1() AS PA, mscal.azel() AS ARRAY_AZEL, '
-                                        'mscal.ha() AS ARRAY_HA, mscal.uvwJ2000() AS UVW')
-                try:
-                    az, el = rows.getcell('AZEL', 0)
-                    ha, dec = rows.getcell('HADEC', 0)
-                    pa = rows.getcell('PA', 0)
-                    array_az, array_el = rows.getcell('ARRAY_AZEL', 0)
-                    array_ha = rows.getcell('ARRAY_HA', 0)
-                    uvw = rows.getcell('UVW', 0)
-                finally:
-                    rows.close()
+                for first in (0, 1):
+                    rows = tb.query(f'FIELD_ID==0 AND ANTENNA1=={first} AND ANTENNA2=={first+1} '
+                                    f'AND abs(TIME-{stamp:.17g})<0.001',
+                                    columns='mscal.azel1() AS AZEL, mscal.hadec1() AS HADEC, '
+                                            'mscal.pa1() AS PA, mscal.azel() AS ARRAY_AZEL, '
+                                            'mscal.ha() AS ARRAY_HA, mscal.uvwJ2000() AS UVW')
+                    try:
+                        az, el = rows.getcell('AZEL', 0)
+                        ha, dec = rows.getcell('HADEC', 0)
+                        pa = rows.getcell('PA', 0)
+                        array_az, array_el = rows.getcell('ARRAY_AZEL', 0)
+                        array_ha = rows.getcell('ARRAY_HA', 0)
+                        uvw = rows.getcell('UVW', 0)
+                    finally:
+                        rows.close()
+                    by_baseline.append([az, el, ha, dec, pa, array_az, array_el, array_ha, *uvw])
             finally:
                 tb.close()
-            output.append([az, el, ha, dec, pa, array_az, array_el, array_ha, *uvw])
+            output.append(by_baseline)
     finally:
         metadata.done()
         measure.done()
@@ -126,6 +129,47 @@ def opacity(root, dataset, native, name):
     return {'corrected_nrms': float(corrected)}
 
 
+def with_last_epoch(source, destination, last_epoch):
+    copy_ms(source, destination)
+    offset = last_epoch - selected_epochs(destination)[-1]
+    tb = table()
+    assert tb.open(str(destination), nomodify=False)
+    try:
+        for column in ('TIME', 'TIME_CENTROID'):
+            tb.putcol(column, tb.getcol(column) + offset)
+    finally:
+        tb.close()
+
+
+def check_upper_boundary(root, moving, native, last_epoch):
+    outside = root/'outside.ms'
+    with_last_epoch(moving, outside, last_epoch)
+    metadata = msmetadata()
+    measure = measures()
+    assert metadata.open(str(outside))
+    try:
+        epoch = measure.epoch('UTC', {'value': last_epoch, 'unit': 's'})
+        try:
+            metadata.phasecenter(0, epoch)
+        except RuntimeError as error:
+            assert 'extractDirMeas' in str(error)
+        else:
+            raise AssertionError('CASA accepted the final ephemeris sample')
+    finally:
+        metadata.done()
+        measure.done()
+    try:
+        native.msexplore(vis=str(outside), field='0', spw='0', selectdata=True,
+                         preset='elevation_vs_time', plot_output=str(root/'outside.txt'),
+                         plot_format='txt')
+    except RuntimeError as error:
+        assert 'outside the ephemeris interpolation range' in str(error)
+    else:
+        raise AssertionError('casa-rs accepted the final ephemeris sample')
+    assert not (root/'outside.txt').exists()
+    return {'refused': True}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', required=True, type=Path)
@@ -157,16 +201,27 @@ def main():
         tb.putkeyword('posrefsys', 'ICRF/ICRS')
     finally:
         tb.close()
+    assert tb.open(str(ephemeris))
+    try:
+        last_epoch = float(tb.getcol('MJD')[-1]) * 86400.
+    finally:
+        tb.close()
+    edge = root/'near-end.ms'
+    with_last_epoch(moving, edge, last_epoch - 30.)
     results, derived = {}, {}
-    for mount, dataset in [('alt-az', moving), ('equatorial', equatorial)]:
+    for mount, dataset in [('alt-az', moving), ('equatorial', equatorial), ('near-end', edge)]:
         case = root/mount
         case.mkdir()
         epochs = selected_epochs(dataset)
         assert len(epochs) > 2
         angles = snapshot_angles(case, dataset, epochs)
-        derived[mount] = {'ms': dataset.name, 'epochs': list(zip(epochs.tolist(), angles.tolist()))}
-        results[mount] = diagnostic_series(case, tasks, dataset, epochs, angles)
+        rows = [(stamp, first, numbers)
+                for stamp, expected in zip(epochs.tolist(), angles.tolist())
+                for first, numbers in enumerate(expected)]
+        derived[mount] = {'ms': dataset.name, 'epochs': rows}
+        results[mount] = diagnostic_series(case, tasks, dataset, epochs, angles[:, 0])
     (root/'derived.json').write_text(json.dumps(derived, indent=2)+'\n')
+    results['upper-boundary'] = check_upper_boundary(root, moving, tasks, last_epoch)
     results['moving-opacity'] = opacity(root, moving, tasks, 'moving-opacity')
     results['icrs-opacity'] = opacity(root, equatorial, tasks, 'icrs-opacity')
     results['fixed-opacity'] = opacity(root, fixed, tasks, 'fixed-opacity')
