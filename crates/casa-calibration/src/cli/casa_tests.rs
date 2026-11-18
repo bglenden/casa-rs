@@ -290,6 +290,7 @@ fn gaincal_reads_casas_values() {
             preaverage_seconds: 12.5,
             correlation_dependent_flags: false,
             normalization_type: crate::GainNormalization::Median,
+            robustness: Default::default(),
             min_snr: 2.5,
             min_baselines_per_antenna: 2,
             smodel: [2.5, 0.0, 0.0, 0.0],

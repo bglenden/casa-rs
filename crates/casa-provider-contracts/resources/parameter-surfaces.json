@@ -14996,8 +14996,7 @@
             "provider": {"field": "solmode"},
             "python": {"name": "solmode"},
             "presentation": {"label": "Solve Mode", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979}
+          }
         },
         {
           "name": "rmsthresh",
@@ -15011,8 +15010,7 @@
             "provider": {"field": "rmsthresh"},
             "python": {"name": "rmsthresh"},
             "presentation": {"label": "RMS Thresholds", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979}
+          }
         },
         {
           "name": "corrdepflags",

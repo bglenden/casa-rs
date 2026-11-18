@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow, SolveBaseKey,
-    SolveBucketKey,
+    AveragedBaseline, BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow,
+    SolveBaseKey, SolveBucketKey,
 };
 
 /// Each selected row of `rows`, in solve order, with the group and
@@ -74,6 +74,15 @@ pub(super) struct FirstTBuffer {
     pub(super) time: f64,
     pub(super) max_span: Option<f64>,
     pub(super) skipped_baseline: (i32, i32),
+}
+
+impl FirstTBuffer {
+    pub(super) fn contains(self, baseline: AveragedBaseline) -> bool {
+        baseline.field_id == self.field
+            && self
+                .max_span
+                .is_none_or(|span| f64::from_bits(baseline.start_bits) - self.time <= span)
+    }
 }
 
 /// First buffer seen by `TJones::guessPar`. The CASA

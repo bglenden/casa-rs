@@ -300,6 +300,9 @@ pub struct SolveGainTaskRequest {
     /// Statistic used when normalization is enabled.
     #[serde(default)]
     pub normalization_type: GainNormalization,
+    /// Optional CASA robust weights and outlier rejection.
+    #[serde(default)]
+    pub robustness: crate::GainSolveRobustness,
     /// Minimum solution SNR required to keep a solved parameter unflagged.
     #[serde(default = "default_min_snr")]
     pub min_snr: f32,
@@ -457,6 +460,7 @@ impl CalibrationTaskRequest {
                     model_source: request.model_source,
                     normalize_average_amplitude: request.normalize_average_amplitude,
                     normalization_type: request.normalization_type,
+                    robustness: request.robustness.clone(),
                     min_snr: request.min_snr,
                     min_baselines_per_antenna: request.min_baselines_per_antenna,
                     smodel: request.smodel,

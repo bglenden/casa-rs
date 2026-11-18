@@ -88,6 +88,21 @@ pub enum GainNormalization {
     Median,
 }
 
+/// Reweighting and outlier rejection for a routine gain solve.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GainSolveRobustness {
+    /// Reweight the samples by their complex residuals in three L1 passes.
+    pub l1: bool,
+    /// Successive rejection thresholds in multiples of each correlation's RMS.
+    pub rms_thresholds: Vec<f32>,
+}
+
+impl GainSolveRobustness {
+    pub(crate) fn enabled(&self) -> bool {
+        self.l1 || !self.rms_thresholds.is_empty()
+    }
+}
+
 /// Visibility model source used by the gain solver.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveModelSource {
@@ -168,6 +183,8 @@ pub struct GainSolveRequest {
     pub normalize_average_amplitude: bool,
     /// Statistic used when normalization is enabled.
     pub normalization_type: GainNormalization,
+    /// Optional CASA robust weights and outlier rejection.
+    pub robustness: GainSolveRobustness,
     /// Minimum solution SNR required to keep a solved parameter unflagged.
     pub min_snr: f32,
     /// Minimum unflagged baselines per antenna required before solving.
@@ -415,6 +432,7 @@ pub(crate) fn solve_gain_rows(
             // VbAvg applies this boundary to either source of the interval.
             preaverage_max_span: averaging_interval.map(|seconds| f64::from(seconds) * 0.999),
             correlation_dependent_flags: request.correlation_dependent_flags,
+            robust_seed: request.robustness.enabled(),
             channelized: false,
         },
     )?;
@@ -438,7 +456,7 @@ pub(crate) fn solve_gain_rows(
         if group.attempted {
             attempted_spw_ids.insert(group.spw_id);
         }
-        group.finalize_for_solve(request.solve_mode);
+        group.finalize_for_solve(request.solve_mode, request.robustness.enabled());
         trace::trace_group(&base_key, &bucket_key, &group, request);
         solve_stats.interval(&IntervalStages::of(
             &group,
@@ -561,6 +579,7 @@ pub(crate) fn solve_closed_group(
             scalar_seed: None,
             correlation_dependent_flags: request.correlation_dependent_flags,
             defer_reference: true,
+            robustness: request.robustness.enabled().then_some(&request.robustness),
         },
     )
 }

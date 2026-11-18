@@ -109,7 +109,8 @@ pub use simulated::{
 };
 pub use solve::{
     GainNormalization, GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode,
-    GainSolveModelSource, GainSolveReport, GainSolveRequest, GainType, RefAntSelector,
+    GainSolveModelSource, GainSolveReport, GainSolveRequest, GainSolveRobustness, GainType,
+    RefAntSelector,
 };
 pub use solve_stats::{AntennaSolveStats, SolveCounts, SolveStats, WindowSolveStats};
 pub use stats::{
