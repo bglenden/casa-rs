@@ -693,18 +693,11 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     let ms = ms.to_str().unwrap();
-    let solve = json!({"vis": ms, "caltable": "g.gcal", "refant": "0", "bandtype": "BPOLY"});
     let with = |base: &Value, name: &str, value: Value| {
         let mut values = base.clone();
         values[name] = value;
         values
     };
-    refused_naming_979(
-        dir.path(),
-        "bandpass",
-        with(&solve, "combine", json!("spw")),
-        "combine",
-    );
     // Fluxscale's former fitorder/time/scan refusals are replaced by the
     // positive scientific check above now that those behaviors are implemented.
     // gencal reads infile only for the caltypes CASA's task XML shows it

@@ -40,6 +40,7 @@ pub(super) fn solve_polynomial(
     request: &BandpassSolveRequest,
     context: CalibrationSolveContext,
     groups: impl Iterator<Item = SolveAccumulator>,
+    bin_widths: &BTreeMap<i32, usize>,
     cuts: BandpassSolveCuts,
     mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
@@ -52,15 +53,15 @@ pub(super) fn solve_polynomial(
                 .unwrap_or_default(),
             source,
         })?;
-    let selections = context
+    let descriptions = context
         .rows
         .iter()
-        .map(|row| (row.data_spw_id, row.channel_selection.as_ref()))
+        .map(|row| (row.data_desc_id, row))
         .collect::<BTreeMap<_, _>>();
-    let mut channel_count = 0;
-    let mut fitted = Vec::new();
-    for mut group in groups {
-        let frequencies = window.chan_freq(group.spw_id as usize).map_err(|source| {
+    let mut frequencies_by_description = BTreeMap::new();
+    for (id, row) in descriptions {
+        let spw = row.data_spw_id;
+        let frequencies = window.chan_freq(spw as usize).map_err(|source| {
             BandpassSolveError::OpenMeasurementSet {
                 path: ms
                     .path()
@@ -69,12 +70,30 @@ pub(super) fn solve_polynomial(
                 source,
             }
         })?;
-        let channels = selected_channels(selections[&group.spw_id], frequencies.len())?;
-        let frequencies = channels
+        let channels = selected_channels(row.channel_selection.as_ref(), frequencies.len())?;
+        frequencies_by_description.insert(
+            id,
+            super::metadata::average_frequencies(
+                &frequencies,
+                &channels,
+                bin_widths.get(&spw).copied().unwrap_or(1),
+            ),
+        );
+    }
+    let mut channel_count = 0;
+    let mut fitted = Vec::new();
+    for group in groups {
+        let Some(polynomial) = &group.polynomial else {
+            continue;
+        };
+        let frequencies = polynomial
+            .descriptions()
             .iter()
-            .map(|&channel| frequencies[channel])
-            .collect::<Vec<_>>();
-        group.finalize_for_solve(GainSolveMode::AmplitudePhase, false);
+            .map(|id| (*id, frequencies_by_description[id].as_slice()))
+            .collect::<BTreeMap<_, _>>();
+        if frequencies.is_empty() {
+            continue;
+        }
         let rows = fit::fit_interval(
             &group,
             &frequencies,
@@ -84,7 +103,11 @@ pub(super) fn solve_polynomial(
             cuts,
         )?;
         if !rows.is_empty() {
-            channel_count = frequencies.len();
+            channel_count = frequencies
+                .values()
+                .map(|channels| channels.len())
+                .max()
+                .unwrap_or(0);
             fitted.extend(rows);
         }
     }
@@ -248,6 +271,7 @@ fn write_polynomial_rows(
         .collect::<BTreeMap<_, _>>();
 
     for row in fitted_rows {
+        let from_casa_task = request.cuts.is_some();
         let reference_frequency_hz = (row.valid_domain_hz[0] + row.valid_domain_hz[1]) / 2.0;
         let flat_amp = row
             .amp_coefficients
@@ -340,7 +364,11 @@ fn write_polynomial_rows(
             ),
             RecordField::new(
                 "REF_ANT",
-                Value::Array(ArrayValue::from_i32_vec(vec![row.antenna_id])),
+                Value::Array(ArrayValue::from_i32_vec(vec![if from_casa_task {
+                    refant_id
+                } else {
+                    row.antenna_id
+                }])),
             ),
             RecordField::new("REF_FEED", Value::Array(ArrayValue::from_i32_vec(vec![0]))),
             RecordField::new(
@@ -416,7 +444,9 @@ fn write_polynomial_rows(
             ),
             RecordField::new(
                 COL_PHASE_UNITS,
-                Value::Scalar(ScalarValue::String("RAD".to_string())),
+                Value::Scalar(ScalarValue::String(
+                    if from_casa_task { "RADIANS" } else { "RAD" }.to_string(),
+                )),
             ),
             RecordField::new(
                 COL_VALID_DOMAIN,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selection, bucketing, and accumulation for `gaincal` and `bandpass`.
 
+mod polynomial;
 mod samples;
 mod time;
 mod weights;
@@ -103,6 +104,7 @@ pub(crate) fn build_solve_groups(
         options.solve_interval,
         options.combine,
         include_autocorrelations,
+        options.polynomial_bandpass,
     );
     let seed_buffers = if needs_first_buffer
         || options.combine.observations
@@ -120,7 +122,11 @@ pub(crate) fn build_solve_groups(
     models.phase_times =
         weights::chunk_phase_times(&ordered, options.combine, models.dynamic_fields());
     let mut layouts = SolveRowLayouts::new(ms, options.rotate_model, &models, channel_bin_widths)?;
-    let spectral_weights = SpectralWeights::new(ms, &ordered, options.combine)?;
+    let spectral_weights = if options.polynomial_bandpass {
+        SpectralWeights::default()
+    } else {
+        SpectralWeights::new(ms, &ordered, options.combine)?
+    };
     let pipelined = overlap_inputs(ordered.len());
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
         eprintln!("calibration_workers {}", if pipelined { 2 } else { 1 });
@@ -563,6 +569,8 @@ pub(crate) struct SolveGroupOptions {
     /// Solve each data channel apart (`bandpass`) rather than the selected
     /// channels together (`gaincal`).
     pub(crate) channelized: bool,
+    /// BPOLY uses the old visibility iterator and scalar row weights.
+    pub(crate) polynomial_bandpass: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -671,6 +679,7 @@ pub(crate) struct SolveAccumulator {
     pub(crate) solution_channels: usize,
     /// A single parallel hand in channelized G solves occupies parameter zero.
     pub(crate) scalar_bandpass: bool,
+    pub(crate) polynomial: Option<polynomial::PolynomialAccumulation>,
     /// `[solution channel][receptor]`, filled by [`Self::finalize_for_solve`].
     pub(crate) channel_graphs: Vec<Vec<SolveGraph>>,
     /// The solution's TIME, set by [`Self::finalize_for_solve`].
@@ -768,6 +777,7 @@ impl SolveAccumulator {
             unique_time_bits: BTreeSet::new(),
             solution_channels: 1,
             scalar_bandpass: false,
+            polynomial: None,
             channel_graphs: Vec::new(),
             solution_time: 0.0,
             attempted: false,
@@ -919,6 +929,19 @@ impl SolveAccumulator {
         channels: SelectedChannels<'_>,
         options: &SolveGroupOptions,
     ) -> Result<(), GainSolveError> {
+        if options.polynomial_bandpass {
+            self.observe_metadata(row);
+            self.polynomial
+                .get_or_insert_with(Default::default)
+                .observe(
+                    row,
+                    samples,
+                    correlation_types,
+                    channels,
+                    options.point_stokes,
+                );
+            return Ok(());
+        }
         if options.channelized {
             let channel_count = channels
                 .indices

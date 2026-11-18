@@ -462,12 +462,15 @@ fn bandpass_reads_casas_values() {
     assert!(solve.combine.scans && !solve.combine.fields);
     assert_eq!(solve.band_type, BandpassType::B);
     assert_eq!(solve.cuts, Some(BandpassSolveCuts::CASA_DEFAULTS));
-    // A BPOLY edge mask of half the channels leaves none to fit.
+    // For an even channel count an edge mask of 50 leaves the center.
     let mut values = defaults;
     values["bandtype"] = json!("BPOLY");
     values["maskedge"] = json!(50);
-    let message = refused(casa("bandpass", values), "maskedge");
-    assert!(message.contains("below 50"), "{message}");
+    let CalibrationTaskRequest::SolveBandpass(solve) = casa("bandpass", values).expect("bandpass")
+    else {
+        panic!("a bandpass solve");
+    };
+    assert_eq!(solve.cuts.unwrap().mask_edge_percent, 50.0);
 }
 
 #[test]

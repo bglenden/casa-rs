@@ -493,6 +493,7 @@ pub(crate) fn solve_gain_rows(
             correlation_dependent_flags: request.correlation_dependent_flags,
             robust_seed: request.robustness.enabled(),
             channelized: false,
+            polynomial_bandpass: false,
         },
     )?;
 

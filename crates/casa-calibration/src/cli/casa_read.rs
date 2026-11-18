@@ -133,23 +133,11 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
     let (time_interval, frequency_interval) = supplied_interval
         .split_once(',')
         .unwrap_or((&supplied_interval, ""));
-    if matches!(model_source, GainSolveModelSource::ModelColumn) {
-        return Err(not_yet("smodel", "[] with a MODEL_DATA column"));
-    }
     let combine = combine(task)?;
     // CASA reads maskedge only for BPOLY.
     let mask_edge_percent = match band_type {
         BandpassType::B => BandpassSolveCuts::CASA_DEFAULTS.mask_edge_percent,
-        BandpassType::BPoly => {
-            let percent = task.number("maskedge")?;
-            if !(0.0..50.0).contains(&percent) {
-                return Err(TaskFailure::validation(
-                    "maskedge must be a percentage of the channels from 0 to below 50",
-                )
-                .at("maskedge"));
-            }
-            percent as f32
-        }
+        BandpassType::BPoly => task.number("maskedge")? as f32,
     };
     Ok(SolveBandpassTaskRequest {
         append: task.flag("append")?,
@@ -170,11 +158,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         phase_degree: count(task, "degphase")?,
         model_source,
         solve_interval: parse_time_solint(time_interval)?,
-        frequency_interval: if band_type == BandpassType::B {
-            parse_frequency_solint(frequency_interval)?
-        } else {
-            None
-        },
+        frequency_interval: parse_frequency_solint(frequency_interval)?,
         correlation_dependent_flags: task.flag("corrdepflags")?,
         smodel,
         cuts: Some(BandpassSolveCuts {
@@ -758,12 +742,6 @@ fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
     let upper = text.to_ascii_uppercase();
     let spectral_windows = upper.contains("SPW");
     let observations = upper.contains("OBS");
-    if (spectral_windows || observations)
-        && task.surface() == "bandpass"
-        && task.required_text("bandtype")? == "BPOLY"
-    {
-        return Err(not_yet("combine", &text));
-    }
     Ok(GainSolveCombine {
         scans: upper.contains("SCAN"),
         fields: upper.contains("FIELD"),

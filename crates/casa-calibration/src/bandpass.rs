@@ -327,6 +327,7 @@ pub(crate) fn solve_bandpass(
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
     let use_casa_solve = request.band_type == BandpassType::B || request.cuts.is_some();
+    let polynomial_bandpass = request.band_type == BandpassType::BPoly && request.cuts.is_some();
     let rotate_model = request.parang && use_casa_solve;
     let input_phase = crate::timing::Phase::start("bandpass_select_read_average");
     let context = prepare_calibration_solve(
@@ -385,6 +386,7 @@ pub(crate) fn solve_bandpass(
                 spectral_windows: request.combine.spectral_windows,
             },
             channelized: true,
+            polynomial_bandpass,
             preaverage_max_span: match request.solve_interval {
                 GainSolveInterval::Seconds(seconds) => Some(f64::from(seconds as f32) * 0.999),
                 _ => None,
@@ -402,7 +404,15 @@ pub(crate) fn solve_bandpass(
     if request.band_type == BandpassType::BPoly
         && let Some(cuts) = request.cuts
     {
-        return bpoly::solve_polynomial(ms, request, context, groups.into_values(), cuts, mode);
+        return bpoly::solve_polynomial(
+            ms,
+            request,
+            context,
+            groups.into_values(),
+            &channel_bin_widths,
+            cuts,
+            mode,
+        );
     }
     let kernel_phase = crate::timing::Phase::start("bandpass_solve");
     let mut solution_rows = Vec::new();
@@ -585,7 +595,10 @@ fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), Bandp
         request.band_type == BandpassType::B || request.cuts.is_some(),
     )?;
     crate::solve::validate_solve_interval(request.solve_interval)?;
-    if request.band_type == BandpassType::BPoly && request.frequency_interval.is_some() {
+    if request.band_type == BandpassType::BPoly
+        && request.cuts.is_none()
+        && request.frequency_interval.is_some()
+    {
         return Err(BandpassSolveError::UnsupportedConfiguration {
             reason: "frequency intervals require bandtype='B'".to_string(),
         });
@@ -602,6 +615,7 @@ fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), Bandp
         });
     }
     if matches!(request.band_type, BandpassType::BPoly)
+        && request.cuts.is_none()
         && (request.amplitude_degree > 31 || request.phase_degree > 31)
     {
         return Err(BandpassSolveError::UnsupportedConfiguration {

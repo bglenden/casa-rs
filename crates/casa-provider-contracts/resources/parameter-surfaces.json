@@ -15580,8 +15580,7 @@
             "provider": {"field": "corrdepflags"},
             "python": {"name": "corrdepflags"},
             "presentation": {"label": "Correlation-dependent Flags", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
+          }
         },
         {
           "name": "append",

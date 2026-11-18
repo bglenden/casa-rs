@@ -21,7 +21,7 @@ struct VisibilitySample {
 
 pub(super) fn fit_interval(
     group: &SolveAccumulator,
-    frequencies: &[f64],
+    frequencies: &BTreeMap<i32, &[f64]>,
     antennas: &BTreeSet<i32>,
     refant: i32,
     request: &BandpassSolveRequest,
@@ -39,9 +39,24 @@ pub(super) fn fit_interval(
         .ok_or_else(|| error("at least two distinct channel frequencies are required"))?;
     let indices = frequencies
         .iter()
-        .map(|&value| grid.index(value))
-        .collect::<Vec<_>>();
-    if indices.iter().copied().collect::<BTreeSet<_>>().len() < count {
+        .map(|(&id, &frequencies)| {
+            (
+                id,
+                frequencies
+                    .iter()
+                    .map(|&value| grid.index(value))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    if indices
+        .values()
+        .flatten()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .len()
+        < count
+    {
         return Err(error(
             "not enough spectral channels for the requested degree",
         ));
@@ -60,21 +75,25 @@ pub(super) fn fit_interval(
         .enumerate()
         .map(|(i, &id)| (id, i))
         .collect::<BTreeMap<_, _>>();
-    let (mut spectra, participation) =
-        collect_spectra(group, &indices, &grid, &antenna_indices, cuts);
+    let (spectra, participation) = collect_spectra(group, &indices, &grid, &antenna_indices, cuts);
     if spectra.iter().all(Vec::is_empty) {
         return Ok(Vec::new());
     }
+    let time = group
+        .polynomial
+        .as_ref()
+        .and_then(|accumulation| accumulation.time())
+        .unwrap_or_else(|| group.aggregate_time());
     let mut rows = antennas
         .iter()
         .map(|&antenna_id| BPolySolutionRow {
-            time_seconds: group.solution_time,
-            interval_seconds: group.total_interval / group.sample_rows.max(1) as f64,
+            time_seconds: (time / 86_400.0) * 86_400.0,
+            interval_seconds: 0.0,
             field_id: group.field_id,
             spw_id: group.spw_id,
             antenna_id,
-            scan_number: group.scan_number(),
-            observation_id: group.observation_id,
+            scan_number: -1,
+            observation_id: -1,
             valid_domain_hz: grid.domain(),
             scale_factor: Complex32::new(1.0, 0.0),
             amp_coefficients: vec![vec![0.0; amp_count]; 2],
@@ -82,12 +101,9 @@ pub(super) fn fit_interval(
         })
         .collect::<Vec<_>>();
 
-    for (receptor, samples) in spectra.iter_mut().enumerate() {
+    for (receptor, samples) in spectra.iter().enumerate() {
         if samples.is_empty() {
             continue;
-        }
-        if cuts.normalize_visibilities {
-            normalize_input(samples);
         }
         let active = samples
             .iter()
@@ -128,10 +144,16 @@ struct FrequencyGrid {
 }
 
 impl FrequencyGrid {
-    fn new(frequencies: &[f64]) -> Option<Self> {
-        let step = (frequencies.get(1)? - frequencies.first()?).abs();
-        let first = frequencies.iter().copied().reduce(f64::min)?;
-        let last = frequencies.iter().copied().reduce(f64::max)?;
+    fn new(frequencies: &BTreeMap<i32, &[f64]>) -> Option<Self> {
+        let step = frequencies
+            .values()
+            .filter_map(|channels| Some((channels.get(1)? - channels.first()?).abs()))
+            .reduce(f64::max)?;
+        let values = frequencies
+            .values()
+            .flat_map(|channels| channels.iter().copied());
+        let first = values.clone().reduce(f64::min)?;
+        let last = values.reduce(f64::max)?;
         (step.is_finite() && step > 0.0 && first.is_finite() && last.is_finite()).then(|| Self {
             first,
             step,
@@ -154,71 +176,73 @@ impl FrequencyGrid {
 
 fn collect_spectra(
     group: &SolveAccumulator,
-    bins: &[usize],
+    bins: &BTreeMap<i32, Vec<usize>>,
     grid: &FrequencyGrid,
     antennas: &BTreeMap<i32, usize>,
     cuts: BandpassSolveCuts,
 ) -> ([Vec<VisibilitySample>; 2], Vec<Vec<usize>>) {
     let mut sums = [BTreeMap::new(), BTreeMap::new()];
+    let mut means = [BTreeMap::new(), BTreeMap::new()];
     let mut participation = vec![vec![0; grid.count]; antennas.len()];
-    for (channel, (&bin, graphs)) in bins.iter().zip(&group.channel_graphs).enumerate() {
-        if cuts.masks_polynomial_channel(channel, bins.len()) {
-            continue;
-        }
-        for (receptor, graph) in graphs.iter().enumerate() {
-            for (&(a, b), &weight) in graph
-                .weights
-                .iter()
-                .filter(|&(&(a, b), w)| a < b && *w > 0.0)
-            {
-                let sample = graph.edges[&(a, b)];
-                if sample.norm_sqr() == 0.0 {
-                    continue;
-                }
-                let (i, j) = (antennas[&a], antennas[&b]);
-                let (sum, total) = sums[receptor]
-                    .entry((i, j, bin))
-                    .or_insert((Complex64::default(), 0.0));
-                *sum += Complex64::new(f64::from(sample.re), f64::from(sample.im));
-                *total += f64::from(weight);
-                participation[i][bin] += 1;
-                participation[j][bin] += 1;
+    for (description, [a, b], receptor, spectrum) in
+        group.polynomial.iter().flat_map(|data| data.spectra())
+    {
+        let bins = &bins[&description];
+        let (i, j) = (antennas[&a], antennas[&b]);
+        let weight = f64::from(spectrum.weight);
+        for (channel, (&bin, &sample)) in
+            bins.iter().zip(&spectrum.weighted_visibilities).enumerate()
+        {
+            if cuts.masks_polynomial_channel(channel, bins.len()) || sample.norm_sqr() == 0.0 {
+                continue;
             }
+            let sample = Complex64::new(f64::from(sample.re), f64::from(sample.im));
+            let (sum, total) = sums[receptor]
+                .entry((i, j, bin))
+                .or_insert((Complex64::default(), 0.0));
+            *sum += sample;
+            *total += weight;
+            if cuts.normalize_visibilities {
+                let (sum, total) = means[receptor]
+                    .entry((i, j))
+                    .or_insert((Complex64::default(), 0.0));
+                *sum += sample;
+                *total += weight;
+            }
+            participation[i][bin] += 1;
+            participation[j][bin] += 1;
         }
     }
-    let spectra = sums.map(|sum| {
-        sum.into_iter()
-            .filter_map(|((a, b, channel), (visibility, weight))| {
-                (participation[a][channel] > 1
-                    && participation[b][channel] > 1
-                    && visibility.norm_sqr() > 0.0)
-                    .then_some(VisibilitySample {
-                        antennas: [a, b],
-                        channel,
-                        visibility: visibility / weight,
-                        weight,
-                    })
-            })
-            .collect()
-    });
+    let spectra = sums
+        .into_iter()
+        .zip(means)
+        .map(|(sum, means)| {
+            sum.into_iter()
+                .filter_map(|((a, b, channel), (visibility, weight))| {
+                    let visibility = if let Some(&(sum, norm_weight)) = means.get(&(a, b)) {
+                        if sum.norm_sqr() == 0.0 {
+                            return None;
+                        }
+                        visibility / (sum / norm_weight)
+                    } else {
+                        visibility
+                    };
+                    (participation[a][channel] > 1
+                        && participation[b][channel] > 1
+                        && visibility.norm_sqr() > 0.0)
+                        .then_some(VisibilitySample {
+                            antennas: [a, b],
+                            channel,
+                            visibility: visibility / weight,
+                            weight,
+                        })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("two parallel-hand spectra");
     (spectra, participation)
-}
-
-fn normalize_input(samples: &mut [VisibilitySample]) {
-    let mut means = BTreeMap::new();
-    for sample in samples.iter() {
-        let (sum, weight) = means
-            .entry(sample.antennas)
-            .or_insert((Complex64::default(), 0.0));
-        *sum += sample.visibility * sample.weight;
-        *weight += sample.weight;
-    }
-    for sample in samples {
-        let (sum, weight) = means[&sample.antennas];
-        if sum.norm_sqr() > 0.0 {
-            sample.visibility /= sum / weight;
-        }
-    }
 }
 
 fn fit_coefficients(

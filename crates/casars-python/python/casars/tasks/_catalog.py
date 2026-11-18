@@ -674,8 +674,6 @@ def bandpass(
     """Solve bandpass calibration for a MeasurementSet.
 
     CASA's ``bandpass``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #979:
-    ``corrdepflags``.
     """
     return _call_casa(bandpass, locals())
 
