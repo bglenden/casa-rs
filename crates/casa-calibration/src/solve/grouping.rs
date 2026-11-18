@@ -1311,6 +1311,8 @@ mod tests {
             .entry(SolveAccumulationKey {
                 baseline: unaveraged_baseline((0, 1)),
                 correlation_index,
+                parallel_hand: true,
+                zero_model: false,
             })
             .or_insert_with(|| vec![SolveEdgeAccumulation::default()]);
         let accumulation = &mut accumulation[0];
