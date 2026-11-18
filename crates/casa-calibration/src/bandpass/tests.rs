@@ -155,6 +155,7 @@ fn solution(wild: &[usize], flagged: &[usize]) -> (BandpassSolutionRow, Vec<f64>
         field_id: 0,
         spw_id: 0,
         antenna_id: 1,
+        refant_id: 0,
         scan_number: 1,
         observation_id: 0,
         channel_count: CHANNELS,
