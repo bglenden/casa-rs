@@ -31,14 +31,10 @@ pub(super) fn bandpass_reference_phases(
         .collect()
 }
 
-pub(super) fn normalize_bandpass_rows(
-    mut rows: Vec<BandpassSolutionRow>,
-    channel_count: usize,
-) -> Vec<BandpassSolutionRow> {
-    for row in &mut rows {
+pub(super) fn normalize_bandpass_rows(rows: &mut [BandpassSolutionRow], channel_count: usize) {
+    for row in rows {
         normalize_bandpass_row(row, channel_count);
     }
-    rows
 }
 
 fn normalize_bandpass_row(row: &mut BandpassSolutionRow, channel_count: usize) {

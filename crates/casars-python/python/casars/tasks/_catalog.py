@@ -640,7 +640,7 @@ def bandpass(
     uvrange: str = '',
     antenna: str = '',
     scan: str = '',
-    observation: str = '',
+    observation: str | int = '',
     msselect: str = '',
     solint: str = 'inf',
     combine: str = 'scan',

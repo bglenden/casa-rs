@@ -169,6 +169,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         model_source,
         solve_interval: parse_time_solint(time_interval)?,
         frequency_interval: parse_frequency_solint(frequency_interval)?,
+        correlation_dependent_flags: task.flag("corrdepflags")?,
         smodel,
         cuts: Some(BandpassSolveCuts {
             min_baselines_per_antenna: count(task, "minblperant")?,
@@ -298,7 +299,7 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
 /// CASA's selection: `field`, `spw` and `intent` always; the others are inactive,
 /// and so unset, while `selectdata` is not.
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
-    let full = task.surface() != "bandpass";
+    let full = task.surface() != "bandpass" || task.required_text("bandtype")? == "B";
     let text = |name: &str| {
         task.text(name).map(|value| {
             if full {
@@ -314,11 +315,7 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         spw: text("spw")?,
         antenna: text("antenna")?,
         scan: text("scan")?,
-        observation: if full {
-            selector_text(task.value("observation"))
-        } else {
-            text("observation")?
-        },
+        observation: selector_text(task.value("observation")),
         array: text("array")?,
         timerange: text("timerange")?,
         msselect: text("msselect")?,
@@ -359,7 +356,7 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         selection.observation = None;
         selection.msselect = None;
     }
-    if task.surface() == "gaincal" {
+    if matches!(task.surface(), "gaincal" | "bandpass") {
         // The public task always adds this predicate, including when the
         // optional selectors are disabled.
         selection.msselect = Some(match selection.msselect {

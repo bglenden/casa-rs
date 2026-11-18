@@ -31,7 +31,9 @@ use crate::constants::{
 };
 use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
-use crate::solve::grouping::{SolveAccumulator, SolveGroupOptions, build_solve_groups};
+use crate::solve::grouping::{
+    SelectedSolveRow, SolveAccumulator, SolveGroupOptions, build_solve_groups,
+};
 use crate::solve::kernel::{SolveGraphOptions, SolveStart, SolvedGraphs, solve_graphs};
 use crate::solve::spectral_window_ids;
 use crate::solve::{
@@ -145,6 +147,8 @@ pub struct BandpassSolveRequest {
     pub solve_interval: GainSolveInterval,
     /// Optional frequency interval used to group selected channels.
     pub frequency_interval: Option<BandpassFrequencyInterval>,
+    /// Keep independent flags on each correlation during the solve.
+    pub correlation_dependent_flags: bool,
     /// Point-source Stokes model when requested.
     pub smodel: [f32; 4],
     /// The per-channel cuts and `BPOLY` edge mask, or none: every antenna
@@ -313,7 +317,7 @@ pub(crate) fn solve_bandpass(
         &request.refant,
         &request.prior_calibration_tables,
         request.parang && !rotate_model,
-        false,
+        request.band_type == BandpassType::B,
         crate::solve::grouping::PriorCalibrationMode::Data,
     )?;
     let channel_bin_widths = metadata::bin_widths(ms, &context.rows, request.frequency_interval)?;
@@ -339,7 +343,7 @@ pub(crate) fn solve_bandpass(
                 _ => None,
             },
             robust_seed: false,
-            correlation_dependent_flags: false,
+            correlation_dependent_flags: request.correlation_dependent_flags,
         },
     )?;
 
@@ -363,15 +367,18 @@ pub(crate) fn solve_bandpass(
                 .cuts
                 .map_or(0, |cuts| cuts.min_baselines_per_antenna),
         ));
-        let (rows, refants) = solve_bandpass_group(
+        let (mut rows, refants) = solve_bandpass_group(
             &group,
             &context.available_antennas,
             context.refant_id,
             request.combine,
-            request.normalize_average_amplitude,
             request.cuts,
             request.band_type,
+            request.correlation_dependent_flags,
         );
+        if request.normalize_average_amplitude {
+            normalize_bandpass_rows(&mut rows, group.solution_channels);
+        }
         let solutions = rows
             .iter()
             .map(|row| AntennaSolution {
@@ -423,6 +430,7 @@ pub(crate) fn solve_bandpass(
                 context.refant_id,
                 &solution_rows,
                 &channel_bin_widths,
+                &context.rows,
                 mode,
             )
         }
@@ -506,9 +514,9 @@ fn solve_bandpass_group(
     available_antennas: &BTreeSet<i32>,
     refant_id: i32,
     combine: BandpassSolveCombine,
-    normalize_average_amplitude: bool,
     cuts: Option<BandpassSolveCuts>,
     band_type: BandpassType,
+    correlation_dependent_flags: bool,
 ) -> (Vec<BandpassSolutionRow>, BTreeSet<i32>) {
     let channel_count = group.solution_channels;
     // CASA solves the last channel first and starts each channel from the
@@ -524,7 +532,7 @@ fn solve_bandpass_group(
                 refant_id,
                 min_baselines_per_antenna: cuts.map_or(0, |cuts| cuts.min_baselines_per_antenna),
                 group_seed: None,
-                correlation_dependent_flags: false,
+                correlation_dependent_flags,
                 defer_reference: band_type == BandpassType::B,
                 robustness: None,
             },
@@ -634,12 +642,7 @@ fn solve_bandpass_group(
         }
     }
 
-    let rows = if normalize_average_amplitude {
-        normalize_bandpass_rows(solution_rows, channel_count)
-    } else {
-        solution_rows
-    };
-    (rows, refants)
+    (solution_rows, refants)
 }
 
 fn write_bandpass_caltable(
@@ -648,6 +651,7 @@ fn write_bandpass_caltable(
     refant_id: i32,
     rows: &[BandpassSolutionRow],
     channel_bin_widths: &BTreeMap<i32, usize>,
+    selected_rows: &[SelectedSolveRow],
     mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     let schema = TableSchema::new(vec![
@@ -783,9 +787,9 @@ fn write_bandpass_caltable(
     ])?;
     metadata::write(
         &writer.output_path().join("SPECTRAL_WINDOW"),
-        request,
         rows,
         channel_bin_widths,
+        selected_rows,
     )?;
     writer.save_main()?;
 

@@ -13,6 +13,7 @@ import numpy as np
 
 from applycal_oracle import copy_ms
 from calibration_lifecycle_oracle import contents
+from gaincal_delay_oracle import duplicate_rows
 from gaincal_oracle import relative_rms
 from record_casa_returns import make_cal_ms
 
@@ -56,14 +57,15 @@ def gapped_data(source, target):
 
 
 def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,),
-            solint='inf', interval_count=None, parang=False, minsnr=0., spw='', bins=None):
+            solint='inf', interval_count=None, parang=False, minsnr=0., spw='', bins=None,
+            **solve_options):
     products, corrected, returns, windows = [], [], [], []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
         copy_ms(source, ms)
         result = engine.bandpass(str(ms), str(output), field='0', spw=spw, refant='A0',
                                  smodel=list(s_model), minsnr=minsnr, solnorm=normalize,
-                                 fillgaps=fillgaps, solint=solint, parang=parang)
+                                 fillgaps=fillgaps, solint=solint, parang=parang, **solve_options)
         if interval_count is not None:
             np.testing.assert_array_equal(result['solvestats']['expected'], [interval_count]*2)
         np.testing.assert_array_equal(result.pop('solve_tables'), [str(output)])
@@ -76,7 +78,8 @@ def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s
         corrected.append(contents(ms))
     np.testing.assert_equal(returns[1], returns[0])
     expected, actual = products
-    for column in ('FLAG', 'ANTENNA1', 'ANTENNA2', 'FIELD_ID', 'SPECTRAL_WINDOW_ID'):
+    for column in ('FLAG', 'ANTENNA1', 'ANTENNA2', 'FIELD_ID', 'SPECTRAL_WINDOW_ID',
+                   'OBSERVATION_ID', 'SCAN_NUMBER', 'INTERVAL'):
         np.testing.assert_array_equal(actual[column], expected[column], err_msg=column)
     np.testing.assert_allclose(actual['TIME'], expected['TIME'], rtol=0., atol=1e-4)
     if interval_count is not None:
@@ -179,6 +182,76 @@ def frequency_cases(root, source, native):
     return results
 
 
+def selection_cases(root, source, native):
+    shared = root/'shared-window.ms'
+    copy_ms(source, shared)
+    tool = table()
+    assert duplicate_rows(tool, shared/'DATA_DESCRIPTION') == 1
+    count = duplicate_rows(tool, shared)
+    tool.open(str(shared), nomodify=False)
+    try:
+        tool.putcol('DATA_DESC_ID', np.ones(count, dtype=np.int32), count, count)
+        tool.putcol('DATA', 2*tool.getcol('DATA', count, count), count, count)
+        for column in ('TIME', 'TIME_CENTROID'):
+            tool.putcol(column, tool.getcol(column, count, count) + 5., count, count)
+    finally:
+        tool.close()
+    selected = root/'observing-selection.ms'
+    copy_ms(source, selected)
+    tool.open(str(selected/'SPECTRAL_WINDOW'), nomodify=False)
+    try:
+        tool.putcell('NAME', 0, 'CALWINDOW')
+    finally:
+        tool.close()
+    tool.open(str(selected/'STATE'), nomodify=False)
+    try:
+        first = tool.nrows()
+        tool.addrows(2)
+        tool.putcell('OBS_MODE', first, 'CALIBRATE_BANDPASS#ON_SOURCE')
+        tool.putcell('OBS_MODE', first+1, 'CALIBRATE_PHASE#ON_SOURCE')
+    finally:
+        tool.close()
+    tool.open(str(selected), nomodify=False)
+    try:
+        time = tool.getcol('TIME')
+        bandpass = time < np.median(time)
+        tool.putcol('STATE_ID', np.where(bandpass, first, first+1).astype(np.int32))
+        uvw = tool.getcol('UVW')
+        uvw[0] = np.where(time < np.quantile(time, .25), 10., 100.)
+        uvw[1:] = 0.
+        tool.putcol('UVW', uvw)
+    finally:
+        tool.close()
+    correlation_flags = root/'correlation-flags.ms'
+    copy_ms(source, correlation_flags)
+    tool.open(str(correlation_flags), nomodify=False)
+    try:
+        flags = tool.getcol('FLAG')
+        flags[0, 2] = True
+        flags[1, 8] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    cases = [
+        ('shared-window', shared, dict(interval_count=2)),
+        ('selection', selected, dict(intent='*BANDPASS*', uvrange='<50m', observation=0,
+                                     spw='CALWINDOW:2~7', bins=[[channel] for channel in range(2, 8)])),
+        ('selectdata-disabled', selected, dict(intent='*BANDPASS*', selectdata=False,
+                                               uvrange='>10000km', antenna='MISSING')),
+        ('coupled-flags', correlation_flags, dict(remaining_flags=[2, 8])),
+        ('independent-flags', correlation_flags, dict(corrdepflags=True)),
+    ]
+    results = {}
+    for label, dataset, options in cases:
+        folder = root/label
+        folder.mkdir()
+        results[label] = compare(folder, dataset, native, False, **options)
+    flagged = contents(root/'independent-flags'/'casa.B')['FLAG']
+    assert np.all(flagged[0, 2]) and not np.any(flagged[1, 2])
+    assert np.all(flagged[1, 8]) and not np.any(flagged[0, 8])
+    return results
+
+
 def model_cases(root, source, native):
     scratch = root/'scratch-model.ms'
     copy_ms(source, scratch)
@@ -268,6 +341,7 @@ def main():
         results[folder.name] = compare(folder, source, native, False, solint=interval,
                                        interval_count=count)
     results.update(frequency_cases(root, source, native))
+    results.update(selection_cases(root, source, native))
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, report in results.items():
         assert max(report.values()) < 1e-3, (name, report)

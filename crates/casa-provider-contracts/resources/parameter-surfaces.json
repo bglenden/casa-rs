@@ -15355,7 +15355,7 @@
             "python": {"name": "intent"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
         },
         {
           "name": "selectdata",
@@ -15399,7 +15399,7 @@
             "python": {"name": "uvrange"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}, {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}]}}
         },
         {
           "name": "antenna",
@@ -15431,18 +15431,17 @@
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 4},
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
           "projections": {
             "cli": {"flags": ["--observation"], "metavar": "IDS"},
-            "provider": {"field": "observation", "adapter": "omit_none"},
-            "python": {"name": "observation"},
+            "provider": {"field": "observation", "adapter": "identity"},
+            "python": {"name": "observation", "type_hint": "str | int"},
             "presentation": {"label": "Observation IDs", "group": "Selection"}
-          },
-          "unimplemented_forms": {"issue": 979, "forms": "an observation id as a number (give it as text: observation='0')"}
+          }
         },
         {
           "name": "msselect",
@@ -15585,7 +15584,7 @@
             "python": {"name": "corrdepflags"},
             "presentation": {"label": "Correlation-dependent Flags", "group": "Solve", "advanced": true}
           },
-          "unimplemented": {"issue": 979}
+          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}}
         },
         {
           "name": "append",

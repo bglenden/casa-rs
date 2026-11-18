@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selected B-table channelization, including CASA's persisted width defects.
-use super::{
-    BandpassFrequencyInterval, BandpassSolutionRow, BandpassSolveError, BandpassSolveRequest,
-};
+use super::{BandpassFrequencyInterval, BandpassSolutionRow, BandpassSolveError};
 use crate::solve::grouping::SelectedSolveRow;
 use casa_ms::ms::MeasurementSet;
 use casa_tables::{Table, TableOptions};
@@ -53,12 +51,20 @@ fn bandwidth_bin_widths(
 
 pub(super) fn write(
     path: &Path,
-    request: &BandpassSolveRequest,
     rows: &[BandpassSolutionRow],
     channel_bin_widths: &BTreeMap<i32, usize>,
+    selected_rows: &[SelectedSolveRow],
 ) -> Result<(), BandpassSolveError> {
     let fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
     let mut table = Table::open(TableOptions::new(path)).map_err(|e| fail(e.to_string()))?;
+    let selections = selected_rows
+        .iter()
+        .filter_map(|row| {
+            row.channel_selection
+                .as_ref()
+                .map(|channels| (row.data_spw_id, channels))
+        })
+        .collect::<BTreeMap<_, _>>();
     for row in 0..table.row_count() {
         let present = rows.iter().any(|r| r.spw_id == row as i32);
         table
@@ -80,9 +86,8 @@ pub(super) fn write(
         };
         let frequencies = array("CHAN_FREQ")?;
         let widths = array("CHAN_WIDTH")?;
-        let selection = request.selection.channel_selection_for_spw(row as i32);
-        let channels =
-            crate::solve::grouping::selected_channels(selection.as_ref(), frequencies.len())?;
+        let selection = selections.get(&(row as i32)).copied();
+        let channels = crate::solve::grouping::selected_channels(selection, frequencies.len())?;
         let mut selected_frequencies = Vec::new();
         let mut selected_widths = Vec::new();
         for channel in channels {
