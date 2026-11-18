@@ -17,12 +17,12 @@ from calibration_lifecycle_oracle import contents
 from record_casa_returns import make_cal_ms
 
 
-def solve(module, root, label, source, refant='A0', **options):
+def solve(module, root, label, source, refant='A0', minsnr=0., **options):
     caltable = root/f'{label}.cal'
     preload = os.environ.pop('LD_PRELOAD', None) if module is not casa else None
     try:
         module.gaincal(vis=str(source), caltable=str(caltable), refant=refant,
-                       smodel=[1., 0., 0., 0.], minsnr=0., **options)
+                       smodel=[1., 0., 0., 0.], minsnr=minsnr, **options)
     finally:
         if preload is not None:
             os.environ['LD_PRELOAD'] = preload
@@ -396,11 +396,56 @@ def robust_gains(root, source, native):
     return results
 
 
+def robust_edge_cases(root, source, native):
+    results, failures = {}, []
+    for name in ['late-reference', 'persistent-rejection', 'small-residuals']:
+        case = root/name
+        case.mkdir()
+        vis = case/'source.ms'
+        copy_ms(source, vis)
+        t = table()
+        t.open(str(vis), nomodify=False)
+        try:
+            a, b = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+            _, integration = np.unique(t.getcol('TIME'), return_inverse=True)
+            buffer = (integration % 6)//2
+            blocked = (a>=4) | (b>=4)
+            data = t.getcol('DATA')
+            if name == 'late-reference':
+                zero = (a==0) | (b==0)
+                blocked |= ((buffer==0) & zero) | ((buffer==1) & ~zero) | (buffer==2)
+                data[:] = np.where(((a==0)&(b==1)) | ((a==2)&(b==3)), 5., -1.)
+            else:
+                sign = np.select([buffer==1, buffer==2], [1., -1.])
+                if name == 'persistent-rejection':
+                    last = (a==3) | (b==3)
+                    blocked |= (buffer==0) & last
+                    data[:] = 1.+sign*np.where(last, .5, .125)
+                else:
+                    data[:] = 1.+sign*2.**-14
+            flags = np.broadcast_to(blocked, data.shape).copy()
+            t.putcol('DATA', data)
+            t.putcol('FLAG', flags)
+            t.putcol('SIGMA', np.ones_like(t.getcol('SIGMA')))
+        finally:
+            t.close()
+        thresholds = [1., 10.] if name == 'persistent-rejection' else [10.]
+        try:
+            results[name] = gain_and_apply(
+                case, vis, native, 'G', 'inf', calmode='ap', solmode='R', rmsthresh=thresholds,
+                minsnr=1e5 if name == 'small-residuals' else 0.,
+                field='0', preavg=20., minblperant=3, compare_flagged_gains=False)
+        except AssertionError as error:
+            failures.append((name, str(error)))
+    assert not failures, failures
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -456,6 +501,8 @@ def main():
         results = correlation_flags(root, amplitude_data(root, source), native)
     elif args.case == 'robust':
         results = robust_gains(root, amplitude_data(root, source), native)
+    elif args.case == 'robust-edges':
+        results = robust_edge_cases(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
