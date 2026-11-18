@@ -240,6 +240,14 @@ fn casa_value(
             &report.output_table,
             &report.solve_stats,
         ),
+        ("bandpass", CalibrationTaskResult::SolveBandpass(report))
+            if report.solve_stats.windows.is_empty() =>
+        {
+            crate::casa_return::skipped_solve_record(
+                applied,
+                (!report.selected_data.fields.is_empty()).then_some(&report.selected_data),
+            )
+        }
         ("bandpass", CalibrationTaskResult::SolveBandpass(report)) => solve_record(
             applied,
             &report.selected_data,

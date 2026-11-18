@@ -3,6 +3,7 @@
 
 use ndarray::Array2;
 
+use super::bpoly::fit_bpoly_row;
 use super::*;
 use crate::solve::grouping::{SolveSampleRow, SolveSamples};
 

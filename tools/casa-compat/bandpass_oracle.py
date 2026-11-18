@@ -391,6 +391,25 @@ def reference_cases(root, source, native):
                                  solint='int', interval_count=6, minblperant=3)
         actual = contents(folder/'native.B')
         np.testing.assert_array_equal(actual['ANTENNA2'][::5], references)
+    for label, field, selector, minbl, attempted in [
+        ('missing-reference', '0', 'MISSING,A3', 4, False),
+        ('no-matching-field', 'MISSING', 'A0', 4, False),
+        ('too-few-baselines', '0', 'A0', 8, True),
+    ]:
+        folder = root/label
+        folder.mkdir()
+        returns = []
+        for name, engine in [('casa', casa), ('native', native)]:
+            ms, output = folder/f'{name}.ms', folder/f'{name}.B'
+            copy_ms(source, ms)
+            result = engine.bandpass(str(ms), str(output), field=field, refant=selector,
+                                     minblperant=minbl)
+            assert not output.exists(), (label, name)
+            assert ('solvestats' in result) == attempted
+            np.testing.assert_array_equal(result.pop('solve_tables'), [str(output)] if attempted else [])
+            returns.append(result)
+        np.testing.assert_equal(returns[1], returns[0])
+        results[label] = {}
     return results
 
 
@@ -434,7 +453,7 @@ def main():
     results.update(reference_cases(root, source, native))
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, report in results.items():
-        assert max(report.values()) < 1e-3, (name, report)
+        assert max(report.values(), default=0.) < 1e-3, (name, report)
 
 
 if __name__ == '__main__':
