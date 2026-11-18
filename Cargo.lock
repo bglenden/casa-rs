@@ -240,6 +240,7 @@ dependencies = [
 name = "casa-calibration"
 version = "0.27.0"
 dependencies = [
+ "casa-components",
  "casa-ms",
  "casa-numerics",
  "casa-observation",

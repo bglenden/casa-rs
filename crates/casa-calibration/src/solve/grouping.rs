@@ -63,7 +63,8 @@ pub(crate) fn build_solve_groups(
     options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
-    let mut layouts = SolveRowLayouts::new(ms, options.rotate_point_model)?;
+    let models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
+    let mut layouts = SolveRowLayouts::new(ms, options.rotate_point_model, &models)?;
     let needs_first_buffer = options.gain_type == GainType::T || options.robust_seed;
     let mut ordered = bucketed_rows(
         rows,
@@ -94,7 +95,9 @@ pub(crate) fn build_solve_groups(
             ms,
             &indices,
             preapplied_rows.is_none(),
-            options.model_source,
+            batch
+                .iter()
+                .any(|(row, _, _)| models.reads_column(row.field_id)),
             batch
                 .iter()
                 .map(|row| spectral_weights.contains(row))
@@ -187,7 +190,7 @@ fn read_input_batch(
     ms: &MeasurementSet,
     rows: &[usize],
     read_visibilities: bool,
-    model: GainSolveModelSource,
+    read_model_column: bool,
     spectral_weights: Vec<bool>,
 ) -> Result<SolveInputBatch, GainSolveError> {
     let schema = ms.main_table().schema();
@@ -201,7 +204,7 @@ fn read_input_batch(
     if read_visibilities {
         columns.extend(["DATA", "FLAG"]);
     }
-    if model == GainSolveModelSource::ModelColumn {
+    if read_model_column {
         columns.push("MODEL_DATA");
     }
     let mut inputs = SolveInputBatch {
@@ -737,7 +740,13 @@ impl SolveAccumulator {
         layouts: &mut SolveRowLayouts,
         inputs: (&SolveInputBatch, usize),
     ) -> Result<(), GainSolveError> {
-        let inputs = read_row_inputs(ms, row, preapplied_row, options.model_source, inputs)?;
+        let inputs = read_row_inputs(
+            ms,
+            row,
+            preapplied_row,
+            layouts.models.reads_column(row.field_id),
+            inputs,
+        )?;
         let channel_count = inputs.data.shape()[1];
         let layout = match layouts.by_ddid.entry(row.data_desc_id) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
@@ -768,7 +777,17 @@ impl SolveAccumulator {
                 )
             })
             .transpose()?;
+        let predicted = layouts.models.predict(ms, row, &layout.correlations)?;
         let mut samples = inputs.samples();
+        if let Some(predicted) = &predicted {
+            if predicted.shape() != samples.data.shape() {
+                return Err(GainSolveError::UnsupportedParameterShape {
+                    path: "<virtual model visibility>".into(),
+                    shape: predicted.shape().to_vec(),
+                });
+            }
+            samples.model = Some(two_dimensional(predicted));
+        }
         samples.point_model = rotated.as_deref();
         self.observe_selected_samples(
             &SolveSampleRow::of(row),
@@ -1130,7 +1149,7 @@ fn read_row_inputs<'a>(
     ms: &'a MeasurementSet,
     row: &SelectedSolveRow,
     preapplied_row: Option<&'a EvaluatedApplyRow>,
-    model_source: GainSolveModelSource,
+    read_model_column: bool,
     inputs: (&'a SolveInputBatch, usize),
 ) -> Result<SolveRowInputs<'a>, GainSolveError> {
     let (data, flags) = match preapplied_row {
@@ -1152,15 +1171,14 @@ fn read_row_inputs<'a>(
             shape: data.shape().to_vec(),
         });
     }
-    let model = match model_source {
-        GainSolveModelSource::ModelColumn => {
-            let model = input_cell(ms, row.row_index, inputs, "MODEL_DATA")?;
-            match model {
-                ArrayValue::Complex32(model) if model.shape() == data.shape() => Some(model),
-                other => return Err(unsupported_shape("MODEL_DATA", other)),
-            }
+    let model = if read_model_column {
+        let model = input_cell(ms, row.row_index, inputs, "MODEL_DATA")?;
+        match model {
+            ArrayValue::Complex32(model) if model.shape() == data.shape() => Some(model),
+            other => return Err(unsupported_shape("MODEL_DATA", other)),
         }
-        GainSolveModelSource::PointSource => None,
+    } else {
+        None
     };
     let mut weights = solve_weights(ms, row.row_index, data.shape(), inputs)?;
     if let Some(factors) = preapplied_row.and_then(|row| row.weight_factors.as_ref()) {

@@ -764,12 +764,9 @@ fn a_sub_parameter_casa_ignores_takes_any_value() {
     }
 }
 
-/// CASA's empty `smodel` reads a field's virtual model (`setjy` with
-/// `usescratch=False`) before `MODEL_DATA`. casa-rs does not implement the
-/// virtual model yet, so a solve that would read one is refused, naming
-/// #979, rather than run against another model.
+/// A field with a virtual record and no matching entries uses the unit model.
 #[test]
-fn an_empty_smodel_is_refused_where_casa_would_read_a_virtual_model() {
+fn gaincal_uses_the_unit_model_for_an_empty_virtual_record() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     {
@@ -781,29 +778,32 @@ fn an_empty_smodel_is_refused_where_casa_would_read_a_virtual_model() {
         );
         keywords.upsert(
             "model_0",
-            casa_types::Value::Record(casa_types::RecordValue::default()),
+            casa_types::Value::Record(casa_types::RecordValue::new(vec![
+                casa_types::RecordField::new(
+                    "version",
+                    casa_types::Value::Scalar(casa_types::ScalarValue::Int32(2)),
+                ),
+            ])),
         );
         opened.save().expect("save");
     }
     let ms = ms.to_str().unwrap();
-    for (surface, caltable) in [("gaincal", "g.gcal"), ("bandpass", "b.bcal")] {
-        refused_naming_979(
+    refused_naming_979(
+        dir.path(),
+        "bandpass",
+        json!({"vis": ms, "caltable": "b.bcal", "refant": "0"}),
+        "smodel",
+    );
+    for (caltable, smodel) in [("g.gcal", json!([])), ("p.gcal", json!([1, 0, 0, 0]))] {
+        let (output, reply) = json_run(
             dir.path(),
-            surface,
-            json!({"vis": ms, "caltable": caltable, "refant": "0"}),
-            "smodel",
+            "gaincal",
+            json!({"vis": ms, "caltable": caltable, "refant": "0", "minblperant": 2, "smodel": smodel}),
+        );
+        assert!(
+            matches!(reply, Some(TaskReply::Succeeded { .. })),
+            "{reply:?}\n{}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
-    // An explicit point model is CASA's too, whatever the MeasurementSet holds.
-    let (output, reply) = json_run(
-        dir.path(),
-        "gaincal",
-        json!({"vis": ms, "caltable": "p.gcal", "refant": "0", "minblperant": 2,
-               "smodel": [1, 0, 0, 0]}),
-    );
-    assert!(
-        matches!(reply, Some(TaskReply::Succeeded { .. })),
-        "{reply:?}\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 }

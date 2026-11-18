@@ -528,20 +528,27 @@ fn window_map(map: &[i64]) -> Result<Vec<i32>, TaskFailure> {
         .collect()
 }
 
-/// The sky model of a solve: CASA's empty `smodel` is the `MODEL_DATA`
-/// column where the MeasurementSet has one and a 1 Jy point source where it
-/// does not; `[I, Q, U, V]` is a point source, and a shorter list, `[I]` to
-/// `[I, Q, U]`, is too, its missing Stokes zero (probed with CASA 6.7.6.14,
-/// whose `gaincal` aborts on more than four). CASA reads a field's virtual
-/// model (`setjy` with `usescratch=False`) before `MODEL_DATA`; casa-rs
-/// does not implement it yet, so an empty `smodel` on a MeasurementSet
-/// that holds one is refused.
+/// Parse the point-source Stokes vector, with omitted Stokes set to zero.
+/// Gaincal resolves an empty vector from the selected fields of the MS.
 fn model(
     task: &TaskInvocation<'_>,
     measurement_set: &Path,
 ) -> Result<(GainSolveModelSource, [f32; 4]), TaskFailure> {
     let smodel = task.numbers("smodel")?;
     match smodel.as_slice() {
+        [] if task.surface() == "gaincal" => {
+            std::fs::metadata(measurement_set).map_err(|error| {
+                TaskFailure::validation(format!(
+                    "open MeasurementSet {}: {error}",
+                    measurement_set.display()
+                ))
+                .at("vis")
+            })?;
+            Ok((
+                GainSolveModelSource::FromMeasurementSet,
+                [1.0, 0.0, 0.0, 0.0],
+            ))
+        }
         [] => {
             let ms = MeasurementSet::open(measurement_set).map_err(|error| {
                 TaskFailure::validation(format!(

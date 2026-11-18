@@ -10,6 +10,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use crate::execute::ParallacticAngleState;
+use crate::solve::model::ModelInputs;
 
 use super::{
     AveragedBaseline, GainSolveError, GainSolveMode, SelectedSolveRow, SolveAccumulator,
@@ -23,15 +24,17 @@ pub(super) struct SolveAccumulationKey {
     pub(super) parallel_hand: bool,
 }
 
-pub(super) struct SolveRowLayouts {
+pub(super) struct SolveRowLayouts<'a> {
+    pub(super) models: &'a ModelInputs,
     pub(super) by_ddid: HashMap<i32, SolveRowLayout>,
     pub(super) rotation: Option<ParallacticAngleState>,
 }
 
-impl SolveRowLayouts {
+impl<'a> SolveRowLayouts<'a> {
     pub(super) fn new(
         ms: &MeasurementSet,
         rotate_point_model: bool,
+        models: &'a ModelInputs,
     ) -> Result<Self, GainSolveError> {
         let rotation = rotate_point_model
             .then(|| crate::execute::load_parallactic_angle_state(ms))
@@ -47,6 +50,7 @@ impl SolveRowLayouts {
         Ok(Self {
             by_ddid: HashMap::new(),
             rotation,
+            models,
         })
     }
 }

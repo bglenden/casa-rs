@@ -783,11 +783,67 @@ def spectral_weights(root, source, native):
     return results
 
 
+def virtual_components(root, source, native):
+    vis = root/'setjy.ms'
+    copy_ms(source, vis)
+    flux = [1.7, 0., 0., 0.]
+    casa.setjy(vis=str(vis), field='0', standard='manual', fluxdensity=flux, usescratch=False)
+    t = table()
+    t.open(str(vis))
+    try:
+        assert 'MODEL_DATA' in t.colnames()
+    finally:
+        t.close()
+    variants = {'overrides-column': (vis, '0'), 'unrelated-field': (vis, '1')}
+    for name in ['without-column', 'offset-component', 'unmatched-entry']:
+        variant = root/f'{name}.ms'
+        copy_ms(vis, variant)
+        if name == 'without-column':
+            t.open(str(variant), nomodify=False)
+            try:
+                t.removecols('MODEL_DATA')
+            finally:
+                t.close()
+        else:
+            t.open(str(variant/'SOURCE'), nomodify=False)
+            try:
+                row = t.getkeyword('model_0')
+                record = t.getcell('SOURCE_MODEL', row)
+                entry = record['cl_0']
+                if name == 'offset-component':
+                    longitude = entry['container']['component0']['shape']['direction']['m0']
+                    assert longitude['unit'] == 'rad'
+                    longitude['value'] += .00015
+                else:
+                    entry['indexcombination'][..., 2] += 1000
+                t.putcell('SOURCE_MODEL', row, record)
+            finally:
+                t.close()
+        variants[name] = (variant, '0')
+
+    results = {}
+    for name, (variant, field) in variants.items():
+        for gain in ['G', 'T']:
+            case = root/f'{name}-{gain}'
+            case.mkdir()
+            results[case.name] = gain_and_apply(case, variant, native, gain, 'inf',
+                                               calmode='ap', field=field, smodel=[], minblperant=2)
+            if name == 'overrides-column':
+                explicit = solve(casa, case, 'explicit', variant, gaintype=gain,
+                                 calmode='ap', field=field, smodel=flux, minblperant=2)
+                sky = contents(case/f'ap-{gain}-inf-mean-norm0-casa.cal')
+                assert relative_rms(explicit['CPARAM'], sky['CPARAM']) < 1e-6
+                unit = solve(casa, case, 'unit', variant, gaintype=gain, calmode='ap',
+                             field=field, minblperant=2)
+                assert relative_rms(unit['CPARAM'], sky['CPARAM']) > .2
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights', 'virtual-components'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -853,6 +909,8 @@ def main():
         results = point_models(root, amplitude_data(root, source), native)
     elif args.case == 'spectral-weights':
         results = spectral_weights(root, amplitude_data(root, source), native)
+    elif args.case == 'virtual-components':
+        results = virtual_components(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

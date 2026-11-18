@@ -133,7 +133,7 @@ pub(crate) fn spectral_record(model: &SpectralModel) -> Result<RecordValue, Comp
 ///
 /// [`ComponentError::Spectrum`] for a negative error, which CASA's setters
 /// throw on, and for a tabulation whose columns differ in length.
-pub(super) fn apply_spectral_record(
+pub(crate) fn apply_spectral_record(
     kind: &mut SpectralKind,
     record: &RecordValue,
 ) -> Result<(), ComponentError> {
