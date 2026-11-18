@@ -128,10 +128,19 @@ pub enum GainSolveModelSource {
     FromMeasurementSet,
 }
 
+impl GainSolveModelSource {
+    /// A stored model or a polarized point must be rotated on the model
+    /// side of a diagonal Jones solve to respect the calibration order.
+    pub(crate) fn needs_model_rotation(self, stokes: [f32; 4]) -> bool {
+        self != Self::PointSource || stokes[1..].iter().any(|value| *value != 0.0)
+    }
+}
+
 /// Supported first-wave gain solution intervals.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveInterval {
     /// Solve one solution per `(observation, field, spw, scan)` group.
+    #[default]
     Infinite,
     /// Solve one solution per integration timestamp inside each scan.
     Integration,
@@ -440,8 +449,7 @@ pub(crate) fn solve_gain_rows(
     // before a diagonal gain is fitted.
     let rotate_model = request.parang
         && request.gain_type == GainType::G
-        && (request.model_source != GainSolveModelSource::PointSource
-            || request.smodel[1..].iter().any(|value| *value != 0.0));
+        && request.model_source.needs_model_rotation(request.smodel);
     let point_stokes = if request.model_source == GainSolveModelSource::PointSource {
         request.smodel
     } else {
@@ -790,7 +798,7 @@ fn find_flex_refant(
         .find_map(|&antenna_id| Some((usable(current, antenna_id)?, usable(previous, antenna_id)?)))
 }
 
-fn phase_only(gain: Complex32) -> Complex32 {
+pub(crate) fn phase_only(gain: Complex32) -> Complex32 {
     let norm = gain.norm();
     if norm > f32::EPSILON {
         gain / Complex32::new(norm, 0.0)
@@ -884,7 +892,9 @@ pub(crate) fn get_f64(table: &Table, row: usize, column: &str) -> Result<f64, Ga
     }
 }
 
-fn validate_solve_interval(solve_interval: GainSolveInterval) -> Result<(), GainSolveError> {
+pub(crate) fn validate_solve_interval(
+    solve_interval: GainSolveInterval,
+) -> Result<(), GainSolveError> {
     match solve_interval {
         GainSolveInterval::Infinite | GainSolveInterval::Integration => Ok(()),
         GainSolveInterval::Seconds(seconds) if seconds > 0.0 => Ok(()),

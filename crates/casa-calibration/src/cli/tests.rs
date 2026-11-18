@@ -528,6 +528,8 @@ fn calibrate_bandpass_solve_reads_every_parameter_it_emits() {
     assert_eq!(
         request("calibrate", &args).expect("calibrate"),
         CalibrationTaskRequest::SolveBandpass(SolveBandpassTaskRequest {
+            model_source: GainSolveModelSource::PointSource,
+            solve_interval: GainSolveInterval::Infinite,
             append: false,
             measurement_set: PathBuf::from("dataset.ms"),
             selection: MsSelection::new(),

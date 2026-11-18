@@ -439,6 +439,7 @@ fn bandpass_reads_casas_values() {
         Some(BandpassSolveCuts {
             min_baselines_per_antenna: 2,
             min_snr: 1.5,
+            fill_gaps: 0,
             mask_edge_percent: 10.0,
         })
     );

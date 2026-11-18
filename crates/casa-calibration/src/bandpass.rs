@@ -1,19 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Limited `bandpass` support for the first `B Jones` solver wave.
-//!
-//! This module intentionally implements only a narrow, testable slice:
-//!
-//! - `bandtype='B'`
-//! - `solint='inf'`
-//! - explicit reference antenna
-//! - prior gain-table preapply
-//! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`)
+//! Channelized `B Jones` and legacy polynomial `BPOLY` bandpass solving.
 //!
 //! The acceptance contract is downstream behavior: the resulting caltable
 //! should be CASA-compatible on disk and should yield corrected visibilities
 //! close to CASA's own `bandpass` when applied after the same prior gains.
 
 mod metadata;
+mod postprocess;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -51,6 +44,7 @@ use crate::writer::{
     set_measinfo_keyword,
 };
 use casa_numerics::solve_weighted_least_squares;
+use postprocess::{bandpass_reference_phases, fill_bandpass_gaps, normalize_bandpass_rows};
 
 const LEGACY_CAL_HISTORY_KEYWORD: &str = "CAL_HISTORY";
 
@@ -84,6 +78,9 @@ pub struct BandpassSolveCuts {
     /// A channel solution whose SNR is not above this is flagged
     /// (`minsnr`).
     pub min_snr: f32,
+    /// Largest interior flagged gap to interpolate in a channelized B table.
+    #[serde(default)]
+    pub fill_gaps: usize,
     /// The percentage of a window's channels at each edge a `BPOLY` fit
     /// leaves out (`maskedge`).
     pub mask_edge_percent: f32,
@@ -95,6 +92,7 @@ impl BandpassSolveCuts {
     pub const CASA_DEFAULTS: Self = Self {
         min_baselines_per_antenna: 4,
         min_snr: 3.0,
+        fill_gaps: 0,
         mask_edge_percent: 5.0,
     };
 
@@ -126,13 +124,17 @@ pub struct BandpassSolveRequest {
     pub combine: BandpassSolveCombine,
     /// Requested output bandpass table family.
     pub band_type: BandpassType,
-    /// Whether to normalize average amplitudes to unity. Deferred from this wave.
+    /// Whether to normalize average amplitudes to unity.
     pub normalize_average_amplitude: bool,
     /// Requested amplitude polynomial degree for `BPOLY` output.
     pub amplitude_degree: usize,
     /// Requested phase polynomial degree for `BPOLY` output.
     pub phase_degree: usize,
-    /// Point-source Stokes model. Only `[I,0,0,0]` is supported in this wave.
+    /// Visibility model source.
+    pub model_source: GainSolveModelSource,
+    /// Time interval used to group channelized solutions.
+    pub solve_interval: GainSolveInterval,
+    /// Point-source Stokes model when requested.
     pub smodel: [f32; 4],
     /// The per-channel cuts and `BPOLY` edge mask, or none: every antenna
     /// with a baseline is solved, every solution kept and every channel
@@ -290,13 +292,16 @@ pub(crate) fn solve_bandpass(
     mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
+    let rotate_model = request.parang
+        && request.band_type == BandpassType::B
+        && request.model_source.needs_model_rotation(request.smodel);
     let input_phase = crate::timing::Phase::start("bandpass_select_read_average");
     let context = prepare_calibration_solve(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
-        request.parang,
+        request.parang && !rotate_model,
         false,
         crate::solve::grouping::PriorCalibrationMode::Data,
     )?;
@@ -306,17 +311,20 @@ pub(crate) fn solve_bandpass(
         context.preapplied_rows.as_ref(),
         SolveGroupOptions {
             gain_type: GainType::G,
-            model_source: GainSolveModelSource::PointSource,
+            model_source: request.model_source,
             point_stokes: request.smodel,
-            rotate_model: false,
-            solve_interval: GainSolveInterval::Infinite,
+            rotate_model,
+            solve_interval: request.solve_interval,
             combine: GainSolveCombine {
                 scans: request.combine.scans,
                 fields: request.combine.fields,
                 ..GainSolveCombine::default()
             },
             channelized: true,
-            preaverage_max_span: None,
+            preaverage_max_span: match request.solve_interval {
+                GainSolveInterval::Seconds(seconds) => Some(f64::from(seconds as f32) * 0.999),
+                _ => None,
+            },
             robust_seed: false,
             correlation_dependent_flags: false,
         },
@@ -349,6 +357,7 @@ pub(crate) fn solve_bandpass(
             request.combine,
             request.normalize_average_amplitude,
             request.cuts,
+            request.band_type,
         );
         let solutions = rows
             .iter()
@@ -390,6 +399,11 @@ pub(crate) fn solve_bandpass(
     }
     let report = match request.band_type {
         BandpassType::B => {
+            if let Some(cuts) = request.cuts.filter(|cuts| cuts.fill_gaps > 0) {
+                for row in &mut solution_rows {
+                    fill_bandpass_gaps(row, cuts.fill_gaps);
+                }
+            }
             write_bandpass_caltable(ms, request, context.refant_id, &solution_rows, mode)
         }
         BandpassType::BPoly => {
@@ -404,7 +418,8 @@ pub(crate) fn solve_bandpass(
 }
 
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
-    crate::solve::validate_smodel(request.smodel, false)?;
+    crate::solve::validate_smodel(request.smodel, request.band_type == BandpassType::B)?;
+    crate::solve::validate_solve_interval(request.solve_interval)?;
     if matches!(
         request.refant,
         RefAntSelector::Unspecified | RefAntSelector::Expression { .. }
@@ -435,6 +450,8 @@ struct BandpassSolutionRow {
     channel_count: usize,
     gains: Vec<Complex32>,
     flags: Vec<bool>,
+    param_errors: Vec<f32>,
+    snrs: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -466,6 +483,7 @@ fn solve_bandpass_group(
     combine: BandpassSolveCombine,
     normalize_average_amplitude: bool,
     cuts: Option<BandpassSolveCuts>,
+    band_type: BandpassType,
 ) -> (Vec<BandpassSolutionRow>, BTreeSet<i32>) {
     let channel_count = group.solution_channels;
     // CASA solves the last channel first and starts each channel from the
@@ -482,7 +500,7 @@ fn solve_bandpass_group(
                 min_baselines_per_antenna: cuts.map_or(0, |cuts| cuts.min_baselines_per_antenna),
                 group_seed: None,
                 correlation_dependent_flags: false,
-                defer_reference: false,
+                defer_reference: band_type == BandpassType::B,
                 robustness: None,
             },
             start.as_ref(),
@@ -501,6 +519,19 @@ fn solve_bandpass_group(
     if refants.is_empty() {
         return (Vec::new(), refants);
     }
+    // CASA keeps the previous formal errors and SNR when a channel fails
+    // to solve, while flagging its gains. It traverses the channels backward.
+    let mut channel_errors = solved_channels
+        .iter()
+        .rev()
+        .scan(None, |previous, channel| {
+            if let Some(channel) = channel {
+                *previous = Some(channel);
+            }
+            Some(*previous)
+        })
+        .collect::<Vec<_>>();
+    channel_errors.reverse();
 
     let mut antenna_ids = available_antennas.clone();
     antenna_ids.extend(group.antenna_ids.iter().copied());
@@ -512,27 +543,45 @@ fn solve_bandpass_group(
     };
     let scan_number = group.scan_number();
     let interval_seconds = group.total_interval / group.sample_rows.max(1) as f64;
+    let reference_phases = bandpass_reference_phases(&solved_channels, refant_id, cuts, band_type);
 
     let mut solution_rows = Vec::new();
     for field_id in output_field_ids {
         for antenna_id in antenna_ids.iter().copied() {
             let mut gains = Vec::with_capacity(2 * channel_count);
             let mut flags = Vec::with_capacity(2 * channel_count);
-            for solved in &solved_channels {
-                for receptor in 0..2 {
-                    let solution = solved.as_ref().and_then(|solved| {
-                        let receptor = solved.receptors.get(receptor)?;
-                        let above_min_snr = cuts.is_none_or(|cuts| {
-                            receptor
-                                .snr
-                                .get(&antenna_id)
-                                .is_some_and(|snr| *snr > cuts.min_snr)
-                        });
-                        (receptor.solved.contains(&antenna_id) && above_min_snr)
-                            .then(|| receptor.gains[&antenna_id])
-                    });
-                    gains.push(solution.unwrap_or(Complex32::new(1.0, 0.0)));
-                    flags.push(solution.is_none());
+            let mut param_errors = Vec::with_capacity(2 * channel_count);
+            let mut snrs = Vec::with_capacity(2 * channel_count);
+            for ((solved, estimates), phases) in solved_channels
+                .iter()
+                .zip(&channel_errors)
+                .zip(&reference_phases)
+            {
+                for (receptor_index, phase) in phases.iter().enumerate() {
+                    let receptor = solved
+                        .as_ref()
+                        .and_then(|solved| solved.receptors.get(receptor_index));
+                    let snr = receptor.and_then(|fit| fit.snr.get(&antenna_id)).copied();
+                    let solution = receptor
+                        .filter(|fit| fit.solved.contains(&antenna_id))
+                        .map(|fit| fit.gains[&antenna_id]);
+                    let above_min_snr =
+                        cuts.is_none_or(|cuts| snr.is_some_and(|snr| snr > cuts.min_snr));
+                    gains.push(solution.map_or(Complex32::new(1.0, 0.0), |gain| gain / *phase));
+                    flags.push(solution.is_none() || !above_min_snr);
+                    let estimates = estimates.and_then(|fit| fit.receptors.get(receptor_index));
+                    param_errors.push(
+                        estimates
+                            .and_then(|fit| fit.param_error.get(&antenna_id))
+                            .copied()
+                            .unwrap_or_default(),
+                    );
+                    snrs.push(
+                        estimates
+                            .and_then(|fit| fit.snr.get(&antenna_id))
+                            .copied()
+                            .unwrap_or_default(),
+                    );
                 }
             }
             solution_rows.push(BandpassSolutionRow {
@@ -546,6 +595,8 @@ fn solve_bandpass_group(
                 channel_count,
                 gains,
                 flags,
+                param_errors,
+                snrs,
             });
         }
     }
@@ -556,58 +607,6 @@ fn solve_bandpass_group(
         solution_rows
     };
     (rows, refants)
-}
-
-fn normalize_bandpass_rows(
-    mut rows: Vec<BandpassSolutionRow>,
-    channel_count: usize,
-) -> Vec<BandpassSolutionRow> {
-    for row in &mut rows {
-        normalize_bandpass_row(row, channel_count);
-    }
-    rows
-}
-
-fn normalize_bandpass_row(row: &mut BandpassSolutionRow, channel_count: usize) {
-    if channel_count == 0 {
-        return;
-    }
-    for receptor in 0..2 {
-        let mut coherent_sum = Complex32::new(0.0, 0.0);
-        let mut power_sum = 0.0_f32;
-        let mut good_count = 0usize;
-        for channel in 0..channel_count {
-            let index = receptor + 2 * channel;
-            if row.flags.get(index).copied().unwrap_or(false) {
-                continue;
-            }
-            let gain = row.gains[index];
-            let amplitude = gain.norm();
-            if amplitude <= f32::EPSILON {
-                continue;
-            }
-            coherent_sum += gain / Complex32::new(amplitude, 0.0);
-            power_sum += amplitude * amplitude;
-            good_count += 1;
-        }
-        if good_count <= 1 {
-            continue;
-        }
-        let amplitude_factor = (power_sum / good_count as f32).sqrt();
-        if amplitude_factor <= f32::EPSILON {
-            continue;
-        }
-        let phase_factor = if coherent_sum.norm() > f32::EPSILON {
-            coherent_sum / Complex32::new(coherent_sum.norm(), 0.0)
-        } else {
-            Complex32::new(1.0, 0.0)
-        };
-        let normalization = phase_factor * Complex32::new(amplitude_factor, 0.0);
-        for channel in 0..channel_count {
-            let index = receptor + 2 * channel;
-            row.gains[index] /= normalization;
-        }
-    }
 }
 
 fn write_bandpass_caltable(
@@ -703,7 +702,7 @@ fn write_bandpass_caltable(
                 Value::Array(ArrayValue::Float32(
                     ArrayD::from_shape_vec(
                         IxDyn(&[receptor_count, row.channel_count]).f(),
-                        vec![0.0; element_count],
+                        row.param_errors.clone(),
                     )
                     .expect("bandpass paramerr should reshape to receptor x channel"),
                 )),
@@ -723,7 +722,7 @@ fn write_bandpass_caltable(
                 Value::Array(ArrayValue::Float32(
                     ArrayD::from_shape_vec(
                         IxDyn(&[receptor_count, row.channel_count]).f(),
-                        vec![1.0; element_count],
+                        row.snrs.clone(),
                     )
                     .expect("bandpass snr should reshape to receptor x channel"),
                 )),

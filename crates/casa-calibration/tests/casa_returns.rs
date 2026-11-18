@@ -708,12 +708,12 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
         values[name] = value;
         values
     };
-    for (surface, name, value) in [
-        ("bandpass", "solint", json!("int")),
-        ("bandpass", "fillgaps", json!(2)),
-    ] {
-        refused_naming_979(dir.path(), surface, with(&solve, name, value), name);
-    }
+    refused_naming_979(
+        dir.path(),
+        "bandpass",
+        with(&solve, "solint", json!("inf,2ch")),
+        "solint",
+    );
     // Fluxscale's former fitorder/time/scan refusals are replaced by the
     // positive scientific check above now that those behaviors are implemented.
     // gencal reads infile only for the caltypes CASA's task XML shows it
@@ -764,7 +764,7 @@ fn a_sub_parameter_casa_ignores_takes_any_value() {
 
 /// A field with a virtual record and no matching entries uses the unit model.
 #[test]
-fn gaincal_uses_the_unit_model_for_an_empty_virtual_record() {
+fn gaincal_and_bandpass_use_the_unit_model_for_an_empty_virtual_record() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     {
@@ -789,19 +789,24 @@ fn gaincal_uses_the_unit_model_for_an_empty_virtual_record() {
     refused_naming_979(
         dir.path(),
         "bandpass",
-        json!({"vis": ms, "caltable": "b.bcal", "refant": "0"}),
+        json!({"vis": ms, "caltable": "legacy.bpoly", "refant": "0", "bandtype": "BPOLY"}),
         "smodel",
     );
-    for (caltable, smodel) in [("g.gcal", json!([])), ("p.gcal", json!([1, 0, 0, 0]))] {
-        let (output, reply) = json_run(
-            dir.path(),
-            "gaincal",
-            json!({"vis": ms, "caltable": caltable, "refant": "0", "minblperant": 2, "smodel": smodel}),
-        );
-        assert!(
-            matches!(reply, Some(TaskReply::Succeeded { .. })),
-            "{reply:?}\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+    for surface in ["gaincal", "bandpass"] {
+        for (label, smodel) in [("virtual", json!([])), ("point", json!([1, 0, 0, 0]))] {
+            let caltable = format!("{surface}-{label}.cal");
+            let (output, reply) = json_run(
+                dir.path(),
+                surface,
+                json!({"vis": ms, "caltable": caltable, "refant": "0", "minblperant": 2,
+                       "minsnr": 0.0, "smodel": smodel}),
+            );
+            assert!(
+                matches!(reply, Some(TaskReply::Succeeded { .. })),
+                "{reply:?}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(dir.path().join(caltable).is_dir());
+        }
     }
 }

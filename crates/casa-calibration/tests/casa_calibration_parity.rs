@@ -1457,6 +1457,8 @@ fn solve_bandpass_with_prior_gain_matches_casa_bandpass_downstream_via_casa_appl
     run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
+            model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: rust_b.clone(),
             refant: RefAntSelector::AntennaName("VA15".to_string()),
@@ -1563,6 +1565,8 @@ fn solve_bandpass_with_combine_field_matches_casa_bandpass_downstream_via_casa_a
     run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
+            model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0, 1]).spw(&[0]),
             output_table: rust_b.clone(),
             refant: RefAntSelector::AntennaName("VA15".to_string()),
@@ -1672,6 +1676,8 @@ fn solve_bandpass_with_combine_scan_matches_casa_bandpass_downstream_via_casa_ap
     run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
+            model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[1]).spw(&[0]),
             output_table: rust_b.clone(),
             refant: RefAntSelector::AntennaName("VA15".to_string()),
@@ -1781,6 +1787,8 @@ fn solve_bandpass_with_combine_scan_and_field_matches_casa_bandpass_downstream_v
     run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
+            model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0, 1]).spw(&[0]),
             output_table: rust_b.clone(),
             refant: RefAntSelector::AntennaName("VA15".to_string()),
@@ -1890,6 +1898,8 @@ fn solve_bandpass_with_prior_gain_and_parang_matches_casa_bandpass_downstream() 
     run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
+            model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: rust_b.clone(),
             refant: RefAntSelector::AntennaName("VA15".to_string()),
@@ -1996,6 +2006,8 @@ fn solve_bandpass_with_solnorm_matches_casa_bandpass_downstream_via_casa_applyca
     run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
+            model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: rust_b.clone(),
             refant: RefAntSelector::AntennaName("VA15".to_string()),
@@ -2099,6 +2111,8 @@ fn solve_bpoly_bandpass_with_prior_gain_matches_casa_bandpass_downstream() {
     run_bandpass_solve(
         &source_ms,
         &BandpassSolveRequest {
+            model_source: Default::default(),
+            solve_interval: Default::default(),
             selection: MsSelection::new().field(&[0]).spw(&[0]),
             output_table: rust_bpoly.clone(),
             refant: RefAntSelector::AntennaName("VA15".to_string()),

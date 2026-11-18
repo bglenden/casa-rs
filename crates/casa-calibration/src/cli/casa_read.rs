@@ -78,7 +78,7 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
 fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure> {
     let measurement_set = task.path("vis")?;
     let min_snr = min_snr(task)?;
-    let (model_source, smodel) = model(task, &measurement_set)?;
+    let (model_source, smodel) = model(task, &measurement_set, true)?;
     let reference = task.required_text("refant")?;
     let strict = match task.required_text("refantmode")?.as_str() {
         "flex" => false,
@@ -122,15 +122,15 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
 
 fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskFailure> {
     let measurement_set = task.path("vis")?;
-    let (model_source, smodel) = model(task, &measurement_set)?;
-    if matches!(model_source, GainSolveModelSource::ModelColumn) {
-        return Err(not_yet("smodel", "[] with a MODEL_DATA column"));
-    }
     let band_type = match task.required_text("bandtype")?.as_str() {
         "B" => BandpassType::B,
         "BPOLY" => BandpassType::BPoly,
         other => return Err(unknown("bandtype", other, "'B' or 'BPOLY'")),
     };
+    let (model_source, smodel) = model(task, &measurement_set, band_type == BandpassType::B)?;
+    if matches!(model_source, GainSolveModelSource::ModelColumn) {
+        return Err(not_yet("smodel", "[] with a MODEL_DATA column"));
+    }
     let combine = combine(task)?;
     // CASA reads maskedge only for BPOLY.
     let mask_edge_percent = match band_type {
@@ -161,10 +161,18 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         normalize_average_amplitude: task.flag("solnorm")?,
         amplitude_degree: count(task, "degamp")?,
         phase_degree: count(task, "degphase")?,
+        model_source,
+        solve_interval: solint(task)?,
         smodel,
         cuts: Some(BandpassSolveCuts {
             min_baselines_per_antenna: count(task, "minblperant")?,
             min_snr: min_snr(task)?,
+            fill_gaps: match band_type {
+                BandpassType::B => {
+                    usize::try_from(task.integer("fillgaps")?.max(0)).unwrap_or(usize::MAX)
+                }
+                BandpassType::BPoly => 0,
+            },
             mask_edge_percent,
         }),
         measurement_set,
@@ -529,14 +537,15 @@ fn window_map(map: &[i64]) -> Result<Vec<i32>, TaskFailure> {
 }
 
 /// Parse the point-source Stokes vector, with omitted Stokes set to zero.
-/// Gaincal resolves an empty vector from the selected fields of the MS.
+/// Gaincal and channelized bandpass resolve an empty vector from the MS.
 fn model(
     task: &TaskInvocation<'_>,
     measurement_set: &Path,
+    use_stored_models: bool,
 ) -> Result<(GainSolveModelSource, [f32; 4]), TaskFailure> {
     let smodel = task.numbers("smodel")?;
     match smodel.as_slice() {
-        [] if task.surface() == "gaincal" => {
+        [] if use_stored_models => {
             std::fs::metadata(measurement_set).map_err(|error| {
                 TaskFailure::validation(format!(
                     "open MeasurementSet {}: {error}",
@@ -580,7 +589,7 @@ fn model(
                 )
                 .at("smodel"));
             }
-            if task.surface() == "bandpass" && polarized.iter().any(|stokes| *stokes != 0.0) {
+            if !use_stored_models && polarized.iter().any(|stokes| *stokes != 0.0) {
                 return Err(not_yet("smodel", &format!("{smodel:?}")));
             }
             let mut stokes = [0.0; 4];
@@ -670,6 +679,11 @@ fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
     let supplied = selector_text(task.value("solint")).unwrap_or_default();
     let text = match supplied.split_once(',') {
         Some((time, _)) if task.surface() == "gaincal" => time,
+        Some((time, frequency))
+            if frequency.trim().is_empty() || frequency.trim().eq_ignore_ascii_case("none") =>
+        {
+            time
+        }
         Some(_) => return Err(not_yet("solint", &supplied)),
         None => &supplied,
     };

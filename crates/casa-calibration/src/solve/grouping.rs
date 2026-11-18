@@ -978,9 +978,7 @@ impl SolveAccumulator {
                 GainType::G | GainType::K => receptors.0,
                 GainType::T | GainType::KCross => 0,
             };
-            let point = if options.channelized && !options.gain_type.is_delay() {
-                Complex32::new(options.point_stokes[0], 0.0)
-            } else if let Some(rotated) = samples.point_model {
+            let point = if let Some(rotated) = samples.point_model {
                 rotated[corr_index]
             } else {
                 samples::point_visibility(
@@ -1002,14 +1000,14 @@ impl SolveAccumulator {
             if !parallel_hand && matches!(options.gain_type, GainType::G | GainType::K) {
                 // CASA can use cross-hand weights for the averaged baseline's
                 // time even though only parallel hands enter these solves.
-                if !delay && (options.rotate_model || !options.channelized) {
+                if !delay {
                     row_weight += samples::centroid_weight(
                         samples,
                         corr_index,
                         channels,
                         shared_flags.as_deref(),
                         point,
-                        false,
+                        options.channelized,
                     );
                 }
                 continue;
@@ -1029,8 +1027,8 @@ impl SolveAccumulator {
                 channelized: options.channelized,
                 retain_zero_model: options.gain_type.is_delay()
                     || options.gain_type == GainType::T
-                    || (!options.channelized
-                        && (samples.model.is_some() || point.norm_sqr() == 0.0)),
+                    || samples.model.is_some()
+                    || point.norm_sqr() == 0.0,
             }
             .observe(
                 samples,

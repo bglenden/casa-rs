@@ -69,6 +69,7 @@ fn solved_antennas(group: &SolveAccumulator, cuts: BandpassSolveCuts) -> BTreeSe
         BandpassSolveCombine::default(),
         false,
         Some(cuts),
+        BandpassType::B,
     );
     rows.iter()
         .filter(|row| !row.flags[0])
@@ -158,6 +159,8 @@ fn solution(wild: &[usize], flagged: &[usize]) -> (BandpassSolutionRow, Vec<f64>
         channel_count: CHANNELS,
         gains,
         flags,
+        param_errors: vec![0.; 2 * CHANNELS],
+        snrs: vec![0.; 2 * CHANNELS],
     };
     (row, frequencies)
 }
