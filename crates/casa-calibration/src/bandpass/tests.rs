@@ -158,6 +158,8 @@ fn solution(wild: &[usize], flagged: &[usize]) -> (BandpassSolutionRow, Vec<f64>
         channel_count: CHANNELS,
         gains,
         flags,
+        param_errors: vec![0.; 2 * CHANNELS],
+        snrs: vec![0.; 2 * CHANNELS],
     };
     (row, frequencies)
 }

@@ -435,6 +435,8 @@ struct BandpassSolutionRow {
     channel_count: usize,
     gains: Vec<Complex32>,
     flags: Vec<bool>,
+    param_errors: Vec<f32>,
+    snrs: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -518,21 +520,27 @@ fn solve_bandpass_group(
         for antenna_id in antenna_ids.iter().copied() {
             let mut gains = Vec::with_capacity(2 * channel_count);
             let mut flags = Vec::with_capacity(2 * channel_count);
+            let mut param_errors = Vec::with_capacity(2 * channel_count);
+            let mut snrs = Vec::with_capacity(2 * channel_count);
             for solved in &solved_channels {
                 for receptor in 0..2 {
-                    let solution = solved.as_ref().and_then(|solved| {
-                        let receptor = solved.receptors.get(receptor)?;
-                        let above_min_snr = cuts.is_none_or(|cuts| {
-                            receptor
-                                .snr
-                                .get(&antenna_id)
-                                .is_some_and(|snr| *snr > cuts.min_snr)
-                        });
-                        (receptor.solved.contains(&antenna_id) && above_min_snr)
-                            .then(|| receptor.gains[&antenna_id])
+                    let receptor = solved
+                        .as_ref()
+                        .and_then(|solved| solved.receptors.get(receptor));
+                    let snr = receptor.and_then(|fit| fit.snr.get(&antenna_id)).copied();
+                    let error = receptor
+                        .and_then(|fit| fit.param_error.get(&antenna_id))
+                        .copied();
+                    let solution = receptor.and_then(|fit| {
+                        let above_min_snr =
+                            cuts.is_none_or(|cuts| snr.is_some_and(|snr| snr > cuts.min_snr));
+                        (fit.solved.contains(&antenna_id) && above_min_snr)
+                            .then(|| fit.gains[&antenna_id])
                     });
                     gains.push(solution.unwrap_or(Complex32::new(1.0, 0.0)));
                     flags.push(solution.is_none());
+                    param_errors.push(error.unwrap_or_default());
+                    snrs.push(snr.unwrap_or_default());
                 }
             }
             solution_rows.push(BandpassSolutionRow {
@@ -546,6 +554,8 @@ fn solve_bandpass_group(
                 channel_count,
                 gains,
                 flags,
+                param_errors,
+                snrs,
             });
         }
     }
@@ -703,7 +713,7 @@ fn write_bandpass_caltable(
                 Value::Array(ArrayValue::Float32(
                     ArrayD::from_shape_vec(
                         IxDyn(&[receptor_count, row.channel_count]).f(),
-                        vec![0.0; element_count],
+                        row.param_errors.clone(),
                     )
                     .expect("bandpass paramerr should reshape to receptor x channel"),
                 )),
@@ -723,7 +733,7 @@ fn write_bandpass_caltable(
                 Value::Array(ArrayValue::Float32(
                     ArrayD::from_shape_vec(
                         IxDyn(&[receptor_count, row.channel_count]).f(),
-                        vec![1.0; element_count],
+                        row.snrs.clone(),
                     )
                     .expect("bandpass snr should reshape to receptor x channel"),
                 )),
