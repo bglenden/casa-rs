@@ -52,7 +52,9 @@ mod timing;
 mod uvsub;
 mod writer;
 
-pub use uvsub::{subtract_visibility_model, subtract_visibility_model_holding};
+pub use uvsub::{
+    subtract_visibility_model, subtract_visibility_model_holding, visibility_model_source_paths,
+};
 
 pub use output::CalibrationOutputMode;
 

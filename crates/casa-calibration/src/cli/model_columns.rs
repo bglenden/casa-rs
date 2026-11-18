@@ -39,7 +39,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
 }
 
 fn run_one(task: &TaskInvocation<'_>, path: &Path) -> Result<(), TaskFailure> {
-    let mut lock = TableWriteLock::acquire(path, 0)
+    let mut lock = TableWriteLock::acquire_to_reread(path, 0)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     let mut ms = MeasurementSet::open(path)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;

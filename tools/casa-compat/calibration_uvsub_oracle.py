@@ -7,6 +7,8 @@ import inspect
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import casatasks as casa
 from casatools import ms as casa_ms, table
@@ -41,6 +43,7 @@ def task_cases(root, source, native):
         ('observed-and-scratch', {'model': True}, False, False),
         ('corrected-and-scratch', {'corrected': True, 'model': True}, True, False),
         ('virtual-only', {'virtual': True}, False, False),
+        ('same-time-mixed-interval-state', {'virtual': True}, False, False),
         ('virtual-precedence', {'corrected': True, 'model': True, 'virtual': True}, True, False),
         ('one-virtual-field', {'model': True, 'virtual': True}, False, True),
     ]
@@ -51,6 +54,15 @@ def task_cases(root, source, native):
             prepare(source, path, **fixture)
             if remove_one_field:
                 casa.delmod(str(path), field='1')
+            if label == 'same-time-mixed-interval-state':
+                patch = table()
+                patch.open(str(path), nomodify=False)
+                try:
+                    assert patch.getcell('TIME', 0) == patch.getcell('TIME', 1)
+                    patch.putcell('INTERVAL', 1, 5.)
+                    patch.putcell('STATE_ID', 1, 1)
+                finally:
+                    patch.close()
             assert task(str(path), reverse) is None
             assert history_count(path, 'uvsub') == 1
             states.append(state(path))
@@ -67,6 +79,21 @@ def tool_cases(root, source, native_ms):
         assert inspect.signature(tool.uvsub) == inspect.signature(casa_ms().uvsub)
         assert inspect.signature(tool.open) == inspect.signature(casa_ms().open)
         assert tool.uvsub() is False
+        for invalid_bool in (1, None, np.bool_(True)):
+            try:
+                tool.uvsub(invalid_bool)
+            except TypeError:
+                pass
+            else:
+                raise AssertionError((engine, invalid_bool))
+        assert_open_error(tool, path/'ANTENNA')
+        control = path/'table.dat'
+        original_mode = control.stat().st_mode
+        try:
+            control.chmod(0o444)
+            assert_open_error(tool, path, nomodify=False)
+        finally:
+            control.chmod(original_mode)
         assert tool.open(str(path), True, True, True) is True
         assert tool.uvsub() is False
         assert tool.done() is True
@@ -108,6 +135,55 @@ def tool_cases(root, source, native_ms):
     return {'tool-forward-reverse-and-access': compare_data(*states)}
 
 
+def assert_open_error(tool, path, **kwargs):
+    try:
+        tool.open(str(path), **kwargs)
+    except RuntimeError:
+        assert tool.close() is False
+    else:
+        raise AssertionError(f'ms.open accepted {path} with {kwargs}')
+
+
+def permanent_parts(root, source, native_ms):
+    inspector = """
+import errno, fcntl, os, sys
+with open(sys.argv[1], 'rb+') as lock:
+    mode = fcntl.LOCK_SH if sys.argv[2] == 'read' else fcntl.LOCK_EX
+    try:
+        fcntl.lockf(lock, mode | fcntl.LOCK_NB, 1, 0, os.SEEK_SET)
+    except OSError as error:
+        if error.errno not in (errno.EACCES, errno.EAGAIN):
+            raise
+        print('held')
+    else:
+        print('available')
+"""
+    comparisons = []
+    for engine, factory in [('native', native_ms), ('casa', casa_ms)]:
+        path = root/f'permanent-{engine}.mms'
+        casa.partition(str(source), str(path), separationaxis='scan', numsubms=2,
+                       disableparallel=True, flagbackup=False, datacolumn='data')
+        parts = referenced_tables(path)
+        locks = [part/'table.lock' for part in parts] + [parts[0]/'ANTENNA'/'table.lock']
+        tool = factory()
+        for read_only in (True, False):
+            assert tool.open(str(path), nomodify=read_only, lock=True) is True
+            try:
+                if not read_only:
+                    assert tool.uvsub() is True
+                for lock in locks:
+                    for access in ('read', 'write'):
+                        status = subprocess.check_output([sys.executable, '-c', inspector,
+                                                          str(lock), access], text=True).strip()
+                        assert status == ('available' if read_only and access == 'read' else 'held'), (
+                            engine, lock, access, status)
+            finally:
+                assert tool.close() is True
+        comparisons.append([state(part) for part in parts])
+    return {'tool-permanent-partition-locks': [compare_data(actual, expected)
+                                              for actual, expected in zip(*comparisons, strict=True)]}
+
+
 def mms_case(root, source, native):
     outputs = []
     for engine, task in [('native', native.uvsub), ('casa', casa.uvsub)]:
@@ -146,6 +222,7 @@ def main():
     got = task_cases(root, source, native)
     got.update(tool_cases(root, source, native_ms))
     got.update(mms_case(root, source, native))
+    got.update(permanent_parts(root, source, native_ms))
     (root/'results.json').write_text(json.dumps(got, indent=2)+'\n')
 
 

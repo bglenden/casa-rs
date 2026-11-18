@@ -386,7 +386,19 @@ impl VisibilityModels {
             observations: true,
             ..GainSolveCombine::default()
         };
-        let ordered = bucketed_rows(&rows, GainSolveInterval::Infinite, combine, true, true);
+        // VisBuffer chooses the first physical row at a timestamp. Solves
+        // order tied timestamps by interval, which can choose a different state.
+        let mut ordered: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row,
+                    SolveBaseKey::for_row(row, combine),
+                    SolveBucketKey::Infinite,
+                )
+            })
+            .collect();
+        ordered.sort_unstable_by_key(|(row, _, _)| row.row_index);
         models.bind_buffers(ms, &ordered, combine)?;
         models.phase_times = weights::chunk_phase_times(&ordered, combine, models.dynamic_fields());
         Ok(Self {
@@ -560,6 +572,31 @@ pub(crate) struct SolveBaseKey {
     pub(crate) data_desc_id: i32,
     pub(crate) observation_id: i32,
     pub(crate) scan_number: i32,
+}
+
+impl SolveBaseKey {
+    fn for_row(row: &SelectedSolveRow, combine: GainSolveCombine) -> Self {
+        Self {
+            array_id: row.array_id,
+            field_id: if combine.fields { 0 } else { row.field_id },
+            spw_id: if combine.spectral_windows {
+                0
+            } else {
+                row.data_spw_id
+            },
+            data_desc_id: if combine.spectral_windows {
+                0
+            } else {
+                row.data_desc_id
+            },
+            observation_id: if combine.observations {
+                0
+            } else {
+                row.observation_id
+            },
+            scan_number: if combine.scans { 0 } else { row.scan_number },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

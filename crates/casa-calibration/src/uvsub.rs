@@ -2,12 +2,12 @@
 //! Visibility-domain subtraction using CASA's visible model precedence.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_ms::schema::main_table::{VisibilityDataColumn, initial_model_visibility};
 use casa_ms::write_session::{
     MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
-    MeasurementSetMutationColumnValues, MeasurementSetWriteSession,
+    MeasurementSetMutationColumnValues, MeasurementSetWriteError, MeasurementSetWriteSession,
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelectionRow};
 use casa_tables::{Table, TableInfo, TableWriteLock};
@@ -25,33 +25,48 @@ const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
 /// Create the corrected column from observed data when it is absent.
 /// An existing virtual model takes precedence over the scratch model.
 pub fn subtract_visibility_model(path: impl AsRef<Path>, reverse: bool) -> MsResult<()> {
-    let path = path.as_ref();
-    let lock = TableWriteLock::acquire(path, 0)?;
-    subtract_visibility_model_holding(path, reverse, lock)?.release()?;
+    for path in visibility_model_source_paths(path.as_ref())? {
+        let mut lock = TableWriteLock::acquire_to_reread(&path, 0)?;
+        subtract_visibility_model_holding(&path, reverse, &mut lock)?;
+        lock.release()?;
+    }
     Ok(())
 }
 
-/// Subtract while retaining a write lock already owned by a tool session.
+/// Open an ordinary MS or a Multi-MS's physical parts before changing any.
+#[doc(hidden)]
+pub fn visibility_model_source_paths(path: &Path) -> MsResult<Vec<PathBuf>> {
+    let concatenated = std::fs::read_to_string(path.join("table.info"))
+        .is_ok_and(|info| TableInfo::parse(&info).sub_type == "CONCATENATED");
+    let paths = if concatenated {
+        Table::concatenated_source_paths(path)?
+            .ok_or_else(|| invalid("Multi-MS has no concatenation"))?
+    } else {
+        vec![path.to_owned()]
+    };
+    paths
+        .into_iter()
+        .map(|path| {
+            let path = path.canonicalize().map_err(invalid)?;
+            let ms = MeasurementSet::open(&path)?;
+            if ms.ms_version() != Some(2.0) {
+                return Err(invalid(format!(
+                    "{} is not an MSv2 MeasurementSet",
+                    path.display()
+                )));
+            }
+            Ok(path)
+        })
+        .collect()
+}
+
+/// Subtract in one physical MS while retaining an already held MAIN lock.
 #[doc(hidden)]
 pub fn subtract_visibility_model_holding(
     path: &Path,
     reverse: bool,
-    lock: TableWriteLock,
-) -> MsResult<TableWriteLock> {
-    let concatenated = std::fs::read_to_string(path.join("table.info"))
-        .is_ok_and(|info| TableInfo::parse(&info).sub_type == "CONCATENATED");
-    if concatenated {
-        let sources = Table::concatenated_source_paths(path)?
-            .ok_or_else(|| invalid("Multi-MS has no concatenation"))?;
-        // Check all references before modifying the first partition.
-        for source in &sources {
-            MeasurementSet::open(source)?;
-        }
-        for source in sources {
-            subtract_visibility_model(source, reverse)?;
-        }
-        return Ok(lock);
-    }
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
     let mut ms = MeasurementSet::open(path)?;
     let create = !has_column(&ms, CORRECTED);
     let input = if create {
@@ -66,26 +81,29 @@ pub fn subtract_visibility_model_holding(
     let correlations = (0..polarizations.row_count())
         .map(|id| Ok((id as i32, polarizations.corr_type(id)?)))
         .collect::<MsResult<_>>()?;
-    let mut lock = lock;
     let plan = scratch_write_plan(
         &mut ms,
         selected.row_indices().collect(),
         &[CORRECTED],
         create,
-        &mut lock,
+        lock,
     )?;
     let batch_rows = plan.batch_rows().max(1);
-    let mut session =
-        MeasurementSetWriteSession::start_selected_row_mutation_holding(&mut ms, plan, lock)
-            .map_err(invalid)?;
-    for rows in selected.selected_rows.chunks(batch_rows) {
-        let batch = subtract_batch(&ms, rows, input, &models, &correlations, reverse)?;
-        session
-            .write_mutation_batch(&mut ms, batch)
-            .map_err(invalid)?;
-    }
-    let (_, lock) = session.finish_mutation_holding().map_err(invalid)?;
-    Ok(lock)
+    MeasurementSetWriteSession::mutate_selected_rows_with_lock(
+        &mut ms,
+        plan,
+        lock,
+        |session, ms| {
+            for rows in selected.selected_rows.chunks(batch_rows) {
+                let batch = subtract_batch(ms, rows, input, &models, &correlations, reverse)
+                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                session.write_mutation_batch(ms, batch)?;
+            }
+            Ok(())
+        },
+    )
+    .map_err(invalid)?;
+    Ok(())
 }
 
 fn subtract_batch(
