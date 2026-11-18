@@ -348,11 +348,11 @@ def combination_cases(root, source, native):
         ('combine-obs-and-spw', windows, '1,0', 'spw,obs', 1, [0, 0]),
     ]
     results = {}
-    for label, dataset, spw, combine, count, mapping in cases:
+    for label, dataset, spw, combine, intervals, mapping in cases:
         folder = root/label
         folder.mkdir()
         results[label] = compare(folder, dataset, native, False, combine=combine, spw=spw,
-                                 apply_spwmap=mapping, interval_count=count)
+                                 apply_spwmap=mapping, interval_count=intervals)
         if spw:
             expected, actual = (contents(folder/f'{engine}.B'/'SPECTRAL_WINDOW')
                                 for engine in ('casa', 'native'))
@@ -360,6 +360,54 @@ def combination_cases(root, source, native):
                 np.testing.assert_array_equal(actual[key], expected[key], err_msg=key)
             np.testing.assert_array_equal(actual['CHAN_FREQ'][:2, 0], [100.020e9, 100.021e9])
             np.testing.assert_allclose(actual['CHAN_WIDTH'][:, 0], 5e6/3., rtol=1e-15)
+
+    flagged = root/'flagged-reference-window.ms'
+    copy_ms(windows, flagged)
+    tool.open(str(flagged), nomodify=False)
+    try:
+        flags = tool.getcol('FLAG')
+        flags[..., tool.getcol('DATA_DESC_ID') == 0] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    label = 'combine-spw-with-flagged-anchor'
+    folder = root/label
+    folder.mkdir()
+    results[label] = compare(folder, flagged, native, False, combine='spw', spw='0,1')
+    expected, actual = (contents(folder/f'{engine}.B'/'SPECTRAL_WINDOW')
+                        for engine in ('casa', 'native'))
+    for key in ('CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'FLAG_ROW', 'TOTAL_BANDWIDTH'):
+        np.testing.assert_array_equal(actual[key], expected[key], err_msg=key)
+    np.testing.assert_array_equal(actual['FLAG_ROW'], [True, False])
+    np.testing.assert_array_equal(actual['CHAN_FREQ'][:2, 0], [100.020e9, 100.021e9])
+
+    simultaneous = root/'simultaneous-windows.ms'
+    copy_ms(windows, simultaneous)
+    tool.open(str(simultaneous), nomodify=False)
+    try:
+        time = tool.getcol('TIME')
+        time = 5084545960.3 + (time - time.min())
+        time[count:] = time[:count]
+        tool.putcol('TIME', time)
+        tool.putcol('TIME_CENTROID', time)
+        tool.putcol('OBSERVATION_ID', np.zeros(len(time), dtype=np.int32))
+        sigma = np.ones_like(tool.getcol('SIGMA'))
+        sigma[:, count:] = .5
+        tool.putcol('SIGMA', sigma)
+        tool.putcol('WEIGHT', 1./sigma**2)
+        flags = tool.getcol('FLAG')
+        antenna = tool.getcol('ANTENNA1')
+        flags[:, 1, (time == np.unique(time)[1]) & (antenna == 0)] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    label = 'combine-spw-buffer-time'
+    folder = root/label
+    folder.mkdir()
+    results[label] = compare(folder, simultaneous, native, False, combine='spw',
+                             spw='0,1', solint='int', interval_count=6, apply_spwmap=[0, 0])
+    expected, actual = (contents(folder/f'{engine}.B') for engine in ('casa', 'native'))
+    np.testing.assert_array_equal(actual['TIME'], expected['TIME'])
     return results
 
 
@@ -394,6 +442,7 @@ def reference_cases(root, source, native):
     for label, field, selector, minbl, attempted in [
         ('missing-reference', '0', 'MISSING,A3', 4, False),
         ('no-matching-field', 'MISSING', 'A0', 4, False),
+        ('invalid-field-and-reference', 'MISSING', 'MISSING', 4, False),
         ('too-few-baselines', '0', 'A0', 8, True),
     ]:
         folder = root/label
@@ -410,6 +459,32 @@ def reference_cases(root, source, native):
             returns.append(result)
         np.testing.assert_equal(returns[1], returns[0])
         results[label] = {}
+    return results
+
+
+def scalar_cases(root, native):
+    results = {}
+    for hand in ['XX', 'YY']:
+        folder = root/f'scalar-{hand.lower()}'
+        folder.mkdir()
+        source = folder/'source.ms'
+        source_data(source, stokes=hand)
+        errors = compare(folder, source, native, False, refant='')
+        expected = contents(folder/'casa.B')
+        np.testing.assert_array_equal(expected['CPARAM'][1], 0.)
+        np.testing.assert_array_equal(expected['FLAG'][0], False)
+        np.testing.assert_array_equal(expected['FLAG'][1], True)
+        for reader, engine in [('casa', casa), ('native', native)]:
+            writer = 'native' if reader == 'casa' else 'casa'
+            ms = folder/f'{reader}-interop.ms'
+            copy_ms(source, ms)
+            engine.applycal(str(ms), field='0', gaintable=[str(folder/f'{writer}.B')],
+                            flagbackup=False)
+            corrected = contents(ms)
+            np.testing.assert_array_equal(corrected['FLAG'], False)
+            errors[f'{reader}_interop'] = relative_rms(
+                corrected['CORRECTED_DATA'], contents(folder/f'{reader}.ms')['CORRECTED_DATA'])
+        results[folder.name] = errors
     return results
 
 
@@ -447,6 +522,21 @@ def prior_cases(root, source, native):
                                  **options)
     flags = contents(root/'prior-flagged-receptor'/'casa.B')['FLAG']
     assert np.all(flags[0, :, 0]) and not np.any(flags[1, :, 0])
+    for label, field, expected_priors in [
+        ('invalid-selection-with-prior', 'MISSING', []),
+        ('invalid-reference-with-prior', '0', gains[:1]),
+    ]:
+        returns = []
+        for name, engine in [('casa', casa), ('native', native)]:
+            output = root/f'{label}-{name}.B'
+            record = engine.bandpass(str(source), str(output), field=field, refant='MISSING',
+                                     gaintable=gains[:1])
+            assert not output.exists()
+            np.testing.assert_array_equal(record['apply_tables'], expected_priors)
+            np.testing.assert_array_equal(record['solve_tables'], [])
+            returns.append(record)
+        np.testing.assert_equal(returns[1], returns[0])
+        results[label] = {}
     return results
 
 
@@ -515,6 +605,7 @@ def main():
     results.update(selection_cases(root, source, native))
     results.update(combination_cases(root, source, native))
     results.update(reference_cases(root, source, native))
+    results.update(scalar_cases(root, native))
     results.update(prior_cases(root, source, native))
     results['bandpass-gains-fluxscale'] = fluxscale_workflow(root, source, native)
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
