@@ -642,7 +642,7 @@ def bandpass(
     scan: str = '',
     observation: str | int = '',
     msselect: str = '',
-    solint: ParameterData = 'inf',
+    solint: str | int | float = 'inf',
     combine: str = 'scan',
     refant: str = '',
     minblperant: int = 4,

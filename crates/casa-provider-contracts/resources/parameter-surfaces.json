@@ -15465,7 +15465,7 @@
           "projections": {
             "cli": {"flags": ["--solint"], "metavar": "INTERVAL"},
             "provider": {"field": "solint"},
-            "python": {"name": "solint"},
+            "python": {"name": "solint", "type_hint": "str | int | float"},
             "presentation": {"label": "Solution Interval", "group": "Solve", "advanced": true}
           }
         },
@@ -15509,7 +15509,8 @@
             "provider": {"field": "minblperant"},
             "python": {"name": "minblperant"},
             "presentation": {"label": "Minimum Baselines per Antenna", "group": "Solve", "advanced": true}
-          }
+          },
+          "reviewed_homonym": {"review_id": "#31", "reason": "CASA bandpass accepts negative values to disable the cut, and BPOLY ignores the cut."}
         },
         {
           "name": "minsnr",
