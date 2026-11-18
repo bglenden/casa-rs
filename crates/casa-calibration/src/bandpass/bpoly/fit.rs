@@ -20,7 +20,7 @@ struct VisibilitySample {
 
 pub(super) fn fit_interval(
     group: &SolveAccumulator,
-    frequencies: &BTreeMap<i32, &[f64]>,
+    frequencies: &BTreeMap<i32, (&[f64], f64)>,
     antennas: &BTreeSet<i32>,
     refant: i32,
     request: &BandpassSolveRequest,
@@ -43,9 +43,9 @@ pub(super) fn fit_interval(
     let count = amp_count.max(phase_count);
     let grid = FrequencyGrid::new(frequencies)
         .ok_or_else(|| error("at least two distinct channel frequencies are required"))?;
-    let indices = frequencies
+    let mut indices = frequencies
         .iter()
-        .map(|(&id, &frequencies)| {
+        .map(|(&id, &(frequencies, _))| {
             (
                 id,
                 frequencies
@@ -55,20 +55,18 @@ pub(super) fn fit_interval(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    if indices
-        .values()
-        .flatten()
-        .copied()
-        .collect::<BTreeSet<_>>()
-        .len()
-        < count
-    {
+    let occupied = indices.values().flatten().copied().collect::<BTreeSet<_>>();
+    if occupied.len() < count {
         return Err(error(
             "not enough spectral channels for the requested degree",
         ));
     }
 
-    let basis = (0..grid.count)
+    // The logical grid can span a wide gap between spectral windows.
+    // Only store basis and participation entries for selected channels.
+    let basis = occupied
+        .iter()
+        .copied()
         .map(|channel| {
             let mut values = vec![0.0; count];
             let [first, last] = grid.domain();
@@ -76,12 +74,21 @@ pub(super) fn fit_interval(
             values
         })
         .collect::<Vec<_>>();
+    let compact = occupied
+        .into_iter()
+        .enumerate()
+        .map(|(index, slot)| (slot, index))
+        .collect::<BTreeMap<_, _>>();
+    for slot in indices.values_mut().flatten() {
+        *slot = compact[slot];
+    }
     let antenna_indices = antennas
         .iter()
         .enumerate()
         .map(|(i, &id)| (id, i))
         .collect::<BTreeMap<_, _>>();
-    let (spectra, participation) = collect_spectra(group, &indices, &grid, &antenna_indices, cuts);
+    let (spectra, participation) =
+        collect_spectra(group, &indices, basis.len(), &antenna_indices, cuts);
     if spectra.iter().all(Vec::is_empty) {
         return Ok(Vec::new());
     }
@@ -120,10 +127,18 @@ pub(super) fn fit_interval(
             .filter(|index| active.contains(index))
             .or_else(|| active.first())
             .copied();
-        let amplitudes = fit_coefficients(samples, &basis, &active, amp_count, None)
-            .ok_or_else(|| error("amplitude polynomial fit is singular"))?;
-        let phases = fit_coefficients(samples, &basis, &active, phase_count, phase_reference)
-            .ok_or_else(|| error("phase polynomial fit is singular"))?;
+        let Some((amplitudes, phases)) =
+            fit_coefficients(samples, &basis, &active, amp_count, None).zip(fit_coefficients(
+                samples,
+                &basis,
+                &active,
+                phase_count,
+                phase_reference,
+            ))
+        else {
+            tracing::warn!("{}", error("normal equations are singular"));
+            return Ok(Vec::new());
+        };
         for (&index, amplitude) in active.iter().zip(amplitudes.chunks(amp_count.max(1))) {
             rows[index].amp_coefficients[receptor].copy_from_slice(amplitude);
         }
@@ -150,15 +165,18 @@ struct FrequencyGrid {
 }
 
 impl FrequencyGrid {
-    fn new(frequencies: &BTreeMap<i32, &[f64]>) -> Option<Self> {
+    fn new(frequencies: &BTreeMap<i32, (&[f64], f64)>) -> Option<Self> {
         let step = frequencies
             .values()
-            .filter_map(|channels| Some((channels.get(1)? - channels.first()?).abs()))
-            .reduce(f64::max)
-            .unwrap_or(1.0);
+            .map(|&(channels, spacing)| {
+                channels
+                    .get(1)
+                    .map_or(spacing, |second| (second - channels[0]).abs())
+            })
+            .reduce(f64::max)?;
         let values = frequencies
             .values()
-            .flat_map(|channels| channels.iter().copied());
+            .flat_map(|(channels, _)| channels.iter().copied());
         let first = values.clone().reduce(f64::min)?;
         let last = values.reduce(f64::max)?;
         (step.is_finite() && step > 0.0 && first.is_finite() && last.is_finite()).then(|| Self {
@@ -184,13 +202,13 @@ impl FrequencyGrid {
 fn collect_spectra(
     group: &SolveAccumulator,
     bins: &BTreeMap<i32, Vec<usize>>,
-    grid: &FrequencyGrid,
+    occupied_channel_count: usize,
     antennas: &BTreeMap<i32, usize>,
     cuts: BandpassSolveCuts,
 ) -> ([Vec<VisibilitySample>; 2], Vec<Vec<usize>>) {
     let mut sums = [BTreeMap::new(), BTreeMap::new()];
     let mut means = [BTreeMap::new(), BTreeMap::new()];
-    let mut participation = vec![vec![0; grid.count]; antennas.len()];
+    let mut participation = vec![vec![0; occupied_channel_count]; antennas.len()];
     for (description, [a, b], receptor, spectrum) in
         group.polynomial.iter().flat_map(|data| data.spectra())
     {

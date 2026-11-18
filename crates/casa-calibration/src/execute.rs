@@ -4342,12 +4342,22 @@ fn load_bpoly_calibration_table(
         .map(|spw| (spw.spw_id, spw))
         .collect::<HashMap<_, _>>();
 
+    let rows = (0..table.row_count())
+        .map(|row| {
+            Ok((
+                get_i32(&table, row, COL_CAL_DESC_ID)?,
+                get_f64(&table, row, COL_TIME)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, ApplyExecutionError>>()?;
+    let first = rows
+        .iter()
+        .copied()
+        .min_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
     let mut solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>> = HashMap::new();
-    for row_index in 0..table.row_count() {
+    for (row_index, (cal_desc_id, time_seconds)) in rows.into_iter().enumerate() {
         let field_id = get_i32(&table, row_index, COL_FIELD_ID)?;
         let antenna_id = get_i32(&table, row_index, COL_ANTENNA1)?;
-        let time_seconds = get_f64(&table, row_index, COL_TIME)?;
-        let cal_desc_id = get_i32(&table, row_index, COL_CAL_DESC_ID)?;
         let cal_desc_entry = cal_desc_map.get(&cal_desc_id).ok_or_else(|| {
             ApplyExecutionError::UnsupportedCalibrationTable {
                 path: table_plan.spec.path.display().to_string(),
@@ -4365,6 +4375,7 @@ fn load_bpoly_calibration_table(
             &table_plan.spec.path,
             spw_plan,
             *cal_desc_entry,
+            first == Some((cal_desc_id, time_seconds)),
         )?;
         solutions
             .entry((field_id, cal_desc_entry.spw_id, antenna_id))
@@ -4435,7 +4446,7 @@ fn load_bpoly_cal_desc_map(
             row_index as i32,
             LegacyCalDescEntry {
                 spw_id: *spw_id,
-                receptor_count: receptor_count.max(1),
+                receptor_count,
             },
         );
     }
@@ -4448,6 +4459,7 @@ fn sample_bpoly_row(
     path: &Path,
     spw_plan: &crate::plan::SpectralWindowPlan,
     cal_desc_entry: LegacyCalDescEntry,
+    first_interval: bool,
 ) -> Result<CalibrationGrid, ApplyExecutionError> {
     let scale_factor = get_complex32(table, row_index, COL_SCALE_FACTOR)?;
     let valid_domain = get_f64_array(table, row_index, COL_VALID_DOMAIN, path)?;
@@ -4537,7 +4549,7 @@ fn sample_bpoly_row(
         IxDyn(&[receptor_count, channel_count]).f(),
         Complex32::new(1.0, 0.0),
     );
-    let flags = ArrayD::from_elem(IxDyn(&[receptor_count, channel_count]).f(), false);
+    let mut flags = ArrayD::from_elem(IxDyn(&[receptor_count, channel_count]).f(), false);
     let domain_start_hz = *domain_start_hz;
     let domain_end_hz = *domain_end_hz;
 
@@ -4554,6 +4566,19 @@ fn sample_bpoly_row(
                 reason: format!("missing BPOLY phase coefficients for receptor {receptor}"),
             }
         })?;
+        // The CASA-layout loader starts with valid unity gains only for the
+        // first stored interval. Later intervals flag receptor groups whose
+        // coefficients never replace that interval's initial unity value.
+        if cal_desc_entry.receptor_count == 0
+            && !first_interval
+            && amp_coeff
+                .iter()
+                .chain(phase_coeff)
+                .all(|&coefficient| coefficient == 0.0)
+        {
+            flags.index_axis_mut(ndarray::Axis(0), receptor).fill(true);
+            continue;
+        }
 
         for (channel, frequency_hz) in spw_plan.channel_frequencies_hz.iter().copied().enumerate() {
             if frequency_hz < domain_start_hz || frequency_hz > domain_end_hz {
@@ -5934,6 +5959,7 @@ mod tests {
                 spw_id: 5,
                 receptor_count: 2,
             },
+            true,
         )
         .unwrap()
         {
@@ -5987,6 +6013,7 @@ mod tests {
                     spw_id: 5,
                     receptor_count: 2,
                 },
+                true,
             )
             .is_err()
         );

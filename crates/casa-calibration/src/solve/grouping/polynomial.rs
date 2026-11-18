@@ -3,10 +3,39 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_ms::ChannelSelection;
 use casa_types::Complex32;
 use num_complex::Complex64;
 
-use super::{SelectedChannels, SolveSampleRow, SolveSamples, WeightedTime, samples};
+use super::{
+    GainSolveError, SelectedChannels, SolveSampleRow, SolveSamples, WeightedTime, samples,
+};
+
+/// The old CASA iterator selects a continuous channel range. It replaces
+/// strides with one and flags holes between the selected segments.
+pub(crate) fn channel_selection(
+    selection: Option<&ChannelSelection>,
+    count: usize,
+) -> Result<(Vec<usize>, Vec<bool>), GainSolveError> {
+    let Some(selection) = selection else {
+        return Ok(((0..count).collect(), Vec::new()));
+    };
+    let mut selection = selection.clone();
+    for segment in &mut selection.segments {
+        segment.stride = 1;
+    }
+    let mut selected = super::selected_channels(Some(&selection), count)?;
+    selected.sort_unstable();
+    let mut excluded = vec![true; count];
+    for &channel in &selected {
+        excluded[channel] = false;
+    }
+    let envelope = selected
+        .first()
+        .zip(selected.last())
+        .map_or_else(Vec::new, |(&first, &last)| (first..=last).collect());
+    Ok((envelope, excluded))
+}
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PolynomialAccumulation {
@@ -51,6 +80,29 @@ impl PolynomialAccumulation {
         let width = channels.bin_width.unwrap_or(1);
         let channel_flags = samples::channel_flags(samples);
         let bin_count = channels.indices.len().div_ceil(width);
+        let excluded = |channel: usize| channels.excluded.get(channel).copied().unwrap_or(false);
+        let weight_at = |correlation, channel| {
+            channels
+                .bin_weights
+                .map_or(1.0, |weights| weights[[correlation, channel]])
+        };
+        let usable = |correlation, channel| {
+            !excluded(channel)
+                && !samples.flags[[correlation, channel]]
+                && weight_at(correlation, channel) > 0.0
+        };
+        // VisBuffer::channelAve averages each correlation separately.
+        // Its output channel is shared-flagged if one hand has no sample.
+        let averaged_flags = (width > 1).then(|| {
+            channels
+                .indices
+                .chunks(width)
+                .map(|bin| {
+                    (0..correlations.len())
+                        .any(|correlation| bin.iter().all(|&channel| !usable(correlation, channel)))
+                })
+                .collect::<Vec<_>>()
+        });
         let mut antennas = [row.antenna1, row.antenna2];
         let reverse_baseline = antennas[0] > antennas[1];
         antennas.sort_unstable();
@@ -76,7 +128,7 @@ impl PolynomialAccumulation {
                     .model
                     .map_or(point, |model| model[[correlation, channel]])
             };
-            let flag = |channel| channel_flags[channel];
+            let flag = |channel: usize| channel_flags[channel] || excluded(channel);
             let mut amplitude_sum = 0.0;
             let mut count = 0;
             for &channel in channels.indices {
@@ -88,7 +140,11 @@ impl PolynomialAccumulation {
                     }
                 }
             }
-            if count == 0 {
+            if count == 0
+                || averaged_flags
+                    .as_ref()
+                    .is_some_and(|flags| flags.iter().all(|flag| *flag))
+            {
                 continue;
             }
 
@@ -110,32 +166,50 @@ impl PolynomialAccumulation {
                     weight: 0.0,
                 });
             spectrum.weight += weight;
-            for (sum, bin) in spectrum
+            for (index, (sum, bin)) in spectrum
                 .weighted_visibilities
                 .iter_mut()
                 .zip(channels.indices.chunks(width))
+                .enumerate()
             {
+                if averaged_flags.as_ref().is_some_and(|flags| flags[index]) {
+                    continue;
+                }
                 let mut visibility = Complex32::default();
-                let mut unflagged = 0;
+                let mut weight_sum = 0.0_f64;
                 for &channel in bin {
-                    if !flag(channel) {
+                    if if width == 1 {
+                        !flag(channel)
+                    } else {
+                        usable(correlation, channel)
+                    } {
                         let data = samples.data[[correlation, channel]];
                         let model = model(channel);
-                        if model.norm_sqr() > 0.0 {
+                        let channel_weight = if width == 1 {
+                            1.0
+                        } else {
+                            weight_at(correlation, channel)
+                        };
+                        // Normalization precedes binning. It only touches a
+                        // channel when the input's shared flag is clear.
+                        if flag(channel) {
+                            visibility += data * channel_weight;
+                        } else if model.norm_sqr() > 0.0 {
                             let divided = Complex64::new(data.re.into(), data.im.into())
                                 / Complex64::new(model.re.into(), model.im.into());
-                            visibility += Complex32::new(divided.re as f32, divided.im as f32);
+                            visibility += Complex32::new(divided.re as f32, divided.im as f32)
+                                * channel_weight;
                         }
-                        unflagged += 1;
+                        weight_sum += f64::from(channel_weight);
                     }
                 }
-                if unflagged > 0 {
+                if weight_sum > 0.0 {
                     let visibility = if reverse_baseline {
                         visibility.conj()
                     } else {
                         visibility
                     };
-                    *sum += visibility * (weight / unflagged as f32);
+                    *sum += visibility * (weight / weight_sum as f32);
                 }
             }
             time_weight += f64::from(weight);

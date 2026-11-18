@@ -69,13 +69,23 @@ pub(super) fn solve_polynomial(
                 source,
             }
         })?;
-        let channels = selected_channels(row.channel_selection.as_ref(), frequencies.len())?;
+        let (channels, _) = crate::solve::grouping::polynomial::channel_selection(
+            row.channel_selection.as_ref(),
+            frequencies.len(),
+        )?;
+        let spacing = frequencies
+            .windows(2)
+            .next()
+            .map_or(1.0, |pair| (pair[1] - pair[0]).abs());
         frequencies_by_description.insert(
             id,
-            super::metadata::average_frequencies(
-                &frequencies,
-                &channels,
-                bin_widths.get(&spw).copied().unwrap_or(1),
+            (
+                super::metadata::average_frequencies(
+                    &frequencies,
+                    &channels,
+                    bin_widths.get(&spw).copied().unwrap_or(1),
+                ),
+                spacing,
             ),
         );
     }
@@ -88,8 +98,14 @@ pub(super) fn solve_polynomial(
             .expect("selected windows")
     });
     if combined_window.is_some()
-        && frequencies_by_description.values().map(Vec::len).min()
-            != frequencies_by_description.values().map(Vec::len).max()
+        && frequencies_by_description
+            .values()
+            .map(|(channels, _)| channels.len())
+            .min()
+            != frequencies_by_description
+                .values()
+                .map(|(channels, _)| channels.len())
+                .max()
     {
         tracing::warn!(
             "Spectral windows with different selected channel counts cannot be combined"
@@ -110,7 +126,10 @@ pub(super) fn solve_polynomial(
         let frequencies = polynomial
             .descriptions()
             .iter()
-            .map(|id| (*id, frequencies_by_description[id].as_slice()))
+            .map(|id| {
+                let (frequencies, spacing) = &frequencies_by_description[id];
+                (*id, (frequencies.as_slice(), *spacing))
+            })
             .collect::<BTreeMap<_, _>>();
         if frequencies.is_empty() {
             continue;
@@ -138,7 +157,7 @@ pub(super) fn solve_polynomial(
             }
             channel_count = frequencies
                 .values()
-                .map(|channels| channels.len())
+                .map(|(channels, _)| channels.len())
                 .max()
                 .unwrap_or(0);
             fitted.extend(rows);

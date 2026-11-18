@@ -99,7 +99,31 @@ pub(super) struct SolveRowLayout {
     pub(super) channel_count: usize,
     pub(super) selection: Option<ChannelSelection>,
     pub(super) channels: Vec<usize>,
+    pub(super) excluded: Vec<bool>,
     pub(super) all_channels: bool,
+}
+
+impl SolveRowLayout {
+    pub(super) fn select_channels(
+        &mut self,
+        row: &SelectedSolveRow,
+        channel_count: usize,
+        polynomial: bool,
+    ) -> Result<(), GainSolveError> {
+        let selection = row.channel_selection.as_ref();
+        (self.channels, self.excluded) = if polynomial {
+            super::polynomial::channel_selection(selection, channel_count)?
+        } else {
+            (
+                super::selected_channels(selection, channel_count)?,
+                Vec::new(),
+            )
+        };
+        self.all_channels = self.channels.iter().copied().eq(0..channel_count);
+        self.channel_count = channel_count;
+        self.selection.clone_from(&row.channel_selection);
+        Ok(())
+    }
 }
 
 impl SolveAccumulator {
