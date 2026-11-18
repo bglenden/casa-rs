@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><span class="kw">crate</span>::selected_data::SelectedData;
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span><span class="kw">crate</span>::solve::grouping::{
 <a href=#20 id=20 data-nosnippet>20</a>    SelectedSolveRow, all_antenna_ids, collect_selected_rows, load_preapplied_rows,
-<a href=#21 id=21 data-nosnippet>21</a>    refuse_shared_spectral_windows, resolve_refant,
+<a href=#21 id=21 data-nosnippet>21</a>    refuse_shared_spectral_windows, resolve_refants,
 <a href=#22 id=22 data-nosnippet>22</a>};
 <a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span><span class="kw">crate</span>::solve::{GainSolveError, GainSolveReport, GainSolveRequest, RefAntSelector, solve_gain};
 <a href=#24 id=24 data-nosnippet>24</a>
@@ -146,54 +146,57 @@
 <a href=#146 id=146 data-nosnippet>146</a><span class="doccomment">/// Shared dataset-dependent inputs prepared once for every solve family.
 <a href=#147 id=147 data-nosnippet>147</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>CalibrationSolveContext {
 <a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) refant_id: i32,
-<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) available_antennas: BTreeSet&lt;i32&gt;,
-<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) rows: Vec&lt;SelectedSolveRow&gt;,
-<a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// What `rows` select, for the solve's report.
-<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) selected_data: SelectedData,
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) preapplied_rows: <span class="prelude-ty">Option</span>&lt;HashMap&lt;usize, EvaluatedApplyRow&gt;&gt;,
-<a href=#154 id=154 data-nosnippet>154</a>}
-<a href=#155 id=155 data-nosnippet>155</a>
-<a href=#156 id=156 data-nosnippet>156</a><span class="doccomment">/// Resolve the common selection, reference-antenna, and preapply lifecycle.
-<a href=#157 id=157 data-nosnippet>157</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>prepare_calibration_solve(
-<a href=#158 id=158 data-nosnippet>158</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#159 id=159 data-nosnippet>159</a>    selection: <span class="kw-2">&amp;</span>MsSelection,
-<a href=#160 id=160 data-nosnippet>160</a>    refant: <span class="kw-2">&amp;</span>RefAntSelector,
-<a href=#161 id=161 data-nosnippet>161</a>    prior_calibration_tables: <span class="kw-2">&amp;</span>[ApplyCalibrationTableSpec],
-<a href=#162 id=162 data-nosnippet>162</a>    parang: bool,
-<a href=#163 id=163 data-nosnippet>163</a>) -&gt; <span class="prelude-ty">Result</span>&lt;CalibrationSolveContext, GainSolveError&gt; {
-<a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">let </span>refant_id = resolve_refant(measurement_set, refant)<span class="question-mark">?</span>;
-<a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">let </span>available_antennas = all_antenna_ids(measurement_set)<span class="question-mark">?</span>;
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">let </span>rows = collect_selected_rows(measurement_set, selection)<span class="question-mark">?</span>;
-<a href=#167 id=167 data-nosnippet>167</a>    refuse_shared_spectral_windows(<span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
-<a href=#168 id=168 data-nosnippet>168</a>    <span class="prelude-val">Ok</span>(CalibrationSolveContext {
-<a href=#169 id=169 data-nosnippet>169</a>        refant_id,
-<a href=#170 id=170 data-nosnippet>170</a>        available_antennas,
-<a href=#171 id=171 data-nosnippet>171</a>        selected_data: SelectedData::of(measurement_set, <span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>,
-<a href=#172 id=172 data-nosnippet>172</a>        rows,
-<a href=#173 id=173 data-nosnippet>173</a>        preapplied_rows: load_preapplied_rows(
-<a href=#174 id=174 data-nosnippet>174</a>            measurement_set,
-<a href=#175 id=175 data-nosnippet>175</a>            selection,
-<a href=#176 id=176 data-nosnippet>176</a>            prior_calibration_tables,
-<a href=#177 id=177 data-nosnippet>177</a>            parang,
-<a href=#178 id=178 data-nosnippet>178</a>        )<span class="question-mark">?</span>,
-<a href=#179 id=179 data-nosnippet>179</a>    })
-<a href=#180 id=180 data-nosnippet>180</a>}
-<a href=#181 id=181 data-nosnippet>181</a>
-<a href=#182 id=182 data-nosnippet>182</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>resolve_calibration_selection(
-<a href=#183 id=183 data-nosnippet>183</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#184 id=184 data-nosnippet>184</a>    selection: <span class="kw-2">&amp;</span>MsSelection,
-<a href=#185 id=185 data-nosnippet>185</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ResolvedMsSelection, MsSelectionError&gt; {
-<a href=#186 id=186 data-nosnippet>186</a>    measurement_set.resolve_selection(selection, calibration_selection_budget()<span class="question-mark">?</span>)
-<a href=#187 id=187 data-nosnippet>187</a>}
-<a href=#188 id=188 data-nosnippet>188</a>
-<a href=#189 id=189 data-nosnippet>189</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>resolve_apply_selection(
-<a href=#190 id=190 data-nosnippet>190</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#191 id=191 data-nosnippet>191</a>    selection: <span class="kw-2">&amp;</span>MsSelection,
-<a href=#192 id=192 data-nosnippet>192</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ResolvedMsSelection, MsSelectionError&gt; {
-<a href=#193 id=193 data-nosnippet>193</a>    measurement_set.resolve_casa_selection(selection, calibration_selection_budget()<span class="question-mark">?</span>)
-<a href=#194 id=194 data-nosnippet>194</a>}
-<a href=#195 id=195 data-nosnippet>195</a>
-<a href=#196 id=196 data-nosnippet>196</a><span class="kw">fn </span>calibration_selection_budget() -&gt; <span class="prelude-ty">Result</span>&lt;MsSelectionIoBudget, MsSelectionError&gt; {
-<a href=#197 id=197 data-nosnippet>197</a>    MsSelectionIoBudget::from_system_memory(<span class="number">2</span>, std::mem::size_of::&lt;ResolvedMsSelectionRow&gt;(), <span class="prelude-val">None</span>)
-<a href=#198 id=198 data-nosnippet>198</a>}
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) refant_alternates: Vec&lt;i32&gt;,
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) available_antennas: BTreeSet&lt;i32&gt;,
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) rows: Vec&lt;SelectedSolveRow&gt;,
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="doccomment">/// What `rows` select, for the solve's report.
+<a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) selected_data: SelectedData,
+<a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) preapplied_rows: <span class="prelude-ty">Option</span>&lt;HashMap&lt;usize, EvaluatedApplyRow&gt;&gt;,
+<a href=#155 id=155 data-nosnippet>155</a>}
+<a href=#156 id=156 data-nosnippet>156</a>
+<a href=#157 id=157 data-nosnippet>157</a><span class="doccomment">/// Resolve the common selection, reference-antenna, and preapply lifecycle.
+<a href=#158 id=158 data-nosnippet>158</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>prepare_calibration_solve(
+<a href=#159 id=159 data-nosnippet>159</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#160 id=160 data-nosnippet>160</a>    selection: <span class="kw-2">&amp;</span>MsSelection,
+<a href=#161 id=161 data-nosnippet>161</a>    refant: <span class="kw-2">&amp;</span>RefAntSelector,
+<a href=#162 id=162 data-nosnippet>162</a>    prior_calibration_tables: <span class="kw-2">&amp;</span>[ApplyCalibrationTableSpec],
+<a href=#163 id=163 data-nosnippet>163</a>    parang: bool,
+<a href=#164 id=164 data-nosnippet>164</a>) -&gt; <span class="prelude-ty">Result</span>&lt;CalibrationSolveContext, GainSolveError&gt; {
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">let </span>refants = resolve_refants(measurement_set, refant)<span class="question-mark">?</span>;
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">let </span>refant_id = refants.first().copied().unwrap_or(-<span class="number">1</span>);
+<a href=#167 id=167 data-nosnippet>167</a>    <span class="kw">let </span>available_antennas = all_antenna_ids(measurement_set)<span class="question-mark">?</span>;
+<a href=#168 id=168 data-nosnippet>168</a>    <span class="kw">let </span>rows = collect_selected_rows(measurement_set, selection)<span class="question-mark">?</span>;
+<a href=#169 id=169 data-nosnippet>169</a>    refuse_shared_spectral_windows(<span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
+<a href=#170 id=170 data-nosnippet>170</a>    <span class="prelude-val">Ok</span>(CalibrationSolveContext {
+<a href=#171 id=171 data-nosnippet>171</a>        refant_id,
+<a href=#172 id=172 data-nosnippet>172</a>        refant_alternates: refants.into_iter().skip(<span class="number">1</span>).collect(),
+<a href=#173 id=173 data-nosnippet>173</a>        available_antennas,
+<a href=#174 id=174 data-nosnippet>174</a>        selected_data: SelectedData::of(measurement_set, <span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>,
+<a href=#175 id=175 data-nosnippet>175</a>        rows,
+<a href=#176 id=176 data-nosnippet>176</a>        preapplied_rows: load_preapplied_rows(
+<a href=#177 id=177 data-nosnippet>177</a>            measurement_set,
+<a href=#178 id=178 data-nosnippet>178</a>            selection,
+<a href=#179 id=179 data-nosnippet>179</a>            prior_calibration_tables,
+<a href=#180 id=180 data-nosnippet>180</a>            parang,
+<a href=#181 id=181 data-nosnippet>181</a>        )<span class="question-mark">?</span>,
+<a href=#182 id=182 data-nosnippet>182</a>    })
+<a href=#183 id=183 data-nosnippet>183</a>}
+<a href=#184 id=184 data-nosnippet>184</a>
+<a href=#185 id=185 data-nosnippet>185</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>resolve_calibration_selection(
+<a href=#186 id=186 data-nosnippet>186</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#187 id=187 data-nosnippet>187</a>    selection: <span class="kw-2">&amp;</span>MsSelection,
+<a href=#188 id=188 data-nosnippet>188</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ResolvedMsSelection, MsSelectionError&gt; {
+<a href=#189 id=189 data-nosnippet>189</a>    measurement_set.resolve_selection(selection, calibration_selection_budget()<span class="question-mark">?</span>)
+<a href=#190 id=190 data-nosnippet>190</a>}
+<a href=#191 id=191 data-nosnippet>191</a>
+<a href=#192 id=192 data-nosnippet>192</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>resolve_apply_selection(
+<a href=#193 id=193 data-nosnippet>193</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#194 id=194 data-nosnippet>194</a>    selection: <span class="kw-2">&amp;</span>MsSelection,
+<a href=#195 id=195 data-nosnippet>195</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ResolvedMsSelection, MsSelectionError&gt; {
+<a href=#196 id=196 data-nosnippet>196</a>    measurement_set.resolve_casa_selection(selection, calibration_selection_budget()<span class="question-mark">?</span>)
+<a href=#197 id=197 data-nosnippet>197</a>}
+<a href=#198 id=198 data-nosnippet>198</a>
+<a href=#199 id=199 data-nosnippet>199</a><span class="kw">fn </span>calibration_selection_budget() -&gt; <span class="prelude-ty">Result</span>&lt;MsSelectionIoBudget, MsSelectionError&gt; {
+<a href=#200 id=200 data-nosnippet>200</a>    MsSelectionIoBudget::from_system_memory(<span class="number">2</span>, std::mem::size_of::&lt;ResolvedMsSelectionRow&gt;(), <span class="prelude-val">None</span>)
+<a href=#201 id=201 data-nosnippet>201</a>}
 </code></pre></div></section></main></body></html>
