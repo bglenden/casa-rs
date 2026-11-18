@@ -266,6 +266,35 @@ def correlation_flags(root, source, native):
                 except AssertionError as error:
                     failures.append((label, str(error)))
     assert not failures, failures
+    for name in ['first-flagged', 'appended-autocorrelation', 'leading-autocorrelation']:
+        case = root/name
+        case.mkdir()
+        alternate = case/'source.ms'
+        copy_ms(source, alternate)
+        t.open(str(alternate), nomodify=False)
+        try:
+            a, b = t.getcol('ANTENNA1'), t.getcol('ANTENNA2')
+            leading = (a==0) & (b==1)
+            if name == 'first-flagged':
+                flags = t.getcol('FLAG')
+                flags[..., leading] = True
+                t.putcol('FLAG', flags)
+            else:
+                for row in np.flatnonzero(leading):
+                    cells = {col: t.getcell(col, int(row)) for col in t.colnames()
+                             if t.iscelldefined(col, int(row))}
+                    output = t.nrows()
+                    t.addrows(1)
+                    autocorrelation = dict(cells, ANTENNA2=cells['ANTENNA1'])
+                    if name == 'leading-autocorrelation':
+                        for col, value in cells.items():
+                            t.putcell(col, output, value)
+                        output = int(row)
+                    for col, value in autocorrelation.items():
+                        t.putcell(col, output, value)
+        finally:
+            t.close()
+        results[name] = gain_and_apply(case, alternate, native, 'T', 'inf', calmode='ap', minblperant=3)
     return results
 
 

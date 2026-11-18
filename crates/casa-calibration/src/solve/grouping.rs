@@ -2,6 +2,7 @@
 //! Selection, bucketing, and accumulation for `gaincal` and `bandpass`.
 
 mod samples;
+mod time;
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -22,6 +23,7 @@ use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::resolve_calibration_selection;
 use crate::solve::kernel::SolveGraph;
+use time::{bucketed_rows, first_t_baselines};
 
 pub(crate) fn validate_solve_interval(
     solve_interval: GainSolveInterval,
@@ -76,7 +78,15 @@ pub(crate) fn build_solve_groups(
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut layouts_by_ddid = HashMap::new();
-    let ordered = bucketed_rows(rows, options.solve_interval, options.combine);
+    let scalar_gain = options.gain_type == GainType::T;
+    let mut ordered = bucketed_rows(rows, options.solve_interval, options.combine, scalar_gain);
+    let seed_baselines = if scalar_gain {
+        let baselines = first_t_baselines(&ordered);
+        ordered.retain(|(row, _, _)| row.antenna1 != row.antenna2);
+        baselines
+    } else {
+        BTreeMap::new()
+    };
     let pipelined = overlap_inputs(ordered.len());
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
         eprintln!("calibration_workers {}", if pipelined { 2 } else { 1 });
@@ -98,7 +108,10 @@ pub(crate) fn build_solve_groups(
         let _accumulate_phase = crate::timing::Phase::start("solve_accumulate");
         for (index, &(row, base_key, bucket_key)) in batch.iter().enumerate() {
             let group = groups.entry((base_key, bucket_key)).or_insert_with(|| {
-                SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id)
+                let mut group =
+                    SolveAccumulator::new(row.field_id, row.data_spw_id, row.observation_id);
+                group.first_t_baseline = seed_baselines.get(&(base_key, bucket_key)).copied();
+                group
             });
             if options.combine.fields {
                 // CalSolVi2Organizer orders the buffers of a grouped time
@@ -318,65 +331,6 @@ fn ms_read_error(ms: &MeasurementSet, source: casa_tables::TableError) -> GainSo
             .unwrap_or_else(|| "<in-memory>".to_string()),
         source: MsError::from(source),
     }
-}
-
-/// Each cross-correlation row of `rows`, in solve order, with the group and
-/// interval it is solved in.
-///
-/// CASA's iteration sorts by the axes `combine` keeps apart and then by
-/// time, so the rows of a group come in time order whatever their fields
-/// and scans, and a `solint` interval starts at its group's earliest time.
-fn bucketed_rows(
-    rows: &[SelectedSolveRow],
-    solve_interval: GainSolveInterval,
-    combine: GainSolveCombine,
-) -> Vec<(&SelectedSolveRow, SolveBaseKey, SolveBucketKey)> {
-    let mut keyed = rows
-        .iter()
-        .filter(|row| row.antenna1 != row.antenna2)
-        .map(|row| {
-            let base_key = SolveBaseKey {
-                field_id: if combine.fields { 0 } else { row.field_id },
-                spw_id: row.data_spw_id,
-                observation_id: row.observation_id,
-                scan_number: if combine.scans { 0 } else { row.scan_number },
-            };
-            (row, base_key)
-        })
-        .collect::<Vec<_>>();
-    keyed.sort_by(|(a, a_key), (b, b_key)| {
-        a_key
-            .cmp(b_key)
-            .then(a.time_seconds.total_cmp(&b.time_seconds))
-            .then(a.interval_seconds.total_cmp(&b.interval_seconds))
-            .then(a.row_index.cmp(&b.row_index))
-    });
-
-    let mut bucket_starts = BTreeMap::<SolveBaseKey, f64>::new();
-    keyed
-        .into_iter()
-        .map(|(row, base_key)| {
-            let bucket_key = match solve_interval {
-                GainSolveInterval::Infinite => SolveBucketKey::Infinite,
-                GainSolveInterval::Integration => SolveBucketKey::Integration {
-                    time_bits: row.time_seconds.to_bits(),
-                    interval_bits: row.interval_seconds.to_bits(),
-                },
-                GainSolveInterval::Seconds(seconds) => {
-                    // MSIter2 starts its time grid 10 ms before the first
-                    // timestamp and receives solint as a Float.
-                    let start = *bucket_starts
-                        .entry(base_key)
-                        .or_insert(row.time_seconds - 0.01);
-                    let index = ((row.time_seconds - start) / f64::from(seconds as f32))
-                        .floor()
-                        .max(0.0);
-                    SolveBucketKey::Seconds(index as u64)
-                }
-            };
-            (row, base_key, bucket_key)
-        })
-        .collect()
 }
 
 /// Refuses `rows` when two of their data descriptions share a spectral
@@ -664,6 +618,8 @@ pub(crate) struct SolveAccumulator {
     /// model division), and sets its window's gain-table channel then,
     /// whether or not the solve succeeds.
     pub(crate) attempted: bool,
+    /// The first buffer row skipped by CASA's scalar-gain initializer.
+    pub(crate) first_t_baseline: Option<(i32, i32)>,
     baseline_centroids: HashMap<AveragedBaseline, WeightedTime>,
     preaverage_starts: HashMap<AveragedBaseline, f64>,
     receptor_accumulations: Vec<HashMap<SolveAccumulationKey, Vec<SolveEdgeAccumulation>>>,
@@ -777,6 +733,7 @@ impl SolveAccumulator {
             channel_graphs: Vec::new(),
             solution_time: 0.0,
             attempted: false,
+            first_t_baseline: None,
             baseline_centroids: HashMap::new(),
             preaverage_starts: HashMap::new(),
             receptor_accumulations: Vec::new(),
@@ -1446,7 +1403,7 @@ mod tests {
             .map(|(index, (field, scan, time))| row(index, field, scan, 0, time))
             .collect::<Vec<_>>();
         let buckets = |combine| {
-            bucketed_rows(&rows, GainSolveInterval::Seconds(20.0), combine)
+            bucketed_rows(&rows, GainSolveInterval::Seconds(20.0), combine, false)
                 .into_iter()
                 .map(|(row, base, bucket)| (row.time_seconds, base.field_id, bucket))
                 .collect::<Vec<_>>()
