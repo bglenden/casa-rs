@@ -477,6 +477,8 @@ fn solve_bandpass_group(
             SolveGraphOptions {
                 refant_id,
                 min_baselines_per_antenna: cuts.map_or(0, |cuts| cuts.min_baselines_per_antenna),
+                first_t_baseline: None,
+                defer_reference: false,
             },
             start.as_ref(),
         );

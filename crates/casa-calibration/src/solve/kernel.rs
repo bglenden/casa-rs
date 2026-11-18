@@ -152,6 +152,8 @@ pub(crate) struct SolvedGraphs {
 pub(crate) struct SolveGraphOptions {
     pub(crate) refant_id: i32,
     pub(crate) min_baselines_per_antenna: usize,
+    pub(crate) first_t_baseline: Option<(i32, i32)>,
+    pub(crate) defer_reference: bool,
 }
 
 pub(crate) struct PhaseStepTrace {
@@ -203,6 +205,8 @@ pub(crate) fn solve_group(
         SolveGraphOptions {
             refant_id,
             min_baselines_per_antenna,
+            first_t_baseline: group.first_t_baseline,
+            defer_reference: true,
         },
         None,
     )?;
@@ -302,7 +306,13 @@ pub(crate) fn solve_graphs(
                 .collect::<BTreeSet<_>>()
         })
         .collect::<Vec<_>>();
-    let mut first = first_guess(&active, &solved_antennas, gain_type, refant_id);
+    let mut first = first_guess(
+        &active,
+        &solved_antennas,
+        gain_type,
+        refant_id,
+        options.first_t_baseline,
+    );
     if let Some(start) = start {
         for (guess, receptor) in first.iter_mut().zip(&start.receptors) {
             for (antenna_id, value) in guess.iter_mut() {
@@ -323,7 +333,11 @@ pub(crate) fn solve_graphs(
                 solved,
                 gains,
                 solve_mode,
-                if options.refant_id < 0 { -1 } else { refant_id },
+                if options.defer_reference || options.refant_id < 0 {
+                    -1
+                } else {
+                    refant_id
+                },
             )
         })
         .collect::<Vec<_>>();
@@ -381,6 +395,7 @@ fn first_guess(
     antennas: &[BTreeSet<i32>],
     gain_type: GainType,
     refant_id: i32,
+    first_t_baseline: Option<(i32, i32)>,
 ) -> Vec<HashMap<i32, Complex64>> {
     let mut amplitude_sum = 0.0_f64;
     let mut amplitude_count = 0_usize;
@@ -392,6 +407,11 @@ fn first_guess(
                 .iter()
                 .filter(|antenna_id| **antenna_id != refant_id)
                 .filter_map(|&antenna_id| {
+                    if first_t_baseline
+                        == Some((refant_id.min(antenna_id), refant_id.max(antenna_id)))
+                    {
+                        return None;
+                    }
                     let weight = f64::from(graph.weight((refant_id, antenna_id)));
                     let edge = graph.edges.get(&(refant_id, antenna_id))?;
                     let mean = complex32_to_64(*edge) / weight;
@@ -953,6 +973,8 @@ mod tests {
         SolveGraphOptions {
             refant_id: 0,
             min_baselines_per_antenna,
+            first_t_baseline: None,
+            defer_reference: false,
         }
     }
 
