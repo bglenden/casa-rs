@@ -14673,7 +14673,7 @@
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "context_role": "field_selection",
-          "surface_note": "This calibration provider currently accepts comma-separated FIELD_ID integers.",
+          "surface_note": "Select fields by CASA field ID, name, or pattern.",
           "projections": {
             "cli": {"flags": ["--field"], "metavar": "IDS"},
             "provider": {"field": "field", "adapter": "identity"},
