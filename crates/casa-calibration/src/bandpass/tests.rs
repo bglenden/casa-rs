@@ -19,6 +19,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
         combine: GainSolveCombine::default(),
         channelized: true,
         preaverage_max_span: None,
+        correlation_dependent_flags: false,
     };
     let mut group = SolveAccumulator::new(0, 0, 0);
     for antenna1 in 0..4 {
@@ -94,6 +95,9 @@ fn channel_solves_apply_casas_baseline_and_snr_cuts() {
         SolveGraphOptions {
             refant_id: 0,
             min_baselines_per_antenna: 3,
+            scalar_seed: None,
+            correlation_dependent_flags: false,
+            defer_reference: false,
         },
         None,
     )

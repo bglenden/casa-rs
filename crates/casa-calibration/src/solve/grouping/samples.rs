@@ -3,8 +3,91 @@
 
 use casa_types::Complex32;
 use ndarray::Axis;
+use num_complex::Complex64;
+use std::borrow::Cow;
+use std::collections::{BTreeSet, HashMap};
 
-use super::{SolveEdgeAccumulation, SolveSamples, median_with_even_mean};
+use super::{
+    GainSolveMode, SolveAccumulator, SolveEdgeAccumulation, SolveSamples, median_with_even_mean,
+};
+
+impl SolveAccumulator {
+    /// Scalar gains start from the parallel-hand phasors in the first
+    /// gathered buffer (`TJones::guessPar`). Later buffers enter the solve.
+    pub(in crate::solve) fn scalar_initial_gains(
+        &self,
+        antennas: &BTreeSet<i32>,
+        preferred: i32,
+        mode: GainSolveMode,
+    ) -> Option<HashMap<i32, Complex64>> {
+        let buffer = self.first_t_buffer?;
+        let samples = self.receptor_accumulations.first()?;
+        let first = samples.iter().filter_map(|(key, channels)| {
+            let baseline = key.baseline;
+            let data = channels.first()?;
+            let within_buffer = buffer
+                .max_span
+                .is_none_or(|span| f64::from_bits(baseline.start_bits) - buffer.time <= span);
+            (baseline.field_id == buffer.field && within_buffer && data.weight > f32::EPSILON)
+                .then(|| (baseline.antennas, data.weighted_sum / data.weight))
+        });
+        let guess_antenna = first
+            .clone()
+            .flat_map(|((a, b), _)| [a, b])
+            .min_by_key(|id| (*id != preferred, *id));
+        let mut guesses = HashMap::<i32, Complex32>::new();
+        let mut amplitude_sum = 0.0;
+        let mut count = 0;
+        for ((a, b), visibility) in first {
+            if (a, b) == buffer.skipped_baseline {
+                continue;
+            }
+            let amplitude = visibility.norm();
+            if amplitude <= 0.0 {
+                continue;
+            }
+            let phasor = if mode == GainSolveMode::Amplitude {
+                Complex32::new(1.0, 0.0)
+            } else {
+                visibility / amplitude
+            };
+            let (antenna, phasor) = if Some(a) == guess_antenna {
+                (b, phasor.conj())
+            } else if Some(b) == guess_antenna {
+                (a, phasor)
+            } else {
+                continue;
+            };
+            *guesses.entry(antenna).or_default() += phasor / self.parallel_hands as f32;
+            amplitude_sum += if mode == GainSolveMode::Phase {
+                1.0
+            } else {
+                amplitude
+            };
+            count += 1;
+        }
+        let scale = if count == 0 {
+            0.3
+        } else {
+            (amplitude_sum / count as f32).sqrt()
+        };
+        Some(
+            antennas
+                .iter()
+                .map(|&antenna| {
+                    let value = guesses
+                        .get(&antenna)
+                        .filter(|gain| gain.norm_sqr() > 0.0)
+                        .map_or(Complex32::new(scale, 0.0), |gain| *gain / scale);
+                    (
+                        antenna,
+                        Complex64::new(f64::from(value.re), f64::from(value.im)),
+                    )
+                })
+                .collect(),
+        )
+    }
+}
 
 /// CASA's correlation-independent flags are shared by every receptor.
 pub(super) fn channel_flags(samples: &SolveSamples<'_>) -> Vec<bool> {
@@ -44,13 +127,17 @@ impl SampleAccumulation<'_> {
         &mut self,
         samples: &SolveSamples<'_>,
         correlation: usize,
-        flags: &[bool],
+        shared_flags: Option<&[bool]>,
         channels: &[usize],
         stokes_i: f32,
         all_channels: bool,
     ) -> f64 {
         let data = samples.data.index_axis(Axis(0), correlation);
         let weights = samples.weights.index_axis(Axis(0), correlation);
+        let flags = shared_flags.map_or_else(
+            || Cow::Owned(samples.flags.row(correlation).to_vec()),
+            Cow::Borrowed,
+        );
         let model = samples
             .model
             .map(|model| model.index_axis_move(Axis(0), correlation));
@@ -70,7 +157,7 @@ impl SampleAccumulation<'_> {
             return self.add_uniform(
                 packed
                     .chunks_exact(correlations)
-                    .zip(flags)
+                    .zip(flags.iter())
                     .map(|(channel, &flagged)| Sample {
                         data: channel[correlation],
                         model: point,
@@ -83,7 +170,7 @@ impl SampleAccumulation<'_> {
         if all_channels {
             // Strided row iterators avoid repeated two-dimensional indexing;
             // scalar weights retain their broadcast stride of zero.
-            let values = data.iter().zip(weights.iter()).zip(flags);
+            let values = data.iter().zip(weights.iter()).zip(flags.iter());
             if let Some(model) = &model {
                 self.add::<false>(values.zip(model).map(
                     |(((&data, &weight), &flagged), &model)| Sample {

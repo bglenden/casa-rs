@@ -288,6 +288,7 @@ fn gaincal_reads_casas_values() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: true,
             preaverage_seconds: 12.5,
+            correlation_dependent_flags: false,
             normalization_type: crate::GainNormalization::Median,
             min_snr: 2.5,
             min_baselines_per_antenna: 2,

@@ -152,6 +152,8 @@ pub struct GainSolveRequest {
     /// Positive averaging interval in seconds before the gain solve.
     /// Nonpositive values average over the whole solution interval.
     pub preaverage_seconds: f64,
+    /// Preserve each correlation's flags independently when gathering data.
+    pub correlation_dependent_flags: bool,
     /// Axes to combine while forming solve groups.
     pub combine: GainSolveCombine,
     /// Reference antenna.
@@ -412,6 +414,7 @@ pub(crate) fn solve_gain_rows(
             combine: request.combine,
             // VbAvg applies this boundary to either source of the interval.
             preaverage_max_span: averaging_interval.map(|seconds| f64::from(seconds) * 0.999),
+            correlation_dependent_flags: request.correlation_dependent_flags,
             channelized: false,
         },
     )?;
@@ -551,9 +554,14 @@ pub(crate) fn solve_closed_group(
         available_antennas,
         request.gain_type,
         request.solve_mode,
-        refant_id,
         request.min_snr,
-        request.min_baselines_per_antenna,
+        kernel::SolveGraphOptions {
+            refant_id,
+            min_baselines_per_antenna: request.min_baselines_per_antenna,
+            scalar_seed: None,
+            correlation_dependent_flags: request.correlation_dependent_flags,
+            defer_reference: true,
+        },
     )
 }
 

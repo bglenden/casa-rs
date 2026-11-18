@@ -76,6 +76,7 @@ fn observe(
         combine: request.combine,
         channelized: false,
         preaverage_max_span: None,
+        correlation_dependent_flags: false,
     };
     for sample in samples {
         let coordinate = batch.sample(sample);

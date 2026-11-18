@@ -315,6 +315,7 @@ pub(crate) fn solve_bandpass(
             },
             channelized: true,
             preaverage_max_span: None,
+            correlation_dependent_flags: false,
         },
     )?;
 
@@ -476,6 +477,9 @@ fn solve_bandpass_group(
             SolveGraphOptions {
                 refant_id,
                 min_baselines_per_antenna: cuts.map_or(0, |cuts| cuts.min_baselines_per_antenna),
+                scalar_seed: None,
+                correlation_dependent_flags: false,
+                defer_reference: false,
             },
             start.as_ref(),
         );

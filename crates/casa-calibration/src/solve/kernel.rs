@@ -149,9 +149,12 @@ pub(crate) struct SolvedGraphs {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct SolveGraphOptions {
+pub(crate) struct SolveGraphOptions<'a> {
     pub(crate) refant_id: i32,
     pub(crate) min_baselines_per_antenna: usize,
+    pub(crate) scalar_seed: Option<&'a SolveAccumulator>,
+    pub(crate) correlation_dependent_flags: bool,
+    pub(crate) defer_reference: bool,
 }
 
 pub(crate) struct PhaseStepTrace {
@@ -190,10 +193,10 @@ pub(crate) fn solve_group(
     available_antennas: &BTreeSet<i32>,
     gain_type: GainType,
     solve_mode: GainSolveMode,
-    refant_id: i32,
     min_snr: f32,
-    min_baselines_per_antenna: usize,
+    options: SolveGraphOptions<'_>,
 ) -> Option<Vec<SolutionRow>> {
+    let refant_id = options.refant_id;
     let scan_number = *group.scan_numbers.iter().next().unwrap_or(&0);
     let graphs = group.channel_graphs.first()?;
     let solved = solve_graphs(
@@ -201,8 +204,9 @@ pub(crate) fn solve_group(
         gain_type,
         solve_mode,
         SolveGraphOptions {
-            refant_id,
-            min_baselines_per_antenna,
+            scalar_seed: (gain_type == GainType::T).then_some(&group),
+            defer_reference: true,
+            ..options
         },
         None,
     )?;
@@ -279,7 +283,7 @@ pub(crate) fn solve_graphs(
     graphs: &[SolveGraph],
     gain_type: GainType,
     solve_mode: GainSolveMode,
-    options: SolveGraphOptions,
+    options: SolveGraphOptions<'_>,
     start: Option<&SolvedGraphs>,
 ) -> Option<SolvedGraphs> {
     let constrained = baseline_constrained_antennas(graphs, options.min_baselines_per_antenna);
@@ -296,13 +300,24 @@ pub(crate) fn solve_graphs(
         .iter()
         .map(|graph| {
             let with_data = graph.antennas();
-            reachable_antennas(graph, refant_id)
-                .into_iter()
-                .filter(|antenna_id| with_data.contains(antenna_id))
-                .collect::<BTreeSet<_>>()
+            if options.correlation_dependent_flags {
+                with_data
+            } else {
+                reachable_antennas(graph, refant_id)
+                    .into_iter()
+                    .filter(|antenna_id| with_data.contains(antenna_id))
+                    .collect::<BTreeSet<_>>()
+            }
         })
         .collect::<Vec<_>>();
-    let mut first = first_guess(&active, &solved_antennas, gain_type, refant_id);
+    let mut first = if let Some(seed) = options.scalar_seed
+        && let Some(guess) =
+            seed.scalar_initial_gains(&solved_antennas[0], options.refant_id, solve_mode)
+    {
+        vec![guess]
+    } else {
+        first_guess(&active, &solved_antennas, gain_type, refant_id)
+    };
     if let Some(start) = start {
         for (guess, receptor) in first.iter_mut().zip(&start.receptors) {
             for (antenna_id, value) in guess.iter_mut() {
@@ -323,7 +338,11 @@ pub(crate) fn solve_graphs(
                 solved,
                 gains,
                 solve_mode,
-                if options.refant_id < 0 { -1 } else { refant_id },
+                if options.defer_reference || options.refant_id < 0 {
+                    -1
+                } else {
+                    refant_id
+                },
             )
         })
         .collect::<Vec<_>>();
@@ -388,12 +407,17 @@ fn first_guess(
         .iter()
         .zip(antennas)
         .map(|(graph, antennas)| {
+            let seed = if antennas.contains(&refant_id) {
+                refant_id
+            } else {
+                antennas.first().copied().unwrap_or(refant_id)
+            };
             antennas
                 .iter()
-                .filter(|antenna_id| **antenna_id != refant_id)
+                .filter(|antenna_id| **antenna_id != seed)
                 .filter_map(|&antenna_id| {
-                    let weight = f64::from(graph.weight((refant_id, antenna_id)));
-                    let edge = graph.edges.get(&(refant_id, antenna_id))?;
+                    let weight = f64::from(graph.weight((seed, antenna_id)));
+                    let edge = graph.edges.get(&(seed, antenna_id))?;
                     let mean = complex32_to_64(*edge) / weight;
                     let amplitude = mean.norm();
                     (weight > f64::EPSILON && amplitude > 0.0).then(|| {
@@ -422,9 +446,6 @@ fn first_guess(
             guess
                 .entry(*antenna_id)
                 .or_insert(Complex64::new(scale, 0.0));
-        }
-        if antennas.contains(&refant_id) {
-            guess.insert(refant_id, Complex64::new(scale, 0.0));
         }
     }
     guesses
@@ -949,10 +970,13 @@ mod tests {
         );
     }
 
-    fn options(min_baselines_per_antenna: usize) -> SolveGraphOptions {
+    fn options(min_baselines_per_antenna: usize) -> SolveGraphOptions<'static> {
         SolveGraphOptions {
             refant_id: 0,
             min_baselines_per_antenna,
+            scalar_seed: None,
+            correlation_dependent_flags: false,
+            defer_reference: false,
         }
     }
 
@@ -1143,9 +1167,8 @@ mod tests {
             &BTreeSet::from([0, 1, 2, 3]),
             GainType::T,
             GainSolveMode::Phase,
-            0,
             0.0,
-            0,
+            options(0),
         )
         .expect("solve should emit flagged rows for the disconnected component");
 
