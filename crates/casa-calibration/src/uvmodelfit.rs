@@ -9,13 +9,14 @@ use casa_components::{
     ComponentShape, Ellipse, EllipseErrors, Flux, ShapeKind, ShapeTransform, SkyComponent,
     SpectralModel,
 };
+use casa_ms::columns::direction_columns::DirectionColumn;
 use casa_ms::derived::engine::raw_field_phase_direction;
 use casa_ms::{MeasurementSet, MsError, MsResult, ResolvedMsSelection};
-use casa_types::Complex64;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::ephemeris::offset_true_angle;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::quanta::Unit;
+use casa_types::{Complex64, ScalarValue};
 
 const ARCSECOND_RAD: f64 = PI / 648_000.0;
 const LIGHT_SPEED: f64 = 299_792_458.0;
@@ -67,6 +68,8 @@ pub struct VisibilityFitRequest<'a> {
 pub struct VisibilityComponentFit {
     /// Fitted values in the order and units of [`VisibilityFitRequest::initial`].
     pub parameters: Vec<f64>,
+    /// Formal errors from the inverse normal matrix, in the same units.
+    pub formal_errors: Vec<f64>,
     /// The fitted component placed on the sky relative to the selected field.
     pub component: SkyComponent,
 }
@@ -97,7 +100,7 @@ pub fn fit_visibility_component(
     {
         return Err(invalid("visibility model fitting requires a single field"));
     }
-    let centre = raw_field_phase_direction(ms, field as usize)?;
+    let centre = fit_phase_centre(ms, selection, field as usize)?;
     let count = request.shape.count();
     if request.initial.len() != count || request.initial.iter().any(|number| !number.is_finite()) {
         return Err(invalid(format!(
@@ -120,21 +123,61 @@ pub fn fit_visibility_component(
         shape: request.shape,
         values,
     };
-    let fitted = if request.iterations < 0 {
+    let (fitted, equations) = if request.iterations < 0 {
         // With a negative limit UVMod exports the initial component without reading samples.
-        model
+        (model, Equations::default())
     } else {
         let input = samples::FitSamples::new(ms, selection)?;
         solve_model(&input, model, vary, request.iterations as usize)?
     };
     let mut parameters = fitted.values[..count].to_vec();
+    let mut formal_errors = equations.formal_errors(&vary[..count]);
     if count == PARAMETERS {
         parameters[5] = parameters[5].to_degrees();
+        formal_errors[5] = formal_errors[5].to_degrees();
     }
     Ok(VisibilityComponentFit {
         parameters,
+        formal_errors,
         component: fitted.component(&centre)?,
     })
+}
+
+fn fit_phase_centre(
+    ms: &MeasurementSet,
+    selection: &ResolvedMsSelection,
+    field_id: usize,
+) -> MsResult<MDirection> {
+    let direction = raw_field_phase_direction(ms, field_id)?;
+    let field = ms.field()?;
+    if field.num_poly(field_id)? == 0 {
+        return Ok(direction);
+    }
+    // UVMod reads the phase centre of the first buffer in array, field,
+    // data-description and time order. Its input has already been reduced to one field.
+    let row_ids: Vec<_> = selection.row_indices().collect();
+    let arrays = ms
+        .main_table()
+        .column_accessor("ARRAY_ID")?
+        .scalar_cells_owned_for_rows(&row_ids)?;
+    let mut first: Option<((i32, i32), f64)> = None;
+    for (row, array) in selection.selected_rows.iter().zip(arrays) {
+        let Some(ScalarValue::Int32(array)) = array else {
+            return Err(invalid("ARRAY_ID is not an Int array identifier"));
+        };
+        let keys = (array, row.data_desc_id);
+        let time = row.time_mjd_seconds;
+        if first.is_none_or(|(earliest_keys, earliest_time)| {
+            keys < earliest_keys || (keys == earliest_keys && time < earliest_time)
+        }) {
+            first = Some((keys, time));
+        }
+    }
+    let epoch = first.expect("the fit has selected rows").1;
+    let mut measured = DirectionColumn::phase_dir(field.table())
+        .get_direction_at(field_id, epoch - field.time(field_id)?)?;
+    measured.set_reference(direction.refer());
+    Ok(measured)
 }
 
 fn solve_model(
@@ -142,7 +185,7 @@ fn solve_model(
     mut model: FitModel,
     vary: [bool; PARAMETERS],
     iterations: usize,
-) -> MsResult<FitModel> {
+) -> MsResult<(FitModel, Equations)> {
     let mut previous = input.equations(model, &vary)?;
     let mut damping = 0.001;
     let mut accepted = 0;
@@ -151,19 +194,17 @@ fn solve_model(
         if accepted >= iterations {
             break;
         }
-        let mut hessian = previous.hessian;
-        for (index, terms) in hessian.iter_mut().enumerate() {
-            if terms[index] == 0.0 {
-                terms[index] = 1.0;
-            }
-            terms[index] *= 1.0 + damping;
+        let mut hessian = previous.symmetric_hessian(PARAMETERS);
+        for index in (0..hessian.len()).step_by(PARAMETERS + 1) {
+            hessian[index] *= 1.0 + damping;
         }
-        let Some(delta) = casa_numerics::solve_symmetric_ldlt_casacore(hessian, previous.gradient)
+        let Some(delta) =
+            casa_numerics::solve_symmetric_positive_definite(&hessian, &previous.gradient)
         else {
             damping *= 10.0;
             continue;
         };
-        let trial = model.update(delta);
+        let trial = model.update(delta.try_into().expect("one step per parameter"));
         let attempted = input.equations(trial, &vary)?;
         // UVMod accepts improvements and tolerates rounding at the same chi-square.
         let increase = attempted.chi_square - previous.chi_square;
@@ -176,7 +217,7 @@ fn solve_model(
             damping *= 10.0;
         }
     }
-    Ok(model)
+    Ok((model, previous))
 }
 
 #[derive(Clone, Copy)]
@@ -306,6 +347,39 @@ struct Equations {
 }
 
 impl Equations {
+    fn symmetric_hessian(&self, size: usize) -> Vec<f64> {
+        let mut matrix = Vec::with_capacity(size * size);
+        for row in 0..size {
+            for column in 0..size {
+                let entry = self.hessian[row.min(column)][row.max(column)];
+                matrix.push(if row == column && entry == 0.0 {
+                    1.0
+                } else {
+                    entry
+                });
+            }
+        }
+        matrix
+    }
+
+    fn formal_errors(&self, vary: &[bool]) -> Vec<f64> {
+        let size = vary.len();
+        let matrix = self.symmetric_hessian(size);
+        let inverse = casa_numerics::invert_symmetric_positive_definite(&matrix, size);
+        vary.iter()
+            .enumerate()
+            .map(|(index, &enabled)| {
+                if enabled {
+                    inverse
+                        .as_ref()
+                        .map_or(f64::NAN, |data| data[index * (size + 1)].sqrt())
+                } else {
+                    0.0
+                }
+            })
+            .collect()
+    }
+
     fn add(
         &mut self,
         residual: Complex64,

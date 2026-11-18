@@ -2,29 +2,38 @@
 //! Adapt uvmodelfit's installed CASA task surface to the shared fitter.
 
 use casa_components::ComponentList;
+use casa_ms::MsSelection;
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::{MeasurementSet, MsSelection};
 use casa_provider_contracts::CasaValue;
-use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
-use crate::model_columns::initialize_scratch_column;
 use crate::session::resolve_casa_calibration_selection;
 use crate::{VisibilityFitRequest, VisibilityFitShape, fit_visibility_component};
 
+use super::multi_ms::{OpenedMs, partition_paths};
+
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("vis")?;
-    let lock = TableWriteLock::acquire_to_reread(&path, 0).map_err(execution)?;
-    let mut ms = MeasurementSet::open(&path).map_err(execution)?;
-    let lock = initialize_scratch_column(&mut ms, VisibilityDataColumn::CorrectedData, lock)
-        .map_err(execution)?;
+    let root = OpenedMs::open(&path)?;
+    let corrected = VisibilityDataColumn::CorrectedData;
+    let parts = partition_paths(&path)?
+        .unwrap_or_default()
+        .iter()
+        .map(|path| OpenedMs::open(path)?.initialize(corrected))
+        .collect::<Result<Vec<_>, _>>()?;
+    let root = if parts.is_empty() {
+        root.initialize(corrected)?
+    } else {
+        root.reload(&path)?
+    };
+    let ms = &root.measurement_set;
     let selected = resolve_casa_calibration_selection(&ms, &selection(task)?).map_err(execution)?;
     let shape = VisibilityFitShape::parse(&task.text("comptype")?.unwrap_or_default())
         .map_err(failed_fit)?;
     let parameters = task.numbers("sourcepar")?;
     let vary = task.flags("varypar")?;
     let fitted = fit_visibility_component(
-        &ms,
+        ms,
         &selected,
         VisibilityFitRequest {
             shape,
@@ -39,30 +48,49 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         list.write_table(task.workspace().join(path))
             .map_err(failed_fit)?;
     }
-    drop(ms);
-    lock.release().map_err(execution)?;
-    TaskSuccess::new(CasaValue::None, &fitted.parameters)
+    for part in parts {
+        part.release()?;
+    }
+    root.release()?;
+    let mut report = TaskSuccess::new(CasaValue::None, &fitted.parameters)?
+        .with_output_line("Formal errors assume the visibility weights are correctly scaled.");
+    let labels = [
+        ("I", " Jy"),
+        ("x", " arcsec"),
+        ("y", " arcsec"),
+        ("a", " arcsec"),
+        ("r", ""),
+        ("p", " deg"),
+    ];
+    for ((value, error), (label, unit)) in fitted
+        .parameters
+        .into_iter()
+        .zip(fitted.formal_errors)
+        .zip(labels)
+    {
+        report = report.with_output_line(format!("{label} = {value:.9e} +/- {error:.9e}{unit}"));
+    }
+    Ok(report)
 }
 
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
     let select = task.flag("selectdata")?;
-    let text = |name| {
-        let value = super::casa_read::selector_text(task.value(name))?;
-        let stripped = value
-            .strip_prefix('[')
-            .and_then(|inner| inner.strip_suffix(']'))
-            .unwrap_or(&value);
-        (!stripped.is_empty()).then(|| stripped.to_owned())
+    let text = |name| -> Result<Option<String>, TaskFailure> {
+        Ok(task.text(name)?.filter(|value| !value.is_empty()))
     };
-    let optional = |name| select.then(|| text(name)).flatten();
+    let optional = |name| {
+        if select { text(name) } else { Ok(None) }
+    };
     Ok(MsSelection {
-        field: text("field"),
-        spw: text("spw"),
-        timerange: optional("timerange"),
-        uvrange: optional("uvrange"),
-        antenna: optional("antenna"),
-        scan: optional("scan"),
-        msselect: optional("msselect"),
+        field: text("field")?,
+        spw: text("spw")?,
+        timerange: optional("timerange")?,
+        uvrange: select
+            .then(|| super::casa_read::uv_selector_text(task.value("uvrange")))
+            .flatten(),
+        antenna: optional("antenna")?,
+        scan: optional("scan")?,
+        msselect: optional("msselect")?,
         ..MsSelection::default()
     })
 }

@@ -104,6 +104,22 @@ pub fn solve_symmetric_ldlt_casacore<const N: usize>(
     Some(solution)
 }
 
+/// Solve a symmetric positive-definite system by Cholesky factorization.
+/// The full symmetric matrix is row-major. Small positive pivots are valid.
+#[must_use]
+pub fn solve_symmetric_positive_definite(normal: &[f64], known: &[f64]) -> Option<Vec<f64>> {
+    let size = known.len();
+    if size == 0 || normal.len() != size.checked_mul(size)? {
+        return None;
+    }
+    let factor = DMatrix::from_row_slice(size, size, normal).cholesky()?;
+    let result = factor.solve(&DVector::from_column_slice(known));
+    result
+        .iter()
+        .all(|value| value.is_finite())
+        .then(|| result.as_slice().to_vec())
+}
+
 /// Invert a symmetric positive-definite matrix, as casacore's
 /// `invertSymPosDef` does, by Cholesky factorization.
 ///

@@ -228,6 +228,9 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         shape = arguments["comptype"]
         if isinstance(shape, str) and shape not in ("P", "G", "D"):
             raise AssertionError(str({"comptype": [f"unallowed value {shape}"]}))
+        iterations = arguments["niter"]
+        if isinstance(iterations, bool):
+            values["niter"] = int(iterations)
         try:
             return run(name, **values).value
         except (TypeError, ValueError) as error:

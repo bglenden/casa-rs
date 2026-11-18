@@ -2,6 +2,7 @@
 //! Accumulate the fit's small normal equations in bounded MS row batches.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use casa_components::ShapeTransform;
 use casa_ms::schema::main_table::VisibilityDataColumn;
@@ -11,6 +12,7 @@ use casa_types::{ArrayValue, Complex32, Complex64};
 use ndarray::{ArrayD, Axis};
 
 use super::{Equations, FitModel, PARAMETERS, invalid};
+use crate::model_columns::calibration_channel_span;
 const CORRECTED: VisibilityDataColumn = VisibilityDataColumn::CorrectedData;
 const WORKSPACE_BYTES: usize = 32 * 1024 * 1024;
 
@@ -18,7 +20,7 @@ pub(super) struct FitSamples<'a> {
     ms: &'a MeasurementSet,
     selected: &'a ResolvedMsSelection,
     frequencies: BTreeMap<i32, Vec<f64>>,
-    channels: BTreeMap<i32, Vec<usize>>,
+    channels: BTreeMap<i32, Range<usize>>,
     parallel: BTreeMap<i32, Vec<usize>>,
     batch_rows: usize,
 }
@@ -34,10 +36,14 @@ impl<'a> FitSamples<'a> {
             let window = row.spectral_window_id;
             if let std::collections::btree_map::Entry::Vacant(entry) = frequencies.entry(window) {
                 let values = spectral_windows.chan_freq(window as usize)?;
-                let indices = match selected.channel_selections.get(&window) {
-                    Some(selection) => selection.indices(values.len())?,
-                    None => (0..values.len()).collect(),
-                };
+                let indices = selected
+                    .channel_selections
+                    .get(&window)
+                    .and_then(calibration_channel_span)
+                    .unwrap_or(0..values.len());
+                if indices.end > values.len() {
+                    return Err(invalid("channel selection exceeds the spectral window"));
+                }
                 channels.insert(window, indices);
                 entry.insert(values);
             }
@@ -129,7 +135,7 @@ impl<'a> FitSamples<'a> {
             ));
         }
         let baseline = transform.at_baseline(sample.uvw);
-        for &channel in &self.channels[&row.spectral_window_id] {
+        for channel in self.channels[&row.spectral_window_id].clone() {
             if sample
                 .flags
                 .index_axis(Axis(1), channel)
