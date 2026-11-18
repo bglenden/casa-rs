@@ -6563,3 +6563,16 @@ casa-rs gives independent SOURCE or MAIN records their own Fourier grids.
 Replacing one record deletes the old grid that record owned. The other
 partition's recipe still opens in CASA and casa-rs. The standalone
 `calibration_ft_oracle.py` fixture exercises the replacement sequence.
+
+## TaQL derived geometry treats an ephemeris field offset as a direction
+
+CASA 6.7.6.14 `msmetadata.phasecenter(field, epoch)` follows the attached
+body and applies the field offset. The TaQL `mscal.hadec1()` and
+`mscal.azel1()` functions use the stored `PHASE_DIR` directly for the same
+field. For the Uranus fixture, `mscal.hadec1()` reports a declination of
+0.00190 rad while the attached phase centre is near 0.20677 rad.
+
+The calibration engine and diagnostics read the attached direction at the
+requested epoch. The `calibration_ephemeris_geometry_oracle.py` fixture obtains
+the per-epoch phase centres from CASA and evaluates CASA geometry on fixed
+snapshots of those directions (#989).

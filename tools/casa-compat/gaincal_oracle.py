@@ -1387,7 +1387,7 @@ def separate_arrays(root, source, native):
     return results
 
 
-def ephemeris_observation(root, source):
+def ephemeris_observation(root, source, offset=(1e-6, -2e-6)):
     from casaconfig import config
     from casatools import ms
 
@@ -1406,7 +1406,7 @@ def ephemeris_observation(root, source):
     try:
         t.putcell('TIME', 0, origin)
         for column in ['DELAY_DIR', 'PHASE_DIR', 'REFERENCE_DIR']:
-            t.putcell(column, 0, np.array([[1e-6], [-2e-6]]))
+            t.putcell(column, 0, np.asarray(offset).reshape(2, 1))
     finally:
         t.close()
     ephemeris = Path(config.measurespath)/'ephemerides'/'JPL-Horizons'/'Uranus_55197-59214dUTC_J2000.tab'
