@@ -3349,6 +3349,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#applycal-nearest-field-mapping-fails-for-legacy-bpoly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Applycal nearest-field mapping fails for legacy BPOLY
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#simulator-short-cubic-time-axes-can-alter-data-before-failing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9028,6 +9039,20 @@ flags and weights remain unchanged; a newly required CORRECTED_DATA is
 initialized from DATA, and no successful-task HISTORY is written. The
 oracle records this as an intentional CASA-bug correction, separately from
 its matching MAIN/API/state cases. No numerical tolerance changes.</p>
+<h2 id="applycal-nearest-field-mapping-fails-for-legacy-bpoly">Applycal nearest-field mapping fails for legacy BPOLY<a class="headerlink" href="#applycal-nearest-field-mapping-fails-for-legacy-bpoly" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-17</li>
+<li>Status: corrected under the standing crash rule (#1518)</li>
+<li>Affected code: CASA 6.7.6.14 <code>BJonesPoly::loadMemCalTable</code> and the
+  subsequent nearest-field mapping of the converted B table.</li>
+</ul>
+<p>BPOLY conversion ignores the supplied field selector and assigns
+<code>FIELD_ID=-1</code> to all converted rows. With <code>gainfield=['nearest']</code>, CASA
+reports that the converted table has no available calibration and the
+isolated public task aborts. Casa-rs applies the field-independent BPOLY
+solutions for this input, as it does for explicit field selectors. The
+public oracle compares the result against an independent CASA run with
+the same polynomial table and default gainfield.</p>
 <h2 id="simulator-short-cubic-time-axes-can-alter-data-before-failing">Simulator short cubic time axes can alter DATA before failing<a class="headerlink" href="#simulator-short-cubic-time-axes-can-alter-data-before-failing" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-12</li>

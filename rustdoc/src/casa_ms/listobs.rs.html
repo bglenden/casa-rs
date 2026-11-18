@@ -2752,7 +2752,7 @@
 <a href=#2752 id=2752 data-nosnippet>2752</a>        options: ListObsOptions,
 <a href=#2753 id=2753 data-nosnippet>2753</a>        expected: <span class="kw-2">&amp;</span>str,
 <a href=#2754 id=2754 data-nosnippet>2754</a>    ) {
-<a href=#2755 id=2755 data-nosnippet>2755</a>        <span class="kw">let </span>err = selection_from_options(ms, <span class="kw-2">&amp;</span>options).expect_err(<span class="string">"selector should fail"</span>);
+<a href=#2755 id=2755 data-nosnippet>2755</a>        <span class="kw">let </span>err = selection_from_options(ms, <span class="kw-2">&amp;</span>options, <span class="bool-val">false</span>).expect_err(<span class="string">"selector should fail"</span>);
 <a href=#2756 id=2756 data-nosnippet>2756</a>        <span class="macro">assert!</span>(
 <a href=#2757 id=2757 data-nosnippet>2757</a>            <span class="macro">format!</span>(<span class="string">"{err}"</span>).contains(expected),
 <a href=#2758 id=2758 data-nosnippet>2758</a>            <span class="string">"expected {expected:?} in {err}"
