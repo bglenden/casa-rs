@@ -96,7 +96,12 @@ pub(crate) fn build_solve_groups(
         read_input_batch(
             ms,
             &indices,
-            preapplied_rows.is_none(),
+            (
+                preapplied_rows.is_none(),
+                batch
+                    .iter()
+                    .any(|(row, _, _)| models.uses_fourier(row.field_id)),
+            ),
             batch
                 .iter()
                 .any(|(row, _, _)| models.reads_column(row.field_id)),
@@ -191,7 +196,7 @@ pub(crate) struct SolveInputBatch {
 fn read_input_batch(
     ms: &MeasurementSet,
     rows: &[usize],
-    read_visibilities: bool,
+    (read_visibilities, read_model_flags): (bool, bool),
     read_model_column: bool,
     spectral_weights: Vec<bool>,
 ) -> Result<SolveInputBatch, GainSolveError> {
@@ -204,7 +209,10 @@ fn read_input_batch(
         columns.push("SIGMA");
     }
     if read_visibilities {
-        columns.extend(["DATA", "FLAG"]);
+        columns.push("DATA");
+    }
+    if read_visibilities || read_model_flags {
+        columns.push("FLAG");
     }
     if read_model_column {
         columns.push("MODEL_DATA");
@@ -342,28 +350,6 @@ fn ms_read_error(ms: &MeasurementSet, source: casa_tables::TableError) -> GainSo
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "<in-memory>".to_string()),
         source: MsError::from(source),
-    }
-}
-
-/// Refuses `rows` when two of their data descriptions share a spectral
-/// window, whatever their polarizations: CASA solves each description
-/// apart, where casa-rs's groups and tables are keyed by window.
-pub(crate) fn refuse_shared_spectral_windows(
-    rows: &[SelectedSolveRow],
-) -> Result<(), GainSolveError> {
-    let mut descriptions = BTreeMap::<i32, BTreeSet<i32>>::new();
-    for row in rows {
-        descriptions
-            .entry(row.data_spw_id)
-            .or_default()
-            .insert(row.data_desc_id);
-    }
-    match descriptions.into_iter().find(|(_, ids)| ids.len() > 1) {
-        Some((spw_id, ids)) => Err(GainSolveError::SharedSpectralWindow {
-            spw_id,
-            data_desc_ids: ids.into_iter().collect(),
-        }),
-        None => Ok(()),
     }
 }
 
@@ -740,14 +726,14 @@ impl SolveAccumulator {
         preapplied_row: Option<&EvaluatedApplyRow>,
         options: &SolveGroupOptions,
         layouts: &mut SolveRowLayouts,
-        inputs: (&SolveInputBatch, usize),
+        batch: (&SolveInputBatch, usize),
     ) -> Result<(), GainSolveError> {
         let inputs = read_row_inputs(
             ms,
             row,
             preapplied_row,
             layouts.models.reads_column(row.field_id),
-            inputs,
+            batch,
         )?;
         let channel_count = inputs.data.shape()[1];
         let layout = match layouts.by_ddid.entry(row.data_desc_id) {
@@ -766,7 +752,17 @@ impl SolveAccumulator {
             layout.channel_count = channel_count;
             layout.selection.clone_from(&row.channel_selection);
         }
-        let mut predicted = layouts.models.predict(ms, row, &layout.correlations)?;
+        let raw_flags = if preapplied_row.is_some() && layouts.models.uses_fourier(row.field_id) {
+            match input_cell(ms, row.row_index, batch, "FLAG")? {
+                ArrayValue::Bool(flags) if flags.shape() == inputs.data.shape() => flags,
+                other => return Err(unsupported_shape("FLAG", other)),
+            }
+        } else {
+            inputs.flags.as_ref()
+        };
+        let mut predicted = layouts
+            .models
+            .predict(ms, row, &layout.correlations, raw_flags)?;
         let rotated = layouts
             .rotation
             .as_ref()
@@ -1473,6 +1469,7 @@ mod tests {
 
     #[test]
     fn data_descriptions_sharing_a_window_are_refused() {
+        use crate::session::refuse_shared_spectral_windows;
         // Two descriptions on window 0, as a duplicated description or one
         // holding the cross hands would give.
         let rows = [row(0, 0, 1, 0, 100.0), row(1, 0, 1, 1, 100.0)];

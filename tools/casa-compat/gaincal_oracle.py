@@ -912,6 +912,7 @@ def virtual_fourier(root, source, native):
         ('continuum', source, 'GridFT', {}),
         ('off-centre', source, 'GridFT', {'phasecenter': 'J2000 0h0m0.10s -30d00m00s'}),
         ('cube', source, 'GridFT', {'specmode': 'cube', 'nchan': 3, 'start': 0, 'width': 1}),
+        ('partially-flagged', source, 'GridFT', {}),
         ('taylor', wide, 'MultiTermFTNew', {'deconvolver': 'mtmfs', 'nterms': 2}),
         ('taylor-outside', source, 'MultiTermFTNew', {'deconvolver': 'mtmfs', 'nterms': 2}),
     ]
@@ -934,12 +935,21 @@ def virtual_fourier(root, source, native):
         if name == 'taylor-outside':
             verify_no_fourier_solution(folder, vis, native)
             continue
+        partial_flags = name == 'partially-flagged'
+        if partial_flags:
+            t.open(str(vis), nomodify=False)
+            try:
+                flags = t.getcol('FLAG')
+                flags[0, ::2, :] = True
+                t.putcol('FLAG', flags)
+            finally:
+                t.close()
         for gain in ['G', 'T']:
             case = folder/gain
             case.mkdir()
             results[f'{name}-{gain}'] = gain_and_apply(
                 case, vis, native, gain, 'inf', calmode='ap', field='0', spw='0',
-                smodel=[], minblperant=2)
+                smodel=[], minblperant=2, corrdepflags=partial_flags)
             explicit = solve(casa, case, 'unit', vis, gaintype=gain, calmode='ap',
                              field='0', spw='0', minblperant=2)
             sky = contents(case/f'ap-{gain}-inf-mean-norm0-casa.cal')

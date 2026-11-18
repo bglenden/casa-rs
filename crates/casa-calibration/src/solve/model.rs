@@ -5,6 +5,7 @@ mod fourier;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use casa_components::{ComponentList, Polarisation};
 use casa_ms::columns::direction_columns::DirectionColumn;
@@ -25,7 +26,7 @@ use fourier::{FourierModel, FourierRow};
 
 pub(super) struct ModelInputs {
     read_column: bool,
-    virtual_models: BTreeMap<i32, Vec<Entry>>,
+    virtual_models: BTreeMap<i32, Arc<[Entry]>>,
     frequencies: BTreeMap<i32, (Vec<f64>, FrequencyRef)>,
     geometry: Option<MsCalEngine>,
     dynamic_fields: BTreeSet<i32>,
@@ -82,13 +83,18 @@ impl ModelInputs {
             return Ok(inputs);
         }
         let fields: BTreeSet<_> = rows.iter().map(|row| row.field_id).collect();
+        let mut records = BTreeMap::<_, Arc<[Entry]>>::new();
         for field in fields {
             if let Some(record) =
                 virtual_model(ms, field).map_err(|source| read_error(ms, source))?
             {
-                inputs
-                    .virtual_models
-                    .insert(field, decode_entries(&record.record)?);
+                let entries = match records.entry(record.key) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(decode_entries(&record.record)?.into())
+                    }
+                };
+                inputs.virtual_models.insert(field, Arc::clone(entries));
             }
         }
         if inputs
@@ -141,6 +147,14 @@ impl ModelInputs {
         &self.dynamic_fields
     }
 
+    pub(super) fn uses_fourier(&self, field: i32) -> bool {
+        self.virtual_models.get(&field).is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| matches!(entry.prediction, Prediction::FourierGrid(_)))
+        })
+    }
+
     /// A defined virtual model overrides MODEL_DATA. CASA uses a unit point
     /// model if none of the field's entries matches this visibility buffer.
     pub(super) fn predict(
@@ -148,6 +162,7 @@ impl ModelInputs {
         ms: &MeasurementSet,
         row: &SelectedSolveRow,
         correlations: &[i32],
+        raw_flags: &ArrayD<bool>,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
         let Some(entries) = self.virtual_models.get(&row.field_id) else {
             return Ok(None);
@@ -213,6 +228,7 @@ impl ModelInputs {
                             row,
                             correlations,
                             frequencies,
+                            raw_flags,
                             frequency_ref: *frequency_ref,
                             engine,
                             field: &field,

@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, StokesType};
 use casa_images::PagedImage;
@@ -21,13 +21,19 @@ use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{Complex32, Correlation, RecordValue, ScalarValue, Value};
-use ndarray::ArrayD;
+use ndarray::{ArrayD, Axis};
 
 use super::{GainSolveError, SelectedSolveRow, model_error};
 
 pub(super) struct FourierModel {
     record: RecordValue,
-    prepared: Mutex<BTreeMap<Vec<i32>, PreparedFourierModel>>,
+    prepared: Mutex<FourierCache>,
+}
+
+#[derive(Default)]
+struct FourierCache {
+    grids: Option<Arc<PreparedModelGrids>>,
+    layouts: BTreeMap<Vec<i32>, PreparedFourierModel>,
 }
 
 pub(super) struct FourierRow<'a> {
@@ -35,6 +41,7 @@ pub(super) struct FourierRow<'a> {
     pub(super) row: &'a SelectedSolveRow,
     pub(super) correlations: &'a [i32],
     pub(super) frequencies: &'a [f64],
+    pub(super) raw_flags: &'a ArrayD<bool>,
     pub(super) frequency_ref: FrequencyRef,
     pub(super) engine: &'a MsCalEngine,
     pub(super) field: &'a MDirection,
@@ -59,13 +66,18 @@ impl FourierModel {
             .prepared
             .lock()
             .expect("solve model is single consumer");
-        if !prepared.contains_key(row.correlations) {
-            prepared.insert(
-                row.correlations.to_vec(),
-                PreparedFourierModel::load(&self.record, row.ms, row.correlations)?,
-            );
+        if !prepared.layouts.contains_key(row.correlations) {
+            let model = PreparedFourierModel::load(
+                &self.record,
+                row.ms,
+                row.correlations,
+                prepared.grids.clone(),
+            )?;
+            prepared.grids = Some(Arc::clone(&model.grids));
+            prepared.layouts.insert(row.correlations.to_vec(), model);
         }
         prepared
+            .layouts
             .get_mut(row.correlations)
             .expect("correlation layout was prepared")
             .predict(row, output)
@@ -75,7 +87,7 @@ impl FourierModel {
 struct PreparedFourierModel {
     operator: MeasurementOperator,
     resampler: SpectralResampler,
-    grids: PreparedModelGrids,
+    grids: Arc<PreparedModelGrids>,
     phase_centre: MDirection,
     continuum_axis: Option<SpectralAxis>,
     convert_frequencies: bool,
@@ -93,6 +105,7 @@ impl PreparedFourierModel {
         record: &RecordValue,
         ms: &MeasurementSet,
         correlations: &[i32],
+        cached_grids: Option<Arc<PreparedModelGrids>>,
     ) -> Result<Self, GainSolveError> {
         let (terms, continuum_basis) = grid_terms(record)?;
         let images = terms
@@ -114,7 +127,9 @@ impl PreparedFourierModel {
             })
             .ok_or_else(|| model_error("virtual grid image has no direction coordinate"))?;
         let increments = direction.increment();
-        let centre = direction.reference_value();
+        let centre = direction
+            .to_world(&[(nx / 2) as f64, (ny / 2) as f64])
+            .map_err(model_error)?;
         let phase_centre = MDirection::from_angles(centre[0], centre[1], direction.direction_ref());
         let geometry = GridGeometry::new(
             ImageExtent {
@@ -145,7 +160,10 @@ impl PreparedFourierModel {
         };
         let operator =
             MeasurementOperator::new(geometry, basis, polarization, kernels, GridPrecision::F32);
-        let grids = load_grids(&operator, &images)?;
+        let grids = match cached_grids {
+            Some(grids) => grids,
+            None => Arc::new(load_grids(&operator, &images)?),
+        };
         Ok(Self {
             operator,
             resampler,
@@ -178,6 +196,11 @@ impl PreparedFourierModel {
         )
         .map_err(model_error)?;
         let (uvw_m, phase_shift_m) = projection.apply(row.uvw);
+        if row.raw_flags.shape() != [row.correlations.len(), row.frequencies.len()] {
+            return Err(model_error(
+                "virtual Fourier prediction flags do not match the visibility layout",
+            ));
+        }
         let cells = row.frequencies.len() * row.correlations.len();
         self.data.resize(cells, Complex32::new(0.0, 0.0));
         self.output.resize(cells, Complex32::new(0.0, 0.0));
@@ -201,14 +224,19 @@ impl PreparedFourierModel {
         self.frequencies.clear();
         self.frequencies
             .extend(row.frequencies.iter().map(|frequency| frequency * ratio));
-        if let Some(axis) = &self.continuum_axis {
-            for (flags, &frequency) in self
-                .flags
-                .chunks_exact_mut(row.correlations.len())
-                .zip(&self.frequencies)
-            {
-                flags.fill(axis.nearest_channel(frequency).is_none());
-            }
+        // Reopened GridFT uses the original flag cube and the channel-wide
+        // flag from setSpectralFlag, before any solve pre-calibration.
+        for ((flags, raw), &frequency) in self
+            .flags
+            .chunks_exact_mut(row.correlations.len())
+            .zip(row.raw_flags.axis_iter(Axis(1)))
+            .zip(&self.frequencies)
+        {
+            let outside = self
+                .continuum_axis
+                .as_ref()
+                .is_some_and(|axis| axis.nearest_channel(frequency).is_none());
+            flags.fill(outside || raw.iter().any(|flag| *flag));
         }
         let native = NativeRow {
             uvw_m,
@@ -362,6 +390,17 @@ fn open_grid(
 ) -> Result<PagedImage<Complex32>, GainSolveError> {
     if record_text(record, "name")? != "GridFT" {
         return Err(model_error("virtual Taylor models require GridFT terms"));
+    }
+    if ["tangentspecified", "fixmovingsource"].iter().any(|field| {
+        matches!(
+            record.get(field),
+            Some(Value::Scalar(ScalarValue::Bool(true)))
+        )
+    }) || matches!(record.get("distance"), Some(Value::Scalar(ScalarValue::Float64(distance))) if *distance != 0.0)
+    {
+        return Err(model_error(
+            "virtual GridFT facet, tracking or finite-distance geometry is unsupported",
+        ));
     }
     let recorded = Path::new(record_text(record, "diskimage")?);
     let path = match (recorded.exists(), ms.path(), recorded.file_name()) {
