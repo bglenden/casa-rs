@@ -15378,7 +15378,7 @@
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "START:END"},
             "provider": {"field": "timerange", "adapter": "omit_none"},
@@ -15407,7 +15407,7 @@
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--antenna"], "metavar": "IDS"},
             "provider": {"field": "antenna", "adapter": "omit_none"},
@@ -15421,7 +15421,7 @@
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--scan"], "metavar": "IDS"},
             "provider": {"field": "scan", "adapter": "omit_none"},
@@ -15435,7 +15435,7 @@
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--observation"], "metavar": "IDS"},
             "provider": {"field": "observation", "adapter": "identity"},
@@ -15449,7 +15449,7 @@
           "order": 11,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
-          "active_when": {"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}},
+          "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--msselect"], "metavar": "EXPR"},
             "provider": {"field": "msselect", "adapter": "omit_none"},

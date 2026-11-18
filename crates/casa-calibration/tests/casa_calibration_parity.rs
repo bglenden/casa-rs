@@ -1579,6 +1579,7 @@ fn solve_bandpass_with_combine_field_matches_casa_bandpass_downstream_via_casa_a
             combine: BandpassSolveCombine {
                 scans: false,
                 fields: true,
+                ..BandpassSolveCombine::default()
             },
             band_type: BandpassType::B,
             normalize_average_amplitude: false,
@@ -1692,6 +1693,7 @@ fn solve_bandpass_with_combine_scan_matches_casa_bandpass_downstream_via_casa_ap
             combine: BandpassSolveCombine {
                 scans: true,
                 fields: false,
+                ..BandpassSolveCombine::default()
             },
             band_type: BandpassType::B,
             normalize_average_amplitude: false,
@@ -1805,6 +1807,7 @@ fn solve_bandpass_with_combine_scan_and_field_matches_casa_bandpass_downstream_v
             combine: BandpassSolveCombine {
                 scans: true,
                 fields: true,
+                ..BandpassSolveCombine::default()
             },
             band_type: BandpassType::B,
             normalize_average_amplitude: false,

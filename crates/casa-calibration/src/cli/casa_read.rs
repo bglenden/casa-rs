@@ -161,6 +161,8 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         combine: BandpassSolveCombine {
             scans: combine.scans,
             fields: combine.fields,
+            observations: combine.observations,
+            spectral_windows: combine.spectral_windows,
         },
         band_type,
         normalize_average_amplitude: task.flag("solnorm")?,
@@ -321,29 +323,28 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         msselect: text("msselect")?,
         ..MsSelection::default()
     };
-    if !full {
-        return Ok(selection);
-    }
-    selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
-    selection.uvrange = uv_selector_text(task.value("uvrange"));
-    // calibrater.selectvis converts these variants with toCasaString, which
-    // removes one outer bracket pair even when the input was a string.
-    for selector in [
-        &mut selection.field,
-        &mut selection.spw,
-        &mut selection.intent,
-        &mut selection.timerange,
-        &mut selection.uvrange,
-        &mut selection.antenna,
-        &mut selection.scan,
-        &mut selection.observation,
-    ] {
-        if let Some(text) = selector
-            && let Some(inner) = text
-                .strip_prefix('[')
-                .and_then(|text| text.strip_suffix(']'))
-        {
-            *selector = (!inner.is_empty()).then(|| inner.to_string());
+    if full {
+        selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
+        selection.uvrange = uv_selector_text(task.value("uvrange"));
+        // calibrater.selectvis converts these variants with toCasaString, which
+        // removes one outer bracket pair even when the input was a string.
+        for selector in [
+            &mut selection.field,
+            &mut selection.spw,
+            &mut selection.intent,
+            &mut selection.timerange,
+            &mut selection.uvrange,
+            &mut selection.antenna,
+            &mut selection.scan,
+            &mut selection.observation,
+        ] {
+            if let Some(text) = selector
+                && let Some(inner) = text
+                    .strip_prefix('[')
+                    .and_then(|text| text.strip_suffix(']'))
+            {
+                *selector = (!inner.is_empty()).then(|| inner.to_string());
+            }
         }
     }
     // CASA accepts these parameters even when disabled, retaining their input
@@ -356,7 +357,7 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         selection.observation = None;
         selection.msselect = None;
     }
-    if matches!(task.surface(), "gaincal" | "bandpass") {
+    if full && matches!(task.surface(), "gaincal" | "bandpass") {
         // The public task always adds this predicate, including when the
         // optional selectors are disabled.
         selection.msselect = Some(match selection.msselect {
@@ -755,7 +756,10 @@ fn combine(task: &TaskInvocation<'_>) -> Result<GainSolveCombine, TaskFailure> {
     let upper = text.to_ascii_uppercase();
     let spectral_windows = upper.contains("SPW");
     let observations = upper.contains("OBS");
-    if task.surface() == "bandpass" && (spectral_windows || observations) {
+    if (spectral_windows || observations)
+        && task.surface() == "bandpass"
+        && task.required_text("bandtype")? == "BPOLY"
+    {
         return Err(not_yet("combine", &text));
     }
     Ok(GainSolveCombine {

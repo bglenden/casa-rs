@@ -75,6 +75,12 @@ pub struct BandpassSolveCombine {
     pub scans: bool,
     /// Extend solves across field boundaries.
     pub fields: bool,
+    /// Extend solves across observation boundaries.
+    #[serde(default)]
+    pub observations: bool,
+    /// Solve compatible spectral windows together.
+    #[serde(default)]
+    pub spectral_windows: bool,
 }
 
 /// The cuts CASA's `bandpass` makes in each channel's solve
@@ -335,7 +341,8 @@ pub(crate) fn solve_bandpass(
             combine: GainSolveCombine {
                 scans: request.combine.scans,
                 fields: request.combine.fields,
-                ..GainSolveCombine::default()
+                observations: request.combine.observations,
+                spectral_windows: request.combine.spectral_windows,
             },
             channelized: true,
             preaverage_max_span: match request.solve_interval {
@@ -790,6 +797,7 @@ fn write_bandpass_caltable(
         rows,
         channel_bin_widths,
         selected_rows,
+        request.combine.spectral_windows,
     )?;
     writer.save_main()?;
 

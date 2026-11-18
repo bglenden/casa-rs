@@ -542,6 +542,7 @@ fn calibrate_bandpass_solve_reads_every_parameter_it_emits() {
             combine: BandpassSolveCombine {
                 scans: true,
                 fields: true,
+                ..BandpassSolveCombine::default()
             },
             band_type: BandpassType::BPoly,
             normalize_average_amplitude: true,

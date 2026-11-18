@@ -58,7 +58,7 @@ def gapped_data(source, target):
 
 def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,),
             solint='inf', interval_count=None, parang=False, minsnr=0., spw='', bins=None,
-            **solve_options):
+            apply_spwmap=None, **solve_options):
     products, corrected, returns, windows = [], [], [], []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
@@ -74,7 +74,7 @@ def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s
         if bins is not None:
             windows.append(contents(output/'SPECTRAL_WINDOW'))
         engine.applycal(str(ms), field='0', gaintable=[str(output)], flagbackup=False, spw=spw,
-                        parang=parang)
+                        parang=parang, **({'spwmap': [apply_spwmap]} if apply_spwmap else {}))
         corrected.append(contents(ms))
     np.testing.assert_equal(returns[1], returns[0])
     expected, actual = products
@@ -306,6 +306,63 @@ def model_cases(root, source, native):
     return results
 
 
+def combination_cases(root, source, native):
+    observations = root/'two-observations.ms'
+    copy_ms(source, observations)
+    tool = table()
+    observation = duplicate_rows(tool, observations/'OBSERVATION')
+    count = duplicate_rows(tool, observations)
+    tool.open(str(observations), nomodify=False)
+    try:
+        tool.putcol('OBSERVATION_ID', np.full(count, observation, dtype=np.int32), count, count)
+        tool.putcol('DATA', 1.4*tool.getcol('DATA', count, count), count, count)
+        for column in ('TIME', 'TIME_CENTROID'):
+            tool.putcol(column, tool.getcol(column, count, count) + 5., count, count)
+    finally:
+        tool.close()
+    windows = root/'two-windows.ms'
+    copy_ms(observations, windows)
+    assert duplicate_rows(tool, windows/'SPECTRAL_WINDOW') == 1
+    assert duplicate_rows(tool, windows/'DATA_DESCRIPTION') == 1
+    tool.open(str(windows/'DATA_DESCRIPTION'), nomodify=False)
+    try:
+        tool.putcell('SPECTRAL_WINDOW_ID', 1, 1)
+    finally:
+        tool.close()
+    tool.open(str(windows/'SPECTRAL_WINDOW'), nomodify=False)
+    try:
+        tool.putcell('CHAN_FREQ', 1, tool.getcell('CHAN_FREQ', 0)+30.e6)
+        tool.putcell('REF_FREQUENCY', 1, tool.getcell('REF_FREQUENCY', 0)+30.e6)
+        for column in ('CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION'):
+            tool.putcell(column, 1, 2*tool.getcell(column, 0))
+    finally:
+        tool.close()
+    tool.open(str(windows), nomodify=False)
+    try:
+        tool.putcol('DATA_DESC_ID', np.ones(count, dtype=np.int32), count, count)
+    finally:
+        tool.close()
+    cases = [
+        ('combine-obs', observations, '', 'obs', 1, None),
+        ('combine-spw-keep-obs', windows, '0,1', 'spw', 2, None),
+        ('combine-obs-and-spw', windows, '1,0', 'spw,obs', 1, [0, 0]),
+    ]
+    results = {}
+    for label, dataset, spw, combine, count, mapping in cases:
+        folder = root/label
+        folder.mkdir()
+        results[label] = compare(folder, dataset, native, False, combine=combine, spw=spw,
+                                 apply_spwmap=mapping, interval_count=count)
+        if spw:
+            expected, actual = (contents(folder/f'{engine}.B'/'SPECTRAL_WINDOW')
+                                for engine in ('casa', 'native'))
+            for key in ('CHAN_FREQ', 'CHAN_WIDTH', 'EFFECTIVE_BW', 'FLAG_ROW', 'TOTAL_BANDWIDTH'):
+                np.testing.assert_array_equal(actual[key], expected[key], err_msg=key)
+            np.testing.assert_array_equal(actual['CHAN_FREQ'][:2, 0], [100.020e9, 100.021e9])
+            np.testing.assert_allclose(actual['CHAN_WIDTH'][:, 0], 5e6/3., rtol=1e-15)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -342,6 +399,7 @@ def main():
                                        interval_count=count)
     results.update(frequency_cases(root, source, native))
     results.update(selection_cases(root, source, native))
+    results.update(combination_cases(root, source, native))
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, report in results.items():
         assert max(report.values()) < 1e-3, (name, report)

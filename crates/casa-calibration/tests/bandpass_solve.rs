@@ -510,6 +510,7 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
             combine: BandpassSolveCombine {
                 scans: true,
                 fields: false,
+                ..BandpassSolveCombine::default()
             },
             band_type: BandpassType::B,
             normalize_average_amplitude: false,
@@ -656,6 +657,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
             combine: BandpassSolveCombine {
                 scans: false,
                 fields: true,
+                ..BandpassSolveCombine::default()
             },
             band_type: BandpassType::B,
             normalize_average_amplitude: false,
