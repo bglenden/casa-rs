@@ -344,33 +344,31 @@ fn combined_fields_keep_casas_interval_boundaries() {
     assert_eq!(ints(entry(entry(&value, "solvestats"), "expected")), [2, 2]);
 }
 
-/// Two data descriptions on one window: CASA solves each apart, which
-/// casa-rs does not yet, so the solve is refused naming #979, whether the
-/// second repeats the first's correlations or holds the cross hands.
+/// Gaincal accepts either correlation layout on descriptions of the same
+/// window. Bandpass support is tracked on its own calibration ticket.
 #[test]
-fn data_descriptions_sharing_a_window_are_refused_naming_979() {
+fn gaincal_accepts_data_descriptions_sharing_a_window() {
     for cross_hands in [false, true] {
         let dir = TempDir::new().unwrap();
         let ms =
             common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
         share_window_zero(&ms, cross_hands);
-        for (surface, caltable) in [("gaincal", "g.gcal"), ("bandpass", "b.bcal")] {
-            let (output, reply) = json_run(
-                dir.path(),
-                surface,
-                json!({"vis": ms.to_str().unwrap(), "caltable": caltable, "refant": "0",
-                       "minblperant": 2, "smodel": [1, 0, 0, 0]}),
-            );
-            match reply {
-                Some(TaskReply::Failed { message, .. }) => assert!(
-                    message.contains("share spectral window 0") && message.contains("#979"),
-                    "{message}"
-                ),
-                other => panic!(
-                    "{surface} {cross_hands}: {other:?}\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            }
+        let parameters = |caltable| {
+            json!({"vis": ms.to_str().unwrap(), "caltable": caltable, "refant": "0",
+                   "minblperant": 2, "smodel": [1, 0, 0, 0]})
+        };
+        let value = returned(dir.path(), "gaincal", parameters("g.gcal"));
+        assert_eq!(ints(entry(entry(&value, "selectvis"), "spw")), [0]);
+        let (output, reply) = json_run(dir.path(), "bandpass", parameters("b.bcal"));
+        match reply {
+            Some(TaskReply::Failed { message, .. }) => assert!(
+                message.contains("share spectral window 0") && message.contains("#979"),
+                "{message}"
+            ),
+            other => panic!(
+                "bandpass {cross_hands}: {other:?}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
         }
     }
 }

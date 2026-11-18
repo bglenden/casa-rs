@@ -166,7 +166,11 @@ pub(crate) fn prepare_calibration_solve(
     let refant_id = refants.first().copied().unwrap_or(-1);
     let available_antennas = all_antenna_ids(measurement_set)?;
     let rows = collect_selected_rows(measurement_set, selection, full_selection)?;
-    refuse_shared_spectral_windows(&rows)?;
+    if !full_selection {
+        // The legacy bandpass setup still addresses a description by its
+        // window. Gaincal can solve descriptions separately.
+        refuse_shared_spectral_windows(&rows)?;
+    }
     Ok(CalibrationSolveContext {
         refant_id,
         refant_alternates: refants.into_iter().skip(1).collect(),

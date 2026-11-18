@@ -479,7 +479,7 @@ fn solve_bandpass_group(
             SolveGraphOptions {
                 refant_id,
                 min_baselines_per_antenna: cuts.map_or(0, |cuts| cuts.min_baselines_per_antenna),
-                scalar_seed: None,
+                group_seed: None,
                 correlation_dependent_flags: false,
                 defer_reference: false,
                 robustness: None,

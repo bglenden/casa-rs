@@ -662,13 +662,15 @@ fn robust_gain_solve(task: &TaskInvocation<'_>) -> Result<crate::GainSolveRobust
 /// text, or text that contains `inf`, in any case, is one solution per
 /// scan; text that contains `int`, one per integration; anything else is a
 /// time, in seconds when it has no unit. A time of zero is CASA's `inf`,
-/// and a negative one its `int`. Channel intervals (`'inf,2ch'`) are not
-/// implemented yet.
+/// and a negative one its `int`. G and T have a single gain per spectral
+/// window, so CASA ignores the frequency interval after a comma.
 fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
-    let text = selector_text(task.value("solint")).unwrap_or_default();
-    if text.contains(',') {
-        return Err(not_yet("solint", &text));
-    }
+    let supplied = selector_text(task.value("solint")).unwrap_or_default();
+    let text = match supplied.split_once(',') {
+        Some((time, _)) if task.surface() == "gaincal" => time,
+        Some(_) => return Err(not_yet("solint", &supplied)),
+        None => &supplied,
+    };
     let upper = text.to_ascii_uppercase();
     if upper.is_empty() || upper.contains("INF") {
         return Ok(GainSolveInterval::Infinite);
@@ -676,7 +678,7 @@ fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
     if upper.contains("INT") {
         return Ok(GainSolveInterval::Integration);
     }
-    let invalid = || unknown("solint", &text, "'inf', 'int' or a time such as '60s'");
+    let invalid = || unknown("solint", text, "'inf', 'int' or a time such as '60s'");
     let quantity = text.parse::<Quantity>().map_err(|_| invalid())?;
     let seconds = if quantity.unit().name().is_empty() {
         quantity.value()

@@ -11,9 +11,9 @@ use casa_images::PagedImage;
 use casa_imaging_model::{GridFtProjection, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, Boxcar, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
-    ImageExtent, MeasurementOperator, NativeRow, PlaneRange, PolarizationRouting,
+    ImageExtent, MeasurementOperator, NativeRow, PaddingFactor, PlaneRange, PolarizationRouting,
     PredictionScratch, PreparedModelGrids, RowContext, SpectralAxis, SpectralKernel,
-    SpectralResampler, Spheroidal,
+    SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, convert_frequency_to_frame};
@@ -137,7 +137,7 @@ impl PreparedFourierModel {
                 increment_rad: [increments[0], increments[1]],
                 reference_pixel: [nx / 2, ny / 2],
             },
-            GridPadding::None,
+            grid_padding(terms[0])?,
         )
         .map_err(model_error)?;
         let polarization = grid_polarization(image, correlations)?;
@@ -148,16 +148,7 @@ impl PreparedFourierModel {
         }
         let axis = image_spectral_axis(image, channels)?;
         let (basis, resampler) = spectral_layout(record, &axis, continuum_basis)?;
-        let convolution = record_text(terms[0], "convtype")?;
-        let kernels: Box<dyn ConvolutionFunctionSet> = match convolution {
-            "SF" => Box::new(Spheroidal::new(&geometry, &polarization)),
-            "BOX" => Box::new(Boxcar::new(&geometry, &polarization)),
-            name => {
-                return Err(model_error(format!(
-                    "unsupported virtual grid convolution {name}"
-                )));
-            }
-        };
+        let kernels = grid_kernel(terms[0], &geometry, &polarization)?;
         let operator =
             MeasurementOperator::new(geometry, basis, polarization, kernels, GridPrecision::F32);
         let grids = match cached_grids {
@@ -345,7 +336,7 @@ fn image_spectral_axis(
 
 fn grid_terms(record: &RecordValue) -> Result<(Vec<&RecordValue>, Basis), GainSolveError> {
     match record_text(record, "name")? {
-        "GridFT" => Ok((vec![record], Basis::Constant)),
+        "GridFT" | "WProjectFT" => Ok((vec![record], Basis::Constant)),
         "MultiTermFTNew" => {
             let Some(Value::Scalar(ScalarValue::UInt32(terms))) = record.get("nterms") else {
                 return Err(model_error(
@@ -388,8 +379,10 @@ fn open_grid(
     record: &RecordValue,
     ms: &MeasurementSet,
 ) -> Result<PagedImage<Complex32>, GainSolveError> {
-    if record_text(record, "name")? != "GridFT" {
-        return Err(model_error("virtual Taylor models require GridFT terms"));
+    if !matches!(record_text(record, "name")?, "GridFT" | "WProjectFT") {
+        return Err(model_error(
+            "virtual Taylor models require GridFT or WProjectFT terms",
+        ));
     }
     if ["tangentspecified", "fixmovingsource"].iter().any(|field| {
         matches!(
@@ -417,6 +410,57 @@ fn record_text<'a>(record: &'a RecordValue, field: &str) -> Result<&'a str, Gain
     match record.get(field) {
         Some(Value::Scalar(ScalarValue::String(value))) => Ok(value),
         _ => Err(model_error(format!("virtual model has no {field} string"))),
+    }
+}
+
+fn grid_padding(record: &RecordValue) -> Result<GridPadding, GainSolveError> {
+    if record_text(record, "name")? != "WProjectFT" {
+        return Ok(GridPadding::None);
+    }
+    let Some(padding) = record_number(record, "padding") else {
+        return Err(model_error("virtual WProjectFT has no padding factor"));
+    };
+    Ok(GridPadding::CasaComposite(
+        PaddingFactor::new(padding as f32).map_err(model_error)?,
+    ))
+}
+
+fn grid_kernel(
+    record: &RecordValue,
+    geometry: &GridGeometry,
+    polarization: &PolarizationRouting,
+) -> Result<Box<dyn ConvolutionFunctionSet>, GainSolveError> {
+    if record_text(record, "name")? == "WProjectFT" {
+        let Some(Value::Scalar(ScalarValue::Int32(planes))) = record.get("nwplanes") else {
+            return Err(model_error("virtual WProjectFT has no plane count"));
+        };
+        let planes = u32::try_from(*planes).map_err(model_error)?;
+        let max_w = record_number(record, "maxw")
+            .filter(|max_w| max_w.is_finite())
+            .ok_or_else(|| model_error("virtual WProjectFT has no valid maximum W"))?;
+        let count = if max_w > 0.0 {
+            WPlaneCount::Restored { planes, max_w }
+        } else {
+            WPlaneCount::Fixed(planes)
+        };
+        return Ok(Box::new(
+            WPlanes::new(geometry, polarization, count).map_err(model_error)?,
+        ));
+    }
+    match record_text(record, "convtype")? {
+        "SF" => Ok(Box::new(Spheroidal::new(geometry, polarization))),
+        "BOX" => Ok(Box::new(Boxcar::new(geometry, polarization))),
+        name => Err(model_error(format!(
+            "unsupported virtual grid convolution {name}"
+        ))),
+    }
+}
+
+fn record_number(record: &RecordValue, field: &str) -> Option<f64> {
+    match record.get(field) {
+        Some(Value::Scalar(ScalarValue::Float64(value))) => Some(*value),
+        Some(Value::Scalar(ScalarValue::Float32(value))) => Some(f64::from(*value)),
+        _ => None,
     }
 }
 

@@ -13,7 +13,7 @@ use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_types::{ArrayValue, Complex32};
-use ndarray::{ArrayD, ArrayView2, Ix2, IxDyn, ShapeBuilder};
+use ndarray::{ArrayD, ArrayView2, IxDyn, ShapeBuilder};
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
@@ -24,7 +24,10 @@ use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
 use crate::solve::kernel::{RobustSample, SolveGraph};
-use samples::{SolveAccumulationKey, SolveEdgeAccumulation, SolveRowLayout, SolveRowLayouts};
+use samples::{
+    SolveAccumulationKey, SolveEdgeAccumulation, SolveRowInputs, SolveRowLayout, SolveRowLayouts,
+    two_dimensional,
+};
 use time::{AveragedBaseline, FirstTBuffer, WeightedTime, bucketed_rows, first_t_buffers};
 use weights::{SpectralWeights, solve_weights};
 
@@ -64,7 +67,14 @@ pub(crate) fn build_solve_groups(
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
-    let needs_first_buffer = options.gain_type == GainType::T || options.robust_seed;
+    let seed_combined_g = options.gain_type == GainType::G
+        && !options.channelized
+        && !options.robust_seed
+        && (options.combine.spectral_windows
+            || options.combine.fields
+            || options.combine.observations);
+    let needs_first_buffer =
+        options.gain_type == GainType::T || options.robust_seed || seed_combined_g;
     let mut ordered = bucketed_rows(
         rows,
         options.solve_interval,
@@ -122,6 +132,7 @@ pub(crate) fn build_solve_groups(
                     buffer.map_or(row.observation_id, |first| first.observation_id),
                 );
                 group.first_t_buffer = buffer.copied();
+                group.first_g_graphs = seed_combined_g.then(Box::default);
                 group
             });
             if options.combine.fields {
@@ -590,6 +601,7 @@ pub(crate) struct SolveSamples<'a> {
 pub(crate) struct SolveBaseKey {
     pub(crate) field_id: i32,
     pub(crate) spw_id: i32,
+    pub(crate) data_desc_id: i32,
     pub(crate) observation_id: i32,
     pub(crate) scan_number: i32,
 }
@@ -631,6 +643,7 @@ pub(crate) struct SolveAccumulator {
     /// whether or not the solve succeeds.
     pub(crate) attempted: bool,
     first_t_buffer: Option<FirstTBuffer>,
+    pub(crate) first_g_graphs: Option<Box<[SolveGraph; 2]>>,
     parallel_hands: usize,
     baseline_centroids: HashMap<AveragedBaseline, WeightedTime>,
     preaverage_starts: HashMap<AveragedBaseline, f64>,
@@ -654,40 +667,6 @@ impl SolveEdgeStats {
     }
 }
 
-/// One MAIN row's checked two-dimensional solve arrays. Scalar SIGMA weights
-/// have one channel, broadcast to the data's channel count without copying.
-struct SolveRowInputs<'a> {
-    data: &'a ArrayD<Complex32>,
-    flags: Cow<'a, ArrayD<bool>>,
-    weights: ArrayD<f32>,
-    model: Option<&'a ArrayD<Complex32>>,
-}
-
-impl SolveRowInputs<'_> {
-    /// The arrays as [`SolveSamples`] views.
-    fn samples(&self) -> SolveSamples<'_> {
-        SolveSamples {
-            data: two_dimensional(self.data),
-            flags: two_dimensional(&self.flags),
-            weights: self
-                .weights
-                .broadcast(self.data.raw_dim())
-                .expect("checked receptor/channel weight shape")
-                .into_dimensionality::<Ix2>()
-                .expect("checked two-dimensional"),
-            model: self.model.map(two_dimensional),
-            point_model: None,
-        }
-    }
-}
-
-/// A MAIN cell checked two-dimensional, as a view.
-fn two_dimensional<T>(cell: &ArrayD<T>) -> ArrayView2<'_, T> {
-    cell.view()
-        .into_dimensionality::<Ix2>()
-        .expect("checked two-dimensional")
-}
-
 impl SolveAccumulator {
     pub(crate) fn new(field_id: i32, spw_id: i32, observation_id: i32) -> Self {
         Self {
@@ -709,6 +688,7 @@ impl SolveAccumulator {
             solution_time: 0.0,
             attempted: false,
             first_t_buffer: None,
+            first_g_graphs: None,
             parallel_hands: 1,
             baseline_centroids: HashMap::new(),
             preaverage_starts: HashMap::new(),
@@ -956,9 +936,10 @@ impl SolveAccumulator {
             );
         }
         if row_weight > 0.0 {
-            let centroid = self.baseline_centroids.entry(baseline).or_default();
-            centroid.weighted_sum += row_weight * row.time_centroid_seconds;
-            centroid.weight += row_weight;
+            self.baseline_centroids
+                .entry(baseline)
+                .or_default()
+                .observe(row.time_centroid_seconds, row_weight);
         }
         Ok(())
     }
@@ -1020,17 +1001,29 @@ impl SolveAccumulator {
                     };
                     let model = accumulation.model_weight / accumulation.weight;
                     let model_weight = weight * model;
+                    let edge_stats = SolveEdgeStats {
+                        weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
+                        raw_weighted_sample_power: accumulation.weighted_sample_power,
+                        sample_count: accumulation.sample_count,
+                        collapsed_count: 1,
+                    };
                     self.channel_graphs[channel_index][receptor].accumulate(
                         key.baseline.antennas,
                         model_weight * model,
                         sample * model_weight,
-                        SolveEdgeStats {
-                            weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
-                            raw_weighted_sample_power: accumulation.weighted_sample_power,
-                            sample_count: accumulation.sample_count,
-                            collapsed_count: 1,
-                        },
+                        edge_stats,
                     );
+                    let in_first_buffer = self
+                        .first_t_buffer
+                        .is_some_and(|buffer| buffer.contains(key.baseline));
+                    if in_first_buffer && let Some(graphs) = self.first_g_graphs.as_mut() {
+                        graphs[receptor].accumulate(
+                            key.baseline.antennas,
+                            model_weight * model,
+                            sample * model_weight,
+                            edge_stats,
+                        );
+                    }
                     if preserve_samples {
                         self.channel_graphs[channel_index][receptor]
                             .robust_samples
@@ -1040,9 +1033,7 @@ impl SolveAccumulator {
                                 visibility: sample,
                                 weight,
                                 model,
-                                in_first_buffer: self
-                                    .first_t_buffer
-                                    .is_some_and(|buffer| buffer.contains(key.baseline)),
+                                in_first_buffer,
                             });
                     }
                     *baseline_weights.entry(key.baseline).or_default() += f64::from(weight);
@@ -1055,16 +1046,11 @@ impl SolveAccumulator {
             let Some(centroid) = self.baseline_centroids.get(&baseline) else {
                 continue;
             };
-            if centroid.weight > 0.0 {
-                solution_time.weighted_sum += weight * centroid.weighted_sum / centroid.weight;
-                solution_time.weight += weight;
-            }
+            solution_time.observe_mean(*centroid, weight);
         }
-        self.solution_time = if solution_time.weight > 0.0 {
-            solution_time.weighted_sum / solution_time.weight
-        } else {
-            self.aggregate_time()
-        };
+        self.solution_time = solution_time
+            .mean()
+            .unwrap_or_else(|| self.aggregate_time());
     }
 
     /// Add `other`'s accumulation, of the same group, to this one before
@@ -1090,9 +1076,10 @@ impl SolveAccumulator {
         self.solution_channels = self.solution_channels.max(other.solution_channels);
         self.attempted |= other.attempted;
         for (baseline, centroid) in other.baseline_centroids {
-            let mine = self.baseline_centroids.entry(baseline).or_default();
-            mine.weighted_sum += centroid.weighted_sum;
-            mine.weight += centroid.weight;
+            self.baseline_centroids
+                .entry(baseline)
+                .or_default()
+                .merge(centroid);
         }
         if self.receptor_accumulations.len() < other.receptor_accumulations.len() {
             self.receptor_accumulations
@@ -1381,20 +1368,17 @@ mod tests {
                 }],
             );
         }
-        group.baseline_centroids.insert(
-            unaveraged_baseline((0, 1)),
-            WeightedTime {
-                weighted_sum: 10.0 + 12.0,
-                weight: 2.0,
-            },
-        );
-        group.baseline_centroids.insert(
-            unaveraged_baseline((0, 2)),
-            WeightedTime {
-                weighted_sum: 20.0,
-                weight: 1.0,
-            },
-        );
+        let mut first = WeightedTime::default();
+        first.observe(10.0, 1.0);
+        first.observe(12.0, 1.0);
+        group
+            .baseline_centroids
+            .insert(unaveraged_baseline((0, 1)), first);
+        let mut second = WeightedTime::default();
+        second.observe(20.0, 1.0);
+        group
+            .baseline_centroids
+            .insert(unaveraged_baseline((0, 2)), second);
 
         group.finalize_for_solve(GainSolveMode::AmplitudePhase, false);
 
@@ -1468,7 +1452,7 @@ mod tests {
     }
 
     #[test]
-    fn data_descriptions_sharing_a_window_are_refused() {
+    fn bandpass_still_rejects_data_descriptions_sharing_a_window() {
         use crate::session::refuse_shared_spectral_windows;
         // Two descriptions on window 0, as a duplicated description or one
         // holding the cross hands would give.
