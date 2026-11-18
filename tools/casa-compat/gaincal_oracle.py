@@ -726,8 +726,9 @@ def point_model_edges(root, source, native):
 
 def spectral_weights(root, source, native):
     results = {}
+    failure_cases = {'sigma-later-undefined', 'sigma-second-scan', 'sigma-combined-scans'}
     for name in ['absent', 'defined', 'sigma-undefined', 'weight-undefined',
-                 'sigma-first-undefined', 'weight-first-undefined', 'sigma-later-undefined']:
+                 'sigma-first-undefined', 'weight-first-undefined', *sorted(failure_cases)]:
         case = root/name
         case.mkdir()
         vis = case/'source.ms'
@@ -736,6 +737,13 @@ def spectral_weights(root, source, native):
         t.open(str(vis), nomodify=False)
         try:
             shape = t.getcell('DATA', 0).shape
+            missing_sigma = {'sigma-first-undefined': 0, 'sigma-later-undefined': 3,
+                             'sigma-combined-scans': 1}.get(name)
+            if name == 'sigma-second-scan':
+                scans = t.getcol('SCAN_NUMBER')
+                missing_sigma = int(np.flatnonzero(scans != scans[0])[0])
+            if name == 'sigma-combined-scans':
+                t.putcell('SCAN_NUMBER', 1, 3)
             for column in ['SIGMA_SPECTRUM', 'WEIGHT_SPECTRUM']:
                 if column in t.colnames():
                     t.removecols(column)
@@ -749,20 +757,21 @@ def spectral_weights(root, source, native):
                 for row in range(t.nrows()):
                     if name != 'weight-undefined' and not (name == 'weight-first-undefined' and row == 0):
                         t.putcell('WEIGHT_SPECTRUM', row, np.ones(shape, dtype=np.float32))
-                    if (name != 'sigma-undefined' and not (name == 'sigma-first-undefined' and row == 0)
-                            and not (name == 'sigma-later-undefined' and row == 3)):
+                    if name != 'sigma-undefined' and row != missing_sigma:
                         sigma = .4 + (np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
                                       + .9*(row % 6))/12
                         t.putcell('SIGMA_SPECTRUM', row, sigma)
         finally:
             t.close()
-        if name == 'sigma-later-undefined':
+        if name in failure_cases:
+            combine = 'scan' if name == 'sigma-combined-scans' else ''
             for engine, module, diagnostic in [
                 ('casa', casa, 'Error in Calibrater::solve'),
                 ('native', native, 'SIGMA_SPECTRUM'),
             ]:
                 try:
-                    solve(module, case, engine, vis, gaintype='G', calmode='ap', minblperant=2)
+                    solve(module, case, engine, vis, gaintype='G', calmode='ap', minblperant=2,
+                          combine=combine)
                 except RuntimeError as error:
                     assert diagnostic in str(error), (engine, error)
                 else:

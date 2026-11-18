@@ -9,19 +9,22 @@ use casa_types::ArrayValue;
 use ndarray::{ArrayD, Axis};
 
 use super::{
-    BucketedRow, GainSolveError, SelectedSolveRow, SolveInputBatch, input_cell, ms_read_error,
-    unsupported_shape,
+    BucketedRow, GainSolveCombine, GainSolveError, SolveBucketKey, SolveInputBatch, input_cell,
+    ms_read_error, unsupported_shape,
 };
 
-/// The spectral columns are in use for a visibility buffer when both have
-/// a defined cell in its first selected row (`resetWeightsUsingSigma`).
+/// Spectral content in the CASA subchunks consumed by the solve.
 #[derive(Default)]
-pub(super) struct SpectralWeights(HashSet<VisibilityBuffer>);
+pub(super) struct SpectralWeights {
+    enabled: HashSet<VisibilityBuffer>,
+    combine: GainSolveCombine,
+}
 
 impl SpectralWeights {
     pub(super) fn new(
         ms: &MeasurementSet,
         rows: &[BucketedRow<'_>],
+        combine: GainSolveCombine,
     ) -> Result<Self, GainSolveError> {
         let table = ms.main_table();
         let available = |name| {
@@ -32,61 +35,126 @@ impl SpectralWeights {
         if !available("WEIGHT_SPECTRUM") || !available("SIGMA_SPECTRUM") {
             return Ok(Self::default());
         }
-        let weight = table
+        let weight_column = table
             .column_accessor("WEIGHT_SPECTRUM")
             .map_err(|source| ms_read_error(ms, source))?;
-        let sigma = table
+        let sigma_column = table
             .column_accessor("SIGMA_SPECTRUM")
             .map_err(|source| ms_read_error(ms, source))?;
-        let mut first_rows = HashMap::<VisibilityBuffer, usize>::new();
-        for (row, _, _) in rows {
+        let mut first_rows = HashMap::<VisibilityBuffer, (usize, i32)>::new();
+        for row in rows {
+            let value = (row.0.row_index, row.0.data_spw_id);
             first_rows
-                .entry((*row).into())
-                .and_modify(|first| *first = (*first).min(row.row_index))
-                .or_insert(row.row_index);
+                .entry(VisibilityBuffer::new(row, combine))
+                .and_modify(|first| *first = (*first).min(value))
+                .or_insert(value);
         }
         let mut first_rows = first_rows.into_iter().collect::<Vec<_>>();
-        first_rows.sort_unstable_by_key(|&(_, row)| row);
-        let mut spectral = HashSet::new();
+        first_rows.sort_unstable_by_key(|&(buffer, _)| buffer);
+        let first_chunk = first_rows.first().map(|(buffer, _)| buffer.chunk);
+        let mut enabled = HashSet::new();
+        let mut cache = SpectralColumnCache::default();
         for block in first_rows.chunks(256) {
-            let indices = block.iter().map(|&(_, row)| row).collect::<Vec<_>>();
-            let weights =
-                defined_cells(&weight, &indices).map_err(|source| ms_read_error(ms, source))?;
-            let sigmas =
-                defined_cells(&sigma, &indices).map_err(|source| ms_read_error(ms, source))?;
-            spectral.extend(
-                block
-                    .iter()
-                    .zip(weights.into_iter().zip(sigmas))
-                    .filter_map(|(&(buffer, _), (weight, sigma))| {
-                        (weight && sigma).then_some(buffer)
-                    }),
-            );
+            let indices = block.iter().map(|&(_, (row, _))| row).collect::<Vec<_>>();
+            let weights = defined_cells(&weight_column, &indices)
+                .map_err(|source| ms_read_error(ms, source))?;
+            let sigmas = defined_cells(&sigma_column, &indices)
+                .map_err(|source| ms_read_error(ms, source))?;
+            for (&(buffer, (_, spw)), (weight, sigma)) in
+                block.iter().zip(weights.into_iter().zip(sigmas))
+            {
+                cache.visit(
+                    buffer.chunk,
+                    spw,
+                    Some(buffer.chunk) == first_chunk,
+                    weight,
+                    sigma,
+                );
+                if cache.weight_available && cache.sigma_available {
+                    enabled.insert(buffer);
+                }
+            }
         }
-        Ok(Self(spectral))
+        Ok(Self { enabled, combine })
     }
 
-    pub(super) fn contains(&self, row: &SelectedSolveRow) -> bool {
-        self.0.contains(&row.into())
+    pub(super) fn contains(&self, row: &BucketedRow<'_>) -> bool {
+        !self.enabled.is_empty()
+            && self
+                .enabled
+                .contains(&VisibilityBuffer::new(row, self.combine))
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct VisibilityBuffer {
+/// CASA's `newSpectralWindow()` and `newMS()` flags are properties of the
+/// outer chunk. Both availability probes use the current subchunk's first row.
+#[derive(Default)]
+struct SpectralColumnCache {
+    chunk: Option<VisibilityChunk>,
+    spw: Option<i32>,
+    new_spw: bool,
+    weight_available: bool,
+    sigma_available: bool,
+}
+
+impl SpectralColumnCache {
+    fn visit(&mut self, chunk: VisibilityChunk, spw: i32, new_ms: bool, weight: bool, sigma: bool) {
+        if self.chunk != Some(chunk) {
+            self.new_spw = self.spw != Some(spw);
+            self.chunk = Some(chunk);
+            self.spw = Some(spw);
+        }
+        if self.new_spw {
+            self.weight_available = weight;
+        }
+        if new_ms && self.weight_available {
+            self.sigma_available = sigma;
+        }
+    }
+}
+
+/// `CalSolVi2Organizer::deriveVI2Sort` orders outer chunks over these axes.
+/// Array is always a boundary; combined observations/scans are omitted.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct VisibilityChunk {
+    array: i32,
     observation: i32,
-    field: i32,
     scan: i32,
+    field: i32,
     data_description: i32,
+    time_bucket: SolveBucketKey,
+    combined_field: i32,
+    combined_data_description: i32,
+}
+
+/// The subchunk groups rows at the same exact time inside the outer chunk.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct VisibilityBuffer {
+    chunk: VisibilityChunk,
     time: u64,
 }
 
-impl From<&SelectedSolveRow> for VisibilityBuffer {
-    fn from(row: &SelectedSolveRow) -> Self {
+impl VisibilityBuffer {
+    fn new(&(row, base, bucket): &BucketedRow<'_>, combine: GainSolveCombine) -> Self {
         Self {
-            observation: row.observation_id,
-            field: row.field_id,
-            scan: row.scan_number,
-            data_description: row.data_desc_id,
+            chunk: VisibilityChunk {
+                array: row.array_id,
+                observation: base.observation_id,
+                scan: base.scan_number,
+                field: base.field_id,
+                data_description: if combine.spectral_windows {
+                    0
+                } else {
+                    row.data_desc_id
+                },
+                time_bucket: bucket,
+                combined_field: if combine.fields { row.field_id } else { 0 },
+                combined_data_description: if combine.spectral_windows {
+                    row.data_desc_id
+                } else {
+                    0
+                },
+            },
             time: row.time_seconds.to_bits(),
         }
     }
