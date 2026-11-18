@@ -100,6 +100,7 @@ impl MsCalEngine {
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             field_motions: field_motions.into_boxed_slice(),
+            calibration_field_directions: false,
             field_reference_epochs: field_reference_epochs.into_boxed_slice(),
             observatory_position,
             time_reference,
