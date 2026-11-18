@@ -509,7 +509,7 @@
 <a href=#509 id=509 data-nosnippet>509</a>    } <span class="kw">else </span>{
 <a href=#510 id=510 data-nosnippet>510</a>        <span class="macro">vec!</span>[group.field_id]
 <a href=#511 id=511 data-nosnippet>511</a>    };
-<a href=#512 id=512 data-nosnippet>512</a>    <span class="kw">let </span>scan_number = <span class="kw-2">*</span>group.scan_numbers.iter().next().unwrap_or(<span class="kw-2">&amp;</span><span class="number">0</span>);
+<a href=#512 id=512 data-nosnippet>512</a>    <span class="kw">let </span>scan_number = group.scan_number();
 <a href=#513 id=513 data-nosnippet>513</a>    <span class="kw">let </span>interval_seconds = group.total_interval / group.sample_rows.max(<span class="number">1</span>) <span class="kw">as </span>f64;
 <a href=#514 id=514 data-nosnippet>514</a>
 <a href=#515 id=515 data-nosnippet>515</a>    <span class="kw">let </span><span class="kw-2">mut </span>solution_rows = Vec::new();

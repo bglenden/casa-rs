@@ -3274,7 +3274,7 @@
 <a href=#3274 id=3274 data-nosnippet>3274</a>}
 <a href=#3275 id=3275 data-nosnippet>3275</a>
 <a href=#3276 id=3276 data-nosnippet>3276</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>load_parallactic_angle_state(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; MsResult&lt;ParallacticAngleState&gt; {
-<a href=#3277 id=3277 data-nosnippet>3277</a>    <span class="kw">let </span>engine = MsCalEngine::new(ms)<span class="question-mark">?</span>;
+<a href=#3277 id=3277 data-nosnippet>3277</a>    <span class="kw">let </span>engine = MsCalEngine::new(ms)<span class="question-mark">?</span>.with_field_ephemerides(ms)<span class="question-mark">?</span>;
 <a href=#3278 id=3278 data-nosnippet>3278</a>    <span class="kw">let </span><span class="kw-2">mut </span>feed_rows = HashMap::&lt;(i32, i32), Vec&lt;FeedAngleRow&gt;&gt;::new();
 <a href=#3279 id=3279 data-nosnippet>3279</a>    <span class="kw">if let </span><span class="prelude-val">Ok</span>(feed) = ms.feed() {
 <a href=#3280 id=3280 data-nosnippet>3280</a>        <span class="kw">for </span>row_index <span class="kw">in </span><span class="number">0</span>..feed.row_count() {
