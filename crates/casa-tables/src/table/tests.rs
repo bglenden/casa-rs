@@ -5393,6 +5393,29 @@ fn packed_tiled_cells_preserve_order_and_refuse_shape_changes() {
         }
     }
     assert!(column.packed_2d_cells_uncached(&[0, 1]).unwrap().is_none());
+    let Some(ArrayValue::Complex64(widened)) = column
+        .packed_2d_cells_uncached_with_complex_promotion(&[2, 0, 2])
+        .unwrap()
+    else {
+        panic!("expected a packed complex128 read");
+    };
+    assert_eq!(widened.shape(), &[2, 3, 3]);
+    for (offset, row) in [2, 0, 2].into_iter().enumerate() {
+        for channel in 0..3 {
+            for corr in 0..2 {
+                assert_eq!(
+                    widened[[corr, channel, offset]],
+                    casa_types::Complex64::new(row as f64, (corr + 2 * channel) as f64)
+                );
+            }
+        }
+    }
+    assert!(
+        column
+            .packed_2d_cells_uncached_with_complex_promotion(&[0, 1])
+            .unwrap()
+            .is_none()
+    );
     assert!(!reopened.inner.has_loaded_rows());
 }
 

@@ -1979,12 +1979,33 @@ impl<'a> TableColumn<'a> {
         &self,
         row_indices: &[usize],
     ) -> Result<Option<ArrayValue>, TableError> {
+        self.read_packed_2d_cells(row_indices, false)
+    }
+
+    /// Read as in [`Self::packed_2d_cells_uncached`], but decode Complex32
+    /// storage directly into a Complex64 result. Other supported element
+    /// types retain their normal representation.
+    ///
+    /// # Errors
+    /// A selected row is out of bounds or the storage read fails.
+    pub fn packed_2d_cells_uncached_with_complex_promotion(
+        &self,
+        row_indices: &[usize],
+    ) -> Result<Option<ArrayValue>, TableError> {
+        self.read_packed_2d_cells(row_indices, true)
+    }
+
+    fn read_packed_2d_cells(
+        &self,
+        row_indices: &[usize],
+        widen_complex: bool,
+    ) -> Result<Option<ArrayValue>, TableError> {
         for &row in row_indices {
             self.table.require_row_index_without_loading_rows(row)?;
         }
         self.table
             .inner
-            .packed_2d_cells_uncached(&self.column, row_indices)
+            .packed_2d_cells_uncached(&self.column, row_indices, widen_complex)
     }
 
     /// Read whole 2-D cells of exactly `shape`, packed `[channel][row][axis0]`,
