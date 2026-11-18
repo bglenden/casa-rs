@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::virtual_model::{put_virtual_model_holding, selected_model_combinations};
+use casa_ms::virtual_model::selected_model_combinations;
 use casa_ms::write_session::{
     MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession,
 };
@@ -61,23 +61,14 @@ pub(crate) fn model_entry(
     })
 }
 
-pub(crate) fn publish_models(
+pub(crate) fn write_model_scratch(
     ms: &mut MeasurementSet,
     selected: &ResolvedMsSelection,
     entries: &[VirtualModelEntry],
-    scratch: bool,
     incremental: bool,
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
     if entries.is_empty() || selected.selected_rows.is_empty() {
-        return Ok(());
-    }
-    if !scratch {
-        for entry in entries {
-            // The legacy SkyEquation asks the VI to append each component
-            // list even for a task invocation with incremental=False.
-            put_virtual_model_holding(ms, entry, true, lock)?;
-        }
         return Ok(());
     }
     let models =
