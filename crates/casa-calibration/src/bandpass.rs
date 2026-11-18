@@ -57,6 +57,15 @@ pub enum BandpassType {
     BPoly,
 }
 
+/// Frequency width of a channelized `bandpass` solution bin.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub enum BandpassFrequencyInterval {
+    /// Number of selected channels per solution.
+    Channels(usize),
+    /// Bandwidth divided by the first input channel's absolute width in each SPW.
+    Hertz(f64),
+}
+
 /// Supported `bandpass(..., combine=...)` axes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct BandpassSolveCombine {
@@ -134,6 +143,8 @@ pub struct BandpassSolveRequest {
     pub model_source: GainSolveModelSource,
     /// Time interval used to group channelized solutions.
     pub solve_interval: GainSolveInterval,
+    /// Optional frequency interval used to group selected channels.
+    pub frequency_interval: Option<BandpassFrequencyInterval>,
     /// Point-source Stokes model when requested.
     pub smodel: [f32; 4],
     /// The per-channel cuts and `BPOLY` edge mask, or none: every antenna
@@ -305,10 +316,12 @@ pub(crate) fn solve_bandpass(
         false,
         crate::solve::grouping::PriorCalibrationMode::Data,
     )?;
+    let channel_bin_widths = metadata::bin_widths(ms, &context.rows, request.frequency_interval)?;
     let groups = build_solve_groups(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
+        &channel_bin_widths,
         SolveGroupOptions {
             gain_type: GainType::G,
             model_source: request.model_source,
@@ -404,7 +417,14 @@ pub(crate) fn solve_bandpass(
                     fill_bandpass_gaps(row, cuts.fill_gaps);
                 }
             }
-            write_bandpass_caltable(ms, request, context.refant_id, &solution_rows, mode)
+            write_bandpass_caltable(
+                ms,
+                request,
+                context.refant_id,
+                &solution_rows,
+                &channel_bin_widths,
+                mode,
+            )
         }
         BandpassType::BPoly => {
             write_bpoly_caltable(ms, request, context.refant_id, &solution_rows, mode)
@@ -420,6 +440,11 @@ pub(crate) fn solve_bandpass(
 fn validate_bandpass_request(request: &BandpassSolveRequest) -> Result<(), BandpassSolveError> {
     crate::solve::validate_smodel(request.smodel, request.band_type == BandpassType::B)?;
     crate::solve::validate_solve_interval(request.solve_interval)?;
+    if request.band_type == BandpassType::BPoly && request.frequency_interval.is_some() {
+        return Err(BandpassSolveError::UnsupportedConfiguration {
+            reason: "frequency intervals require bandtype='B'".to_string(),
+        });
+    }
     if matches!(
         request.refant,
         RefAntSelector::Unspecified | RefAntSelector::Expression { .. }
@@ -614,6 +639,7 @@ fn write_bandpass_caltable(
     request: &BandpassSolveRequest,
     refant_id: i32,
     rows: &[BandpassSolutionRow],
+    channel_bin_widths: &BTreeMap<i32, usize>,
     mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     let schema = TableSchema::new(vec![
@@ -747,7 +773,12 @@ fn write_bandpass_caltable(
         (SubtableId::History, "HISTORY"),
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
     ])?;
-    metadata::write(&writer.output_path().join("SPECTRAL_WINDOW"), request, rows)?;
+    metadata::write(
+        &writer.output_path().join("SPECTRAL_WINDOW"),
+        request,
+        rows,
+        channel_bin_widths,
+    )?;
     writer.save_main()?;
 
     let field_ids = rows.iter().map(|row| row.field_id).collect::<BTreeSet<_>>();

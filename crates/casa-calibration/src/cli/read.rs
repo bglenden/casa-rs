@@ -162,6 +162,7 @@ fn solve_bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest,
         phase_degree: count(task, "degphase")?,
         model_source: GainSolveModelSource::PointSource,
         solve_interval: GainSolveInterval::Infinite,
+        frequency_interval: None,
         smodel: parsed(task, "smodel", parse_stokes_smodel)?,
         // The native bandpass solves every antenna with a baseline and
         // keeps every solution, as it always has.

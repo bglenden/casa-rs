@@ -76,6 +76,7 @@ pub(crate) fn build_solve_groups(
     ms: &MeasurementSet,
     rows: &[SelectedSolveRow],
     preapplied_rows: Option<&HashMap<usize, EvaluatedApplyRow>>,
+    channel_bin_widths: &BTreeMap<i32, usize>,
     options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
@@ -112,7 +113,7 @@ pub(crate) fn build_solve_groups(
     }
     models.phase_times =
         weights::chunk_phase_times(&ordered, options.combine, models.dynamic_fields());
-    let mut layouts = SolveRowLayouts::new(ms, options.rotate_model, &models)?;
+    let mut layouts = SolveRowLayouts::new(ms, options.rotate_model, &models, channel_bin_widths)?;
     let spectral_weights = SpectralWeights::new(ms, &ordered, options.combine)?;
     let pipelined = overlap_inputs(ordered.len());
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
@@ -618,6 +619,13 @@ pub(crate) struct SolveSamples<'a> {
     pub(crate) point_model: Option<&'a [Complex32]>,
 }
 
+#[derive(Clone, Copy)]
+struct SelectedChannels<'a> {
+    indices: &'a [usize],
+    all_channels: bool,
+    bin_width: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SolveBaseKey {
     pub(crate) array_id: i32,
@@ -859,9 +867,16 @@ impl SolveAccumulator {
             &SolveSampleRow::of(row),
             &samples,
             &layout.correlations,
-            &layout.channels,
+            SelectedChannels {
+                indices: &layout.channels,
+                all_channels: layout.all_channels,
+                bin_width: layouts
+                    .channel_bin_widths
+                    .get(&row.data_spw_id)
+                    .copied()
+                    .unwrap_or(1),
+            },
             options,
-            layout.all_channels,
         )
     }
 
@@ -882,9 +897,12 @@ impl SolveAccumulator {
             row,
             samples,
             correlation_types,
-            channels,
+            SelectedChannels {
+                indices: channels,
+                all_channels: channels.iter().copied().eq(0..samples.data.ncols()),
+                bin_width: 1,
+            },
             options,
-            channels.iter().copied().eq(0..samples.data.ncols()),
         )
     }
 
@@ -893,12 +911,11 @@ impl SolveAccumulator {
         row: &SolveSampleRow,
         samples: &SolveSamples<'_>,
         correlation_types: &[i32],
-        channels: &[usize],
+        channels: SelectedChannels<'_>,
         options: &SolveGroupOptions,
-        all_channels: bool,
     ) -> Result<(), GainSolveError> {
         if options.channelized {
-            let channel_count = channels.len();
+            let channel_count = channels.indices.len().div_ceil(channels.bin_width);
             if !options.gain_type.is_delay()
                 && self.sample_rows > 0
                 && self.solution_channels != channel_count
@@ -1036,7 +1053,6 @@ impl SolveAccumulator {
                 shared_flags.as_deref(),
                 channels,
                 point,
-                all_channels,
             );
             if !delay {
                 row_weight += accumulated_weight;

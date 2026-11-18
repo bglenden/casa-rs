@@ -27,11 +27,12 @@ use casa_types::quanta::{Quantity, Unit};
 
 use super::read::{count, parse_gainfield_value, parse_interp_value, parse_refant_selector};
 use crate::{
-    ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassSolveCombine,
-    BandpassSolveCuts, BandpassType, CalibrationTaskRequest, ExecuteApplyTaskRequest,
-    FluxScaleRequest, GainNormalization, GainSolveCombine, GainSolveInterval, GainSolveMode,
-    GainSolveModelSource, GainType, GencalTaskRequest, GencalType, RefAntSelector,
-    SolveBandpassTaskRequest, SolveGainTaskRequest, load_apply_specs_from_callib,
+    ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassFrequencyInterval,
+    BandpassSolveCombine, BandpassSolveCuts, BandpassType, CalibrationTaskRequest,
+    ExecuteApplyTaskRequest, FluxScaleRequest, GainNormalization, GainSolveCombine,
+    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalTaskRequest,
+    GencalType, RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest,
+    load_apply_specs_from_callib,
 };
 
 /// The request a CASA-named surface makes.
@@ -128,6 +129,10 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         other => return Err(unknown("bandtype", other, "'B' or 'BPOLY'")),
     };
     let (model_source, smodel) = model(task, &measurement_set, band_type == BandpassType::B)?;
+    let supplied_interval = selector_text(task.value("solint")).unwrap_or_default();
+    let (time_interval, frequency_interval) = supplied_interval
+        .split_once(',')
+        .unwrap_or((&supplied_interval, ""));
     if matches!(model_source, GainSolveModelSource::ModelColumn) {
         return Err(not_yet("smodel", "[] with a MODEL_DATA column"));
     }
@@ -162,7 +167,8 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
         amplitude_degree: count(task, "degamp")?,
         phase_degree: count(task, "degphase")?,
         model_source,
-        solve_interval: solint(task)?,
+        solve_interval: parse_time_solint(time_interval)?,
+        frequency_interval: parse_frequency_solint(frequency_interval)?,
         smodel,
         cuts: Some(BandpassSolveCuts {
             min_baselines_per_antenna: count(task, "minblperant")?,
@@ -677,16 +683,13 @@ fn robust_gain_solve(task: &TaskInvocation<'_>) -> Result<crate::GainSolveRobust
 /// window, so CASA ignores the frequency interval after a comma.
 fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
     let supplied = selector_text(task.value("solint")).unwrap_or_default();
-    let text = match supplied.split_once(',') {
-        Some((time, _)) if task.surface() == "gaincal" => time,
-        Some((time, frequency))
-            if frequency.trim().is_empty() || frequency.trim().eq_ignore_ascii_case("none") =>
-        {
-            time
-        }
-        Some(_) => return Err(not_yet("solint", &supplied)),
-        None => &supplied,
-    };
+    let time = supplied
+        .split_once(',')
+        .map_or(supplied.as_str(), |(time, _)| time);
+    parse_time_solint(time)
+}
+
+fn parse_time_solint(text: &str) -> Result<GainSolveInterval, TaskFailure> {
     let upper = text.to_ascii_uppercase();
     if upper.is_empty() || upper.contains("INF") {
         return Ok(GainSolveInterval::Infinite);
@@ -712,6 +715,40 @@ fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
     } else {
         GainSolveInterval::Integration
     })
+}
+
+fn parse_frequency_solint(text: &str) -> Result<Option<BandpassFrequencyInterval>, TaskFailure> {
+    let upper = text.trim().to_ascii_uppercase();
+    if upper.is_empty() || upper.contains("NONE") {
+        return Ok(None);
+    }
+    let invalid = || {
+        unknown(
+            "solint",
+            text,
+            "'none', a channel count, or a bandwidth such as '3MHz'",
+        )
+    };
+    let channels = |count: f64| {
+        if !count.is_finite() {
+            return Err(invalid());
+        }
+        let count = count as usize;
+        Ok((count > 1).then_some(BandpassFrequencyInterval::Channels(count)))
+    };
+    if let Some((count, _)) = upper.split_once("CH") {
+        return channels(count.trim().parse::<f64>().map_err(|_| invalid())?);
+    }
+    let quantity = text.trim().parse::<Quantity>().map_err(|_| invalid())?;
+    if quantity.unit().name().is_empty() {
+        return channels(quantity.value());
+    }
+    let hertz = Unit::new("Hz").map_err(|_| invalid())?;
+    let value = quantity.get_value_in(&hertz).map_err(|_| invalid())?;
+    if !value.is_finite() {
+        return Err(invalid());
+    }
+    Ok((value > 0.0).then_some(BandpassFrequencyInterval::Hertz(value)))
 }
 
 /// The axes CASA's `combine` names, found as `SolvableVisCal` finds them:

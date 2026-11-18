@@ -1,14 +1,60 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selected B-table channelization, including CASA's persisted width defects.
-use super::{BandpassSolutionRow, BandpassSolveError, BandpassSolveRequest};
+use super::{
+    BandpassFrequencyInterval, BandpassSolutionRow, BandpassSolveError, BandpassSolveRequest,
+};
+use crate::solve::grouping::SelectedSolveRow;
+use casa_ms::ms::MeasurementSet;
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, ScalarValue, Value};
-use std::path::Path;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
+
+pub(super) fn bin_widths(
+    ms: &MeasurementSet,
+    rows: &[SelectedSolveRow],
+    interval: Option<BandpassFrequencyInterval>,
+) -> Result<BTreeMap<i32, usize>, BandpassSolveError> {
+    let Some(interval) = interval else {
+        return Ok(BTreeMap::new());
+    };
+    let fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
+    let mut widths = BTreeMap::new();
+    for spw in rows
+        .iter()
+        .map(|row| row.data_spw_id)
+        .collect::<BTreeSet<_>>()
+    {
+        let count = match interval {
+            BandpassFrequencyInterval::Channels(count) => count,
+            BandpassFrequencyInterval::Hertz(hertz) => {
+                let window = ms
+                    .spectral_window()
+                    .map_err(|error| fail(error.to_string()))?;
+                let widths = window
+                    .chan_width(spw as usize)
+                    .map_err(|error| fail(error.to_string()))?;
+                let width = widths
+                    .first()
+                    .filter(|width| width.is_finite() && **width != 0.0)
+                    .ok_or_else(|| fail(format!("SPW {spw} has no valid first channel width")))?;
+                (hertz / width.abs()).floor() as usize
+            }
+        };
+        if count > 1 {
+            widths.insert(spw, count);
+        }
+    }
+    Ok(widths)
+}
 
 pub(super) fn write(
     path: &Path,
     request: &BandpassSolveRequest,
     rows: &[BandpassSolutionRow],
+    channel_bin_widths: &BTreeMap<i32, usize>,
 ) -> Result<(), BandpassSolveError> {
     let fail = |reason: String| BandpassSolveError::UnsupportedConfiguration { reason };
     let mut table = Table::open(TableOptions::new(path)).map_err(|e| fail(e.to_string()))?;
@@ -46,6 +92,16 @@ pub(super) fn write(
                     .ok_or_else(|| fail("SPW channel width shape mismatch".to_string()))?
                     .abs(),
             );
+        }
+        if let Some(&width) = channel_bin_widths.get(&(row as i32)) {
+            selected_frequencies = selected_frequencies
+                .chunks(width)
+                .map(|bin| bin.iter().sum::<f64>() / bin.len() as f64)
+                .collect();
+            selected_widths = selected_widths
+                .chunks(width)
+                .map(|bin| bin.iter().sum())
+                .collect();
         }
         let count = selected_frequencies.len();
         let total: f64 = selected_frequencies.iter().sum();

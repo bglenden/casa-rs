@@ -51,6 +51,7 @@ pub(super) fn solve(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
+        &BTreeMap::new(),
         SolveGroupOptions {
             gain_type: request.gain_type,
             model_source: request.model_source,

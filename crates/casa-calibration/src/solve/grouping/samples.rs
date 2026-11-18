@@ -6,15 +6,15 @@ use casa_types::Complex32;
 use ndarray::{ArrayD, ArrayView2, Axis, Ix2, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use crate::execute::ParallacticAngleState;
 use crate::solve::model::ModelInputs;
 
 use super::{
-    AveragedBaseline, GainSolveError, GainSolveMode, SelectedSolveRow, SolveAccumulator,
-    SolveSamples, get_i32, median_with_even_mean,
+    AveragedBaseline, GainSolveError, GainSolveMode, SelectedChannels, SelectedSolveRow,
+    SolveAccumulator, SolveSamples, get_i32, median_with_even_mean,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -62,6 +62,7 @@ pub(super) struct SolveRowLayouts<'a> {
     pub(super) models: &'a ModelInputs,
     pub(super) by_ddid: HashMap<i32, SolveRowLayout>,
     pub(super) rotation: Option<ParallacticAngleState>,
+    pub(super) channel_bin_widths: &'a BTreeMap<i32, usize>,
 }
 
 impl<'a> SolveRowLayouts<'a> {
@@ -69,6 +70,7 @@ impl<'a> SolveRowLayouts<'a> {
         ms: &MeasurementSet,
         rotate_model: bool,
         models: &'a ModelInputs,
+        channel_bin_widths: &'a BTreeMap<i32, usize>,
     ) -> Result<Self, GainSolveError> {
         let rotation = rotate_model
             .then(|| crate::execute::load_parallactic_angle_state(ms))
@@ -85,6 +87,7 @@ impl<'a> SolveRowLayouts<'a> {
             by_ddid: HashMap::new(),
             rotation,
             models,
+            channel_bin_widths,
         })
     }
 }
@@ -251,17 +254,19 @@ pub(super) fn rotate_model(
 pub(super) fn centroid_weight(
     samples: &SolveSamples<'_>,
     correlation: usize,
-    channels: &[usize],
+    channels: SelectedChannels<'_>,
     shared_flags: Option<&[bool]>,
     point: Complex32,
     channelized: bool,
 ) -> f64 {
-    let weights = channels.iter().map(|&channel| {
-        let flagged = shared_flags.map_or_else(
+    let flagged = |channel| {
+        shared_flags.map_or_else(
             || samples.flags[[correlation, channel]],
             |flags| flags[channel],
-        );
-        if flagged {
+        )
+    };
+    let weight = |&channel: &usize| {
+        if flagged(channel) {
             0.0
         } else {
             let model = samples
@@ -271,13 +276,21 @@ pub(super) fn centroid_weight(
             let scale = if power == 0.0 { 1.0 } else { power };
             samples.weights[[correlation, channel]] * scale
         }
-    });
-    if channelized {
+    };
+    if channels.bin_width > 1 {
+        let weights = channels
+            .indices
+            .chunks(channels.bin_width)
+            .filter(|bin| bin.iter().any(|&channel| !flagged(channel)))
+            .map(|bin| bin.iter().map(weight).sum::<f32>());
+        mean_weights(weights)
+    } else if channelized {
         // VisEquation::divideCorrByModel replaces each scalar row weight
         // by the median of the channel weights after model normalization.
-        f64::from(median_with_even_mean(&mut weights.collect::<Vec<_>>()))
+        let mut weights = channels.indices.iter().map(weight).collect::<Vec<_>>();
+        f64::from(median_with_even_mean(&mut weights))
     } else {
-        weights.map(f64::from).sum()
+        channels.indices.iter().map(weight).map(f64::from).sum()
     }
 }
 
@@ -321,9 +334,8 @@ impl SampleAccumulation<'_> {
         samples: &SolveSamples<'_>,
         correlation: usize,
         shared_flags: Option<&[bool]>,
-        channels: &[usize],
+        channels: SelectedChannels<'_>,
         point: Complex32,
-        all_channels: bool,
     ) -> f64 {
         let data = samples.data.index_axis(Axis(0), correlation);
         let weights = samples.weights.index_axis(Axis(0), correlation);
@@ -334,8 +346,27 @@ impl SampleAccumulation<'_> {
         let model = samples
             .model
             .map(|model| model.index_axis_move(Axis(0), correlation));
+        let selected = |&channel: &usize| Sample {
+            data: data[channel],
+            model: model.as_ref().map_or(point, |model| model[channel]),
+            weight: weights[channel],
+            flagged: flags[channel],
+        };
+        if channels.bin_width > 1 {
+            let weights = self
+                .values
+                .iter_mut()
+                .zip(channels.indices.chunks(channels.bin_width))
+                .filter_map(|(value, bin)| {
+                    let (average, unflagged) =
+                        average_channels::<false>(self.attempted, bin.iter().map(selected));
+                    value.merge(average);
+                    unflagged.then_some(average.weight)
+                });
+            return mean_weights(weights);
+        }
         let correlations = samples.data.nrows();
-        if all_channels
+        if channels.all_channels
             && model.is_none()
             && !weights.is_empty()
             && weights.strides()[0] == 0
@@ -359,7 +390,7 @@ impl SampleAccumulation<'_> {
                 weight * point.norm_sqr(),
             );
         }
-        if all_channels {
+        if channels.all_channels {
             // Strided row iterators avoid repeated two-dimensional indexing;
             // scalar weights retain their broadcast stride of zero.
             let values = data.iter().zip(weights.iter()).zip(flags.iter());
@@ -381,12 +412,7 @@ impl SampleAccumulation<'_> {
                 }))
             }
         } else {
-            self.add::<false>(channels.iter().map(|&channel| Sample {
-                data: data[channel],
-                model: model.as_ref().map_or(point, |model| model[channel]),
-                weight: weights[channel],
-                flagged: flags[channel],
-            }))
+            self.add::<false>(channels.indices.iter().map(selected))
         }
     }
 
@@ -459,24 +485,39 @@ impl SampleAccumulation<'_> {
     }
 
     fn add_scalar_row<const POINT: bool>(&mut self, samples: impl Iterator<Item = Sample>) -> f64 {
-        let mut average = SolveEdgeAccumulation::default();
-        let mut channel_count = 0;
-        let mut model_channels = 0;
-        for sample in samples {
-            if !sample.flagged {
-                channel_count += 1;
-                model_channels += usize::from(sample.model.norm_sqr() > 0.0);
-            }
-            average.add_sample::<POINT>(self.attempted, sample, true);
-        }
-        if channel_count > 0 {
-            // ChannelAverageTVI averages the normalized model with flags
-            // alone. VbAvg then time-averages that model with data weights.
-            average.model_weight = average.weight * model_channels as f32 / channel_count as f32;
-            self.values[0].merge(average);
-        }
+        let (average, _) = average_channels::<POINT>(self.attempted, samples);
+        self.values[0].merge(average);
         f64::from(average.weight)
     }
+}
+
+fn average_channels<const POINT: bool>(
+    attempted: &mut bool,
+    samples: impl Iterator<Item = Sample>,
+) -> (SolveEdgeAccumulation, bool) {
+    let mut average = SolveEdgeAccumulation::default();
+    let mut channel_count = 0;
+    let mut model_channels = 0;
+    for sample in samples {
+        if !sample.flagged {
+            channel_count += 1;
+            model_channels += usize::from(sample.model.norm_sqr() > 0.0);
+        }
+        average.add_sample::<POINT>(attempted, sample, true);
+    }
+    if channel_count > 0 {
+        // ChannelAverageTVI averages the normalized model with flags
+        // alone. VbAvg then time-averages that model with data weights.
+        average.model_weight = average.weight * model_channels as f32 / channel_count as f32;
+    }
+    (average, channel_count > 0)
+}
+
+/// After frequency averaging, FreqAxisTVI uses the mean of the weights of
+/// unflagged bins as the scalar weight for the following time average.
+fn mean_weights(weights: impl Iterator<Item = f32>) -> f64 {
+    let (sum, count) = weights.fold((0.0, 0), |(sum, count), value| (sum + value, count + 1));
+    f64::from(sum / count.max(1) as f32)
 }
 
 #[derive(Debug, Clone, Copy, Default)]
