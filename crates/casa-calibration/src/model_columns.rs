@@ -71,7 +71,11 @@ pub(crate) fn delete_model(
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
     if virtual_model {
-        let (fields, _) = casa_ms::virtual_model::virtual_model_clear_ids(ms, field, None)?;
+        let field = field.filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("false"));
+        let fields = field.map_or_else(
+            || Ok(Vec::new()),
+            |text| ms.resolve_field_selector(if text.trim().is_empty() { "*" } else { text }),
+        )?;
         casa_ms::virtual_model::clear_virtual_model_holding(ms, &fields, &[], lock)?;
     }
     if scratch {
