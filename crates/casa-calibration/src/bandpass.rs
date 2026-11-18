@@ -314,6 +314,7 @@ pub(crate) fn solve_bandpass(
                 fields: request.combine.fields,
             },
             channelized: true,
+            preaverage_max_span: None,
         },
     )?;
 

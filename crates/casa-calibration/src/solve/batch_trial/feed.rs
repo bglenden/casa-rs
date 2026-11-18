@@ -75,6 +75,7 @@ fn observe(
         solve_interval: request.solve_interval,
         combine: request.combine,
         channelized: false,
+        preaverage_max_span: None,
     };
     for sample in samples {
         let coordinate = batch.sample(sample);

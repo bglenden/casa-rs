@@ -140,6 +140,9 @@ pub struct GainSolveRequest {
     pub solve_mode: GainSolveMode,
     /// Solution interval.
     pub solve_interval: GainSolveInterval,
+    /// Positive averaging interval in seconds before the gain solve.
+    /// Nonpositive values average over the whole solution interval.
+    pub preaverage_seconds: f64,
     /// Axes to combine while forming solve groups.
     pub combine: GainSolveCombine,
     /// Reference antenna.
@@ -387,6 +390,17 @@ pub(crate) fn solve_gain_rows(
             stokes_i: request.smodel[0],
             solve_interval: request.solve_interval,
             combine: request.combine,
+            preaverage_max_span: match request.solve_interval {
+                GainSolveInterval::Infinite => Some(request.preaverage_seconds),
+                GainSolveInterval::Seconds(seconds) if request.preaverage_seconds < seconds => {
+                    Some(request.preaverage_seconds)
+                }
+                _ => None,
+            }
+            .filter(|seconds| *seconds > f64::from(f32::EPSILON) && seconds.is_finite())
+            // CASA stores preavg as a Float. VbAvg allows a 0.1 percent
+            // tolerance at the end of each baseline's averaging span.
+            .map(|seconds| f64::from(seconds as f32) * 0.999),
             channelized: false,
         },
     )?;

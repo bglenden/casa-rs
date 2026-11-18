@@ -274,6 +274,9 @@ pub struct SolveGainTaskRequest {
     pub solve_mode: GainSolveMode,
     /// Solution interval.
     pub solve_interval: GainSolveInterval,
+    /// Positive averaging interval in seconds before the gain solve.
+    #[serde(default)]
+    pub preaverage_seconds: f64,
     /// Group-combine controls.
     #[serde(default)]
     pub combine: GainSolveCombine,
@@ -442,6 +445,7 @@ impl CalibrationTaskRequest {
                     gain_type: request.gain_type,
                     solve_mode: request.solve_mode,
                     solve_interval: request.solve_interval,
+                    preaverage_seconds: request.preaverage_seconds,
                     combine: request.combine,
                     refant: request.refant.clone(),
                     prior_calibration_tables: request.prior_calibration_tables.clone(),

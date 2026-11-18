@@ -14854,8 +14854,7 @@
             "provider": {"field": "preavg"},
             "python": {"name": "preavg"},
             "presentation": {"label": "Pre-average", "group": "Solve", "advanced": true}
-          },
-          "unimplemented": {"issue": 979}
+          }
         },
         {
           "name": "refant",

@@ -17,11 +17,11 @@ from calibration_lifecycle_oracle import contents
 from record_casa_returns import make_cal_ms
 
 
-def solve(module, root, label, source, **options):
+def solve(module, root, label, source, refant='A0', **options):
     caltable = root/f'{label}.cal'
     preload = os.environ.pop('LD_PRELOAD', None) if module is not casa else None
     try:
-        module.gaincal(vis=str(source), caltable=str(caltable), refant='A0',
+        module.gaincal(vis=str(source), caltable=str(caltable), refant=refant,
                        smodel=[1., 0., 0., 0.], minsnr=0., **options)
     finally:
         if preload is not None:
@@ -93,7 +93,7 @@ def amplitude_data(root, source):
         channel = np.arange(data.shape[1])[:, None]
         receptor = np.arange(data.shape[0])[:, None, None]
         amplitude = (1.+.13*a)*(1.+.13*b)*(1.+.05*(a==1)*(b==3))
-        phase = (.09+.026*channel+.023*time)*(a-b)
+        phase = (.09+.026*channel+.023*time)*(a-b)+.065*(a==2)*(b==4)
         data[:] = amplitude*(1.+.09*receptor)*np.exp(1j*(phase+.04*receptor*(a-b)))
         t.putcol('DATA', data)
         t.putcol('FLAG', np.zeros(data.shape, dtype=bool))
@@ -103,10 +103,12 @@ def amplitude_data(root, source):
     return path
 
 
-def amplitude_only(root, source, native, gaintype, solint, solnorm, normtype='mean'):
-    label = f'amplitude-{gaintype}-{solint}-{normtype}-norm{int(solnorm)}'
-    options = dict(gaintype=gaintype, calmode='a', solint=solint, solnorm=solnorm,
-                   normtype=normtype)
+def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normtype='mean', calmode='a', **extra):
+    label = f'{calmode}-{gaintype}-{solint}-{normtype}-norm{int(solnorm)}'
+    if 'preavg' in extra:
+        label += f'-preavg{extra["preavg"]:g}'
+    options = dict(gaintype=gaintype, calmode=calmode, solint=solint, solnorm=solnorm,
+                   normtype=normtype, **extra)
     solutions, corrected = [], []
     for engine, module in [('casa', casa), ('native', native)]:
         case = f'{label}-{engine}'
@@ -122,11 +124,13 @@ def amplitude_only(root, source, native, gaintype, solint, solnorm, normtype='me
         corrected.append(contents(vis))
 
     expected, actual = solutions
-    for name in ['FIELD_ID', 'ANTENNA1', 'SCAN_NUMBER', 'SPECTRAL_WINDOW_ID', 'FLAG']:
+    for name in ['FIELD_ID', 'ANTENNA1', 'ANTENNA2', 'SCAN_NUMBER', 'SPECTRAL_WINDOW_ID', 'FLAG']:
         np.testing.assert_array_equal(actual[name], expected[name], err_msg=f'{label} {name}')
     np.testing.assert_allclose(actual['TIME'], expected['TIME'], rtol=0., atol=1e-4)
-    assert np.all(expected['CPARAM'].real > 0.) and np.any(expected['PARAMERR'] > 0.)
-    np.testing.assert_allclose(actual['CPARAM'].imag, 0., rtol=0., atol=1e-7)
+    assert np.any(expected['PARAMERR'] > 0.)
+    if calmode == 'a':
+        assert np.all(expected['CPARAM'].real > 0.)
+        np.testing.assert_allclose(actual['CPARAM'].imag, 0., rtol=0., atol=1e-7)
     errors = {name: relative_rms(actual[name], expected[name])
               for name in ['CPARAM', 'PARAMERR', 'SNR']}
     expected_ms, actual_ms = corrected
@@ -141,7 +145,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'amplitude', 'median'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'amplitude', 'median', 'preavg'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -155,19 +159,29 @@ def main():
     make_cal_ms(str(source))
     if args.case == 'amplitude':
         source = amplitude_data(root, source)
-        results = {f'{gain}-{interval}-norm{int(norm)}': amplitude_only(root, source, native, gain, interval, norm)
+        results = {f'{gain}-{interval}-norm{int(norm)}': gain_and_apply(root, source, native, gain, interval, norm)
                    for gain in ['G', 'T'] for interval, norm in [('int', False), ('inf', False), ('inf', True)]}
     elif args.case == 'median':
         source = amplitude_data(root, source)
-        results = {f'{gain}-norm{int(norm)}': amplitude_only(root, source, native, gain, 'inf', norm, 'median')
+        results = {f'{gain}-norm{int(norm)}': gain_and_apply(root, source, native, gain, 'inf', norm, 'median')
                    for gain in ['G', 'T'] for norm in [True, False]}
         for gain in ['G', 'T']:
-            baseline = contents(root/f'amplitude-{gain}-inf-median-norm0-casa.cal')
-            normalized = contents(root/f'amplitude-{gain}-inf-median-norm1-casa.cal')
+            baseline = contents(root/f'a-{gain}-inf-median-norm0-casa.cal')
+            normalized = contents(root/f'a-{gain}-inf-median-norm1-casa.cal')
             power = np.abs(baseline['CPARAM'][~baseline['FLAG']])**2
             assert abs(np.median(power)-np.mean(power)) > 0.01
             np.testing.assert_allclose(normalized['CPARAM'], baseline['CPARAM']/np.sqrt(np.median(power)),
                                        rtol=1e-6, atol=0.)
+    elif args.case == 'preavg':
+        source = amplitude_data(root, source)
+        results = {f'{gain}-{mode}-{interval}-{average:g}': gain_and_apply(
+                       root, source, native, gain, interval, calmode=mode, preavg=average)
+                   for gain in ['G', 'T'] for mode in ['a', 'p', 'ap']
+                   for interval, average in [('inf', 20.), ('25s', 20.), ('int', 20.), ('inf', 0.), ('inf', 1000.)]}
+        for gain in ['G', 'T']:
+            baseline = contents(root/f'a-{gain}-inf-mean-norm0-preavg0-casa.cal')
+            averaged = contents(root/f'a-{gain}-inf-mean-norm0-preavg20-casa.cal')
+            assert relative_rms(averaged['CPARAM'], baseline['CPARAM']) > 0.002
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')

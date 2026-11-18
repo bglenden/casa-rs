@@ -119,6 +119,7 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
         gain_type: gaintype(task)?,
         solve_mode: calmode(task)?,
         solve_interval: solint(task)?,
+        preaverage_seconds: task.number("preavg")?,
         combine: combine(task)?,
         refant: refant(task)?,
         prior_calibration_tables: chain(task, Chain::Solve)?,

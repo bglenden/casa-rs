@@ -18,6 +18,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
         solve_interval: GainSolveInterval::Infinite,
         combine: GainSolveCombine::default(),
         channelized: true,
+        preaverage_max_span: None,
     };
     let mut group = SolveAccumulator::new(0, 0, 0);
     for antenna1 in 0..4 {
