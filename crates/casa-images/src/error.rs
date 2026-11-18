@@ -29,6 +29,11 @@ pub enum ImageError {
     #[error("{0}")]
     RobustStats(String),
 
+    /// A selection CASA refuses, with CASA's wording of why, reported as
+    /// CASA reports it rather than as an image failure.
+    #[error("{0}")]
+    CasaSelection(String),
+
     /// A lattice-layer error occurred (indexing, slicing, tiling, etc.).
     #[error("lattice error: {0}")]
     Lattice(String),

@@ -7,9 +7,11 @@
 //! entries casa-rs computes. The keys CASA returns that casa-rs does not
 //! compute yet are listed with each function and tracked in #977.
 
-use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
+use casa_provider_contracts::{CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype};
 
-use crate::analysis::{ImageHeaderSummary, ImageStatisticsSummary, RestoringBeamSummary};
+use crate::analysis::{
+    ImageHeaderSummary, ImageStatisticsSummary, ImstatPlanesSummary, RestoringBeamSummary,
+};
 
 use casa_lattices::StatisticsAlgorithmKind;
 
@@ -85,6 +87,63 @@ pub fn imstat_record(summary: &ImageStatisticsSummary, kind: StatisticsAlgorithm
                 entries.push(("minposf", CasaValue::string(text.clone())));
             }
         }
+    }
+    sorted(entries)
+}
+
+/// `imstat`'s per-plane record: every statistic an array over the
+/// display positions, with CASA's degenerate display axes dropped and
+/// no extremum positions.
+pub fn imstat_planes_record(summary: &ImstatPlanesSummary) -> CasaValue {
+    let shape = &summary.display_shape;
+    let planes = |values: &[f64]| {
+        if values.is_empty() {
+            CasaValue::float64_vector([])
+        } else {
+            CasaValue::FloatArray {
+                dtype: FloatDtype::Float64,
+                shape: shape.clone(),
+                data: values.iter().map(|value| CasaFloat(*value)).collect(),
+            }
+        }
+    };
+    if summary.biweight {
+        // The biweight reports only its location and scale, with each
+        // plane's count and extrema; no flux, positions or order
+        // statistics.
+        return sorted(vec![
+            ("blc", pixels(&summary.blc)),
+            ("blcf", CasaValue::string(summary.blcf.clone())),
+            ("max", planes(&summary.max)),
+            ("mean", planes(&summary.mean)),
+            ("min", planes(&summary.min)),
+            ("npts", planes(&summary.npts)),
+            ("sigma", planes(&summary.sigma)),
+            ("trc", pixels(&summary.trc)),
+            ("trcf", CasaValue::string(summary.trcf.clone())),
+        ]);
+    }
+    let mut entries = vec![
+        ("blc", pixels(&summary.blc)),
+        ("blcf", CasaValue::string(summary.blcf.clone())),
+        ("max", planes(&summary.max)),
+        ("mean", planes(&summary.mean)),
+        ("medabsdevmed", planes(&summary.medabsdevmed)),
+        ("median", planes(&summary.median)),
+        ("min", planes(&summary.min)),
+        ("npts", planes(&summary.npts)),
+        ("q1", planes(&summary.q1)),
+        ("q3", planes(&summary.q3)),
+        ("quartile", planes(&summary.quartile)),
+        ("rms", planes(&summary.rms)),
+        ("sigma", planes(&summary.sigma)),
+        ("sum", planes(&summary.sum)),
+        ("sumsq", planes(&summary.sumsq)),
+        ("trc", pixels(&summary.trc)),
+        ("trcf", CasaValue::string(summary.trcf.clone())),
+    ];
+    if let Some(flux) = &summary.flux {
+        entries.push(("flux", planes(flux)));
     }
     sorted(entries)
 }

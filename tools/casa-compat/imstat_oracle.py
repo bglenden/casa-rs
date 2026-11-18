@@ -50,6 +50,17 @@ def make_image(path: Path, *, beam: bool) -> None:
     ia.done()
 
 
+def make_stokes_image(path: Path) -> None:
+    """A 4 x 4 x 4 x 2 (RA, Dec, Stokes, frequency) image of a ramp with
+    CASA's default fromshape coordinates: I, Q, U and V Stokes planes."""
+    shape = [4, 4, 4, 2]
+    data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape, order="F")
+    ia = image()
+    ia.fromshape(str(path), shape, overwrite=True)
+    ia.putchunk(data)
+    ia.done()
+
+
 def plain(value):
     if isinstance(value, np.ndarray):
         return value.tolist()
@@ -71,6 +82,10 @@ def error_message(text: str) -> str:
     """CASA's own wording, without the throw site casacore appends."""
     for cut in (" thrown by", " at File:"):
         text = text.split(cut, 1)[0]
+    if "SEVERE" in text:
+        # A logged refusal: the wording follows the logger's name.
+        text = text.split("SEVERE", 1)[1].lstrip("\t ")
+        text = text.split("\t", 1)[1] if "\t" in text else text
     return (
         text.split("\n", 1)[0].strip().removeprefix("Exception: ").rstrip(".")
     )
@@ -84,7 +99,7 @@ def main() -> None:
     make_image(values, beam=True)
     make_image(unbeamed, beam=False)
 
-    result = {"casa_version": version_string(), "values": {}, "unbeamed": {}}
+    result = {"casa_version": version_string(), "values": {}, "unbeamed": {}, "stokes4": {}}
     for name, call in (
         ("classic", {}),
         ("classic clmethod tiled", {"clmethod": "tiled"}),
@@ -145,6 +160,29 @@ def main() -> None:
         ("center m", {"algorithm": "fit-half", "center": "m"}),
         ("center bad", {"algorithm": "fit-half", "center": "bad"}),
         ("clmethod bad", {"clmethod": "bad"}),
+        ("axes 0 1", {"axes": [0, 1]}),
+        ("axes 1 0", {"axes": [1, 0]}),
+        ("axes scalar 0", {"axes": 0}),
+        ("axes scalar 3", {"axes": 3}),
+        ("axes scalar -1", {"axes": -1}),
+        ("axes all four", {"axes": [0, 1, 2, 3]}),
+        ("axes 3", {"axes": [3]}),
+        ("axes 2", {"axes": [2]}),
+        ("axes empty list", {"axes": []}),
+        ("axes minus one list", {"axes": [-1]}),
+        ("axes 0 1 with box", {"axes": [0, 1], "box": "2,2,5,5"}),
+        ("axes 0 1 with chans", {"axes": [0, 1], "chans": "1~2"}),
+        ("axes minus one twice", {"axes": [-1, -1]}),
+        ("axes negative -4 -3", {"axes": [-4, -3]}),
+        ("axes out of range 4", {"axes": [4]}),
+        ("axes out of range -5", {"axes": -5}),
+        ("biweight with axes", {"algorithm": "biweight", "axes": [0, 1]}),
+        ("fit-half with axes", {"algorithm": "fit-half", "axes": [0, 1]}),
+        ("chauvenet with axes", {"algorithm": "chauvenet", "axes": [0, 1]}),
+        (
+            "hinges-fences with axes",
+            {"algorithm": "hinges-fences", "fence": 1.0, "axes": [0, 1]},
+        ),
     ):
         call = dict(imagename=str(values), **call)
         record_case(result["values"], name, **call)
@@ -158,6 +196,32 @@ def main() -> None:
     ):
         call = dict(imagename=str(unbeamed), **call)
         record_case(result["unbeamed"], name, **call)
+
+    stokes4 = root / "stokes4.im"
+    make_stokes_image(stokes4)
+    for name, call in (
+        ("classic", {}),
+        ("stokes I", {"stokes": "I"}),
+        ("stokes IQUV", {"stokes": "IQUV"}),
+        ("stokes QU", {"stokes": "QU"}),
+        ("stokes reverse IU", {"stokes": "IU"}),
+        ("stokes comma Q,U", {"stokes": "Q,U"}),
+        ("stokes empty", {"stokes": ""}),
+        ("stokes with axes", {"stokes": "QU", "axes": [0, 1]}),
+        ("stokes with chans", {"stokes": "QU", "chans": "1"}),
+        ("stokes numeric", {"stokes": "0"}),
+        ("stokes numeric range", {"stokes": "0~2"}),
+        ("stokes unknown", {"stokes": "Z"}),
+        ("stokes out of range", {"stokes": "5"}),
+    ):
+        call = dict(imagename=str(stokes4), **call)
+        record_case(result["stokes4"], name, **call)
+    record_case(
+        result["stokes4"],
+        "stokes absent from image",
+        imagename=str(values),
+        stokes="Q",
+    )
 
     (root / "expected.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     for lock in root.rglob("table.lock"):

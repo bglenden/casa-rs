@@ -11686,10 +11686,6 @@
             "provider": {"field": "axes"},
             "python": {"name": "axes"},
             "presentation": {"label": "Axes", "group": "Statistics", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "equivalent": [{"kind": "array", "value": [{"kind": "integer", "value": -1}]}]
           }
         },
         {
@@ -11701,11 +11697,10 @@
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--stokes"], "metavar": "stokes"},
-            "provider": {"field": "stokes"},
+            "provider": {"field": "stokes", "adapter": "omit_none"},
             "python": {"name": "stokes"},
             "presentation": {"label": "Stokes", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "listit",
