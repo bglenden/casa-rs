@@ -12,7 +12,7 @@ from casatools import measures, msmetadata, table
 import numpy as np
 
 from applycal_oracle import copy_ms
-from gaincal_oracle import ephemeris_observation, relative_rms
+from gaincal_oracle import ephemeris_observation, gain_and_apply, relative_rms
 from record_casa_returns import make_cal_ms
 
 
@@ -161,6 +161,11 @@ def main():
     (root/'derived.json').write_text(json.dumps(derived, indent=2)+'\n')
     results['moving-opacity'] = opacity(root, moving, tasks, 'moving-opacity')
     results['fixed-opacity'] = opacity(root, fixed, tasks, 'fixed-opacity')
+    solve = root/'moving-parallactic-gain'
+    solve.mkdir()
+    results['moving-parallactic-gain'] = gain_and_apply(
+        solve, moving, tasks, 'G', 'int', calmode='ap', field='0', spw='0',
+        minblperant=2, smodel=[1., .15, .1, 0.], parang=True, apply_options={'parang': True})
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
 
 

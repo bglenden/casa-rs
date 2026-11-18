@@ -12,6 +12,7 @@ use casa_observation::FieldEphemeris;
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_types::measures::MeasuresProvider;
+use casa_types::measures::baseline::UvwFrame;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
@@ -754,6 +755,22 @@ impl MsCalEngine {
 
         // Get the field direction in J2000
         let dir = self.direction_at(time_mjd_sec, field_id)?;
+        if self.field_moves(field_id) {
+            // MSCalEngine::getNewUVW forms the baseline from antenna 1 to 2
+            // and projects it in an observatory frame at this row's epoch.
+            let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, self.time_reference);
+            let measures = self
+                .measures
+                .clone()
+                .map_or_else(crate::open_measures_runtime, Ok)?;
+            let projection = UvwFrame::new(
+                dir.as_angles().into(),
+                epoch,
+                &self.observatory_position,
+                measures,
+            )?;
+            return Ok(projection.baseline_uvw([dx, dy, dz]));
+        }
         let (ra, dec) = dir.as_angles();
 
         let (sin_dec, cos_dec) = dec.sin_cos();
