@@ -232,7 +232,7 @@ fn gaincal_returns_its_tables_and_selected_data() {
             "gaincal",
             json!({
                 "vis": ms, "caltable": caltable, "refant": "0", "minblperant": 2,
-                "gaintable": gaintable,
+                "gaintable": gaintable, "preavg": 10.0, "refantmode": "strict",
             }),
         )
     };
@@ -711,8 +711,6 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
         values
     };
     for (surface, name, value) in [
-        ("gaincal", "preavg", json!(10.0)),
-        ("gaincal", "refantmode", json!("strict")),
         ("gaincal", "solmode", json!("L1")),
         ("gaincal", "uvrange", json!(">1klambda")),
         ("gaincal", "intent", json!("*PHASE*")),
