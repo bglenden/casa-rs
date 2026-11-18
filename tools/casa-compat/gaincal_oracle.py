@@ -441,11 +441,57 @@ def robust_edge_cases(root, source, native):
     return results
 
 
+def solve_selections(root, source, native):
+    t = table()
+    t.open(str(source/'STATE'), nomodify=False)
+    try:
+        state_ids = [t.nrows(), t.nrows()+1]
+        t.addrows(2)
+        for row, name in zip(state_ids, ['CALIBRATE_FLUX', 'CALIBRATE_PHASE']):
+            t.putcell('OBS_MODE', row, name+'#ON_SOURCE')
+    finally:
+        t.close()
+    t.open(str(source/'OBSERVATION'), nomodify=False)
+    try:
+        observation = t.nrows()
+        t.addrows(1)
+        for col in t.colnames():
+            if t.iscelldefined(col, 0):
+                t.putcell(col, observation, t.getcell(col, 0))
+    finally:
+        t.close()
+    t.open(str(source), nomodify=False)
+    try:
+        field = t.getcol('FIELD_ID')
+        t.putcol('STATE_ID', np.asarray(state_ids, dtype=np.int32)[field])
+        t.putcol('OBSERVATION_ID', np.where(field==0, 0, observation).astype(np.int32))
+    finally:
+        t.close()
+
+    results = {}
+    for name, interval, expected_field, options in [
+        ('intent', 'inf', [1], dict(intent='*PHASE*')),
+        ('uvrange', 'inf', [0, 1], dict(uvrange='>20m')),
+        ('observation-number', 'inf', [1], dict(observation=int(observation))),
+        ('solint-number', 25.0, [0, 1], {}),
+        ('taql', 'inf', [1], dict(msselect='FIELD_ID == 1')),
+        ('disabled', 'inf', [1], dict(selectdata=False, intent='*PHASE*', scan='4000',
+                                     observation=9000, antenna='MISSING', uvrange='>10000km')),
+    ]:
+        case = root/name
+        case.mkdir()
+        results[name] = gain_and_apply(case, source, native, 'G', interval,
+                                       calmode='ap', minblperant=2, **options)
+        expected = contents(case/f'ap-G-{interval}-mean-norm0-casa.cal')
+        np.testing.assert_array_equal(np.unique(expected['FIELD_ID']), expected_field)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -503,6 +549,8 @@ def main():
         results = robust_gains(root, amplitude_data(root, source), native)
     elif args.case == 'robust-edges':
         results = robust_edge_cases(root, amplitude_data(root, source), native)
+    elif args.case == 'selection':
+        results = solve_selections(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
