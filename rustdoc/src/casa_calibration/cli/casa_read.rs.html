@@ -528,218 +528,225 @@
 <a href=#528 id=528 data-nosnippet>528</a>        .collect()
 <a href=#529 id=529 data-nosnippet>529</a>}
 <a href=#530 id=530 data-nosnippet>530</a>
-<a href=#531 id=531 data-nosnippet>531</a><span class="doccomment">/// The sky model of a solve: CASA's empty `smodel` is the `MODEL_DATA`
-<a href=#532 id=532 data-nosnippet>532</a>/// column where the MeasurementSet has one and a 1 Jy point source where it
-<a href=#533 id=533 data-nosnippet>533</a>/// does not; `[I, Q, U, V]` is a point source, and a shorter list, `[I]` to
-<a href=#534 id=534 data-nosnippet>534</a>/// `[I, Q, U]`, is too, its missing Stokes zero (probed with CASA 6.7.6.14,
-<a href=#535 id=535 data-nosnippet>535</a>/// whose `gaincal` aborts on more than four). CASA reads a field's virtual
-<a href=#536 id=536 data-nosnippet>536</a>/// model (`setjy` with `usescratch=False`) before `MODEL_DATA`; casa-rs
-<a href=#537 id=537 data-nosnippet>537</a>/// does not implement it yet, so an empty `smodel` on a MeasurementSet
-<a href=#538 id=538 data-nosnippet>538</a>/// that holds one is refused.
-<a href=#539 id=539 data-nosnippet>539</a></span><span class="kw">fn </span>model(
-<a href=#540 id=540 data-nosnippet>540</a>    task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#541 id=541 data-nosnippet>541</a>    measurement_set: <span class="kw-2">&amp;</span>Path,
-<a href=#542 id=542 data-nosnippet>542</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(GainSolveModelSource, [f32; <span class="number">4</span>]), TaskFailure&gt; {
-<a href=#543 id=543 data-nosnippet>543</a>    <span class="kw">let </span>smodel = task.numbers(<span class="string">"smodel"</span>)<span class="question-mark">?</span>;
-<a href=#544 id=544 data-nosnippet>544</a>    <span class="kw">match </span>smodel.as_slice() {
-<a href=#545 id=545 data-nosnippet>545</a>        [] =&gt; {
-<a href=#546 id=546 data-nosnippet>546</a>            <span class="kw">let </span>ms = MeasurementSet::open(measurement_set).map_err(|error| {
-<a href=#547 id=547 data-nosnippet>547</a>                TaskFailure::validation(<span class="macro">format!</span>(
-<a href=#548 id=548 data-nosnippet>548</a>                    <span class="string">"open MeasurementSet {}: {error}"</span>,
-<a href=#549 id=549 data-nosnippet>549</a>                    measurement_set.display()
-<a href=#550 id=550 data-nosnippet>550</a>                ))
-<a href=#551 id=551 data-nosnippet>551</a>                .at(<span class="string">"vis"</span>)
-<a href=#552 id=552 data-nosnippet>552</a>            })<span class="question-mark">?</span>;
-<a href=#553 id=553 data-nosnippet>553</a>            <span class="kw">let </span>virtual_fields = casa_ms::scratch_columns::virtual_model_fields(<span class="kw-2">&amp;</span>ms);
-<a href=#554 id=554 data-nosnippet>554</a>            <span class="kw">if </span>!virtual_fields.is_empty() {
-<a href=#555 id=555 data-nosnippet>555</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::validation(<span class="macro">format!</span>(
-<a href=#556 id=556 data-nosnippet>556</a>                    <span class="string">"smodel=[] reads the virtual model of field(s) {virtual_fields:?} (setjy with \
-<a href=#557 id=557 data-nosnippet>557</a>                     usescratch=False), which casa-rs does not implement yet (#979); give smodel, \
-<a href=#558 id=558 data-nosnippet>558</a>                     or write MODEL_DATA"
-<a href=#559 id=559 data-nosnippet>559</a>                </span>))
-<a href=#560 id=560 data-nosnippet>560</a>                .at(<span class="string">"smodel"</span>));
-<a href=#561 id=561 data-nosnippet>561</a>            }
-<a href=#562 id=562 data-nosnippet>562</a>            <span class="kw">let </span>source = <span class="kw">if </span>has_model_column(<span class="kw-2">&amp;</span>ms) {
-<a href=#563 id=563 data-nosnippet>563</a>                GainSolveModelSource::ModelColumn
-<a href=#564 id=564 data-nosnippet>564</a>            } <span class="kw">else </span>{
-<a href=#565 id=565 data-nosnippet>565</a>                GainSolveModelSource::PointSource
-<a href=#566 id=566 data-nosnippet>566</a>            };
-<a href=#567 id=567 data-nosnippet>567</a>            <span class="prelude-val">Ok</span>((source, [<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]))
-<a href=#568 id=568 data-nosnippet>568</a>        }
-<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw-2">&amp;</span>[i, <span class="kw-2">ref </span>polarized @ ..] <span class="kw">if </span>polarized.len() &lt; <span class="number">4 </span>=&gt; {
-<a href=#570 id=570 data-nosnippet>570</a>            <span class="kw">if </span>!(i &gt; <span class="number">0.0 </span>&amp;&amp; i.is_finite()) {
-<a href=#571 id=571 data-nosnippet>571</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::validation(
-<a href=#572 id=572 data-nosnippet>572</a>                    <span class="string">"smodel's Stokes I must be a positive finite flux density"</span>,
-<a href=#573 id=573 data-nosnippet>573</a>                )
-<a href=#574 id=574 data-nosnippet>574</a>                .at(<span class="string">"smodel"</span>));
-<a href=#575 id=575 data-nosnippet>575</a>            }
-<a href=#576 id=576 data-nosnippet>576</a>            <span class="kw">if </span>task.surface() == <span class="string">"bandpass" </span>&amp;&amp; polarized.iter().any(|stokes| <span class="kw-2">*</span>stokes != <span class="number">0.0</span>) {
-<a href=#577 id=577 data-nosnippet>577</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"smodel"</span>, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{smodel:?}"</span>)));
-<a href=#578 id=578 data-nosnippet>578</a>            }
-<a href=#579 id=579 data-nosnippet>579</a>            <span class="kw">let </span><span class="kw-2">mut </span>stokes = [<span class="number">0.0</span>; <span class="number">4</span>];
-<a href=#580 id=580 data-nosnippet>580</a>            <span class="kw">for </span>(value, input) <span class="kw">in </span>stokes.iter_mut().zip(smodel) {
-<a href=#581 id=581 data-nosnippet>581</a>                <span class="kw-2">*</span>value = input <span class="kw">as </span>f32;
+<a href=#531 id=531 data-nosnippet>531</a><span class="doccomment">/// Parse the point-source Stokes vector, with omitted Stokes set to zero.
+<a href=#532 id=532 data-nosnippet>532</a>/// Gaincal resolves an empty vector from the selected fields of the MS.
+<a href=#533 id=533 data-nosnippet>533</a></span><span class="kw">fn </span>model(
+<a href=#534 id=534 data-nosnippet>534</a>    task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#535 id=535 data-nosnippet>535</a>    measurement_set: <span class="kw-2">&amp;</span>Path,
+<a href=#536 id=536 data-nosnippet>536</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(GainSolveModelSource, [f32; <span class="number">4</span>]), TaskFailure&gt; {
+<a href=#537 id=537 data-nosnippet>537</a>    <span class="kw">let </span>smodel = task.numbers(<span class="string">"smodel"</span>)<span class="question-mark">?</span>;
+<a href=#538 id=538 data-nosnippet>538</a>    <span class="kw">match </span>smodel.as_slice() {
+<a href=#539 id=539 data-nosnippet>539</a>        [] <span class="kw">if </span>task.surface() == <span class="string">"gaincal" </span>=&gt; {
+<a href=#540 id=540 data-nosnippet>540</a>            std::fs::metadata(measurement_set).map_err(|error| {
+<a href=#541 id=541 data-nosnippet>541</a>                TaskFailure::validation(<span class="macro">format!</span>(
+<a href=#542 id=542 data-nosnippet>542</a>                    <span class="string">"open MeasurementSet {}: {error}"</span>,
+<a href=#543 id=543 data-nosnippet>543</a>                    measurement_set.display()
+<a href=#544 id=544 data-nosnippet>544</a>                ))
+<a href=#545 id=545 data-nosnippet>545</a>                .at(<span class="string">"vis"</span>)
+<a href=#546 id=546 data-nosnippet>546</a>            })<span class="question-mark">?</span>;
+<a href=#547 id=547 data-nosnippet>547</a>            <span class="prelude-val">Ok</span>((
+<a href=#548 id=548 data-nosnippet>548</a>                GainSolveModelSource::FromMeasurementSet,
+<a href=#549 id=549 data-nosnippet>549</a>                [<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#550 id=550 data-nosnippet>550</a>            ))
+<a href=#551 id=551 data-nosnippet>551</a>        }
+<a href=#552 id=552 data-nosnippet>552</a>        [] =&gt; {
+<a href=#553 id=553 data-nosnippet>553</a>            <span class="kw">let </span>ms = MeasurementSet::open(measurement_set).map_err(|error| {
+<a href=#554 id=554 data-nosnippet>554</a>                TaskFailure::validation(<span class="macro">format!</span>(
+<a href=#555 id=555 data-nosnippet>555</a>                    <span class="string">"open MeasurementSet {}: {error}"</span>,
+<a href=#556 id=556 data-nosnippet>556</a>                    measurement_set.display()
+<a href=#557 id=557 data-nosnippet>557</a>                ))
+<a href=#558 id=558 data-nosnippet>558</a>                .at(<span class="string">"vis"</span>)
+<a href=#559 id=559 data-nosnippet>559</a>            })<span class="question-mark">?</span>;
+<a href=#560 id=560 data-nosnippet>560</a>            <span class="kw">let </span>virtual_fields = casa_ms::scratch_columns::virtual_model_fields(<span class="kw-2">&amp;</span>ms);
+<a href=#561 id=561 data-nosnippet>561</a>            <span class="kw">if </span>!virtual_fields.is_empty() {
+<a href=#562 id=562 data-nosnippet>562</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::validation(<span class="macro">format!</span>(
+<a href=#563 id=563 data-nosnippet>563</a>                    <span class="string">"smodel=[] reads the virtual model of field(s) {virtual_fields:?} (setjy with \
+<a href=#564 id=564 data-nosnippet>564</a>                     usescratch=False), which casa-rs does not implement yet (#979); give smodel, \
+<a href=#565 id=565 data-nosnippet>565</a>                     or write MODEL_DATA"
+<a href=#566 id=566 data-nosnippet>566</a>                </span>))
+<a href=#567 id=567 data-nosnippet>567</a>                .at(<span class="string">"smodel"</span>));
+<a href=#568 id=568 data-nosnippet>568</a>            }
+<a href=#569 id=569 data-nosnippet>569</a>            <span class="kw">let </span>source = <span class="kw">if </span>has_model_column(<span class="kw-2">&amp;</span>ms) {
+<a href=#570 id=570 data-nosnippet>570</a>                GainSolveModelSource::ModelColumn
+<a href=#571 id=571 data-nosnippet>571</a>            } <span class="kw">else </span>{
+<a href=#572 id=572 data-nosnippet>572</a>                GainSolveModelSource::PointSource
+<a href=#573 id=573 data-nosnippet>573</a>            };
+<a href=#574 id=574 data-nosnippet>574</a>            <span class="prelude-val">Ok</span>((source, [<span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]))
+<a href=#575 id=575 data-nosnippet>575</a>        }
+<a href=#576 id=576 data-nosnippet>576</a>        <span class="kw-2">&amp;</span>[i, <span class="kw-2">ref </span>polarized @ ..] <span class="kw">if </span>polarized.len() &lt; <span class="number">4 </span>=&gt; {
+<a href=#577 id=577 data-nosnippet>577</a>            <span class="kw">if </span>!(i &gt; <span class="number">0.0 </span>&amp;&amp; i.is_finite()) {
+<a href=#578 id=578 data-nosnippet>578</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::validation(
+<a href=#579 id=579 data-nosnippet>579</a>                    <span class="string">"smodel's Stokes I must be a positive finite flux density"</span>,
+<a href=#580 id=580 data-nosnippet>580</a>                )
+<a href=#581 id=581 data-nosnippet>581</a>                .at(<span class="string">"smodel"</span>));
 <a href=#582 id=582 data-nosnippet>582</a>            }
-<a href=#583 id=583 data-nosnippet>583</a>            <span class="prelude-val">Ok</span>((GainSolveModelSource::PointSource, stokes))
-<a href=#584 id=584 data-nosnippet>584</a>        }
-<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TaskFailure::validation(<span class="macro">format!</span>(
-<a href=#586 id=586 data-nosnippet>586</a>            <span class="string">"smodel takes [I, Q, U, V], or fewer with the rest zero, or [] for the MODEL_DATA \
-<a href=#587 id=587 data-nosnippet>587</a>             column; found {} values"</span>,
-<a href=#588 id=588 data-nosnippet>588</a>            smodel.len()
-<a href=#589 id=589 data-nosnippet>589</a>        ))
-<a href=#590 id=590 data-nosnippet>590</a>        .at(<span class="string">"smodel"</span>)),
-<a href=#591 id=591 data-nosnippet>591</a>    }
-<a href=#592 id=592 data-nosnippet>592</a>}
-<a href=#593 id=593 data-nosnippet>593</a>
-<a href=#594 id=594 data-nosnippet>594</a><span class="doccomment">/// Whether `ms` has a `MODEL_DATA` column.
-<a href=#595 id=595 data-nosnippet>595</a></span><span class="kw">fn </span>has_model_column(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; bool {
-<a href=#596 id=596 data-nosnippet>596</a>    ms.main_table()
-<a href=#597 id=597 data-nosnippet>597</a>        .schema()
-<a href=#598 id=598 data-nosnippet>598</a>        .is_some_and(|schema| schema.contains_column(<span class="string">"MODEL_DATA"</span>))
+<a href=#583 id=583 data-nosnippet>583</a>            <span class="kw">if </span>task.surface() == <span class="string">"bandpass" </span>&amp;&amp; polarized.iter().any(|stokes| <span class="kw-2">*</span>stokes != <span class="number">0.0</span>) {
+<a href=#584 id=584 data-nosnippet>584</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"smodel"</span>, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{smodel:?}"</span>)));
+<a href=#585 id=585 data-nosnippet>585</a>            }
+<a href=#586 id=586 data-nosnippet>586</a>            <span class="kw">let </span><span class="kw-2">mut </span>stokes = [<span class="number">0.0</span>; <span class="number">4</span>];
+<a href=#587 id=587 data-nosnippet>587</a>            <span class="kw">for </span>(value, input) <span class="kw">in </span>stokes.iter_mut().zip(smodel) {
+<a href=#588 id=588 data-nosnippet>588</a>                <span class="kw-2">*</span>value = input <span class="kw">as </span>f32;
+<a href=#589 id=589 data-nosnippet>589</a>            }
+<a href=#590 id=590 data-nosnippet>590</a>            <span class="prelude-val">Ok</span>((GainSolveModelSource::PointSource, stokes))
+<a href=#591 id=591 data-nosnippet>591</a>        }
+<a href=#592 id=592 data-nosnippet>592</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TaskFailure::validation(<span class="macro">format!</span>(
+<a href=#593 id=593 data-nosnippet>593</a>            <span class="string">"smodel takes [I, Q, U, V], or fewer with the rest zero, or [] for the MODEL_DATA \
+<a href=#594 id=594 data-nosnippet>594</a>             column; found {} values"</span>,
+<a href=#595 id=595 data-nosnippet>595</a>            smodel.len()
+<a href=#596 id=596 data-nosnippet>596</a>        ))
+<a href=#597 id=597 data-nosnippet>597</a>        .at(<span class="string">"smodel"</span>)),
+<a href=#598 id=598 data-nosnippet>598</a>    }
 <a href=#599 id=599 data-nosnippet>599</a>}
 <a href=#600 id=600 data-nosnippet>600</a>
-<a href=#601 id=601 data-nosnippet>601</a><span class="kw">fn </span>applymode(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;ApplyMode, TaskFailure&gt; {
-<a href=#602 id=602 data-nosnippet>602</a>    <span class="kw">match </span>task.required_text(<span class="string">"applymode"</span>)<span class="question-mark">?</span>.as_str() {
-<a href=#603 id=603 data-nosnippet>603</a>        <span class="string">"" </span>| <span class="string">"calflag" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::CalFlag),
-<a href=#604 id=604 data-nosnippet>604</a>        <span class="string">"calflagstrict" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::CalFlagStrict),
-<a href=#605 id=605 data-nosnippet>605</a>        <span class="string">"flagonly" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::FlagOnly),
-<a href=#606 id=606 data-nosnippet>606</a>        <span class="string">"flagonlystrict" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::FlagOnlyStrict),
-<a href=#607 id=607 data-nosnippet>607</a>        <span class="string">"calonly" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::CalOnly),
-<a href=#608 id=608 data-nosnippet>608</a>        <span class="string">"trial" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::Trial),
-<a href=#609 id=609 data-nosnippet>609</a>        other =&gt; <span class="prelude-val">Err</span>(not_yet(<span class="string">"applymode"</span>, other)),
-<a href=#610 id=610 data-nosnippet>610</a>    }
-<a href=#611 id=611 data-nosnippet>611</a>}
-<a href=#612 id=612 data-nosnippet>612</a>
-<a href=#613 id=613 data-nosnippet>613</a><span class="kw">fn </span>gaintype(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainType, TaskFailure&gt; {
-<a href=#614 id=614 data-nosnippet>614</a>    <span class="kw">match </span>task.required_text(<span class="string">"gaintype"</span>)<span class="question-mark">?</span>.as_str() {
-<a href=#615 id=615 data-nosnippet>615</a>        <span class="string">"G" </span>=&gt; <span class="prelude-val">Ok</span>(GainType::G),
-<a href=#616 id=616 data-nosnippet>616</a>        <span class="string">"T" </span>=&gt; <span class="prelude-val">Ok</span>(GainType::T),
-<a href=#617 id=617 data-nosnippet>617</a>        other =&gt; <span class="prelude-val">Err</span>(not_yet(<span class="string">"gaintype"</span>, other)),
-<a href=#618 id=618 data-nosnippet>618</a>    }
-<a href=#619 id=619 data-nosnippet>619</a>}
-<a href=#620 id=620 data-nosnippet>620</a>
-<a href=#621 id=621 data-nosnippet>621</a><span class="kw">fn </span>calmode(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainSolveMode, TaskFailure&gt; {
-<a href=#622 id=622 data-nosnippet>622</a>    <span class="kw">match </span>task.required_text(<span class="string">"calmode"</span>)<span class="question-mark">?</span>.as_str() {
-<a href=#623 id=623 data-nosnippet>623</a>        <span class="string">"p" </span>=&gt; <span class="prelude-val">Ok</span>(GainSolveMode::Phase),
-<a href=#624 id=624 data-nosnippet>624</a>        <span class="string">"a" </span>=&gt; <span class="prelude-val">Ok</span>(GainSolveMode::Amplitude),
-<a href=#625 id=625 data-nosnippet>625</a>        <span class="string">"ap" </span>=&gt; <span class="prelude-val">Ok</span>(GainSolveMode::AmplitudePhase),
-<a href=#626 id=626 data-nosnippet>626</a>        other =&gt; <span class="prelude-val">Err</span>(not_yet(<span class="string">"calmode"</span>, other)),
-<a href=#627 id=627 data-nosnippet>627</a>    }
-<a href=#628 id=628 data-nosnippet>628</a>}
-<a href=#629 id=629 data-nosnippet>629</a>
-<a href=#630 id=630 data-nosnippet>630</a><span class="kw">fn </span>robust_gain_solve(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">crate</span>::GainSolveRobustness, TaskFailure&gt; {
-<a href=#631 id=631 data-nosnippet>631</a>    <span class="kw">let </span>mode = task.required_text(<span class="string">"solmode"</span>)<span class="question-mark">?</span>;
-<a href=#632 id=632 data-nosnippet>632</a>    <span class="kw">let </span>(l1, reject) = <span class="kw">match </span>mode.as_str() {
-<a href=#633 id=633 data-nosnippet>633</a>        <span class="string">"" </span>=&gt; (<span class="bool-val">false</span>, <span class="bool-val">false</span>),
-<a href=#634 id=634 data-nosnippet>634</a>        <span class="string">"L1" </span>=&gt; (<span class="bool-val">true</span>, <span class="bool-val">false</span>),
-<a href=#635 id=635 data-nosnippet>635</a>        <span class="string">"R" </span>=&gt; (<span class="bool-val">false</span>, <span class="bool-val">true</span>),
-<a href=#636 id=636 data-nosnippet>636</a>        <span class="string">"L1R" </span>=&gt; (<span class="bool-val">true</span>, <span class="bool-val">true</span>),
-<a href=#637 id=637 data-nosnippet>637</a>        other =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(unknown(<span class="string">"solmode"</span>, other, <span class="string">"'', 'L1', 'R' or 'L1R'"</span>)),
-<a href=#638 id=638 data-nosnippet>638</a>    };
-<a href=#639 id=639 data-nosnippet>639</a>    <span class="kw">let </span><span class="kw-2">mut </span>rms_thresholds = Vec::new();
-<a href=#640 id=640 data-nosnippet>640</a>    <span class="kw">if </span>reject {
-<a href=#641 id=641 data-nosnippet>641</a>        rms_thresholds = task
-<a href=#642 id=642 data-nosnippet>642</a>            .numbers(<span class="string">"rmsthresh"</span>)<span class="question-mark">?
-<a href=#643 id=643 data-nosnippet>643</a>            </span>.into_iter()
-<a href=#644 id=644 data-nosnippet>644</a>            .map(|value| value <span class="kw">as </span>f32)
-<a href=#645 id=645 data-nosnippet>645</a>            .collect();
-<a href=#646 id=646 data-nosnippet>646</a>        <span class="comment">// GJones::setSolve and TJones::setSolve supply these for an empty list.
-<a href=#647 id=647 data-nosnippet>647</a>        </span><span class="kw">if </span>rms_thresholds.is_empty() {
-<a href=#648 id=648 data-nosnippet>648</a>            rms_thresholds.extend([<span class="number">7.0</span>, <span class="number">5.0</span>, <span class="number">4.0</span>, <span class="number">3.5</span>, <span class="number">3.0</span>, <span class="number">2.8</span>, <span class="number">2.6</span>, <span class="number">2.4</span>, <span class="number">2.2</span>, <span class="number">2.5</span>]);
-<a href=#649 id=649 data-nosnippet>649</a>        }
-<a href=#650 id=650 data-nosnippet>650</a>    }
-<a href=#651 id=651 data-nosnippet>651</a>    <span class="prelude-val">Ok</span>(<span class="kw">crate</span>::GainSolveRobustness { l1, rms_thresholds })
-<a href=#652 id=652 data-nosnippet>652</a>}
-<a href=#653 id=653 data-nosnippet>653</a>
-<a href=#654 id=654 data-nosnippet>654</a><span class="doccomment">/// CASA's `solint`, read as `SolvableVisCal::setSolve` reads it: empty
-<a href=#655 id=655 data-nosnippet>655</a>/// text, or text that contains `inf`, in any case, is one solution per
-<a href=#656 id=656 data-nosnippet>656</a>/// scan; text that contains `int`, one per integration; anything else is a
-<a href=#657 id=657 data-nosnippet>657</a>/// time, in seconds when it has no unit. A time of zero is CASA's `inf`,
-<a href=#658 id=658 data-nosnippet>658</a>/// and a negative one its `int`. Channel intervals (`'inf,2ch'`) are not
-<a href=#659 id=659 data-nosnippet>659</a>/// implemented yet.
-<a href=#660 id=660 data-nosnippet>660</a></span><span class="kw">fn </span>solint(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainSolveInterval, TaskFailure&gt; {
-<a href=#661 id=661 data-nosnippet>661</a>    <span class="kw">let </span>text = selector_text(task.value(<span class="string">"solint"</span>)).unwrap_or_default();
-<a href=#662 id=662 data-nosnippet>662</a>    <span class="kw">if </span>text.contains(<span class="string">','</span>) {
-<a href=#663 id=663 data-nosnippet>663</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"solint"</span>, <span class="kw-2">&amp;</span>text));
-<a href=#664 id=664 data-nosnippet>664</a>    }
-<a href=#665 id=665 data-nosnippet>665</a>    <span class="kw">let </span>upper = text.to_ascii_uppercase();
-<a href=#666 id=666 data-nosnippet>666</a>    <span class="kw">if </span>upper.is_empty() || upper.contains(<span class="string">"INF"</span>) {
-<a href=#667 id=667 data-nosnippet>667</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(GainSolveInterval::Infinite);
-<a href=#668 id=668 data-nosnippet>668</a>    }
-<a href=#669 id=669 data-nosnippet>669</a>    <span class="kw">if </span>upper.contains(<span class="string">"INT"</span>) {
-<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(GainSolveInterval::Integration);
+<a href=#601 id=601 data-nosnippet>601</a><span class="doccomment">/// Whether `ms` has a `MODEL_DATA` column.
+<a href=#602 id=602 data-nosnippet>602</a></span><span class="kw">fn </span>has_model_column(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; bool {
+<a href=#603 id=603 data-nosnippet>603</a>    ms.main_table()
+<a href=#604 id=604 data-nosnippet>604</a>        .schema()
+<a href=#605 id=605 data-nosnippet>605</a>        .is_some_and(|schema| schema.contains_column(<span class="string">"MODEL_DATA"</span>))
+<a href=#606 id=606 data-nosnippet>606</a>}
+<a href=#607 id=607 data-nosnippet>607</a>
+<a href=#608 id=608 data-nosnippet>608</a><span class="kw">fn </span>applymode(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;ApplyMode, TaskFailure&gt; {
+<a href=#609 id=609 data-nosnippet>609</a>    <span class="kw">match </span>task.required_text(<span class="string">"applymode"</span>)<span class="question-mark">?</span>.as_str() {
+<a href=#610 id=610 data-nosnippet>610</a>        <span class="string">"" </span>| <span class="string">"calflag" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::CalFlag),
+<a href=#611 id=611 data-nosnippet>611</a>        <span class="string">"calflagstrict" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::CalFlagStrict),
+<a href=#612 id=612 data-nosnippet>612</a>        <span class="string">"flagonly" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::FlagOnly),
+<a href=#613 id=613 data-nosnippet>613</a>        <span class="string">"flagonlystrict" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::FlagOnlyStrict),
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="string">"calonly" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::CalOnly),
+<a href=#615 id=615 data-nosnippet>615</a>        <span class="string">"trial" </span>=&gt; <span class="prelude-val">Ok</span>(ApplyMode::Trial),
+<a href=#616 id=616 data-nosnippet>616</a>        other =&gt; <span class="prelude-val">Err</span>(not_yet(<span class="string">"applymode"</span>, other)),
+<a href=#617 id=617 data-nosnippet>617</a>    }
+<a href=#618 id=618 data-nosnippet>618</a>}
+<a href=#619 id=619 data-nosnippet>619</a>
+<a href=#620 id=620 data-nosnippet>620</a><span class="kw">fn </span>gaintype(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainType, TaskFailure&gt; {
+<a href=#621 id=621 data-nosnippet>621</a>    <span class="kw">match </span>task.required_text(<span class="string">"gaintype"</span>)<span class="question-mark">?</span>.as_str() {
+<a href=#622 id=622 data-nosnippet>622</a>        <span class="string">"G" </span>=&gt; <span class="prelude-val">Ok</span>(GainType::G),
+<a href=#623 id=623 data-nosnippet>623</a>        <span class="string">"T" </span>=&gt; <span class="prelude-val">Ok</span>(GainType::T),
+<a href=#624 id=624 data-nosnippet>624</a>        other =&gt; <span class="prelude-val">Err</span>(not_yet(<span class="string">"gaintype"</span>, other)),
+<a href=#625 id=625 data-nosnippet>625</a>    }
+<a href=#626 id=626 data-nosnippet>626</a>}
+<a href=#627 id=627 data-nosnippet>627</a>
+<a href=#628 id=628 data-nosnippet>628</a><span class="kw">fn </span>calmode(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainSolveMode, TaskFailure&gt; {
+<a href=#629 id=629 data-nosnippet>629</a>    <span class="kw">match </span>task.required_text(<span class="string">"calmode"</span>)<span class="question-mark">?</span>.as_str() {
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="string">"p" </span>=&gt; <span class="prelude-val">Ok</span>(GainSolveMode::Phase),
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="string">"a" </span>=&gt; <span class="prelude-val">Ok</span>(GainSolveMode::Amplitude),
+<a href=#632 id=632 data-nosnippet>632</a>        <span class="string">"ap" </span>=&gt; <span class="prelude-val">Ok</span>(GainSolveMode::AmplitudePhase),
+<a href=#633 id=633 data-nosnippet>633</a>        other =&gt; <span class="prelude-val">Err</span>(not_yet(<span class="string">"calmode"</span>, other)),
+<a href=#634 id=634 data-nosnippet>634</a>    }
+<a href=#635 id=635 data-nosnippet>635</a>}
+<a href=#636 id=636 data-nosnippet>636</a>
+<a href=#637 id=637 data-nosnippet>637</a><span class="kw">fn </span>robust_gain_solve(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">crate</span>::GainSolveRobustness, TaskFailure&gt; {
+<a href=#638 id=638 data-nosnippet>638</a>    <span class="kw">let </span>mode = task.required_text(<span class="string">"solmode"</span>)<span class="question-mark">?</span>;
+<a href=#639 id=639 data-nosnippet>639</a>    <span class="kw">let </span>(l1, reject) = <span class="kw">match </span>mode.as_str() {
+<a href=#640 id=640 data-nosnippet>640</a>        <span class="string">"" </span>=&gt; (<span class="bool-val">false</span>, <span class="bool-val">false</span>),
+<a href=#641 id=641 data-nosnippet>641</a>        <span class="string">"L1" </span>=&gt; (<span class="bool-val">true</span>, <span class="bool-val">false</span>),
+<a href=#642 id=642 data-nosnippet>642</a>        <span class="string">"R" </span>=&gt; (<span class="bool-val">false</span>, <span class="bool-val">true</span>),
+<a href=#643 id=643 data-nosnippet>643</a>        <span class="string">"L1R" </span>=&gt; (<span class="bool-val">true</span>, <span class="bool-val">true</span>),
+<a href=#644 id=644 data-nosnippet>644</a>        other =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(unknown(<span class="string">"solmode"</span>, other, <span class="string">"'', 'L1', 'R' or 'L1R'"</span>)),
+<a href=#645 id=645 data-nosnippet>645</a>    };
+<a href=#646 id=646 data-nosnippet>646</a>    <span class="kw">let </span><span class="kw-2">mut </span>rms_thresholds = Vec::new();
+<a href=#647 id=647 data-nosnippet>647</a>    <span class="kw">if </span>reject {
+<a href=#648 id=648 data-nosnippet>648</a>        rms_thresholds = task
+<a href=#649 id=649 data-nosnippet>649</a>            .numbers(<span class="string">"rmsthresh"</span>)<span class="question-mark">?
+<a href=#650 id=650 data-nosnippet>650</a>            </span>.into_iter()
+<a href=#651 id=651 data-nosnippet>651</a>            .map(|value| value <span class="kw">as </span>f32)
+<a href=#652 id=652 data-nosnippet>652</a>            .collect();
+<a href=#653 id=653 data-nosnippet>653</a>        <span class="comment">// GJones::setSolve and TJones::setSolve supply these for an empty list.
+<a href=#654 id=654 data-nosnippet>654</a>        </span><span class="kw">if </span>rms_thresholds.is_empty() {
+<a href=#655 id=655 data-nosnippet>655</a>            rms_thresholds.extend([<span class="number">7.0</span>, <span class="number">5.0</span>, <span class="number">4.0</span>, <span class="number">3.5</span>, <span class="number">3.0</span>, <span class="number">2.8</span>, <span class="number">2.6</span>, <span class="number">2.4</span>, <span class="number">2.2</span>, <span class="number">2.5</span>]);
+<a href=#656 id=656 data-nosnippet>656</a>        }
+<a href=#657 id=657 data-nosnippet>657</a>    }
+<a href=#658 id=658 data-nosnippet>658</a>    <span class="prelude-val">Ok</span>(<span class="kw">crate</span>::GainSolveRobustness { l1, rms_thresholds })
+<a href=#659 id=659 data-nosnippet>659</a>}
+<a href=#660 id=660 data-nosnippet>660</a>
+<a href=#661 id=661 data-nosnippet>661</a><span class="doccomment">/// CASA's `solint`, read as `SolvableVisCal::setSolve` reads it: empty
+<a href=#662 id=662 data-nosnippet>662</a>/// text, or text that contains `inf`, in any case, is one solution per
+<a href=#663 id=663 data-nosnippet>663</a>/// scan; text that contains `int`, one per integration; anything else is a
+<a href=#664 id=664 data-nosnippet>664</a>/// time, in seconds when it has no unit. A time of zero is CASA's `inf`,
+<a href=#665 id=665 data-nosnippet>665</a>/// and a negative one its `int`. Channel intervals (`'inf,2ch'`) are not
+<a href=#666 id=666 data-nosnippet>666</a>/// implemented yet.
+<a href=#667 id=667 data-nosnippet>667</a></span><span class="kw">fn </span>solint(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainSolveInterval, TaskFailure&gt; {
+<a href=#668 id=668 data-nosnippet>668</a>    <span class="kw">let </span>text = selector_text(task.value(<span class="string">"solint"</span>)).unwrap_or_default();
+<a href=#669 id=669 data-nosnippet>669</a>    <span class="kw">if </span>text.contains(<span class="string">','</span>) {
+<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"solint"</span>, <span class="kw-2">&amp;</span>text));
 <a href=#671 id=671 data-nosnippet>671</a>    }
-<a href=#672 id=672 data-nosnippet>672</a>    <span class="kw">let </span>invalid = || unknown(<span class="string">"solint"</span>, <span class="kw-2">&amp;</span>text, <span class="string">"'inf', 'int' or a time such as '60s'"</span>);
-<a href=#673 id=673 data-nosnippet>673</a>    <span class="kw">let </span>quantity = text.parse::&lt;Quantity&gt;().map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?</span>;
-<a href=#674 id=674 data-nosnippet>674</a>    <span class="kw">let </span>seconds = <span class="kw">if </span>quantity.unit().name().is_empty() {
-<a href=#675 id=675 data-nosnippet>675</a>        quantity.value()
-<a href=#676 id=676 data-nosnippet>676</a>    } <span class="kw">else </span>{
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="kw">let </span>second = Unit::new(<span class="string">"s"</span>).map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?</span>;
-<a href=#678 id=678 data-nosnippet>678</a>        quantity.get_value_in(<span class="kw-2">&amp;</span>second).map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?
-<a href=#679 id=679 data-nosnippet>679</a>    </span>};
-<a href=#680 id=680 data-nosnippet>680</a>    <span class="kw">if </span>!seconds.is_finite() {
-<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(invalid());
-<a href=#682 id=682 data-nosnippet>682</a>    }
-<a href=#683 id=683 data-nosnippet>683</a>    <span class="prelude-val">Ok</span>(<span class="kw">if </span>seconds &gt; <span class="number">0.0 </span>{
-<a href=#684 id=684 data-nosnippet>684</a>        GainSolveInterval::Seconds(seconds)
-<a href=#685 id=685 data-nosnippet>685</a>    } <span class="kw">else if </span>seconds == <span class="number">0.0 </span>{
-<a href=#686 id=686 data-nosnippet>686</a>        GainSolveInterval::Infinite
-<a href=#687 id=687 data-nosnippet>687</a>    } <span class="kw">else </span>{
-<a href=#688 id=688 data-nosnippet>688</a>        GainSolveInterval::Integration
-<a href=#689 id=689 data-nosnippet>689</a>    })
-<a href=#690 id=690 data-nosnippet>690</a>}
-<a href=#691 id=691 data-nosnippet>691</a>
-<a href=#692 id=692 data-nosnippet>692</a><span class="doccomment">/// The axes CASA's `combine` names, found as `SolvableVisCal` finds them:
-<a href=#693 id=693 data-nosnippet>693</a>/// by the axis name anywhere in the text, in any case (`'Scan,Field'` and
-<a href=#694 id=694 data-nosnippet>694</a>/// `'scan field'` both combine scans and fields).
-<a href=#695 id=695 data-nosnippet>695</a></span><span class="kw">fn </span>combine(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainSolveCombine, TaskFailure&gt; {
-<a href=#696 id=696 data-nosnippet>696</a>    <span class="kw">let </span>text = task.required_text(<span class="string">"combine"</span>)<span class="question-mark">?</span>;
-<a href=#697 id=697 data-nosnippet>697</a>    <span class="kw">let </span>upper = text.to_ascii_uppercase();
-<a href=#698 id=698 data-nosnippet>698</a>    <span class="kw">let </span>spectral_windows = upper.contains(<span class="string">"SPW"</span>);
-<a href=#699 id=699 data-nosnippet>699</a>    <span class="kw">let </span>observations = upper.contains(<span class="string">"OBS"</span>);
-<a href=#700 id=700 data-nosnippet>700</a>    <span class="kw">if </span>task.surface() == <span class="string">"bandpass" </span>&amp;&amp; (spectral_windows || observations) {
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"combine"</span>, <span class="kw-2">&amp;</span>text));
-<a href=#702 id=702 data-nosnippet>702</a>    }
-<a href=#703 id=703 data-nosnippet>703</a>    <span class="prelude-val">Ok</span>(GainSolveCombine {
-<a href=#704 id=704 data-nosnippet>704</a>        scans: upper.contains(<span class="string">"SCAN"</span>),
-<a href=#705 id=705 data-nosnippet>705</a>        fields: upper.contains(<span class="string">"FIELD"</span>),
-<a href=#706 id=706 data-nosnippet>706</a>        observations,
-<a href=#707 id=707 data-nosnippet>707</a>        spectral_windows,
-<a href=#708 id=708 data-nosnippet>708</a>    })
-<a href=#709 id=709 data-nosnippet>709</a>}
-<a href=#710 id=710 data-nosnippet>710</a>
-<a href=#711 id=711 data-nosnippet>711</a><span class="doccomment">/// CASA's `refant`: one antenna, by name or id. CASA's ranked lists, and
-<a href=#712 id=712 data-nosnippet>712</a>/// its default `''`, a solve with no reference antenna, are not
-<a href=#713 id=713 data-nosnippet>713</a>/// implemented yet.
-<a href=#714 id=714 data-nosnippet>714</a></span><span class="kw">fn </span>refant(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;RefAntSelector, TaskFailure&gt; {
-<a href=#715 id=715 data-nosnippet>715</a>    <span class="kw">if </span>text.trim().is_empty() {
-<a href=#716 id=716 data-nosnippet>716</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"refant"</span>, text));
-<a href=#717 id=717 data-nosnippet>717</a>    }
-<a href=#718 id=718 data-nosnippet>718</a>    <span class="kw">if </span>text.contains(<span class="string">','</span>) {
-<a href=#719 id=719 data-nosnippet>719</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"refant"</span>, text));
-<a href=#720 id=720 data-nosnippet>720</a>    }
-<a href=#721 id=721 data-nosnippet>721</a>    <span class="prelude-val">Ok</span>(parse_refant_selector(text.trim()))
-<a href=#722 id=722 data-nosnippet>722</a>}
-<a href=#723 id=723 data-nosnippet>723</a>
-<a href=#724 id=724 data-nosnippet>724</a><span class="doccomment">/// The fields `name` lists; an item may itself list them, `','`-separated.
-<a href=#725 id=725 data-nosnippet>725</a></span><span class="kw">fn </span>fields(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;, TaskFailure&gt; {
-<a href=#726 id=726 data-nosnippet>726</a>    task.texts(name)
-<a href=#727 id=727 data-nosnippet>727</a>}
-<a href=#728 id=728 data-nosnippet>728</a>
-<a href=#729 id=729 data-nosnippet>729</a><span class="doccomment">/// The refusal of a CASA value casa-rs does not implement yet.
-<a href=#730 id=730 data-nosnippet>730</a></span><span class="kw">fn </span>not_yet(name: <span class="kw-2">&amp;</span>str, text: <span class="kw-2">&amp;</span>str) -&gt; TaskFailure {
-<a href=#731 id=731 data-nosnippet>731</a>    TaskFailure::validation(<span class="macro">format!</span>(
-<a href=#732 id=732 data-nosnippet>732</a>        <span class="string">"{name}={text:?} is not implemented by casa-rs yet (#979)"
-<a href=#733 id=733 data-nosnippet>733</a>    </span>))
-<a href=#734 id=734 data-nosnippet>734</a>    .at(name)
-<a href=#735 id=735 data-nosnippet>735</a>}
-<a href=#736 id=736 data-nosnippet>736</a>
-<a href=#737 id=737 data-nosnippet>737</a><span class="doccomment">/// The refusal of a value CASA does not take either.
-<a href=#738 id=738 data-nosnippet>738</a></span><span class="kw">fn </span>unknown(name: <span class="kw-2">&amp;</span>str, text: <span class="kw-2">&amp;</span>str, expected: <span class="kw-2">&amp;</span>str) -&gt; TaskFailure {
-<a href=#739 id=739 data-nosnippet>739</a>    TaskFailure::validation(<span class="macro">format!</span>(<span class="string">"{name}={text:?} is not valid; expected {expected}"</span>)).at(name)
-<a href=#740 id=740 data-nosnippet>740</a>}
-<a href=#741 id=741 data-nosnippet>741</a>
-<a href=#742 id=742 data-nosnippet>742</a><span class="kw">fn </span>out_of_range(name: <span class="kw-2">&amp;</span>str, id: i64) -&gt; TaskFailure {
-<a href=#743 id=743 data-nosnippet>743</a>    TaskFailure::validation(<span class="macro">format!</span>(<span class="string">"{name} value {id} is out of range"</span>)).at(name)
-<a href=#744 id=744 data-nosnippet>744</a>}
+<a href=#672 id=672 data-nosnippet>672</a>    <span class="kw">let </span>upper = text.to_ascii_uppercase();
+<a href=#673 id=673 data-nosnippet>673</a>    <span class="kw">if </span>upper.is_empty() || upper.contains(<span class="string">"INF"</span>) {
+<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(GainSolveInterval::Infinite);
+<a href=#675 id=675 data-nosnippet>675</a>    }
+<a href=#676 id=676 data-nosnippet>676</a>    <span class="kw">if </span>upper.contains(<span class="string">"INT"</span>) {
+<a href=#677 id=677 data-nosnippet>677</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(GainSolveInterval::Integration);
+<a href=#678 id=678 data-nosnippet>678</a>    }
+<a href=#679 id=679 data-nosnippet>679</a>    <span class="kw">let </span>invalid = || unknown(<span class="string">"solint"</span>, <span class="kw-2">&amp;</span>text, <span class="string">"'inf', 'int' or a time such as '60s'"</span>);
+<a href=#680 id=680 data-nosnippet>680</a>    <span class="kw">let </span>quantity = text.parse::&lt;Quantity&gt;().map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?</span>;
+<a href=#681 id=681 data-nosnippet>681</a>    <span class="kw">let </span>seconds = <span class="kw">if </span>quantity.unit().name().is_empty() {
+<a href=#682 id=682 data-nosnippet>682</a>        quantity.value()
+<a href=#683 id=683 data-nosnippet>683</a>    } <span class="kw">else </span>{
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>second = Unit::new(<span class="string">"s"</span>).map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?</span>;
+<a href=#685 id=685 data-nosnippet>685</a>        quantity.get_value_in(<span class="kw-2">&amp;</span>second).map_err(|<span class="kw">_</span>| invalid())<span class="question-mark">?
+<a href=#686 id=686 data-nosnippet>686</a>    </span>};
+<a href=#687 id=687 data-nosnippet>687</a>    <span class="kw">if </span>!seconds.is_finite() {
+<a href=#688 id=688 data-nosnippet>688</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(invalid());
+<a href=#689 id=689 data-nosnippet>689</a>    }
+<a href=#690 id=690 data-nosnippet>690</a>    <span class="prelude-val">Ok</span>(<span class="kw">if </span>seconds &gt; <span class="number">0.0 </span>{
+<a href=#691 id=691 data-nosnippet>691</a>        GainSolveInterval::Seconds(seconds)
+<a href=#692 id=692 data-nosnippet>692</a>    } <span class="kw">else if </span>seconds == <span class="number">0.0 </span>{
+<a href=#693 id=693 data-nosnippet>693</a>        GainSolveInterval::Infinite
+<a href=#694 id=694 data-nosnippet>694</a>    } <span class="kw">else </span>{
+<a href=#695 id=695 data-nosnippet>695</a>        GainSolveInterval::Integration
+<a href=#696 id=696 data-nosnippet>696</a>    })
+<a href=#697 id=697 data-nosnippet>697</a>}
+<a href=#698 id=698 data-nosnippet>698</a>
+<a href=#699 id=699 data-nosnippet>699</a><span class="doccomment">/// The axes CASA's `combine` names, found as `SolvableVisCal` finds them:
+<a href=#700 id=700 data-nosnippet>700</a>/// by the axis name anywhere in the text, in any case (`'Scan,Field'` and
+<a href=#701 id=701 data-nosnippet>701</a>/// `'scan field'` both combine scans and fields).
+<a href=#702 id=702 data-nosnippet>702</a></span><span class="kw">fn </span>combine(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;GainSolveCombine, TaskFailure&gt; {
+<a href=#703 id=703 data-nosnippet>703</a>    <span class="kw">let </span>text = task.required_text(<span class="string">"combine"</span>)<span class="question-mark">?</span>;
+<a href=#704 id=704 data-nosnippet>704</a>    <span class="kw">let </span>upper = text.to_ascii_uppercase();
+<a href=#705 id=705 data-nosnippet>705</a>    <span class="kw">let </span>spectral_windows = upper.contains(<span class="string">"SPW"</span>);
+<a href=#706 id=706 data-nosnippet>706</a>    <span class="kw">let </span>observations = upper.contains(<span class="string">"OBS"</span>);
+<a href=#707 id=707 data-nosnippet>707</a>    <span class="kw">if </span>task.surface() == <span class="string">"bandpass" </span>&amp;&amp; (spectral_windows || observations) {
+<a href=#708 id=708 data-nosnippet>708</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"combine"</span>, <span class="kw-2">&amp;</span>text));
+<a href=#709 id=709 data-nosnippet>709</a>    }
+<a href=#710 id=710 data-nosnippet>710</a>    <span class="prelude-val">Ok</span>(GainSolveCombine {
+<a href=#711 id=711 data-nosnippet>711</a>        scans: upper.contains(<span class="string">"SCAN"</span>),
+<a href=#712 id=712 data-nosnippet>712</a>        fields: upper.contains(<span class="string">"FIELD"</span>),
+<a href=#713 id=713 data-nosnippet>713</a>        observations,
+<a href=#714 id=714 data-nosnippet>714</a>        spectral_windows,
+<a href=#715 id=715 data-nosnippet>715</a>    })
+<a href=#716 id=716 data-nosnippet>716</a>}
+<a href=#717 id=717 data-nosnippet>717</a>
+<a href=#718 id=718 data-nosnippet>718</a><span class="doccomment">/// CASA's `refant`: one antenna, by name or id. CASA's ranked lists, and
+<a href=#719 id=719 data-nosnippet>719</a>/// its default `''`, a solve with no reference antenna, are not
+<a href=#720 id=720 data-nosnippet>720</a>/// implemented yet.
+<a href=#721 id=721 data-nosnippet>721</a></span><span class="kw">fn </span>refant(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;RefAntSelector, TaskFailure&gt; {
+<a href=#722 id=722 data-nosnippet>722</a>    <span class="kw">if </span>text.trim().is_empty() {
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"refant"</span>, text));
+<a href=#724 id=724 data-nosnippet>724</a>    }
+<a href=#725 id=725 data-nosnippet>725</a>    <span class="kw">if </span>text.contains(<span class="string">','</span>) {
+<a href=#726 id=726 data-nosnippet>726</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(not_yet(<span class="string">"refant"</span>, text));
+<a href=#727 id=727 data-nosnippet>727</a>    }
+<a href=#728 id=728 data-nosnippet>728</a>    <span class="prelude-val">Ok</span>(parse_refant_selector(text.trim()))
+<a href=#729 id=729 data-nosnippet>729</a>}
+<a href=#730 id=730 data-nosnippet>730</a>
+<a href=#731 id=731 data-nosnippet>731</a><span class="doccomment">/// The fields `name` lists; an item may itself list them, `','`-separated.
+<a href=#732 id=732 data-nosnippet>732</a></span><span class="kw">fn </span>fields(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;, TaskFailure&gt; {
+<a href=#733 id=733 data-nosnippet>733</a>    task.texts(name)
+<a href=#734 id=734 data-nosnippet>734</a>}
+<a href=#735 id=735 data-nosnippet>735</a>
+<a href=#736 id=736 data-nosnippet>736</a><span class="doccomment">/// The refusal of a CASA value casa-rs does not implement yet.
+<a href=#737 id=737 data-nosnippet>737</a></span><span class="kw">fn </span>not_yet(name: <span class="kw-2">&amp;</span>str, text: <span class="kw-2">&amp;</span>str) -&gt; TaskFailure {
+<a href=#738 id=738 data-nosnippet>738</a>    TaskFailure::validation(<span class="macro">format!</span>(
+<a href=#739 id=739 data-nosnippet>739</a>        <span class="string">"{name}={text:?} is not implemented by casa-rs yet (#979)"
+<a href=#740 id=740 data-nosnippet>740</a>    </span>))
+<a href=#741 id=741 data-nosnippet>741</a>    .at(name)
+<a href=#742 id=742 data-nosnippet>742</a>}
+<a href=#743 id=743 data-nosnippet>743</a>
+<a href=#744 id=744 data-nosnippet>744</a><span class="doccomment">/// The refusal of a value CASA does not take either.
+<a href=#745 id=745 data-nosnippet>745</a></span><span class="kw">fn </span>unknown(name: <span class="kw-2">&amp;</span>str, text: <span class="kw-2">&amp;</span>str, expected: <span class="kw-2">&amp;</span>str) -&gt; TaskFailure {
+<a href=#746 id=746 data-nosnippet>746</a>    TaskFailure::validation(<span class="macro">format!</span>(<span class="string">"{name}={text:?} is not valid; expected {expected}"</span>)).at(name)
+<a href=#747 id=747 data-nosnippet>747</a>}
+<a href=#748 id=748 data-nosnippet>748</a>
+<a href=#749 id=749 data-nosnippet>749</a><span class="kw">fn </span>out_of_range(name: <span class="kw-2">&amp;</span>str, id: i64) -&gt; TaskFailure {
+<a href=#750 id=750 data-nosnippet>750</a>    TaskFailure::validation(<span class="macro">format!</span>(<span class="string">"{name} value {id} is out of range"</span>)).at(name)
+<a href=#751 id=751 data-nosnippet>751</a>}
 </code></pre></div></section></main></body></html>
