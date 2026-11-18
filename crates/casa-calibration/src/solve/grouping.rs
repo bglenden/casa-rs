@@ -20,7 +20,9 @@ use super::{
     GainType, RefAntSelector, correlation_receptors, get_f64, get_i32, stokes_name,
 };
 use crate::ApplyCalibrationTableSpec;
-use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows, evaluate_delay_priors};
+use crate::execute::{
+    EvaluatedApplyRow, PriorSolveBoundary, evaluate_apply_rows, evaluate_solve_priors,
+};
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::{resolve_calibration_selection, resolve_casa_calibration_selection};
 use crate::solve::kernel::{RobustSample, SolveGraph};
@@ -34,6 +36,7 @@ use weights::{SpectralWeights, solve_weights};
 
 pub(crate) enum PriorCalibrationMode {
     Data,
+    Bandpass { share_input_flags: bool },
     Delay { share_input_flags: bool },
 }
 
@@ -61,8 +64,11 @@ pub(crate) fn load_preapplied_rows(
     })?;
     let preapplied = match mode {
         PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false),
+        PriorCalibrationMode::Bandpass { share_input_flags } => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Bandpass, share_input_flags)
+        }
         PriorCalibrationMode::Delay { share_input_flags } => {
-            evaluate_delay_priors(ms, plan, share_input_flags)
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags)
         }
     };
     preapplied

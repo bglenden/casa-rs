@@ -13,7 +13,7 @@ import numpy as np
 
 from applycal_oracle import copy_ms
 from calibration_lifecycle_oracle import contents
-from gaincal_delay_oracle import duplicate_rows
+from gaincal_delay_oracle import duplicate_rows, make_priors
 from gaincal_oracle import relative_rms
 from record_casa_returns import make_cal_ms
 
@@ -58,7 +58,7 @@ def gapped_data(source, target):
 
 def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s_model=(1.,),
             solint='inf', interval_count=None, parang=False, minsnr=0., spw='', bins=None,
-            apply_spwmap=None, refant='A0', **solve_options):
+            apply_spwmap=None, refant='A0', priors=(), **solve_options):
     products, corrected, returns, windows = [], [], [], []
     for name, engine in [('casa', casa), ('native', native)]:
         ms, output = root/f'{name}.ms', root/f'{name}.B'
@@ -73,7 +73,7 @@ def compare(root, source, native, normalize, fillgaps=0, remaining_flags=None, s
         products.append(contents(output))
         if bins is not None:
             windows.append(contents(output/'SPECTRAL_WINDOW'))
-        engine.applycal(str(ms), field='0', gaintable=[str(output)], flagbackup=False, spw=spw,
+        engine.applycal(str(ms), field='0', gaintable=[*priors, str(output)], flagbackup=False, spw=spw,
                         parang=parang, **({'spwmap': [apply_spwmap]} if apply_spwmap else {}))
         corrected.append(contents(ms))
     np.testing.assert_equal(returns[1], returns[0])
@@ -413,6 +413,69 @@ def reference_cases(root, source, native):
     return results
 
 
+def prior_cases(root, source, native):
+    folder = root/'prior-fixtures'
+    folder.mkdir()
+    gains, _ = make_priors(folder, source)
+    delay = str(folder/'delay.K')
+    casa.gaincal(str(source), delay, field='0', gaintype='K', refant='A0', minsnr=0., smodel=[1.])
+    chain = [delay, *gains]
+    library = folder/'chain.callib'
+    library.write_text(''.join(f"caltable='{path}' tinterp='nearest' calwt=True\n" for path in chain))
+
+    flagged = folder/'flagged.G'
+    copy_ms(Path(gains[0]), flagged)
+    tool = table()
+    tool.open(str(flagged), nomodify=False)
+    try:
+        flags = tool.getcol('FLAG')
+        flags[0, :, tool.getcol('ANTENNA1') == 0] = True
+        tool.putcol('FLAG', flags)
+    finally:
+        tool.close()
+    cases = [
+        ('prior-chain', chain, dict(gaintable=chain)),
+        ('prior-callib', chain, dict(docallib=True, callib=str(library))),
+        ('prior-flagged-receptor', [str(flagged)], dict(gaintable=[str(flagged)])),
+    ]
+    results = {}
+    for label, previous, options in cases:
+        case = root/label
+        case.mkdir()
+        results[label] = compare(case, source, native, False, priors=previous, minblperant=3,
+                                 **options)
+    flags = contents(root/'prior-flagged-receptor'/'casa.B')['FLAG']
+    assert np.all(flags[0, :, 0]) and not np.any(flags[1, :, 0])
+    return results
+
+
+def fluxscale_workflow(root, source, native):
+    input_ms = root/'flux-transfer.ms'
+    copy_ms(source, input_ms)
+    tool = table()
+    tool.open(str(input_ms), nomodify=False)
+    try:
+        data = tool.getcol('DATA')
+        data[..., tool.getcol('FIELD_ID') == 1] *= 2.5
+        tool.putcol('DATA', data)
+    finally:
+        tool.close()
+    products = []
+    for name, engine in [('casa', casa), ('native', native)]:
+        vis = root/f'{name}-flux.ms'
+        copy_ms(input_ms, vis)
+        bandpass, gain, flux = (str(root/f'{name}.{family}') for family in ('B', 'G', 'flux'))
+        engine.bandpass(str(vis), bandpass, field='0', refant='A0', minsnr=0., smodel=[1.])
+        engine.gaincal(str(vis), gain, refant='A0', minsnr=0., smodel=[1.],
+                       gaintable=[bandpass], gainfield=['0'])
+        result = engine.fluxscale(str(vis), gain, flux, reference=['0'], transfer=['1'])
+        products.append((result['1']['0']['fluxd'][0], contents(Path(flux))['CPARAM']))
+    (casa_flux, casa_gains), (native_flux, native_gains) = products
+    np.testing.assert_allclose(casa_flux, 2.5, rtol=.015)
+    return {'flux': abs(native_flux/casa_flux - 1.),
+            'CPARAM': relative_rms(native_gains, casa_gains)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -451,6 +514,8 @@ def main():
     results.update(selection_cases(root, source, native))
     results.update(combination_cases(root, source, native))
     results.update(reference_cases(root, source, native))
+    results.update(prior_cases(root, source, native))
+    results['bandpass-gains-fluxscale'] = fluxscale_workflow(root, source, native)
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
     for name, report in results.items():
         assert max(report.values(), default=0.) < 1e-3, (name, report)

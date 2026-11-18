@@ -169,6 +169,7 @@ pub(crate) struct SolvedGraphs {
 
 pub(crate) enum SolveStart<'a> {
     Guess,
+    BandpassGuess,
     PreviousChannel(Option<&'a SolvedGraphs>),
     LegacyChannel(&'a SolvedGraphs),
 }
@@ -339,7 +340,15 @@ pub(crate) fn solve_graphs(
     if solved_antennas.iter().all(BTreeSet::is_empty) {
         return None;
     }
-    let mut first = if let SolveStart::PreviousChannel(previous) = start {
+    let bandpass_guess = matches!(start, SolveStart::BandpassGuess)
+        .then(|| bandpass_first_guess(&active, &constrained, &solved_antennas, refant_id));
+    let mut first = if let Some(guess) = &bandpass_guess {
+        guess
+            .iter()
+            .zip(&solved_antennas)
+            .map(|(gains, antennas)| antennas.iter().map(|&id| (id, gains[&id])).collect())
+            .collect()
+    } else if let SolveStart::PreviousChannel(previous) = start {
         solved_antennas
             .iter()
             .enumerate()
@@ -445,10 +454,68 @@ pub(crate) fn solve_graphs(
             }
         }
     }
+    if let Some(guess) = bandpass_guess {
+        for (receptor, initial) in receptors.iter_mut().zip(guess) {
+            for (antenna, gain) in initial {
+                receptor
+                    .gains
+                    .entry(antenna)
+                    .or_insert_with(|| complex64_to_32(gain));
+            }
+        }
+    }
     Some(SolvedGraphs {
         refant_id,
         receptors,
     })
+}
+
+fn bandpass_first_guess(
+    graphs: &[SolveGraph],
+    constrained: &BTreeSet<i32>,
+    solved_antennas: &[BTreeSet<i32>],
+    requested: i32,
+) -> Vec<HashMap<i32, Complex64>> {
+    if solved_antennas.iter().all(|ants| ants == constrained) {
+        return first_guess(graphs, solved_antennas, GainType::G, requested);
+    }
+    // GJones::guessPar chooses one antenna using rows with both parallel
+    // hands present. It initializes absent receptors to the same mean scale.
+    let joint = graphs[0]
+        .weights
+        .keys()
+        .copied()
+        .filter(|&pair| graphs.iter().all(|graph| graph.weight(pair) > 0.0))
+        .collect::<BTreeSet<_>>();
+    let joined_antennas = joint
+        .iter()
+        .flat_map(|&(a, b)| [a, b])
+        .collect::<BTreeSet<_>>();
+    let Some(guess_ref) = joined_antennas
+        .get(&requested)
+        .or_else(|| joined_antennas.first())
+    else {
+        return graphs
+            .iter()
+            .map(|_| {
+                constrained
+                    .iter()
+                    .map(|&antenna| (antenna, Complex64::new(0.3, 0.0)))
+                    .collect()
+            })
+            .collect();
+    };
+    let mut joined = graphs.to_vec();
+    for graph in &mut joined {
+        graph.edges.retain(|pair, _| joint.contains(pair));
+        graph.weights.retain(|pair, _| joint.contains(pair));
+    }
+    first_guess(
+        &joined,
+        &vec![constrained.clone(); graphs.len()],
+        GainType::G,
+        *guess_ref,
+    )
 }
 
 /// The antennas that keep at least `min_baselines_per_antenna` baselines

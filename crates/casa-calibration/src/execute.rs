@@ -70,7 +70,7 @@ pub(crate) mod parang;
 mod solve_priors;
 mod weights;
 use channels::{DataChannelGrid, apply_row};
-pub(crate) use solve_priors::evaluate_delay_priors;
+pub(crate) use solve_priors::{PriorSolveBoundary, evaluate_solve_priors};
 
 const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
 const PERF_DIR_ENV: &str = "CASA_RS_CALIBRATION_PERF_DIR";

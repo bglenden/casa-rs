@@ -137,9 +137,11 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
     ] {
         let invalid = BandpassSolveRequest {
             refant,
+            band_type: BandpassType::BPoly,
             ..request.clone()
         };
-        let error = run_bandpass_solve(&ms_path, &invalid).expect_err("gain-only reference");
+        let error =
+            run_bandpass_solve(&ms_path, &invalid).expect_err("legacy reference restriction");
         assert!(error.to_string().contains("requires one reference antenna"));
         assert!(!bandpass_table.exists());
     }

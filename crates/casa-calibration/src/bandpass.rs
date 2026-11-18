@@ -307,9 +307,7 @@ pub(crate) fn solve_bandpass(
     mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     validate_bandpass_request(request)?;
-    let rotate_model = request.parang
-        && request.band_type == BandpassType::B
-        && request.model_source.needs_model_rotation(request.smodel);
+    let rotate_model = request.parang && request.band_type == BandpassType::B;
     let input_phase = crate::timing::Phase::start("bandpass_select_read_average");
     let context = prepare_calibration_solve(
         ms,
@@ -318,7 +316,12 @@ pub(crate) fn solve_bandpass(
         &request.prior_calibration_tables,
         request.parang && !rotate_model,
         request.band_type == BandpassType::B,
-        crate::solve::grouping::PriorCalibrationMode::Data,
+        match request.band_type {
+            BandpassType::B => crate::solve::grouping::PriorCalibrationMode::Bandpass {
+                share_input_flags: !request.correlation_dependent_flags,
+            },
+            BandpassType::BPoly => crate::solve::grouping::PriorCalibrationMode::Data,
+        },
     );
     let context = match context {
         Ok(context) => context,
@@ -360,6 +363,10 @@ pub(crate) fn solve_bandpass(
         Err(error) => return Err(error.into()),
     };
     let channel_bin_widths = metadata::bin_widths(ms, &context.rows, request.frequency_interval)?;
+    // Preapply already shared the input flags when requested. Flags
+    // introduced by a prior remain on the affected correlations.
+    let correlation_dependent_flags = request.correlation_dependent_flags
+        || (request.band_type == BandpassType::B && context.preapplied_rows.is_some());
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -383,7 +390,7 @@ pub(crate) fn solve_bandpass(
                 _ => None,
             },
             robust_seed: false,
-            correlation_dependent_flags: request.correlation_dependent_flags,
+            correlation_dependent_flags,
         },
     )?;
 
@@ -417,7 +424,7 @@ pub(crate) fn solve_bandpass(
             request.combine,
             request.cuts,
             request.band_type,
-            request.correlation_dependent_flags,
+            correlation_dependent_flags,
         );
         if request.band_type == BandpassType::BPoly && request.normalize_average_amplitude {
             normalize_bandpass_rows(&mut rows, group.solution_channels);
@@ -626,7 +633,7 @@ fn solve_bandpass_group(
                     .as_ref()
                     .map_or(SolveStart::Guess, SolveStart::LegacyChannel)
             } else if channel + 1 == channel_count {
-                SolveStart::Guess
+                SolveStart::BandpassGuess
             } else {
                 SolveStart::PreviousChannel(start.as_ref())
             },
