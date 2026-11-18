@@ -22,7 +22,7 @@ use crate::ApplyCalibrationTableSpec;
 use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
 use crate::session::resolve_calibration_selection;
-use crate::solve::kernel::SolveGraph;
+use crate::solve::kernel::{RobustSample, SolveGraph};
 use time::{FirstTBuffer, bucketed_rows, first_t_buffers};
 
 pub(crate) fn validate_solve_interval(
@@ -78,9 +78,14 @@ pub(crate) fn build_solve_groups(
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut layouts_by_ddid = HashMap::new();
-    let scalar_gain = options.gain_type == GainType::T;
-    let mut ordered = bucketed_rows(rows, options.solve_interval, options.combine, scalar_gain);
-    let seed_buffers = if scalar_gain {
+    let needs_first_buffer = options.gain_type == GainType::T || options.robust_seed;
+    let mut ordered = bucketed_rows(
+        rows,
+        options.solve_interval,
+        options.combine,
+        needs_first_buffer,
+    );
+    let seed_buffers = if needs_first_buffer {
         let buffers = first_t_buffers(&ordered, options.preaverage_max_span);
         ordered.retain(|(row, _, _)| row.antenna1 != row.antenna2);
         buffers
@@ -511,6 +516,7 @@ pub(crate) struct SolveGroupOptions {
     /// Maximum time from the first sample in an average of one baseline.
     pub(crate) preaverage_max_span: Option<f64>,
     pub(crate) correlation_dependent_flags: bool,
+    pub(crate) robust_seed: bool,
     /// Solve each data channel apart (`bandpass`) rather than the selected
     /// channels together (`gaincal`).
     pub(crate) channelized: bool,
@@ -938,7 +944,7 @@ impl SolveAccumulator {
     /// `SDBList::aggregateTimeCentroid`: each baseline's TIME_CENTROID,
     /// averaged over its rows by row weight as time averaging does, weighted
     /// by the baseline's solve weight after that phase-only scaling.
-    pub(crate) fn finalize_for_solve(&mut self, solve_mode: GainSolveMode) {
+    pub(crate) fn finalize_for_solve(&mut self, solve_mode: GainSolveMode, preserve_samples: bool) {
         self.channel_graphs = vec![
             vec![SolveGraph::default(); self.receptor_accumulations.len()];
             self.solution_channels
@@ -979,6 +985,19 @@ impl SolveAccumulator {
                             collapsed_count: 1,
                         },
                     );
+                    if preserve_samples {
+                        self.channel_graphs[channel_index][receptor]
+                            .robust_samples
+                            .push(RobustSample {
+                                baseline: key.baseline.antennas,
+                                correlation: key.correlation_index,
+                                visibility: sample,
+                                weight,
+                                in_first_buffer: self
+                                    .first_t_buffer
+                                    .is_some_and(|buffer| buffer.contains(key.baseline)),
+                            });
+                    }
                     *baseline_weights.entry(key.baseline).or_default() += f64::from(weight);
                 }
             }
@@ -1306,7 +1325,7 @@ mod tests {
         add(&mut group, 0, Complex32::new(2.0, 0.0));
         add(&mut group, 0, Complex32::new(0.0, 2.0));
 
-        group.finalize_for_solve(GainSolveMode::Phase);
+        group.finalize_for_solve(GainSolveMode::Phase, false);
 
         let graph = &group.channel_graphs[0][0];
         assert!((graph.weights[&(0, 1)] - 4.0).abs() < 1.0e-6);
@@ -1323,7 +1342,7 @@ mod tests {
         add(&mut group, 0, Complex32::new(2.0, 0.0));
         add(&mut group, 3, Complex32::new(0.0, 2.0));
 
-        group.finalize_for_solve(GainSolveMode::Phase);
+        group.finalize_for_solve(GainSolveMode::Phase, false);
 
         let graph = &group.channel_graphs[0][0];
         assert!((graph.weights[&(0, 1)] - 8.0).abs() < 1.0e-6);
@@ -1367,7 +1386,7 @@ mod tests {
             },
         );
 
-        group.finalize_for_solve(GainSolveMode::AmplitudePhase);
+        group.finalize_for_solve(GainSolveMode::AmplitudePhase, false);
 
         assert!((group.solution_time - (3.0 * 11.0 + 20.0) / 4.0).abs() < 1.0e-12);
     }

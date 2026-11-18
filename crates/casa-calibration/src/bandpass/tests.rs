@@ -19,6 +19,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
         combine: GainSolveCombine::default(),
         channelized: true,
         preaverage_max_span: None,
+        robust_seed: false,
         correlation_dependent_flags: false,
     };
     let mut group = SolveAccumulator::new(0, 0, 0);
@@ -53,7 +54,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
                 .expect("observe");
         }
     }
-    group.finalize_for_solve(GainSolveMode::AmplitudePhase);
+    group.finalize_for_solve(GainSolveMode::AmplitudePhase, false);
     group
 }
 
@@ -98,6 +99,7 @@ fn channel_solves_apply_casas_baseline_and_snr_cuts() {
             scalar_seed: None,
             correlation_dependent_flags: false,
             defer_reference: false,
+            robustness: None,
         },
         None,
     )

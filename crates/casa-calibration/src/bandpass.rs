@@ -315,6 +315,7 @@ pub(crate) fn solve_bandpass(
             },
             channelized: true,
             preaverage_max_span: None,
+            robust_seed: false,
             correlation_dependent_flags: false,
         },
     )?;
@@ -332,7 +333,7 @@ pub(crate) fn solve_bandpass(
         &context.available_antennas,
     );
     for mut group in groups.into_values() {
-        group.finalize_for_solve(GainSolveMode::AmplitudePhase);
+        group.finalize_for_solve(GainSolveMode::AmplitudePhase, false);
         solve_stats.interval(&IntervalStages::of(
             &group,
             request
@@ -480,6 +481,7 @@ fn solve_bandpass_group(
                 scalar_seed: None,
                 correlation_dependent_flags: false,
                 defer_reference: false,
+                robustness: None,
             },
             start.as_ref(),
         );

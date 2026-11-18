@@ -319,6 +319,7 @@ mod tests {
             preaverage_seconds: 0.0,
             correlation_dependent_flags: false,
             normalization_type: Default::default(),
+            robustness: Default::default(),
             min_snr: 0.0,
             min_baselines_per_antenna: 1,
             smodel: [1.0, 0.0, 0.0, 0.0],
@@ -352,6 +353,7 @@ mod tests {
         group.scan_numbers.insert(6);
         group.antenna_ids.extend([0, 1]);
         group.channel_graphs = vec![vec![SolveGraph {
+            robust_samples: Vec::new(),
             edges: HashMap::from([
                 ((0, 1), Complex32::new(2.0, -1.0)),
                 ((1, 0), Complex32::new(2.0, 1.0)),
