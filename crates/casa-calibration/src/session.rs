@@ -161,11 +161,12 @@ pub(crate) fn prepare_calibration_solve(
     refant: &RefAntSelector,
     prior_calibration_tables: &[ApplyCalibrationTableSpec],
     parang: bool,
+    full_selection: bool,
 ) -> Result<CalibrationSolveContext, GainSolveError> {
     let refants = resolve_refants(measurement_set, refant)?;
     let refant_id = refants.first().copied().unwrap_or(-1);
     let available_antennas = all_antenna_ids(measurement_set)?;
-    let rows = collect_selected_rows(measurement_set, selection)?;
+    let rows = collect_selected_rows(measurement_set, selection, full_selection)?;
     refuse_shared_spectral_windows(&rows)?;
     Ok(CalibrationSolveContext {
         refant_id,
@@ -189,7 +190,7 @@ pub(crate) fn resolve_calibration_selection(
     measurement_set.resolve_selection(selection, calibration_selection_budget()?)
 }
 
-pub(crate) fn resolve_apply_selection(
+pub(crate) fn resolve_casa_calibration_selection(
     measurement_set: &MeasurementSet,
     selection: &MsSelection,
 ) -> Result<ResolvedMsSelection, MsSelectionError> {

@@ -63,42 +63,9 @@ fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFa
         let (tables, error) = traditional_chain(task, Chain::Apply)?;
         (tables, None, error)
     };
-    let mut selection = selection(task)?;
-    selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
-    selection.uvrange = uv_selector_text(task.value("uvrange"));
-    // calibrater.selectvis converts these variants with toCasaString, which
-    // removes one outer bracket pair even when the input was a string.
-    for selector in [
-        &mut selection.field,
-        &mut selection.spw,
-        &mut selection.intent,
-        &mut selection.timerange,
-        &mut selection.uvrange,
-        &mut selection.antenna,
-        &mut selection.scan,
-        &mut selection.observation,
-    ] {
-        if let Some(text) = selector
-            && let Some(inner) = text
-                .strip_prefix('[')
-                .and_then(|text| text.strip_suffix(']'))
-        {
-            *selector = (!inner.is_empty()).then(|| inner.to_string());
-        }
-    }
-    // CASA accepts these parameters even when disabled, retaining their input
-    // values for HISTORY while passing empty selectors to calibrater.selectvis.
-    if !task.flag("selectdata")? {
-        selection.timerange = None;
-        selection.uvrange = None;
-        selection.antenna = None;
-        selection.scan = None;
-        selection.observation = None;
-        selection.msselect = None;
-    }
     Ok(ExecuteApplyTaskRequest {
         measurement_set: task.path("vis")?,
-        selection,
+        selection: selection(task)?,
         calibration_tables,
         callibrary_error,
         argument_error,
@@ -317,22 +284,23 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
 /// CASA's selection: `field`, `spw` and `intent` always; the others are inactive,
 /// and so unset, while `selectdata` is not.
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
+    let full = task.surface() != "bandpass";
     let text = |name: &str| {
         task.text(name).map(|value| {
-            if task.surface() == "applycal" {
+            if full {
                 value.filter(|text| !text.is_empty())
             } else {
                 value
             }
         })
     };
-    Ok(MsSelection {
+    let mut selection = MsSelection {
         selectdata: true,
         field: text("field")?,
         spw: text("spw")?,
         antenna: text("antenna")?,
         scan: text("scan")?,
-        observation: if task.surface() == "applycal" {
+        observation: if full {
             selector_text(task.value("observation"))
         } else {
             text("observation")?
@@ -341,7 +309,51 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         timerange: text("timerange")?,
         msselect: text("msselect")?,
         ..MsSelection::default()
-    })
+    };
+    if !full {
+        return Ok(selection);
+    }
+    selection.intent = task.text("intent")?.filter(|text| !text.is_empty());
+    selection.uvrange = uv_selector_text(task.value("uvrange"));
+    // calibrater.selectvis converts these variants with toCasaString, which
+    // removes one outer bracket pair even when the input was a string.
+    for selector in [
+        &mut selection.field,
+        &mut selection.spw,
+        &mut selection.intent,
+        &mut selection.timerange,
+        &mut selection.uvrange,
+        &mut selection.antenna,
+        &mut selection.scan,
+        &mut selection.observation,
+    ] {
+        if let Some(text) = selector
+            && let Some(inner) = text
+                .strip_prefix('[')
+                .and_then(|text| text.strip_suffix(']'))
+        {
+            *selector = (!inner.is_empty()).then(|| inner.to_string());
+        }
+    }
+    // CASA accepts these parameters even when disabled, retaining their input
+    // values for HISTORY while passing empty selectors to calibrater.selectvis.
+    if !task.flag("selectdata")? {
+        selection.timerange = None;
+        selection.uvrange = None;
+        selection.antenna = None;
+        selection.scan = None;
+        selection.observation = None;
+        selection.msselect = None;
+    }
+    if task.surface() == "gaincal" {
+        // The public task always adds this predicate, including when the
+        // optional selectors are disabled.
+        selection.msselect = Some(match selection.msselect {
+            Some(predicate) => format!("({predicate}) && ANTENNA1!=ANTENNA2"),
+            None => "ANTENNA1!=ANTENNA2".into(),
+        });
+    }
+    Ok(selection)
 }
 
 fn selector_text(value: Option<&ParameterValue>) -> Option<String> {
@@ -642,7 +654,7 @@ fn robust_gain_solve(task: &TaskInvocation<'_>) -> Result<crate::GainSolveRobust
 /// and a negative one its `int`. Channel intervals (`'inf,2ch'`) are not
 /// implemented yet.
 fn solint(task: &TaskInvocation<'_>) -> Result<GainSolveInterval, TaskFailure> {
-    let text = task.text("solint")?.unwrap_or_default();
+    let text = selector_text(task.value("solint")).unwrap_or_default();
     if text.contains(',') {
         return Err(not_yet("solint", &text));
     }
