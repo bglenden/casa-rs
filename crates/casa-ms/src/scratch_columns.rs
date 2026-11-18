@@ -93,6 +93,32 @@ pub fn prepare_write(
     prepare(ms, column, adds, None)
 }
 
+/// Remove the scratch visibility model while preserving the virtual model.
+/// An absent scratch column is already in the requested state.
+pub fn remove_scratch_model(ms: &mut MeasurementSet) -> MsResult<()> {
+    let name = VisibilityDataColumn::ModelData.name();
+    let table = ms.main_table_mut();
+    if !table
+        .schema()
+        .is_some_and(|schema| schema.contains_column(name))
+    {
+        return Ok(());
+    }
+    let independent = table
+        .data_manager_info()
+        .iter()
+        .any(|manager| manager.columns.len() == 1 && manager.columns[0] == name);
+    if independent {
+        table.remove_columns_in_place(&[name])?;
+    } else {
+        change_in_place(table, 0, Write::Full, None, |main| {
+            main.remove_column(name)?;
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
 /// [`prepare_write`] for a caller that holds MAIN's write lock through
 /// `main_lock`, a [`TableWriteLock`] on the MAIN of `ms` (opened without
 /// locking), as a writer of several mutation sessions in turn holds it:

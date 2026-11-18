@@ -16,6 +16,8 @@ from ._catalog import (
     applycal,
     gaincal,
     bandpass,
+    clearcal,
+    delmod,
     fluxscale,
     gencal,
     plotms,
@@ -44,4 +46,4 @@ from ._runner import (
     run,
 )
 
-__all__ = ['TaskBinaryNotFoundError', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskParameterError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma']
+__all__ = ['TaskBinaryNotFoundError', 'TaskCompletion', 'TaskExecutionError', 'TaskInvocationError', 'TaskParameterError', 'TaskResultError', 'TASK_SURFACES', 'run', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'clearcal', 'delmod', 'fluxscale', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma']

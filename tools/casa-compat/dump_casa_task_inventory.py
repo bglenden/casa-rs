@@ -52,7 +52,9 @@ PINNED_VERSION = "6.7.6.14"
 TASKS: tuple[tuple[str, str], ...] = (
     ("applycal", "casatasks"),
     ("bandpass", "casatasks"),
+    ("clearcal", "casatasks"),
     ("concat", "casatasks"),
+    ("delmod", "casatasks"),
     ("exportfits", "casatasks"),
     ("feather", "casatasks"),
     ("flagdata", "casatasks"),

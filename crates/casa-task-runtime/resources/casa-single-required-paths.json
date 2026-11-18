@@ -1,6 +1,8 @@
 {
   "applycal": "vis",
   "bandpass": "vis",
+  "clearcal": "vis",
+  "delmod": "vis",
   "exportfits": "imagename",
   "flagdata": "vis",
   "flagmanager": "vis",

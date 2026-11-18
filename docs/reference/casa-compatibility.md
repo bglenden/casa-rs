@@ -18,7 +18,9 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
 | bandpass | bandpass | yes | 35 | 35 | 0 | 0 | 4 | 0 |
+| clearcal | clearcal | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
+| delmod | delmod | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 8 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
 | flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
@@ -213,6 +215,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 35, in CASA's order: yes
 - Defaults that differ: none
 
+### clearcal
+
+- CASA source: `casatasks/clearcal.py`, 5 parameters
+- Implementation: `casatasks/private/task_clearcal.py`, `clearcal` (line 9): 1 return statements, 1 raise statements
+  - returns at line 23: `None`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 5, in CASA's order: yes
+- Defaults that differ: none
+
 ### concat
 
 - CASA source: `casatasks/concat.py`, 9 parameters
@@ -223,6 +237,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Accepted only at CASA's default until #939: `respectname`, `timesort`, `forcesingleephemfield`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 9, in CASA's order: yes
+- Defaults that differ: none
+
+### delmod
+
+- CASA source: `casatasks/delmod.py`, 4 parameters
+- Implementation: `casatasks/private/task_delmod.py`, `delmod` (line 13): 1 return statements, 1 raise statements
+  - returns at line 21: `None`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 4, in CASA's order: yes
 - Defaults that differ: none
 
 ### exportfits
