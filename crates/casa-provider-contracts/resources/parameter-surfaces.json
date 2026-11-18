@@ -15344,14 +15344,14 @@
         },
         {
           "name": "intent",
-          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 3},
           "order": 4,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
-            "provider": {"field": "intent"},
+            "provider": {"field": "intent", "adapter": "identity"},
             "python": {"name": "intent"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
           },
@@ -15388,15 +15388,15 @@
         },
         {
           "name": "uvrange",
-          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 4},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
-            "provider": {"field": "uvrange"},
-            "python": {"name": "uvrange"},
+            "provider": {"field": "uvrange", "adapter": "identity"},
+            "python": {"name": "uvrange", "type_hint": "str | int | float | list[str]"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
           },
           "unimplemented": {"issue": 979, "applies_when": {"kind": "all", "predicates": [{"kind": "equals", "parameter": "selectdata", "value": {"kind": "bool", "value": true}}, {"kind": "equals", "parameter": "bandtype", "value": {"kind": "string", "value": "BPOLY"}}]}}

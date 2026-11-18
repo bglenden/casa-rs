@@ -557,7 +557,7 @@ def bandpass(
     intent: str = ...,
     selectdata: bool = ...,
     timerange: str = ...,
-    uvrange: str = ...,
+    uvrange: str | int | float | list[str] = ...,
     antenna: str = ...,
     scan: str = ...,
     observation: str | int = ...,
