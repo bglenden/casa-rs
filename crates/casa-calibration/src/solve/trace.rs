@@ -254,6 +254,7 @@ fn base_key_json(key: &SolveBaseKey) -> serde_json::Value {
     json!({
         "field_id": key.field_id,
         "spw_id": key.spw_id,
+        "data_desc_id": key.data_desc_id,
         "observation_id": key.observation_id,
         "scan_number": key.scan_number,
     })
@@ -335,6 +336,7 @@ mod tests {
         let base_key = SolveBaseKey {
             field_id: 3,
             spw_id: 4,
+            data_desc_id: 4,
             observation_id: 5,
             scan_number: 6,
         };
@@ -468,6 +470,7 @@ mod tests {
             base_key_json(&SolveBaseKey {
                 field_id: 1,
                 spw_id: 2,
+                data_desc_id: 2,
                 observation_id: 3,
                 scan_number: 4,
             })["scan_number"],

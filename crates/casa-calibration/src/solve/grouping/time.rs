@@ -19,8 +19,44 @@ pub(super) struct AveragedBaseline {
 /// A weighted mean of times.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct WeightedTime {
-    pub(super) weighted_sum: f64,
-    pub(super) weight: f64,
+    origin: f64,
+    weighted_offset: f64,
+    weight: f64,
+}
+
+impl WeightedTime {
+    pub(super) fn observe(&mut self, time: f64, weight: f64) {
+        self.add(time, 0.0, weight);
+    }
+
+    pub(super) fn observe_mean(&mut self, centroid: Self, weight: f64) {
+        if centroid.weight > 0.0 {
+            self.add(
+                centroid.origin,
+                centroid.weighted_offset * (weight / centroid.weight),
+                weight,
+            );
+        }
+    }
+
+    pub(super) fn mean(self) -> Option<f64> {
+        (self.weight > 0.0).then(|| self.origin + self.weighted_offset / self.weight)
+    }
+
+    #[cfg(test)]
+    pub(super) fn merge(&mut self, other: Self) {
+        self.add(other.origin, other.weighted_offset, other.weight);
+    }
+
+    fn add(&mut self, origin: f64, weighted_offset: f64, weight: f64) {
+        // Measure offsets before weighting. Summing absolute MS epochs
+        // can split equal caltable times depending on baseline order.
+        if self.weight == 0.0 {
+            self.origin = origin;
+        }
+        self.weighted_offset += weighted_offset + weight * (origin - self.origin);
+        self.weight += weight;
+    }
 }
 
 /// Each selected row of `rows`, in solve order, with the group and
@@ -45,6 +81,11 @@ pub(super) fn bucketed_rows(
                     0
                 } else {
                     row.data_spw_id
+                },
+                data_desc_id: if combine.spectral_windows {
+                    0
+                } else {
+                    row.data_desc_id
                 },
                 observation_id: if combine.observations {
                     0

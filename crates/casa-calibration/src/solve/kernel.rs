@@ -171,7 +171,7 @@ pub(crate) struct SolvedGraphs {
 pub(crate) struct SolveGraphOptions<'a> {
     pub(crate) refant_id: i32,
     pub(crate) min_baselines_per_antenna: usize,
-    pub(crate) scalar_seed: Option<&'a SolveAccumulator>,
+    pub(crate) group_seed: Option<&'a SolveAccumulator>,
     pub(crate) correlation_dependent_flags: bool,
     pub(crate) defer_reference: bool,
     pub(crate) robustness: Option<&'a GainSolveRobustness>,
@@ -224,7 +224,7 @@ pub(crate) fn solve_group(
         gain_type,
         solve_mode,
         SolveGraphOptions {
-            scalar_seed: (gain_type == GainType::T).then_some(&group),
+            group_seed: Some(&group),
             defer_reference: true,
             ..options
         },
@@ -333,7 +333,8 @@ pub(crate) fn solve_graphs(
     if solved_antennas.iter().all(BTreeSet::is_empty) {
         return None;
     }
-    let mut first = if let Some(seed) = options.scalar_seed
+    let mut first = if gain_type == GainType::T
+        && let Some(seed) = options.group_seed
         && let Some(guess) =
             seed.scalar_initial_gains(&solved_antennas[0], options.refant_id, solve_mode)
     {
@@ -346,6 +347,21 @@ pub(crate) fn solve_graphs(
             .min_by_key(|antenna| (*antenna != options.refant_id, *antenna))
             .unwrap_or(refant_id);
         first_guess(&first_graphs, &solved_antennas, gain_type, first_reference)
+    } else if let Some(seed) = options
+        .group_seed
+        .and_then(|group| group.first_g_graphs.as_ref())
+    {
+        let first_reference = seed
+            .iter()
+            .flat_map(SolveGraph::antennas)
+            .min_by_key(|antenna| (*antenna != options.refant_id, *antenna))
+            .unwrap_or(refant_id);
+        first_guess(
+            seed.as_slice(),
+            &solved_antennas,
+            gain_type,
+            first_reference,
+        )
     } else {
         first_guess(&active, &solved_antennas, gain_type, refant_id)
     };
@@ -1057,7 +1073,7 @@ mod tests {
         SolveGraphOptions {
             refant_id: 0,
             min_baselines_per_antenna,
-            scalar_seed: None,
+            group_seed: None,
             correlation_dependent_flags: false,
             defer_reference: false,
             robustness: None,

@@ -98,7 +98,7 @@ fn channel_solves_apply_casas_baseline_and_snr_cuts() {
         SolveGraphOptions {
             refant_id: 0,
             min_baselines_per_antenna: 3,
-            scalar_seed: None,
+            group_seed: None,
             correlation_dependent_flags: false,
             defer_reference: false,
             robustness: None,

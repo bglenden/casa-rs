@@ -480,8 +480,6 @@ pub(crate) fn solve_gain_rows(
         spectral_window_ids(ms)?,
         &context.available_antennas,
     );
-    // Each solved interval's window and its rows in `solution_rows`.
-    let mut intervals = Vec::new();
     for ((base_key, bucket_key), mut group) in groups {
         if group.attempted {
             attempted_spw_ids.insert(group.spw_id);
@@ -515,9 +513,7 @@ pub(crate) fn solve_gain_rows(
             request,
             context.refant_id,
         );
-        let start = solution_rows.len();
         solution_rows.extend(group_rows);
-        intervals.push((spw_id, start..solution_rows.len()));
     }
     if context.refant_id >= 0 {
         let strict = matches!(
@@ -550,15 +546,13 @@ pub(crate) fn solve_gain_rows(
     if request.solve_mode != GainSolveMode::Phase && request.normalize_average_amplitude {
         normalize_gain_solution_amplitudes(&mut solution_rows, request.normalization_type);
     }
-    // The reference antenna each interval ended with, where it kept its
-    // solution: flex flags an interval it found none for.
-    for (spw_id, rows) in intervals {
-        let rows = &solution_rows[rows];
-        if let Some(refant) = rows
-            .iter()
-            .find(|row| row.antenna_id == row.refant_id && row.flags.iter().any(|flagged| !flagged))
+    let mut referenced = BTreeSet::new();
+    for row in &solution_rows {
+        if row.antenna_id == row.refant_id
+            && row.flags.iter().any(|flagged| !flagged)
+            && referenced.insert((row.spw_id, row.time_seconds.to_bits()))
         {
-            solve_stats.used_as_refant(spw_id, refant.antenna_id);
+            solve_stats.used_as_refant(row.spw_id, row.antenna_id);
         }
     }
     drop(kernel_phase);
@@ -615,7 +609,7 @@ pub(crate) fn solve_closed_group(
         kernel::SolveGraphOptions {
             refant_id,
             min_baselines_per_antenna: request.min_baselines_per_antenna,
-            scalar_seed: None,
+            group_seed: None,
             correlation_dependent_flags: request.correlation_dependent_flags,
             defer_reference: true,
             robustness: request.robustness.enabled().then_some(&request.robustness),
@@ -687,10 +681,12 @@ pub(crate) fn apply_reference_antenna(
     alternates: &[i32],
     strict: bool,
 ) {
-    let mut group_indices = BTreeMap::<(i32, u64, i32), Vec<usize>>::new();
+    // CASA `applyRefAnt` iterates by window and exact caltable time, even
+    // where separate solve intervals contributed rows at the same time.
+    let mut group_indices = BTreeMap::<_, Vec<_>>::new();
     for (index, row) in rows.iter().enumerate() {
         group_indices
-            .entry((row.spw_id, row.time_seconds.to_bits(), row.field_id))
+            .entry((row.spw_id, row.time_seconds.to_bits()))
             .or_default()
             .push(index);
     }
@@ -708,7 +704,7 @@ pub(crate) fn apply_reference_antenna(
 
     let mut previous = None::<Vec<usize>>;
     let mut last_spw = None::<i32>;
-    for ((spw_id, _, _), current) in group_indices {
+    for ((spw_id, _), current) in group_indices {
         if last_spw != Some(spw_id) {
             previous = None;
             last_spw = Some(spw_id);
@@ -762,21 +758,16 @@ fn find_flex_refant(
     previous: &[usize],
     receptors: usize,
 ) -> Option<(usize, usize)> {
-    let usable = |index: &usize, antenna_id: i32| {
-        let row = &rows[*index];
-        row.antenna_id == antenna_id && row.flags.iter().take(receptors).all(|flag| !*flag)
+    let usable = |indices: &[usize], antenna_id: i32| {
+        indices
+            .iter()
+            .copied()
+            .find(|&index| rows[index].antenna_id == antenna_id)
+            .filter(|&index| rows[index].flags.iter().take(receptors).all(|flag| !*flag))
     };
-    choices.iter().find_map(|&antenna_id| {
-        let current_index = current
-            .iter()
-            .copied()
-            .find(|index| usable(index, antenna_id))?;
-        let previous_index = previous
-            .iter()
-            .copied()
-            .find(|index| usable(index, antenna_id))?;
-        Some((current_index, previous_index))
-    })
+    choices
+        .iter()
+        .find_map(|&antenna_id| Some((usable(current, antenna_id)?, usable(previous, antenna_id)?)))
 }
 
 fn phase_only(gain: Complex32) -> Complex32 {

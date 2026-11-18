@@ -34,6 +34,14 @@ pub enum WPlaneCount {
     /// reach is `0.25 / |Δx|` wavelengths (`WPConvFunc::findConvFunction`
     /// with `maxW_p = −1`, as tclean constructs it).
     Fixed(u32),
+    /// A restored `WProjectFT` with an already chosen plane count and
+    /// the largest measured absolute w in wavelengths.
+    Restored {
+        /// Number of convolution planes saved in the record.
+        planes: u32,
+        /// Maximum absolute w before CASA's 5% margin.
+        max_w: f64,
+    },
     /// `wprojplanes = −1`: the count follows CASA's `wStat` of the selected
     /// data at the top frequency.
     Auto {
@@ -89,6 +97,7 @@ impl WLayout {
         // |w| the planes reach.
         let (planes, max_uvw) = match count {
             WPlaneCount::Fixed(planes) => (planes as usize, 0.25 / increment[0].abs()),
+            WPlaneCount::Restored { planes, max_w } => (planes as usize, 1.05 * max_w),
             WPlaneCount::Auto {
                 min_w,
                 max_w,

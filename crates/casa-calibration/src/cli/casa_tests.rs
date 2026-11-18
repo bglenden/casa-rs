@@ -314,11 +314,7 @@ fn gaincal_refuses_the_casa_values_it_does_not_implement_yet() {
         values[name] = value;
         casa("gaincal", values)
     };
-    for (name, value) in [
-        ("gaintype", json!("K")),
-        ("gaintype", json!("GSPLINE")),
-        ("solint", json!("inf,2ch")),
-    ] {
+    for (name, value) in [("gaintype", json!("K")), ("gaintype", json!("GSPLINE"))] {
         let mut values = base.clone();
         values[name] = value.clone();
         let message = refused(casa("gaincal", values), name);
@@ -351,6 +347,9 @@ fn gaincal_reads_solint_and_combine_as_casa_does() {
     assert_eq!(read("refant", "").refant, RefAntSelector::Unspecified);
     for (solint, interval) in [
         ("", GainSolveInterval::Infinite),
+        ("inf,2ch", GainSolveInterval::Infinite),
+        ("int,5MHz", GainSolveInterval::Integration),
+        ("30s,unused", GainSolveInterval::Seconds(30.0)),
         ("INF", GainSolveInterval::Infinite),
         ("Int", GainSolveInterval::Integration),
         ("1min", GainSolveInterval::Seconds(60.0)),

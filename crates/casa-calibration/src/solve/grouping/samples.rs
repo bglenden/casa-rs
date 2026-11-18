@@ -3,7 +3,7 @@
 
 use casa_ms::{ChannelSelection, MeasurementSet};
 use casa_types::Complex32;
-use ndarray::{ArrayD, Axis, IxDyn};
+use ndarray::{ArrayD, ArrayView2, Axis, Ix2, IxDyn};
 use num_complex::Complex64;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -22,6 +22,40 @@ pub(super) struct SolveAccumulationKey {
     pub(super) baseline: AveragedBaseline,
     pub(super) correlation_index: usize,
     pub(super) parallel_hand: bool,
+}
+
+/// One MAIN row's checked two-dimensional solve arrays. Scalar SIGMA weights
+/// have one channel, broadcast to the data's channel count without copying.
+pub(super) struct SolveRowInputs<'a> {
+    pub(super) data: &'a ArrayD<Complex32>,
+    pub(super) flags: Cow<'a, ArrayD<bool>>,
+    pub(super) weights: ArrayD<f32>,
+    pub(super) model: Option<&'a ArrayD<Complex32>>,
+}
+
+impl SolveRowInputs<'_> {
+    /// The arrays as [`SolveSamples`] views.
+    pub(super) fn samples(&self) -> SolveSamples<'_> {
+        SolveSamples {
+            data: two_dimensional(self.data),
+            flags: two_dimensional(&self.flags),
+            weights: self
+                .weights
+                .broadcast(self.data.raw_dim())
+                .expect("checked receptor/channel weight shape")
+                .into_dimensionality::<Ix2>()
+                .expect("checked two-dimensional"),
+            model: self.model.map(two_dimensional),
+            point_model: None,
+        }
+    }
+}
+
+/// A MAIN cell checked two-dimensional, as a view.
+pub(super) fn two_dimensional<T>(cell: &ArrayD<T>) -> ArrayView2<'_, T> {
+    cell.view()
+        .into_dimensionality::<Ix2>()
+        .expect("checked two-dimensional")
 }
 
 pub(super) struct SolveRowLayouts<'a> {

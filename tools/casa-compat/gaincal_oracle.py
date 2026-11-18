@@ -122,7 +122,7 @@ def amplitude_data(root, source):
 def gain_and_apply(root, source, native, gaintype, solint, solnorm=False, normtype='mean',
                    calmode='a', compare_flagged_gains=True, apply_options=None, sort_solutions=False,
                    **extra):
-    label = f'{calmode}-{gaintype}-{solint}-{normtype}-norm{int(solnorm)}'
+    label = f'{calmode}-{gaintype}-{solint.replace(",", "-")}-{normtype}-norm{int(solnorm)}'
     if 'preavg' in extra:
         label += f'-preavg{extra["preavg"]:g}'
     options = dict(gaintype=gaintype, calmode=calmode, solint=solint, solnorm=solnorm,
@@ -908,11 +908,22 @@ def virtual_fourier(root, source, native):
         t.putcell('TOTAL_BANDWIDTH', 0, channel_width*freq.size)
     finally:
         t.close()
+    long_w = root/'long-w.ms'
+    copy_ms(source, long_w)
+    t.open(str(long_w), nomodify=False)
+    try:
+        uvw = t.getcol('UVW')
+        uvw[2] *= 5
+        t.putcol('UVW', uvw)
+    finally:
+        t.close()
     cases = [
         ('continuum', source, 'GridFT', {}),
         ('off-centre', source, 'GridFT', {'phasecenter': 'J2000 0h0m0.10s -30d00m00s'}),
         ('cube', source, 'GridFT', {'specmode': 'cube', 'nchan': 3, 'start': 0, 'width': 1}),
         ('partially-flagged', source, 'GridFT', {}),
+        ('wproject', long_w, 'WProjectFT', {'gridder': 'wproject', 'wprojplanes': 8}),
+        ('wproject-measured', long_w, 'WProjectFT', {'gridder': 'wproject', 'wprojplanes': 8}),
         ('taylor', wide, 'MultiTermFTNew', {'deconvolver': 'mtmfs', 'nterms': 2}),
         ('taylor-outside', source, 'MultiTermFTNew', {'deconvolver': 'mtmfs', 'nterms': 2}),
     ]
@@ -926,10 +937,17 @@ def virtual_fourier(root, source, native):
             imsize=64, cell='1arcsec', niter=5, datacolumn='data',
             savemodel='virtual', **arguments)
         t = table()
-        t.open(str(vis/'SOURCE'))
+        measured_w = name == 'wproject-measured'
+        t.open(str(vis/'SOURCE'), nomodify=not measured_w)
         try:
-            record = t.getcell('SOURCE_MODEL', t.getkeyword('model_0'))
+            source_row = t.getkeyword('model_0')
+            record = t.getcell('SOURCE_MODEL', source_row)
             assert record['ft_0']['container']['name'] == machine
+            # A restored WProjectFT keeps its chosen plane count but can
+            # rebuild the kernels using the measured maximum stored with it.
+            if measured_w:
+                record['ft_0']['container']['maxw'] = 30000.
+                t.putcell('SOURCE_MODEL', source_row, record)
         finally:
             t.close()
         if name == 'taylor-outside':
@@ -954,7 +972,33 @@ def virtual_fourier(root, source, native):
                              field='0', spw='0', minblperant=2)
             sky = contents(case/f'ap-{gain}-inf-mean-norm0-casa.cal')
             assert relative_rms(explicit['CPARAM'], sky['CPARAM']) > .01
+    verify_missing_maximum_w(root, native)
     return results
+
+
+def verify_missing_maximum_w(root, native):
+    case = root/'missing-maximum-w'
+    case.mkdir()
+    vis = case/'input.ms'
+    copy_ms(root/'wproject'/'input.ms', vis)
+    t = table()
+    t.open(str(vis/'SOURCE'), nomodify=False)
+    try:
+        source_row = t.getkeyword('model_0')
+        record = t.getcell('SOURCE_MODEL', source_row)
+        del record['ft_0']['container']['maxw']
+        t.putcell('SOURCE_MODEL', source_row, record)
+    finally:
+        t.close()
+    for module, name, message in [(casa, 'casa', 'Calibrater::solve'),
+                                  (native, 'native', 'maximum W')]:
+        try:
+            solve(module, case, name, vis, smodel=[], field='0', spw='0', minblperant=2)
+        except (RuntimeError, ValueError) as error:
+            assert message in str(error), error
+        else:
+            raise AssertionError(f'{name} accepted WProjectFT without maxw')
+        assert not (case/f'{name}.cal').exists()
 
 
 def verify_no_fourier_solution(root, vis, native):
@@ -976,11 +1020,125 @@ def verify_no_fourier_solution(root, vis, native):
         np.testing.assert_array_equal(statistics[0][key], statistics[1][key], err_msg=key)
 
 
+def shared_window_descriptions(root, source, native):
+    results = {}
+    for layout in ['alternating', 'simultaneous']:
+        vis = root/f'{layout}.ms'
+        copy_ms(source, vis)
+        t = table()
+        t.open(str(vis/'DATA_DESCRIPTION'), nomodify=False)
+        try:
+            t.addrows(1)
+            for column in t.colnames():
+                t.putcell(column, 1, t.getcell(column, 0))
+        finally:
+            t.close()
+        t.open(str(vis), nomodify=False)
+        try:
+            _, time = np.unique(t.getcol('TIME'), return_inverse=True)
+            antennas = t.getcol('ANTENNA1') + t.getcol('ANTENNA2')
+            description = (time if layout == 'alternating' else antennas) % 2
+            t.putcol('DATA_DESC_ID', description.astype(np.int32))
+            t.putcol('DATA', t.getcol('DATA')*(1.+.7*description))
+            if layout == 'simultaneous':
+                # Distinct centroids let the caltable interpolation select
+                # each solution even when the visibility timestamps match.
+                t.putcol('TIME_CENTROID', t.getcol('TIME_CENTROID') + .25*description)
+        finally:
+            t.close()
+        for gain in ['G', 'T']:
+            for combine in ['', 'spw']:
+                name = f'{layout}-{gain}-{combine or "split"}'
+                case = root/name
+                case.mkdir()
+                results[name] = gain_and_apply(
+                    case, vis, native, gain, 'inf', calmode='ap', field='0',
+                    combine=combine, minblperant=2, sort_solutions=True,
+                    compare_flagged_gains=False)
+                label = f'ap-{gain}-inf-mean-norm0'
+                expected = contents(case/f'{label}-casa.cal')
+                assert len(expected['TIME']) == (5 if combine else 10)
+                spectral_metadata(case, label)
+    results.update(coincident_description_references(root, native))
+    results.update(simultaneous_distinct_windows(root, native))
+    for gain in ['G', 'T']:
+        for interval in ['inf,2ch', 'int,5MHz', '30s,unused']:
+            case = root/f'interval-{gain}-{interval.replace(",", "-")}'
+            case.mkdir()
+            results[case.name] = gain_and_apply(
+                case, source, native, gain, interval, calmode='ap', field='0',
+                minblperant=2)
+    return results
+
+
+def coincident_description_references(root, native):
+    case = root/'coincident-reference'
+    case.mkdir()
+    vis = case/'input.ms'
+    copy_ms(root/'alternating.ms', vis)
+    t = table()
+    t.open(str(vis), nomodify=False)
+    try:
+        # Two descriptions at each integration with integer times and
+        # uniform weights. The calibrated timestamps are exactly equal.
+        times, integration = np.unique(t.getcol('TIME'), return_inverse=True)
+        coincident = np.floor(times[0]) + 10. * (integration // 2)
+        t.putcol('TIME', coincident)
+        t.putcol('TIME_CENTROID', coincident)
+        t.putcol('SIGMA', np.ones_like(t.getcol('SIGMA')))
+        second = t.getcol('DATA_DESC_ID') == 1
+        uses_reference = (t.getcol('ANTENNA1') == 0) | (t.getcol('ANTENNA2') == 0)
+        flags = t.getcol('FLAG')
+        flags[..., second & uses_reference] = True
+        t.putcol('FLAG', flags)
+    finally:
+        t.close()
+    options = dict(gaintype='G', solint='int', calmode='ap', field='0',
+                   minblperant=2, refantmode='strict')
+    expected = solve(casa, case, 'reference', vis, **options)
+    actual = solve(native, case, 'native', vis, **options)
+    _, count = np.unique(expected['TIME'], return_counts=True)
+    np.testing.assert_array_equal(count, [10, 10, 10])
+    np.testing.assert_array_equal(expected['ANTENNA2'], 0)
+    for column in ['TIME', 'ANTENNA1', 'ANTENNA2', 'FLAG']:
+        np.testing.assert_array_equal(actual[column], expected[column], err_msg=column)
+    valid = ~expected['FLAG']
+    errors = {key: relative_rms(actual[key][valid], expected[key][valid])
+              for key in ['CPARAM', 'PARAMERR', 'SNR']}
+    assert max(errors.values()) < 1e-3, errors
+    return {case.name: errors}
+
+
+def simultaneous_distinct_windows(root, native):
+    case = root/'simultaneous-distinct-windows'
+    case.mkdir()
+    vis = case/'input.ms'
+    copy_ms(root/'simultaneous.ms', vis)
+    t = table()
+    t.open(str(vis/'SPECTRAL_WINDOW'), nomodify=False)
+    try:
+        t.addrows(1)
+        for column in t.colnames():
+            if t.iscelldefined(column, 0):
+                t.putcell(column, 1, t.getcell(column, 0))
+    finally:
+        t.close()
+    t.open(str(vis/'DATA_DESCRIPTION'), nomodify=False)
+    try:
+        t.putcell('SPECTRAL_WINDOW_ID', 1, 1)
+    finally:
+        t.close()
+    errors = gain_and_apply(case, vis, native, 'G', 'inf', calmode='ap',
+                            field='0', combine='spw', minblperant=2,
+                            apply_options={'spwmap': [0, 0]})
+    return {case.name: errors}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights', 'virtual-components', 'virtual-fourier'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights', 'virtual-components', 'virtual-fourier', 'descriptions'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -1050,6 +1208,8 @@ def main():
         results = virtual_components(root, amplitude_data(root, source), native)
     elif args.case == 'virtual-fourier':
         results = virtual_fourier(root, amplitude_data(root, source), native)
+    elif args.case == 'descriptions':
+        results = shared_window_descriptions(root, amplitude_data(root, source), native)
     else:
         results = {str(first): alternating_fields(root, source, native, first) for first in [1, 0]}
     (root/'results.json').write_text(json.dumps(results, indent=2)+'\n')
