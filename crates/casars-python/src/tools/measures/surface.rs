@@ -93,7 +93,7 @@ const METHODS: &[Method] = &[
     method("dirshow", &V, R::Text, Yes),
     method("doframe", &V, R::Bool, Yes),
     method("done", &[], R::Bool, Yes),
-    method("doppler", &DOPPLER, R::Record, No),
+    method("doppler", &DOPPLER, R::Record, Yes),
     method("earthmagnetic", &EARTHMAGNETIC, R::Record, No),
     method("epoch", &EPOCH, R::Record, Yes),
     method(
@@ -136,7 +136,7 @@ const METHODS: &[Method] = &[
     method("obslist", &[], R::Texts, Yes),
     method("posangle", &PAIR, R::Record, Yes),
     method("position", &POSITION, R::Record, Yes),
-    method("radialvelocity", &RADIALVELOCITY, R::Record, No),
+    method("radialvelocity", &RADIALVELOCITY, R::Record, Yes),
     method("rise", &RISE, R::Record, No),
     method("riseset", &RISE, R::Record, No),
     method("separation", &PAIR, R::Record, Yes),
@@ -181,7 +181,7 @@ const METHODS: &[Method] = &[
             param("rfq", K::Any, Empty),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "tofrequency",
@@ -191,9 +191,9 @@ const METHODS: &[Method] = &[
             param("rfq", K::Record, Required),
         ],
         R::Record,
-        No,
+        Yes,
     ),
-    method("toradialvelocity", &RF_V0, R::Record, No),
+    method("toradialvelocity", &RF_V0, R::Record, Yes),
     method(
         "torestfrequency",
         &[
@@ -201,7 +201,7 @@ const METHODS: &[Method] = &[
             param("d0", K::Record, Required),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "touvw",

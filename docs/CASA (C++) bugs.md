@@ -6550,3 +6550,41 @@ casa-rs refuses a duplicated axis with `Invalid cursor axes: [0, 0]: an axis
 is named twice; CASA 6.7.6.14 aborts on it` (crates/casa-images/src/analysis.rs,
 `parse_axes`), keeping every other axes form CASA accepts, including the
 minimum-forms `-1` for all axes (#977).
+
+## Measures spectral conversions reject or truncate valid vectors
+
+CASA 6.7.6.14 `me.tofrequency` and `me.toradialvelocity` return only the
+first result for a Doppler record whose `m0` contains two velocity values.
+`me.torestfrequency` likewise drops values when either input is a vector.
+Both elements convert successfully in separate scalar calls. This silently
+loses requested scientific results; the C++ helpers contain element loops,
+which also show the intended vector behavior.
+
+With no explicit frame, `me.todoppler('BETA', frequency, '1.42GHz')` rejects
+a BARY frequency vector `[1.3e9, 2.6e9] Hz` with `No MeasFrame direction
+specified for conversion of Frequency`. The same scalar inputs return
+valid Doppler values without a frame. This algebraic conversion does not
+need a direction; the vector path introduces a frame-dependent conversion.
+
+casa-rs preserves every input element and broadcasts a scalar against a
+vector. Its expected values come from independent CASA scalar calls for
+each element, including the approaching source at 2.6 GHz. Original CASA
+vector outputs and failures remain in the fixture alongside those controls.
+Input offsets follow each helper's semantics: `todoppler` reads the raw
+frequency/velocity, while conversions from Doppler resolve its reference
+offset. The correction follows the standing rule to correct scientific
+data loss and behavior that contradicts CASA's evident intent (#1252).
+
+Evidence: `tools/simulation/measures_spectral_oracle.py`,
+`crates/casars-python/python/tests/data/casa_measures_spectral.json`, and
+`test_measures_spectral.py` (the `scalar_controls` cases).
+
+### Cyclic spectral arguments terminate the process
+
+CASA 6.7.6.14 terminates with SIGSEGV for a cyclic dictionary or list passed
+to `me.doppler(v0=...)`, and for a cyclic record passed to `me.todoppler`.
+The first native spectral candidate exposed the same recursion failure in
+shared Python value capture. casa-rs now bounds recursive record and sequence
+capture at 128 levels and raises `ValueError` naming #1252. Capture state is
+restored on failure, so repeated failures and a subsequent valid call work.
+The isolated subprocess regressions run with core files disabled.

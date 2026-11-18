@@ -8,13 +8,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
 use super::PyMeasures;
-use crate::convert::holder::Measure;
+use super::record::Measures;
 use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant};
 use crate::tools::LogLine;
-
-const UNSUPPORTED: &str =
-    "measures.getoffset array or unsupported record value is not implemented (#1053)";
 
 enum Visit<'py> {
     Enter(Bound<'py, PyAny>, usize),
@@ -37,23 +34,33 @@ fn validate_containers(value: &Bound<'_, PyAny>) -> PyResult<()> {
         };
         if depth > 128 {
             return Err(PyValueError::new_err(
-                "measure record is too deeply nested (#1053)",
+                "measure record is too deeply nested (#1252)",
             ));
         }
         if value.is_instance(&ndarray)? {
-            return Err(PyNotImplementedError::new_err(UNSUPPORTED));
+            // Numeric arrays contain no recursive Python containers.
+            if value
+                .getattr("dtype")?
+                .getattr("hasobject")?
+                .extract::<bool>()?
+            {
+                return Err(PyValueError::new_err(
+                    "object measure arrays refused (#1252)",
+                ));
+            }
+            continue;
         }
         let entries: Vec<Bound<'_, PyAny>> = if let Ok(dict) = value.cast::<PyDict>() {
             dict.iter().map(|(_, item)| item).collect()
         } else if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
-            return Err(PyNotImplementedError::new_err(UNSUPPORTED));
+            value.try_iter()?.collect::<PyResult<Vec<_>>>()?
         } else {
             continue;
         };
         let id = value.as_ptr() as usize;
         if !active.insert(id) {
             return Err(PyValueError::new_err(
-                "cyclic measure record refused (#1053)",
+                "cyclic measure record refused (#1252)",
             ));
         }
         pending.push(Visit::Leave(id));
@@ -70,7 +77,7 @@ fn validate_containers(value: &Bound<'_, PyAny>) -> PyResult<()> {
 fn copy_record<'py>(value: &Bound<'py, PyDict>, depth: usize) -> PyResult<Bound<'py, PyDict>> {
     if depth > 128 {
         return Err(PyValueError::new_err(
-            "measure record is too deeply nested (#1053)",
+            "measure record is too deeply nested (#1252)",
         ));
     }
     let out = PyDict::new(value.py());
@@ -80,20 +87,54 @@ fn copy_record<'py>(value: &Bound<'py, PyDict>, depth: usize) -> PyResult<Bound<
         .collect::<PyResult<Vec<_>>>()?;
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     for (key, item) in entries {
-        if let Ok(record) = item.cast::<PyDict>() {
-            out.set_item(key, copy_record(record, depth + 1)?)?;
-        } else if item.is_exact_instance_of::<PyString>()
-            || item.is_exact_instance_of::<PyBool>()
-            || item.is_exact_instance_of::<PyInt>()
-            || item.is_exact_instance_of::<PyFloat>()
-            || item.is_exact_instance_of::<PyComplex>()
-        {
-            out.set_item(key, item)?;
-        } else {
-            return Err(PyNotImplementedError::new_err(UNSUPPORTED));
-        }
+        out.set_item(key, copy_value(&item, depth + 1)?)?;
     }
     Ok(out)
+}
+
+fn copy_value<'py>(value: &Bound<'py, PyAny>, depth: usize) -> PyResult<Bound<'py, PyAny>> {
+    if depth > 128 {
+        return Err(PyValueError::new_err(
+            "measure record is too deeply nested (#1252)",
+        ));
+    }
+    if let Ok(record) = value.cast::<PyDict>() {
+        return Ok(copy_record(record, depth)?.into_any());
+    }
+    if let Ok(list) = value.cast::<PyList>() {
+        return Ok(PyList::new(
+            value.py(),
+            list.iter()
+                .map(|item| copy_value(&item, depth + 1))
+                .collect::<PyResult<Vec<_>>>()?,
+        )?
+        .into_any());
+    }
+    if let Ok(tuple) = value.cast::<PyTuple>() {
+        return Ok(PyTuple::new(
+            value.py(),
+            tuple
+                .iter()
+                .map(|item| copy_value(&item, depth + 1))
+                .collect::<PyResult<Vec<_>>>()?,
+        )?
+        .into_any());
+    }
+    if value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)? {
+        return value.call_method0("copy");
+    }
+    if value.is_instance_of::<PyString>()
+        || value.is_instance_of::<PyBool>()
+        || value.is_instance_of::<PyInt>()
+        || value.is_instance_of::<PyFloat>()
+        || value.is_instance_of::<PyComplex>()
+        || value.is_instance(&value.py().import("numpy")?.getattr("generic")?)?
+    {
+        return Ok(value.clone());
+    }
+    Err(PyTypeError::new_err(
+        "unsupported value in measure offset record",
+    ))
 }
 
 #[pymethods]
@@ -117,12 +158,12 @@ impl PyMeasures {
         let RecordArg(mut fields) = v.extract()?;
         let offset = fields.remove("offset");
         let result = self.call(py, move |_, lines| {
-            let base = match Measure::from_record(&fields) {
-                Ok(value) => value.measure,
+            let base = match Measures::read(&RecordArg(fields)) {
+                Ok(value) => value.values[0],
                 Err(error) => {
                     let message = error.message();
                     if message.contains("not yet implemented") {
-                        return Err(PyNotImplementedError::new_err(format!("{message} (#1053)")));
+                        return Err(PyNotImplementedError::new_err(format!("{message} (#1252)")));
                     }
                     lines.push(LogLine::warning(format!("{message}Incorrect input type for getoffset()")));
                     return Ok(CasaValue::Bool(false));
@@ -136,11 +177,8 @@ impl PyMeasures {
                 lines.push(LogLine::error("Incorrect data type for offset"));
                 return Ok(CasaValue::Bool(false));
             };
-            if offset.contains_key("offset") {
-                return Err(PyNotImplementedError::new_err("nested measure offsets are not implemented (#1053)"));
-            }
-            match Measure::from_record(&offset) {
-                Ok(value) if value.measure.kind() == base.kind() => Ok(CasaValue::Bool(true)),
+            match Measures::read(&RecordArg((*offset).clone())) {
+                Ok(value) if value.values[0].kind() == base.kind() => Ok(CasaValue::Bool(true)),
                 Ok(_) => { lines.push(LogLine::warning("Unmatched offset type in MeasureHolder::fromRecord\nIncorrect input type for getoffset()")); Ok(CasaValue::Bool(false)) }
                 Err(error) => { lines.push(LogLine::warning(format!("{}Incorrect input type for getoffset()",error.message()))); Ok(CasaValue::Bool(false)) }
             }

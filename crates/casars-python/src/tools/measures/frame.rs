@@ -53,7 +53,8 @@ pub(super) fn doframe(state: &mut State, v: &RecordArg, lines: &mut Vec<LogLine>
         MeasureKind::Epoch => &mut frame.epoch,
         MeasureKind::Position => &mut frame.position,
         MeasureKind::Direction => &mut frame.direction,
-        MeasureKind::Frequency => return CasaValue::Bool(false),
+        MeasureKind::RadialVelocity => &mut frame.radial_velocity,
+        MeasureKind::Frequency | MeasureKind::Doppler => return CasaValue::Bool(false),
     };
     *slot = Some(measure);
     CasaValue::Bool(true)
@@ -95,16 +96,25 @@ pub(super) fn measure(
         ));
         return Ok(CasaValue::empty_record());
     }
-    let Some(measure) = read(v, "Non-measure type in measure conversion", lines) else {
-        return Ok(CasaValue::empty_record());
+    let measure = match super::record::Measures::read(v) {
+        Ok(measure) => measure,
+        Err(error) => {
+            lines.push(LogLine::error(format!(
+                "{}Non-measure type in measure conversion",
+                error.message()
+            )));
+            return Ok(CasaValue::empty_record());
+        }
     };
-    let target = measure.kind().codes().resolve_or_default(rf);
-    match convert(state, &measure, target)? {
+    if let Some(warning) = &measure.warning {
+        lines.push(LogLine::warning(warning.clone()));
+    }
+    let target = measure.values[0].kind().codes().resolve_or_default(rf);
+    match measure.resolve(state, target)? {
         Ok(converted) => Ok(converted.to_value()),
         Err(reason) => {
             lines.push(LogLine::warning(format!(
-                "Cannot convert due to missing frame information\nCannot convert measure: \
-                 {reason}"
+                "Cannot convert due to missing frame information\nCannot convert measure: {reason}"
             )));
             Ok(CasaValue::empty_record())
         }
@@ -114,7 +124,7 @@ pub(super) fn measure(
 /// `measure` in the code `target` of its kind: itself when it is already
 /// there, else converted in casa-types with the frame. The outer error is the
 /// measures data failing to load; the inner one, the conversion failing.
-fn convert(
+pub(super) fn convert(
     state: &mut State,
     measure: &Measure,
     target: &'static str,
@@ -122,19 +132,43 @@ fn convert(
     if measure.refer == target {
         return Ok(Ok(*measure));
     }
+    if let MeasureValue::Doppler(value) = measure.value {
+        let converted = casa_types::measures::doppler::MDoppler::new(
+            value,
+            crate::convert::holder::doppler_ref(measure.refer)
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?,
+        )
+        .convert_to(
+            crate::convert::holder::doppler_ref(target)
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?,
+            &MeasFrame::new(),
+        );
+        return Ok(converted
+            .map(|value| Measure {
+                refer: target,
+                value: MeasureValue::Doppler(value.value()),
+            })
+            .map_err(|error| error.to_string()));
+    }
     let measures = state.measures().map_err(no_measures)?;
     let converted = (|| {
         let mut frame = MeasFrame::new().with_measures(measures);
         let elements = state.frame;
-        for element in [elements.epoch, elements.position, elements.direction]
-            .into_iter()
-            .flatten()
+        for element in [
+            elements.epoch,
+            elements.position,
+            elements.direction,
+            elements.radial_velocity,
+        ]
+        .into_iter()
+        .flatten()
         {
             frame = match element.to_casa()? {
                 CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
                 CasaMeasure::Position(position) => frame.with_position(position),
                 CasaMeasure::Direction(direction) => frame.with_direction(direction),
-                CasaMeasure::Frequency(_) => frame,
+                CasaMeasure::RadialVelocity(value) => frame.with_radial_velocity(value),
+                CasaMeasure::Frequency(_) | CasaMeasure::Doppler(_) => frame,
             };
         }
         let unsupported =
@@ -160,6 +194,19 @@ fn convert(
             CasaMeasure::Position(position) => CasaMeasure::Position(
                 position
                     .convert_to(PositionRef::from_str(target).map_err(|_| unsupported("position"))?)
+                    .map_err(error)?,
+            ),
+            CasaMeasure::Doppler(value) => CasaMeasure::Doppler(
+                value
+                    .convert_to(crate::convert::holder::doppler_ref(target)?, &frame)
+                    .map_err(error)?,
+            ),
+            CasaMeasure::RadialVelocity(value) => CasaMeasure::RadialVelocity(
+                value
+                    .convert_to(
+                        target.parse().map_err(|_| unsupported("radialvelocity"))?,
+                        &frame,
+                    )
                     .map_err(error)?,
             ),
             CasaMeasure::Frequency(frequency) => CasaMeasure::Frequency(

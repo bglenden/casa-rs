@@ -36,14 +36,17 @@ def test_offset_values_are_copied_without_losing_integer_types():
     assert offset["m0"]["value"] != 123.0
 
 
-def test_unsupported_arrays_and_cycles_are_refused_safely():
+def test_array_offsets_are_copied_and_cycles_are_refused_safely():
+    from test_measures_spectral import CASES, compare
+    case = next(c for c in CASES if c['name']=='support_offset_extra_array')
+    from copy import deepcopy
+    measure = deepcopy(case['args'][0])
+    measure['offset']['extra'] = np.array(measure['offset']['extra'])
     me = measures()
-    measure = me.direction("J2000", "10deg", "20deg")
-    offset = me.direction("J2000", "1deg", "2deg")
-    offset["extra"] = np.array([1, 2])
-    measure["offset"] = offset
-    with pytest.raises(NotImplementedError, match="#1053"):
-        me.getoffset(measure)
+    result = me.getoffset(measure)
+    compare(result, case['result'])
+    result['extra'][0] = -1
+    assert measure['offset']['extra'][0] == 1
     assert ORACLE["cycle_returncode"] == -11
     cyclic = {}
     cyclic["self"] = cyclic
@@ -58,11 +61,7 @@ def test_unsupported_arrays_and_cycles_are_refused_safely():
         me.getoffset(deep)
 
 
-def test_nested_offsets_are_explicitly_unimplemented():
-    me = measures()
-    measure = me.direction("J2000", "10deg", "20deg")
-    offset = me.direction("J2000", "1deg", "2deg")
-    offset["offset"] = me.direction("J2000", "3deg", "4deg")
-    measure["offset"] = offset
-    with pytest.raises(NotImplementedError, match="#1053"):
-        me.getoffset(measure)
+def test_nested_offsets_match_casa():
+    from test_measures_spectral import CASES, compare
+    case = next(c for c in CASES if c['name']=='support_nested_offset')
+    compare(measures().getoffset(case['args'][0]), case['result'])

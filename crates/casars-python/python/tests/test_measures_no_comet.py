@@ -38,5 +38,5 @@ def test_comet_getters_without_table_match_casa(caplog):
 
 
 def test_framecomet_remains_explicitly_unimplemented():
-    with pytest.raises(NotImplementedError,match='#1053'):
+    with pytest.raises(NotImplementedError,match='#1252'):
         measures().framecomet('missing-comet-table')
