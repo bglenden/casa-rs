@@ -584,6 +584,7 @@ fn gaintype(task: &TaskInvocation<'_>) -> Result<GainType, TaskFailure> {
 fn calmode(task: &TaskInvocation<'_>) -> Result<GainSolveMode, TaskFailure> {
     match task.required_text("calmode")?.as_str() {
         "p" => Ok(GainSolveMode::Phase),
+        "a" => Ok(GainSolveMode::Amplitude),
         "ap" => Ok(GainSolveMode::AmplitudePhase),
         other => Err(not_yet("calmode", other)),
     }

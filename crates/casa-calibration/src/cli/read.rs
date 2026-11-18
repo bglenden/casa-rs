@@ -331,9 +331,10 @@ fn parse_gain_type(value: &str) -> Result<GainType, String> {
 fn parse_gain_solve_mode(value: &str) -> Result<GainSolveMode, String> {
     match value {
         "p" => Ok(GainSolveMode::Phase),
+        "a" => Ok(GainSolveMode::Amplitude),
         "ap" => Ok(GainSolveMode::AmplitudePhase),
         other => Err(format!(
-            "unsupported solve_mode {other:?}; expected p or ap"
+            "unsupported solve_mode {other:?}; expected p, a or ap"
         )),
     }
 }

@@ -4,7 +4,7 @@
 //! This module intentionally implements only a narrow, testable slice:
 //!
 //! - `gaintype=G|T`
-//! - `calmode='p|ap'`
+//! - `calmode='p|a|ap'`
 //! - `solint='inf'|'int'|<seconds>`
 //! - explicit reference antenna
 //! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`) or `MODEL_DATA`
@@ -67,11 +67,13 @@ impl GainType {
     }
 }
 
-/// Supported first-wave solve modes.
+/// Visibility and output-gain constraints for `gaincal`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum GainSolveMode {
     /// Phase-only solve.
     Phase,
+    /// Amplitude-only solve.
+    Amplitude,
     /// Amplitude-and-phase solve.
     AmplitudePhase,
 }
@@ -434,11 +436,24 @@ pub(crate) fn solve_gain_rows(
         context.refant_id,
         &refant_distance_order(ms, context.refant_id)?,
     );
-    // CASA's solnorm follows the reference antenna, over every interval
-    // (`SolvableVisJones::globalPostSolveTinker`).
-    if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
-        && request.normalize_average_amplitude
-    {
+    // CASA enforces amplitudes on the final gains after referencing and
+    // before normalizing across all intervals (`globalPostSolveTinker`).
+    if request.solve_mode == GainSolveMode::Amplitude {
+        for row in &mut solution_rows {
+            for (gain, flagged) in row.gains.iter_mut().zip(&row.flags) {
+                let amplitude = gain.norm();
+                *gain = Complex32::new(
+                    if *flagged || amplitude == 0.0 {
+                        1.0
+                    } else {
+                        amplitude
+                    },
+                    0.0,
+                );
+            }
+        }
+    }
+    if request.solve_mode != GainSolveMode::Phase && request.normalize_average_amplitude {
         normalize_gain_solution_amplitudes(&mut solution_rows);
     }
     // The reference antenna each interval ended with, where it kept its

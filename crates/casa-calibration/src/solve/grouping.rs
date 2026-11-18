@@ -923,7 +923,8 @@ impl SolveAccumulator {
     /// into the solve graphs, and set the solution TIME.
     ///
     /// A phase-only solve sees each collapsed sample at unit amplitude with
-    /// its weight times its squared amplitude
+    /// its weight times its squared amplitude. An amplitude-only solve
+    /// keeps the collapsed magnitude and the original weight
     /// (`SolveDataBuffer::enforceAPonData`). TIME is
     /// `SDBList::aggregateTimeCentroid`: each baseline's TIME_CENTROID,
     /// averaged over its rows by row weight as time averaging does, weighted
@@ -952,6 +953,9 @@ impl SolveAccumulator {
                                 averaged / Complex32::new(amplitude, 0.0),
                                 accumulation.weight * amplitude * amplitude,
                             )
+                        }
+                        GainSolveMode::Amplitude => {
+                            (Complex32::new(averaged.norm(), 0.0), accumulation.weight)
                         }
                         GainSolveMode::AmplitudePhase => (averaged, accumulation.weight),
                     };

@@ -284,6 +284,7 @@ fn gain_type_name(gain_type: GainType) -> &'static str {
 fn solve_mode_name(solve_mode: GainSolveMode) -> &'static str {
     match solve_mode {
         GainSolveMode::Phase => "p",
+        GainSolveMode::Amplitude => "a",
         GainSolveMode::AmplitudePhase => "ap",
     }
 }
