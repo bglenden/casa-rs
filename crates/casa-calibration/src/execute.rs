@@ -2112,7 +2112,12 @@ fn apply_row_all_channels(
             continue;
         };
 
-        let is_bandpass = table_plan.summary.table_subtype == "B Jones";
+        // CASA samples BPOLY on its CAL_DESC window and then interpolates
+        // the resulting B grid onto the data window.
+        let is_bandpass = matches!(
+            table_plan.summary.table_subtype.as_str(),
+            "B Jones" | "BPOLY"
+        );
         let bandpass_weights = (is_bandpass && calibrate_weights)
             .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types))
             .flatten();
