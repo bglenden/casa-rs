@@ -254,7 +254,7 @@ fn accumulate_parameters(
                 .to_string(),
         ));
     }
-    let (column, _, _) = request.caltype.parameter_column();
+    let (column, parameter_type, _) = request.caltype.parameter_column();
     let mut prior = BTreeMap::new();
     for row in old
         .rows()
@@ -267,6 +267,18 @@ fn accumulate_parameters(
             ))),
         };
         let key = (id(COL_SPECTRAL_WINDOW_ID)?, id(COL_ANTENNA1)?);
+        let valid = match row.get(column) {
+            Some(Value::Array(ArrayValue::Float32(_))) => parameter_type == PrimitiveType::Float32,
+            Some(Value::Array(ArrayValue::Complex32(_))) => {
+                parameter_type == PrimitiveType::Complex32
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(GencalError::InvalidRequest(format!(
+                "existing table has no {parameter_type:?} {column}"
+            )));
+        }
         if prior.insert(key, row.clone()).is_some() {
             return Err(GencalError::InvalidRequest(
                 "existing gencal table has duplicate antenna/SPW entries".to_string(),
@@ -329,17 +341,21 @@ fn specified_rows(
     } else {
         ms.resolve_spw_selector(&request.spw)
             .map_err(|error| invalid(error.to_string()))?
-            .spw_ids()
-            .to_vec()
+            .channel_list()
+            .iter()
+            .map(|range| range.spw_id)
+            .collect()
     };
-    let antenna_groups = if request.antenna.is_empty() || request.antenna == "*" {
+    let antennas = if request.antenna == "*" {
+        Vec::new()
+    } else {
+        ms.resolve_specified_antennas(&request.antenna)
+            .map_err(|error| invalid(error.to_string()))?
+    };
+    let antenna_groups = if antennas.is_empty() {
         vec![(0..antenna_count).collect::<Vec<_>>()]
     } else {
-        ms.resolve_reference_antennas(&request.antenna)
-            .map_err(|error| invalid(error.to_string()))?
-            .into_iter()
-            .map(|id| vec![id])
-            .collect()
+        antennas.into_iter().map(|id| vec![id]).collect()
     };
     let receptor_groups: &[&[usize]] = match polarization {
         "" => &[&[0, 1]],
@@ -364,11 +380,19 @@ fn specified_rows(
             "Inconsistent number of parameters specified (expected 1 or {required}, got {given}).",
         )));
     }
-    let identity = if request.caltype == GencalType::Amp {
-        1.0
-    } else {
-        0.0
-    };
+    let complex = matches!(request.caltype, GencalType::Amp | GencalType::Ph);
+    let identity = Complex32::new(if complex { 1.0 } else { 0.0 }, 0.0);
+    let factors = request
+        .parameter
+        .iter()
+        .map(|value| match request.caltype {
+            GencalType::Ph => {
+                let (sin, cos) = (value * std::f64::consts::PI / 180.0).sin_cos();
+                Complex32::new(cos as f32, sin as f32)
+            }
+            _ => Complex32::new(*value as f32, 0.0),
+        })
+        .collect::<Vec<_>>();
     let mut parameters = vec![[identity; 2]; antenna_count * window_count];
     for (window_order, window) in windows.into_iter().enumerate() {
         let window_offset = if repeat_windows {
@@ -379,10 +403,16 @@ fn specified_rows(
         for (antenna_order, antennas) in antenna_groups.iter().enumerate() {
             for (receptor_order, receptors) in receptor_groups.iter().enumerate() {
                 let index = window_offset + antenna_order * receptor_groups.len() + receptor_order;
-                let value = request.parameter[index % given];
+                let value = factors[index % given];
                 for antenna in antennas {
                     for receptor in *receptors {
-                        parameters[window * antenna_count + antenna][*receptor] = value;
+                        let parameter =
+                            &mut parameters[window * antenna_count + antenna][*receptor];
+                        if complex {
+                            *parameter *= value;
+                        } else {
+                            parameter.re += value.re;
+                        }
                     }
                 }
             }
@@ -393,15 +423,10 @@ fn specified_rows(
         .into_iter()
         .enumerate()
         .map(|(row, values)| {
-            let parameters = match request.caltype {
-                GencalType::Amp => {
-                    complex_column(values.map(|value| Complex32::new(value as f32, 0.0)))
-                }
-                GencalType::Ph => complex_column(values.map(|value| {
-                    let (sin, cos) = (value * std::f64::consts::PI / 180.0).sin_cos();
-                    Complex32::new(cos as f32, sin as f32)
-                })),
-                _ => f32_column(&values.map(|value| value as f32)),
+            let parameters = if complex {
+                complex_column(values)
+            } else {
+                f32_column(&values.map(|value| value.re))
             };
             PriorCalRow {
                 field_id: -1,
