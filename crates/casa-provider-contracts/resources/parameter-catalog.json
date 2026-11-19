@@ -12999,7 +12999,7 @@
       },
       "base_constraints": [],
       "unit_dimension": null,
-      "semantic_role": "algorithm",
+      "semantic_role": "output_data",
       "documentation": {
         "summary": "Calibration table the task writes.",
         "details": null,
