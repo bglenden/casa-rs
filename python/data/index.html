@@ -906,6 +906,9 @@ persist the edits to the image.</p>
 Use <code>addcoordinate</code> to append axes and <code>fromrecord</code> to restore a coordinate
 record. Pass <code>cs.torecord()</code> as the <code>csys</code> argument to <code>ia.fromshape</code> or
 <code>ia.fromarray</code>. The coordinate record must describe each image axis.</p>
+<p>Use <code>cs.setobserver(name)</code> and <code>cs.settelescope(name)</code> to update observation
+metadata. An unknown telescope name is stored and the setter returns
+<code>False</code>. The record retains the last known telescope position.</p>
 <p>Use <code>ia.open("example.im")</code> to reopen the product. Use
 <code>outfile=""</code> with <code>fromshape</code> or <code>fromarray</code> for a temporary image. Use <code>ia.setmiscinfo(record)</code> to replace an image’s miscellaneous metadata, and
 <code>ia.sethistory(origin, messages)</code> to append provenance. For an image with stored
