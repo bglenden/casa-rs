@@ -44,16 +44,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (channel = None, polarization = None), text_signature = "($self, channel=-1, polarization=-1)")]
-    fn beamarea(
-        &self,
-        channel: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("beamarea")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (source = None, convolved = None), text_signature = "($self, source=[], convolved=[])")]
     fn beamforconvolvedsize(
         &self,
@@ -112,12 +102,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("collapse")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn commonbeam(&self) -> PyResult<Py<PyAny>> {
-        stub("commonbeam")
     }
 
     /// Not yet implemented in casa-rs.
@@ -877,17 +861,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("replacemaskedpixels")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (channel = None, polarization = None, mbret = None), text_signature = "($self, channel=-1, polarization=-1, mbret='list')")]
-    fn restoringbeam(
-        &self,
-        channel: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-        mbret: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("restoringbeam")
     }
 
     /// Not yet implemented in casa-rs.
