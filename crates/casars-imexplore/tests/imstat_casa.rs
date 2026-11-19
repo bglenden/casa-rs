@@ -718,8 +718,7 @@ fn imsubimage_multi_box_cuts_the_bounding_box_with_a_union_mask() {
         imagename: fixture("multi.im"),
         outfile: outfile.clone(),
         box_pixels: Some("0,0,2,2,4,4,6,6".into()),
-        chans: None,
-        overwrite: false,
+        ..casa_images::ImsubimageRequest::default()
     })
     .expect("cut the multi-box region");
     let cut = casa_images::PagedImage::<f32>::open(&outfile).expect("open the cut");

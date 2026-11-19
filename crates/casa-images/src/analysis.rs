@@ -27,6 +27,7 @@ mod exportfits;
 mod extrema;
 mod imhead_fits;
 mod immath;
+mod imsubimage;
 mod list_log;
 mod planes;
 mod projection_header;
@@ -36,9 +37,7 @@ mod summary_log;
 mod task_contract;
 mod world_header;
 
-use self::axes::{
-    direction_plane_axes, legacy_subimage_coordinates, other_axes, subimage_coordinates,
-};
+use self::axes::{direction_plane_axes, other_axes};
 pub use self::extrema::imhead_extrema;
 pub use self::list_log::imhead_list_log;
 use self::planes::{PlaneAt, pv_samples, unravel_index};
@@ -220,18 +219,10 @@ pub fn impv(request: &ImpvRequest) -> Result<PvImageSummary, ImageError> {
     }
 }
 
-/// Extract a CASA `imsubimage`-style image section for tutorial pixel boxes.
+/// Extract a CASA `imsubimage` section across pixel/world boxes, CRTF and
+/// saved regions, channel/Stokes selections, LEL masks, and `dropdeg`/`keepaxes`.
 pub fn imsubimage(request: &ImsubimageRequest) -> Result<ImageSubimageSummary, ImageError> {
-    let image = AnyPagedImage::open(&request.imagename)?;
-    match &image {
-        AnyPagedImage::Float32(image) => imsubimage_typed(image, request),
-        AnyPagedImage::Float64(image) => imsubimage_typed(image, request),
-        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
-            Err(ImageError::InvalidMetadata(
-                "imsubimage currently supports real-valued images".to_string(),
-            ))
-        }
-    }
+    imsubimage::run(request)
 }
 
 /// Evaluate CASA `immath` across `evalexpr`, `spix`, `pola`, `poli`, `lpoli`, and `tpoli` modes.
@@ -1866,11 +1857,8 @@ fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageA
         // A direction coordinate presents its values in the units it is
         // stored in, as casacore's does, though it computes in radians.
         if let casa_coordinates::CoordinateModel::Direction(direction) = coord {
-            refs = direction.in_world_units([refs[0], refs[1]]).to_vec();
-            increments = direction
-                .in_world_units([increments[0], increments[1]])
-                .to_vec();
-            units = direction.world_units().to_vec();
+            (refs, increments) = direction.reference_and_increment_in_world_units();
+            units = direction.visible_world_units();
         }
         for axis_in_coord in 0..coord.n_pixel_axes() {
             summaries.push(ImageAxisSummary {
@@ -1942,7 +1930,7 @@ where
         Some(box_text) => Some(parse_box_region(
             box_text,
             image.shape(),
-            direction_plane_axes(image),
+            direction_plane_axes(image)?,
         )?),
         None => None,
     };
@@ -2680,7 +2668,7 @@ impl Selection {
     ) -> Result<Self, ImageError> {
         let mut start = vec![0; image.ndim()];
         let mut shape = image.shape().to_vec();
-        let plane = direction_plane_axes(image);
+        let plane = region.map_or(Ok([0, 1]), |_| direction_plane_axes(image))?;
         if let Some(region) = region {
             let [x0, y0, x1, y1] = region.bounding_box();
             let [x, y] = plane;
@@ -2776,7 +2764,7 @@ impl Selection {
 /// Parse CASA's `stokes` selection: comma-separated Stokes plane names,
 /// concatenated as in `QU` or `IQUV`. Numeric forms are not names.
 pub(super) fn parse_stokes_selection<T: ImagePixel>(
-    image: &impl ImageInterface<T>,
+    image: &(impl ImageInterface<T> + ?Sized),
     text: &str,
 ) -> Result<Vec<usize>, ImageError> {
     let axis = image.find_axis(CoordinateType::Stokes).ok_or_else(|| {
@@ -3127,7 +3115,7 @@ fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
                 .to_string(),
         ));
     }
-    let [x, y] = direction_plane_axes(image);
+    let [x, y] = direction_plane_axes(image)?;
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let base_world = coordinates.to_world(&base_pixel)?;
     pairs
@@ -3245,7 +3233,7 @@ fn crtf_world_box_pixels<T: ImagePixel>(
                 .to_string(),
         ));
     }
-    let [x, y] = direction_plane_axes(image);
+    let [x, y] = direction_plane_axes(image)?;
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let mut first_world = coordinates.to_world(&base_pixel)?;
     let mut second_world = first_world.clone();
@@ -3379,7 +3367,7 @@ fn parse_boxes(text: &str) -> Result<Vec<[usize; 4]>, ImageError> {
 /// inside the direction plane, and each box's blc no greater than its
 /// trc, with CASA's own refusals. A box's x and y run along the
 /// direction plane's axes wherever they are.
-fn parse_box_region(
+pub(super) fn parse_box_region(
     text: &str,
     image_shape: &[usize],
     plane: [usize; 2],
@@ -3792,98 +3780,6 @@ fn strip_optional_quotes(text: &str) -> &str {
         .unwrap_or(text)
 }
 
-fn imsubimage_typed<T>(
-    image: &PagedImage<T>,
-    request: &ImsubimageRequest,
-) -> Result<ImageSubimageSummary, ImageError>
-where
-    T: ImagePixel + Into<f64> + Copy,
-{
-    if request.outfile.exists() {
-        if request.overwrite {
-            fs::remove_dir_all(&request.outfile)
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-        } else {
-            return Err(ImageError::Io(format!(
-                "subimage output already exists: {}",
-                request.outfile.display()
-            )));
-        }
-    }
-    let box_region = match request
-        .box_pixels
-        .as_deref()
-        .filter(|text| !text.trim().is_empty())
-    {
-        Some(box_text) => Some(parse_box_region(
-            box_text,
-            image.shape(),
-            direction_plane_axes(image),
-        )?),
-        None => None,
-    };
-    let selection = Selection::new(image, box_region.as_ref(), request.chans.as_deref(), None)?;
-    let data = image.get_slice(&selection.start, &selection.shape)?;
-    // Several boxes cover their bounding box: the region mask marks which
-    // pixels are in the union, as CASA's region-composed subimage does; the
-    // pixels outside keep their values and lose their validity.
-    let union_mask = match &box_region {
-        Some(region @ PixelRegion::Boxes(boxes)) if boxes.len() > 1 => {
-            Some(region_pixel_mask(region, &selection)?)
-        }
-        _ => None,
-    };
-    let mask = match (
-        image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?,
-        union_mask,
-    ) {
-        (Some(mut mask), Some(union)) => {
-            Zip::from(&mut mask)
-                .and(&union)
-                .for_each(|existing, in_region| *existing = *existing && *in_region);
-            Some(mask)
-        }
-        (None, Some(union)) => Some(union),
-        (mask, None) => mask,
-    };
-    let output_coordinates =
-        subimage_coordinates(image.coordinates(), &selection.start, &selection.shape)?;
-    let legacy_coordinates = legacy_subimage_coordinates(image, &selection.start, &selection.shape);
-    let mut output = TempImage::<T>::new(
-        selection.shape.clone(),
-        output_coordinates,
-        casa_lattices::TempStoragePolicy::Auto {
-            memory_budget_bytes: 64 * 1024 * 1024,
-            scratch: casa_lattices::ScratchSpace::SystemTemp,
-        },
-    )?;
-    output.set_units(image.units())?;
-    output.set_image_info(&image.image_info()?)?;
-    output.set_misc_info(image.misc_info())?;
-    output.put_slice(&data, &vec![0; output.ndim()])?;
-    if let Some(mask) = mask {
-        output.put_mask("mask0", &mask)?;
-        output.set_default_mask("mask0")?;
-    }
-    output.save_as(&request.outfile)?;
-    if let Some(coords) = legacy_coordinates {
-        patch_saved_coords_keyword(&request.outfile, coords)?;
-    }
-    Ok(ImageSubimageSummary {
-        imagename: request.imagename.display().to_string(),
-        outfile: request.outfile.display().to_string(),
-        blc: selection.start.clone(),
-        trc: selection
-            .start
-            .iter()
-            .zip(&selection.shape)
-            .map(|(start, shape)| start + shape - 1)
-            .collect(),
-        shape: selection.shape,
-        units: image.units().to_string(),
-    })
-}
-
 pub(super) fn patch_saved_coords_keyword(
     path: &Path,
     coords: casa_types::RecordValue,
@@ -4112,7 +4008,7 @@ fn feather_typed(
         ));
     }
     // Feathered in the direction plane, wherever its axes are.
-    let direction = direction_plane_axes(high);
+    let direction = direction_plane_axes(high)?;
     let others = other_axes(high_shape.len(), direction);
     let other_shape = others
         .iter()
@@ -4322,7 +4218,7 @@ where
     // takes its first two axes. The output keeps the input's coordinates
     // rather than a PV image's (#1024), so a direction elsewhere is refused
     // until it has them, rather than labelled more wrongly (#1022 review).
-    let plane = direction_plane_axes(image);
+    let plane = direction_plane_axes(image)?;
     if plane[0] != 0 {
         return Err(ImageError::InvalidMetadata(format!(
             "impv takes the direction from the image's first two axes until its output has a PV \
@@ -5086,7 +4982,7 @@ mod tests {
                 outfile: subimage_path.clone(),
                 box_pixels: Some("0,0,0,1".to_string()),
                 chans: Some("1~2".to_string()),
-                overwrite: false,
+                ..ImsubimageRequest::default()
             }))
             .unwrap();
         let ImageAnalysisTaskResult::Imsubimage(subimage) = subimage_result else {

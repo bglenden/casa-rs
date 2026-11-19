@@ -70,6 +70,7 @@ fn append_group(entries: &mut Vec<ImageHistoryEntry>, group: &str, lines: &[Stri
                 .map_or("", |(location, _)| location);
             entries.push(ImageHistoryEntry {
                 time_mjd_seconds: parse_time(date).unwrap_or(-1.0),
+                priority: "INFO".into(),
                 location: location.to_string(),
                 message: pair[1].clone(),
             });
@@ -77,6 +78,7 @@ fn append_group(entries: &mut Vec<ImageHistoryEntry>, group: &str, lines: &[Stri
     } else if group.is_empty() || group == "LOGTABLE" {
         entries.extend(lines.iter().map(|line| ImageHistoryEntry {
             time_mjd_seconds: -1.0,
+            priority: "INFO".into(),
             location: String::new(),
             message: line.clone(),
         }));

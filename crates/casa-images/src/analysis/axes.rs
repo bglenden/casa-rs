@@ -7,7 +7,9 @@
 //! axes (#1001), so its coordinates can differ from the record's: a
 //! record's coordinates are found where the record places them.
 
-use casa_coordinates::{CoordinateSystem, CoordinateType, StokesCoordinate, StokesType};
+use casa_coordinates::{
+    CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
+};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{ImageError, ImageInterface, ImagePixel, PagedImage};
@@ -26,11 +28,22 @@ use crate::{ImageError, ImageInterface, ImagePixel, PagedImage};
 ///   image (`docs/CASA (C++) bugs.md`).
 /// - `impv` takes it only on axes 0 and 1 until its output has a PV image's
 ///   coordinates (#1024).
-pub(super) fn direction_plane_axes<T: ImagePixel>(image: &impl ImageInterface<T>) -> [usize; 2] {
-    match image.find_axis(CoordinateType::Direction) {
-        Some(longitude) => [longitude, longitude + 1],
-        None => [0, 1],
+pub(super) fn direction_plane_axes<T: ImagePixel>(
+    image: &(impl ImageInterface<T> + ?Sized),
+) -> Result<[usize; 2], ImageError> {
+    let coordinates = image.coordinates();
+    let Some(index) = coordinates.find_coordinate(CoordinateType::Direction) else {
+        return Ok([0, 1]);
+    };
+    if coordinates.coordinate(index).n_pixel_axes() != 2 {
+        return Err(ImageError::InvalidMetadata(
+            "selecting a direction plane requires both direction axes".into(),
+        ));
     }
+    let longitude = (0..index)
+        .map(|i| coordinates.coordinate(i).n_pixel_axes())
+        .sum();
+    Ok([longitude, longitude + 1])
 }
 
 /// The axes of a `rank`-axis image other than its plane's, in order.
@@ -68,21 +81,32 @@ pub(super) fn subimage_coordinates_with_stokes(
     Ok(coords)
 }
 
+/// Stokes list owned by pixel `axis` of `coords`.
+pub(super) fn stokes_for_axis(
+    coords: &CoordinateSystem,
+    axis: usize,
+) -> Result<Vec<StokesType>, ImageError> {
+    let mut offset = 0usize;
+    for idx in 0..coords.n_coordinates() {
+        let coord = coords.coordinate(idx);
+        let next = offset + coord.n_pixel_axes();
+        if (offset..next).contains(&axis)
+            && let CoordinateModel::Stokes(stokes) = coord
+        {
+            return Ok(stokes.stokes().to_vec());
+        }
+        offset = next;
+    }
+    Err(ImageError::InvalidMetadata(
+        "Stokes selection requires a Stokes coordinate".into(),
+    ))
+}
+
 /// Replaces any Stokes coordinate in `coords` with `stokes`.
 pub(super) fn replace_stokes_coordinate(coords: &mut CoordinateSystem, stokes: &[StokesType]) {
     if let Some(idx) = coords.find_coordinate(CoordinateType::Stokes) {
         coords.replace_coordinate(idx, StokesCoordinate::new(stokes.to_vec()));
     }
-}
-
-/// `image`'s own `coords` record for a subimage starting at pixel `start`,
-/// which keeps what CASA wrote there; `None` without one.
-pub(super) fn legacy_subimage_coordinates<T: ImagePixel>(
-    image: &PagedImage<T>,
-    start: &[usize],
-    shape: &[usize],
-) -> Option<RecordValue> {
-    legacy_subimage_coordinates_with_stokes(image, start, shape, None)
 }
 
 /// `image`'s own `coords` record for a subimage starting at pixel `start`,

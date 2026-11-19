@@ -2379,7 +2379,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     }
 }
 
-impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
+impl<'a, T: ImageExprValue> MaskExprBuilder<'a, T> {
     /// Compiles a borrowed lazy boolean mask into an owned execution form.
     pub fn compile(&self) -> Result<MaskExpression<T>, ImageError> {
         let mut ctx = CompileCtx::default();

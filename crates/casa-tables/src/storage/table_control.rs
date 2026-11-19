@@ -720,6 +720,14 @@ pub(crate) fn write_record_rep(io: &mut AipsIo, record: &RecordValue) -> Result<
     Ok(())
 }
 
+/// Read a standalone casacore `TableRecord`, such as a saved image region.
+///
+/// Returns an error if the file cannot be opened or decoded as a `TableRecord`.
+pub fn read_table_record_file(path: &Path) -> Result<RecordValue, StorageError> {
+    let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
+    read_table_record(&mut io)
+}
+
 fn read_table_record(io: &mut AipsIo) -> Result<RecordValue, StorageError> {
     let _version = io.getstart("TableRecord")?;
 
@@ -739,7 +747,12 @@ fn read_table_record(io: &mut AipsIo) -> Result<RecordValue, StorageError> {
 fn read_record_desc(io: &mut AipsIo) -> Result<Vec<(String, CasacoreDataType)>, StorageError> {
     let _version = io.getstart("RecordDesc")?;
     let nfields = io.get_i32()?;
-    let mut desc = Vec::with_capacity(nfields as usize);
+    if nfields < 0 {
+        return Err(StorageError::FormatMismatch(format!(
+            "negative RecordDesc field count: {nfields}"
+        )));
+    }
+    let mut desc = Vec::new();
 
     for _ in 0..nfields {
         let name = io.get_string()?;

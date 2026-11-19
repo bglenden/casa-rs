@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's FITS-like projection header string.
 
-use casa_coordinates::{Coordinate, DirectionCoordinate, ProjectionType};
+use casa_coordinates::{DirectionCoordinate, ProjectionType};
 
 /// `ImageMetaDataBase::_getProjection` names slant SIN's parameters and
 /// recognizes its special NCP form; other projections use their name.
@@ -19,7 +19,7 @@ pub(super) fn projection_header(direction: &DirectionCoordinate) -> String {
         cpp_number(parameters[0]),
         cpp_number(parameters[1])
     );
-    let declination = direction.reference_value()[1];
+    let declination = direction.projection_reference()[1];
     let ncp_parameter = 1.0 / declination.tan();
     if parameters[0] == 0.0
         && declination != 0.0

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
+use casa_coordinates::{CoordinateSystem, CoordinateType, StokesType};
 use casa_lattices::{Lattice, LatticeError};
 use casa_types::{ArrayD, RecordValue, Value};
 use ndarray::{Axis, IxDyn, SliceInfoElem, Zip};
@@ -21,7 +21,7 @@ use crate::{
 };
 
 use super::super::axes::{
-    legacy_subimage_coordinates_with_stokes, subimage_coordinates_with_stokes,
+    legacy_subimage_coordinates_with_stokes, stokes_for_axis, subimage_coordinates_with_stokes,
 };
 use super::super::{
     PixelRegion, direction_plane_axes, mask_error_wording, parse_image_channel_selection,
@@ -252,7 +252,6 @@ impl ImmathSelection {
         let full_shape = image.shape();
         let mut start = vec![0usize; ndim];
         let mut shape = full_shape.to_vec();
-        let plane = direction_plane_axes(image);
 
         let box_spec = request
             .box_pixels
@@ -262,6 +261,11 @@ impl ImmathSelection {
             .transpose()?;
 
         let region = region_pixels(image, request.region.as_deref())?;
+        let plane = if box_spec.is_some() || region.is_some() {
+            direction_plane_axes(image)?
+        } else {
+            [0, 1]
+        };
 
         if let Some(ref b) = box_spec {
             apply_box_bounds(&b.bounds, ndim, full_shape, plane, &mut start, &mut shape)?;
@@ -408,23 +412,6 @@ fn apply_intersect_bounds(
     shape[x] = ex - sx + 1;
     shape[y] = ey - sy + 1;
     Ok(())
-}
-
-fn stokes_for_axis(coords: &CoordinateSystem, axis: usize) -> Result<Vec<StokesType>, ImageError> {
-    let mut offset = 0usize;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        let next = offset + coord.n_pixel_axes();
-        if (offset..next).contains(&axis)
-            && let CoordinateModel::Stokes(stokes) = coord
-        {
-            return Ok(stokes.stokes().to_vec());
-        }
-        offset = next;
-    }
-    Err(ImageError::InvalidMetadata(
-        "Stokes selection requires a Stokes coordinate".into(),
-    ))
 }
 
 pub(super) fn slice_array_subimage<A: Clone>(
@@ -848,7 +835,7 @@ pub(super) fn apply_selection_to_raw<T: RealMathPixel>(
             default_sel = ImmathSelection {
                 start: vec![0; full_shape.len()],
                 shape: full_shape.clone(),
-                plane: direction_plane_axes(&raw),
+                plane: [0, 1],
                 box_spec: None,
                 region: None,
                 channel_axis: None,
