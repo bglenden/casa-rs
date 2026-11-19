@@ -13036,7 +13036,8 @@
         },
         {
           "name": "field",
-          "concept": {"id": "ms.selection.field", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.field", "semantic_revision": 5},
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13051,7 +13052,8 @@
         },
         {
           "name": "spw",
-          "concept": {"id": "ms.selection.spw", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.spw", "semantic_revision": 4},
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13066,7 +13068,8 @@
         },
         {
           "name": "scan",
-          "concept": {"id": "ms.selection.scan", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.scan", "semantic_revision": 5},
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13080,7 +13083,8 @@
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 5},
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13109,7 +13113,8 @@
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 5},
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 11,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13847,7 +13852,7 @@
         },
         {
           "name": "field",
-          "concept": {"id": "ms.selection.field", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.field", "semantic_revision": 5},
           "order": 3,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13862,7 +13867,7 @@
         },
         {
           "name": "spw",
-          "concept": {"id": "ms.selection.spw", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.spw", "semantic_revision": 4},
           "order": 4,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13877,7 +13882,7 @@
         },
         {
           "name": "scan",
-          "concept": {"id": "ms.selection.scan", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.scan", "semantic_revision": 5},
           "order": 5,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13891,7 +13896,7 @@
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 5},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13919,7 +13924,7 @@
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 5},
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},

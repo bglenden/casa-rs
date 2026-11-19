@@ -715,6 +715,19 @@ def _call_initweights(values: dict[str, Any]) -> Any:
 
 
 def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
+    for name in ("field", "spw", "scan", "antenna", "timerange"):
+        if name not in values or isinstance(values[name], str):
+            continue
+        original = values[name]
+        converted, record_type = _ms_transform_selector_variant(name, original)
+        # CASA may omit these scalar fields from the tool record while
+        # still printing their values in the task history.
+        values[name] = original if record_type is None else converted
+        if not (task == "split" and name != "timerange") and record_type is not None:
+            raise RuntimeError(
+                "RecordRep::get_pointer - incorrect data type String   "
+                f"used for field {name} with type {record_type:<8}"
+            )
     if "correlation" in values:
         values["correlation"] = _ms_transform_string_or_vector("correlation", values["correlation"])
     for name in ("observation", "intent", "array", "uvrange", "feed"):
