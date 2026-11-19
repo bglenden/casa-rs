@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "measures",
  "casa_version": "6.7.6.14",
- "audit_revision": "3ed4553798577b9d610a89e3ceda6ea73f5de1e6",
+ "audit_revision": "575540a3369514a43cf2d816d17c625afabbf11f",
  "methods": {
   "addxvalue": {
    "status": "Implemented",
@@ -317,12 +317,10 @@
    ]
   },
   "shift": {
-   "status": "Not implemented",
-   "issue": 1252,
-   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Shift the first direction of a scalar or vector record by an offset and a position angle while retaining its reference origin. Preserve CASA's starting-pole convention.",
    "evidence": [
-    "signature",
-    "refusals"
+    "shift-casa"
    ]
   },
   "show": {
@@ -572,6 +570,21 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md CASA deviations: correct crashes and keep the approved empty initial frame."
+  },
+  {
+   "id": "shift-longitude-quadrant",
+   "record": "Direction shifts can use the wrong longitude quadrant",
+   "inputs": "Angular direction offsets crossing a pole or reaching the other longitude quadrant.",
+   "casa": "The inverse sine restricts longitude to the near quadrant. A 120-degree east shift moves 60 degrees, and a northward shift across the pole can leave the direction unchanged.",
+   "ours": "Selects the longitude quadrant from both tangent-plane components. Retains the CASA convention when the input itself is exactly at a pole.",
+   "rationale": "The documented operation gives a direction at the requested angular separation and position angle.",
+   "impact": "Produces the intended separation and position angle for valid large shifts and pole crossings.",
+   "evidence": [
+    "shift-casa",
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md CASA deviations: correct results contradicting the documented operation."
   }
  ],
  "evidence": {
@@ -617,7 +630,7 @@
    "links": [
     "docs/CASA (C++) bugs.md"
    ],
-   "source_revision": "3ed4553798577b9d610a89e3ceda6ea73f5de1e6"
+   "source_revision": "575540a3369514a43cf2d816d17c625afabbf11f"
   },
   "casa-lists": {
    "kind": "CASA-recorded values",
@@ -761,6 +774,24 @@
    "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures*.py crates/casars-python/python/tests/test_tools_measures.py crates/casars-python/python/tests/test_binding_snapshots.py; CASAPY tools/simulation/measures_comet_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --calls 1000 --samples 7",
    "receipt": "resources/casa-compat/evidence/me-comet-equivalence-20261118.json"
+  },
+  "shift-casa": {
+   "kind": "CASA 6.7.6.14 direction shift comparisons and release performance",
+   "state": "passed",
+   "scope": "Direction records and quantity arguments, stable errors, exact-pole convention, and independent great-circle controls.",
+   "result": "39 recorded cases and the upstream Ganymede shift test passed. All eight release timings are faster than CASA, with a minimum 6.85x speedup.",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_measures_shift.json",
+    "crates/casars-python/python/tests/test_measures_shift.py",
+    "tools/simulation/measures_shift_oracle.py",
+    "tools/simulation/measures_shift_benchmark.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "575540a3369514a43cf2d816d17c625afabbf11f",
+   "revision": "575540a3369514a43cf2d816d17c625afabbf11f",
+   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+   "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_shift.py; CASAPY tools/simulation/measures_shift_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --calls 1000 --samples 7",
+   "receipt": "resources/casa-compat/evidence/me-shift-equivalence-20261118.json"
   }
  }
 }
