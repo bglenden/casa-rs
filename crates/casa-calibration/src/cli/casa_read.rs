@@ -263,7 +263,9 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         "sbd" => GencalType::Sbd,
         "mbd" => GencalType::Mbd,
         "antpos" => GencalType::Antpos,
+        "gc" => GencalType::Gc,
         "gceff" => GencalType::Gceff,
+        "eff" => GencalType::Eff,
         "opac" => GencalType::Opac,
         other => return Err(not_yet("caltype", other)),
     };
@@ -298,6 +300,13 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
             gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
         },
         polarization: task.text("pol")?.unwrap_or_default(),
+        gaincurve_infile: if caltype.is_gain_curve() {
+            task.text("infile")?
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+        } else {
+            None
+        },
     })
 }
 

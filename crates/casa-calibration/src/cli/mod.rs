@@ -213,12 +213,12 @@ fn scientific_paths(request: &CalibrationTaskRequest) -> Vec<std::path::PathBuf>
             (vec![r.input_ms.clone(), r.output_ms.clone()], &[][..])
         }
         CalibrationTaskRequest::Gencal(r) => {
+            let explicit_curve = r.gaincurve_infile.clone();
             let r = &r.prior;
             let mut paths = vec![r.measurement_set.clone(), r.output_table.clone()];
-            if r.caltype == crate::GencalType::Gceff
-                && let Some(source) = r
-                    .gaincurve_table
-                    .clone()
+            if r.caltype.is_gain_curve()
+                && let Some(source) = explicit_curve
+                    .or_else(|| r.gaincurve_table.clone())
                     .or_else(crate::gencal::default_vla_gaincurve_table)
             {
                 paths.push(source);

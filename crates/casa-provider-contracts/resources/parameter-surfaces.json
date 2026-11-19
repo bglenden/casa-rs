@@ -18419,8 +18419,6 @@
           },
           "unimplemented": {"issue": 979, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tecim"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "gc"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "gceff"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eop"}}
@@ -18547,7 +18545,10 @@
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "amp"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "ph"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "sbd"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "mbd"}}
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "mbd"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "gc"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "gceff"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eff"}}
           ]}}}
         },
         {

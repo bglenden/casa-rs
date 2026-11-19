@@ -568,6 +568,7 @@ fn gencal_reads_casas_values() {
                 gaincurve_table: None,
             },
             polarization: String::new(),
+            gaincurve_infile: None,
         })
     );
     let caltype = |value: &str| {
@@ -577,9 +578,7 @@ fn gencal_reads_casas_values() {
         )
     };
     assert!(refused(caltype(""), "caltype").contains("requires a caltype"));
-    // CASA's gc is the gain curve alone; casa-rs's gceff always folds in
-    // the efficiency.
-    for value in ["gc", "eff", "tsys"] {
+    for value in ["tsys", "antposvla", "eop"] {
         assert!(
             refused(caltype(value), "caltype").contains("#979"),
             "{value}"
