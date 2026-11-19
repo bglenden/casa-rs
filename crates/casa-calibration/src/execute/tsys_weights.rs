@@ -136,7 +136,7 @@ impl TsysPlan {
             return Ok(None);
         };
         ComplexSolution::of(grid)
-            .resample_real_frequency(
+            .resample_tsys_weight_frequency(
                 &input.channel_frequencies_hz,
                 &output.channel_frequencies_hz,
                 self.table.interp.frequency_mode(),
