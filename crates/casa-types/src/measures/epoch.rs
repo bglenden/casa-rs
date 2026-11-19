@@ -495,20 +495,18 @@ const ROUTING_EDGES: &[(EpochRef, EpochRef)] = &[
     (EpochRef::TT, EpochRef::TCG),
     (EpochRef::TDB, EpochRef::TCB),
     (EpochRef::UT1, EpochRef::UTC),
+    (EpochRef::UT1, EpochRef::UT2),
     (EpochRef::UT1, EpochRef::GMST1),
     (EpochRef::GMST1, EpochRef::LMST),
     (EpochRef::UT1, EpochRef::GAST),
     (EpochRef::GAST, EpochRef::LAST),
 ];
 
-/// Deferred edges that are not yet implemented.
-const DEFERRED_EDGES: &[(EpochRef, EpochRef)] = &[(EpochRef::UT1, EpochRef::UT2)];
-
 /// Pre-computed BFS paths for all reachable (source, target) pairs.
 ///
 /// The routing graph is static, so paths never change. Computing them once
 /// at startup avoids per-call BFS overhead.
-type EpochPathMap = HashMap<(EpochRef, EpochRef), Result<Vec<EpochRef>, PathError>>;
+type EpochPathMap = HashMap<(EpochRef, EpochRef), Result<Vec<EpochRef>, String>>;
 
 static PATH_CACHE: LazyLock<EpochPathMap> = LazyLock::new(|| {
     let all_refs = [
@@ -536,13 +534,6 @@ static PATH_CACHE: LazyLock<EpochPathMap> = LazyLock::new(|| {
     cache
 });
 
-/// Error from BFS path finding (before conversion to `MeasureError`).
-#[derive(Clone, Debug)]
-enum PathError {
-    Deferred(String),
-    NoRoute(String),
-}
-
 /// Finds the shortest path from `source` to `target` in the routing graph.
 ///
 /// Returns the sequence of intermediate + final reference types to visit
@@ -552,14 +543,11 @@ fn find_path(source: EpochRef, target: EpochRef) -> Result<Vec<EpochRef>, Measur
         .get(&(source, target))
         .expect("all pairs pre-computed")
         .clone()
-        .map_err(|e| match e {
-            PathError::Deferred(route) => MeasureError::NotYetImplemented { route },
-            PathError::NoRoute(route) => MeasureError::NotYetImplemented { route },
-        })
+        .map_err(|route| MeasureError::NotYetImplemented { route })
 }
 
 /// BFS implementation used to populate the path cache.
-fn bfs_find_path(source: EpochRef, target: EpochRef) -> Result<Vec<EpochRef>, PathError> {
+fn bfs_find_path(source: EpochRef, target: EpochRef) -> Result<Vec<EpochRef>, String> {
     let mut visited = [false; 12];
     let mut parent: [Option<EpochRef>; 12] = [None; 12];
     let mut queue = VecDeque::new();
@@ -604,22 +592,7 @@ fn bfs_find_path(source: EpochRef, target: EpochRef) -> Result<Vec<EpochRef>, Pa
         return Ok(path);
     }
 
-    // Check if a deferred edge would connect.
-    for &(a, b) in DEFERRED_EDGES {
-        if (a == source && b == target)
-            || (b == source && a == target)
-            || (visited[epoch_ref_index(a)] && b == target)
-            || (visited[epoch_ref_index(b)] && a == target)
-            || (a == source && visited[epoch_ref_index(b)])
-            || (b == source && visited[epoch_ref_index(a)])
-        {
-            return Err(PathError::Deferred(format!("{source} → {target}")));
-        }
-    }
-
-    Err(PathError::NoRoute(format!(
-        "{source} → {target} (no route found)"
-    )))
+    Err(format!("{source} → {target} (no route found)"))
 }
 
 /// Maps an `EpochRef` variant to a unique index 0..11 for the BFS arrays.
@@ -745,6 +718,8 @@ fn apply_hop(
             // UT1 = UTC + dUT1
             Ok(value + dut1 / SECONDS_PER_DAY)
         }
+        // Both UT1/UT2 hops are identities in casacore's MCEpoch.
+        (UT1, UT2) | (UT2, UT1) => Ok(value),
         // Sidereal epochs, in casacore's sidereal day count under either IAU
         // model (`casacore_sidereal`).
         (UT1, GMST1) => Ok(casacore_sidereal::ut1_to_gmst1(value)),

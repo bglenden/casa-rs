@@ -5380,7 +5380,7 @@ controls alongside the raw shift results. This follows the standing rule
 for results that contradict the documented operation (#1252).
 [CASA measures documentation](https://casadocs.readthedocs.io/en/latest/api/tt/casatools.measures.html)
 
-## Frame display can discard the radial-velocity conversion context
+## Frame display can discard the coordinate conversion context
 
 In CASA 6.7.6.14, `showframe()` fails to display many radial-velocity
 references even after the epoch, observatory, and direction have all
@@ -5393,7 +5393,13 @@ Casa-rs evaluates the displayed LSRK velocity with the explicit frame,
 using the same native conversion as `measure`. The fixture retains
 CASA's raw display errors and separately records the direct conversion
 for all seven affected references. The missing-frame errors still apply
-when the required epoch or direction is absent (#1252).
+when the required epoch or direction is absent.
+
+At the same observatory, CASA's display also reports a missing
+position for LAST and LMST epochs. Casa-rs uses the explicit position
+to display TDB, UT1, and TT. The fixture retains the display errors
+and verifies the derived time scales against CASA's direct conversions
+(#1252).
 
 ## Frame display can report UT1 outside the Earth-orientation table
 

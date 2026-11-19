@@ -33,13 +33,17 @@ if args.backend == "casars":
 root = Path(__file__).resolve().parents[2]
 fixture = root / "crates/casars-python/python/tests/data/casa_measures_showframe.json"
 cases = {case["name"]: case for case in json.loads(fixture.read_text())["cases"]}
-names = [
-    "empty", "epoch", "position", "direction", "galactic", "azel_with_frame",
-    "velocity", "all", "comet_only", "replacement",
+directions = [
+    name for name, case in cases.items()
+    if any(target == "J2000" for _, target, _ in case.get("conversion_controls", ()))
 ]
+display_names = [
+    "empty", "epoch", "position", "direction", "galactic", "azel_with_frame",
+    "velocity", "all", "comet_only", "replacement", "split_epoch", "ut2",
+] + directions
 
 
-def benchmark(setup):
+def benchmark(setup, direction=None):
     tool = measures()
     for element in setup:
         if element == "done":
@@ -48,8 +52,14 @@ def benchmark(setup):
             assert tool.framecomet(element)
         else:
             assert tool.doframe(element)
-    operation = tool.showframe
-    assert operation().startswith("Frame: ")
+    if direction is None:
+        operation = tool.showframe
+        assert operation().startswith("Frame: ")
+    else:
+        def operation():
+            return tool.measure(direction, "J2000")
+
+        assert operation()["refer"] == "J2000"
     samples = []
     gc.disable()
     try:
@@ -65,7 +75,10 @@ def benchmark(setup):
     return {"median_ns": statistics.median(samples), "samples_ns": samples}
 
 
-results = {name: benchmark(cases[name]["setup"]) for name in names}
+results = {name: benchmark(cases[name]["setup"]) for name in display_names}
+for name in directions:
+    setup = cases[name]["setup"]
+    results[f"measure_{name}"] = benchmark(setup[:-1], setup[-1])
 
 
 def git(*arguments):
@@ -78,4 +91,4 @@ args.out.write_text(json.dumps({
     "source_dirty": bool(git("status", "--porcelain")),
     "calls_per_sample": args.calls, "cases": results,
 }, indent=2) + "\n")
-print(f"Measured {len(results)} frame displays")
+print(f"Measured {len(results)} frame displays and direction conversions")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Record CASA 6.7.6.14 showframe strings and independent velocity controls."""
+"""Record CASA 6.7.6.14 showframe strings and independent conversion controls."""
 import argparse
 import json
 from pathlib import Path
@@ -21,6 +21,11 @@ assert version_string() == "6.7.6-14"
 m = measures()
 epoch = m.epoch("UTC", "2011/01/03/17:00:00")
 tai = m.epoch("TAI", {"value": 55564.123456, "unit": "d"})
+split_epoch = {
+    "type": "epoch", "refer": "UTC",
+    "m0": {"value": 55564.0, "unit": "d"},
+    "m1": {"value": 3600.0, "unit": "s"},
+}
 position = m.observatory("ALMA")
 itrf = m.position("ITRF", "100m", "200m", "300m")
 direction = m.direction("J2000", "10deg", "20deg")
@@ -29,11 +34,19 @@ azel = m.direction("AZEL", "135deg", "45deg")
 velocity = m.radialvelocity("LSRK", "15km/s")
 velocity_offset = dict(velocity, offset=m.radialvelocity("LSRK", "1km/s"))
 ganymede = "JPL-Horizons/Ganymede_55437-56293dUTC.tab"
+planets = (
+    "SUN", "MOON", "MERCURY", "VENUS", "MARS", "JUPITER",
+    "SATURN", "URANUS", "NEPTUNE", "PLUTO",
+)
 
 states = {
     "fresh": [],
     "empty": ["done"],
     "epoch": ["done", epoch],
+    "split_epoch": ["done", split_epoch],
+    "ut2": ["done", dict(epoch, refer="UT2")],
+    "sidereal_last": ["done", position, dict(epoch, refer="LAST")],
+    "sidereal_lmst": ["done", position, dict(epoch, refer="LMST")],
     "tai": ["done", tai],
     "future_2030": ["done", m.epoch("UTC", "2030/01/01/12:00:00")],
     "future_2100": ["done", m.epoch("UTC", "2100/01/01/12:00:00")],
@@ -43,6 +56,7 @@ states = {
     "galactic": ["done", galactic],
     "azel_missing": ["done", azel],
     "azel_with_frame": ["done", epoch, position, azel],
+    "sun_offset": ["done", epoch, position, m.direction("SUN", "17deg", "35deg")],
     "velocity": ["done", velocity],
     "velocity_offset": ["done", velocity_offset],
     "all": ["done", epoch, position, direction, velocity, ganymede],
@@ -52,6 +66,8 @@ states = {
     "replacement": ["done", tai, direction, epoch, galactic],
     "inverse_activation_order": ["done", velocity, direction, position, epoch, ganymede],
 }
+for planet in planets:
+    states[planet.lower()] = ["done", epoch, position, m.direction(planet)]
 corrected = {}
 for reference in ["BARY", "LSRD", "GEO", "TOPO", "GALACTO", "LGROUP", "CMB"]:
     value = m.radialvelocity(reference, "15.123km/s")
@@ -103,6 +119,30 @@ for name, state in states.items():
         prefix = case["result"].split(" (TDB", 1)[0]
         case["native_result"] = f"{prefix} (TDB = {tdb}, UT1 = unavailable, TT = {tt})"
         case["epoch_controls"] = control
+    if name.startswith("sidereal_"):
+        assert "error" in case
+        control = {ref: tool.measure(state[-1], ref) for ref in ("TDB", "UT1", "TT")}
+        assert all(control[ref]["m0"]["unit"] == "d" for ref in control)
+        values = [format(control[ref]["m0"]["value"], ".6g") for ref in control]
+        # The epoch's raw value uses the same stream formatter for every reference.
+        assert tool.doframe(dict(state[-1], refer="UTC"))
+        left, right = tool.showframe().split(" (TDB = ", 1)
+        tail = right.split(")\n", 1)[1]
+        tdb, ut1, tt = values
+        case["native_result"] = f"{left} (TDB = {tdb}, UT1 = {ut1}, TT = {tt})\n{tail}"
+        case["epoch_controls"] = control
+    if name == "ut2":
+        ut2 = state[-1]
+        ut1 = tool.measure(ut2, "UT1")
+        case["conversion_controls"] = [
+            (ut2, "UT1", ut1),
+            (ut1, "UT2", tool.measure(ut1, "UT2")),
+            (ut2, "UTC", tool.measure(ut2, "UTC")),
+        ]
+    if name == "sun_offset" or name.upper() in planets:
+        case["conversion_controls"] = [
+            (state[-1], "J2000", tool.measure(state[-1], "J2000")),
+        ]
     if name == "fresh":
         case["native_result"] = "Frame: "
         case["owner_decision"] = "The native tool starts with an explicit empty frame."

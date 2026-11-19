@@ -39,7 +39,7 @@ pub mod update;
 
 pub use comet::CometTable;
 pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
-pub use planet::PlanetaryEphemeris;
+pub use planet::{PlanetaryEphemeris, PlanetaryTable};
 pub use source::{SourceCatalog, SourceEntry};
 pub use spectral_line::{SpectralLineCatalog, SpectralLineEntry};
 

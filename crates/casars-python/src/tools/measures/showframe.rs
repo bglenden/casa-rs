@@ -3,7 +3,7 @@
 
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::radial_velocity::RadialVelocityRef;
-use casa_types::measures::{EpochRef, MeasFrame, MeasureError};
+use casa_types::measures::{EpochRef, MeasFrame, MeasureError, MjdHighPrec};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
@@ -14,15 +14,14 @@ use crate::tools::LogLine;
 
 const MISSING_FRAME: &str = "Missing information in Frame specified for conversion";
 
-fn epoch_text(mjd: f64) -> String {
-    let day = mjd.floor();
-    let fraction = mjd - day;
+fn epoch_text(mjd: MjdHighPrec) -> String {
+    let fraction = mjd.frac();
     let hours = (24.0 * fraction).floor() as u32;
     let minutes = (60.0 * (24.0 * fraction - f64::from(hours))).floor() as u32;
     let seconds = 86_400.0 * fraction - f64::from(minutes) * 60.0 - f64::from(hours) * 3_600.0;
     format!(
         "{}::{hours:02}:{minutes:02}:{seconds:07.4}",
-        stream_double(day)
+        stream_double(mjd.day())
     )
 }
 
@@ -39,7 +38,7 @@ fn radial_error(error: MeasureError) -> String {
     }
 }
 
-fn render(state: &State, native: &MeasFrame) -> Result<String, String> {
+fn render(state: &mut State, native: &MeasFrame) -> Result<String, String> {
     let mut elements = Vec::new();
     if let Some(epoch) = native.epoch() {
         let to = |refer| match epoch.convert_to(refer, native) {
@@ -52,7 +51,7 @@ fn render(state: &State, native: &MeasFrame) -> Result<String, String> {
         let (tdb, ut1, tt) = (to(EpochRef::TDB)?, to(EpochRef::UT1)?, to(EpochRef::TT)?);
         elements.push(format!(
             "Epoch: {} (TDB = {tdb}, UT1 = {ut1}, TT = {tt})",
-            epoch_text(epoch.value().as_mjd())
+            epoch_text(epoch.value())
         ));
     }
     if let (Some(MeasureValue::Position(xyz)), Some(position)) = (
@@ -68,9 +67,11 @@ fn render(state: &State, native: &MeasFrame) -> Result<String, String> {
         ));
     }
     if let Some(direction) = native.direction() {
-        let converted = direction
-            .convert_to(DirectionRef::J2000, native)
-            .map_err(|_| MISSING_FRAME.to_owned())?;
+        let converted = frame::convert_direction(state, direction, DirectionRef::J2000, native)
+            .map_err(|error| match error {
+                MeasureError::MissingFrameData { .. } => MISSING_FRAME.to_owned(),
+                error => error.to_string(),
+            })?;
         let (longitude, latitude) = direction_angles(converted.cosines());
         elements.push(format!(
             "Direction: {}\n        (J2000 = {} deg)",

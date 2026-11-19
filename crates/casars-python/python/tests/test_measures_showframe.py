@@ -1,7 +1,8 @@
-"""Exact CASA 6.7.6.14 frame-display output and direct-velocity controls."""
+"""Exact CASA 6.7.6.14 frame-display output and direct conversion controls."""
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from casars.tools import measures
@@ -34,6 +35,16 @@ def test_showframe_matches_casa(case, snapshot, monkeypatch):
             assert str(error.value) == case["error"]["message"]
         else:
             assert tool.showframe() == case["result"]
+        for source, target, expected in case.get("conversion_controls", ()):
+            actual = tool.measure(source, target)
+            assert actual["refer"] == expected["refer"]
+            for coordinate in expected.keys() - {"type", "refer"}:
+                assert actual[coordinate]["unit"] == expected[coordinate]["unit"]
+                tolerance = 1e-8 if expected["type"] == "direction" else 1e-9
+                np.testing.assert_allclose(
+                    actual[coordinate]["value"], expected[coordinate]["value"],
+                    rtol=0, atol=tolerance,
+                )
     finally:
         tool.done()
 

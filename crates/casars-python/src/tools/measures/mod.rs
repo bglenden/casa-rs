@@ -44,7 +44,7 @@ mod xvalue;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use casa_measures_data::CometTable;
+use casa_measures_data::{CometTable, PlanetaryTable};
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -74,6 +74,7 @@ struct Frame {
 pub(crate) struct State {
     frame: Frame,
     measures: Option<Arc<dyn MeasuresProvider>>,
+    planets: Option<PlanetaryTable>,
     // The comet queries retain their table when done clears the coordinate frame.
     comet: Option<Arc<CometTable>>,
 }
