@@ -146,15 +146,16 @@
 <a href=#146 id=146 data-nosnippet>146</a>            spw_id: window,
 <a href=#147 id=147 data-nosnippet>147</a>            antenna_id: antenna,
 <a href=#148 id=148 data-nosnippet>148</a>            observation_id: -<span class="number">1</span>,
-<a href=#149 id=149 data-nosnippet>149</a>            parameters: f32_column(<span class="kw-2">&amp;</span>gain),
-<a href=#150 id=150 data-nosnippet>150</a>            snr_value: <span class="number">0.0</span>,
-<a href=#151 id=151 data-nosnippet>151</a>            preserved: <span class="prelude-val">None</span>,
-<a href=#152 id=152 data-nosnippet>152</a>        });
-<a href=#153 id=153 data-nosnippet>153</a>    }
-<a href=#154 id=154 data-nosnippet>154</a>    <span class="prelude-val">Ok</span>(curves)
-<a href=#155 id=155 data-nosnippet>155</a>}
-<a href=#156 id=156 data-nosnippet>156</a>
-<a href=#157 id=157 data-nosnippet>157</a><span class="kw">fn </span>choose(n: usize, k: usize) -&gt; usize {
-<a href=#158 id=158 data-nosnippet>158</a>    (<span class="number">0</span>..k).fold(<span class="number">1</span>, |value, step| value * (n - step) / (step + <span class="number">1</span>))
-<a href=#159 id=159 data-nosnippet>159</a>}
+<a href=#149 id=149 data-nosnippet>149</a>            scan_number: -<span class="number">1</span>,
+<a href=#150 id=150 data-nosnippet>150</a>            parameters: f32_column(<span class="kw-2">&amp;</span>gain),
+<a href=#151 id=151 data-nosnippet>151</a>            snr_value: <span class="number">0.0</span>,
+<a href=#152 id=152 data-nosnippet>152</a>            preserved: <span class="prelude-val">None</span>,
+<a href=#153 id=153 data-nosnippet>153</a>        });
+<a href=#154 id=154 data-nosnippet>154</a>    }
+<a href=#155 id=155 data-nosnippet>155</a>    <span class="prelude-val">Ok</span>(curves)
+<a href=#156 id=156 data-nosnippet>156</a>}
+<a href=#157 id=157 data-nosnippet>157</a>
+<a href=#158 id=158 data-nosnippet>158</a><span class="kw">fn </span>choose(n: usize, k: usize) -&gt; usize {
+<a href=#159 id=159 data-nosnippet>159</a>    (<span class="number">0</span>..k).fold(<span class="number">1</span>, |value, step| value * (n - step) / (step + <span class="number">1</span>))
+<a href=#160 id=160 data-nosnippet>160</a>}
 </code></pre></div></section></main></body></html>

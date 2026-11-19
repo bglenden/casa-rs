@@ -3955,6 +3955,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#opacity-priors-can-index-a-nonexistent-second-receptor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opacity priors can index a nonexistent second receptor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#fluxscale-history-can-contain-uninitialized-object-identifiers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10236,12 +10247,28 @@ Regression: <code>casa-calibration</code>'s spectral-fit tests and captured CASA
 passes <code>-1</code> as an antenna index and aborts in <code>ArrayBase</code>. With <code>spw='*'</code>
 CASA similarly passes a negative window index and segfaults. A negated
 antenna clause such as <code>A1;!A3</code> can pass <code>-3</code> and abort after processing A1.</p>
-<p>For the specified gain, phase and delay types, casa-rs treats each whole-axis
+<p>For the specified gain, phase, delay and opacity types, casa-rs treats each whole-axis
 <code>*</code> as that axis's empty selector, which broadcasts the value. It refuses a
 negative antenna index before publishing the table, preserving any existing
 product. The paired <code>calibration_gencal_specify_oracle.py</code> compares the wildcard
 results to CASA's empty selectors and checks safe rejection of the negated
 clause (#32).</p>
+<p>The legacy <code>antposvla</code> path also aborts with an empty antenna selector when
+logging an element of the empty antenna array. Casa-rs safely rotates the
+first offset triple and broadcasts it to all antennas. Explicit antenna
+selections retain CASA's repeated in-place rotations when the parameter
+vector cycles. The paired
+<code>tools/casa-compat/calibration_gencal_antpos_oracle.py</code> checks both forms (#32).</p>
+<h2 id="opacity-priors-can-index-a-nonexistent-second-receptor">Opacity priors can index a nonexistent second receptor<a class="headerlink" href="#opacity-priors-can-index-a-nonexistent-second-receptor" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 constructs a scalar solution for <code>gencal(caltype='opac')</code>.
+Selecting the second receptor with <code>pol='L'</code> or both with <code>pol='X,Y'</code>
+terminates the Python process in the calibration array slicer. Casa-rs raises
+a task error and preserves an existing table. The empty selector, <code>R</code> and
+<code>X</code> select the scalar value.</p>
+<p>Source: <code>synthesis/MeasurementComponents/SolvableVisCal.cc</code>,
+<code>SolvableVisCal::specify</code>. The paired
+<code>tools/casa-compat/calibration_gencal_opacity_oracle.py</code> runs the CASA probes
+in isolated processes and checks native table preservation (#32).</p>
 <h2 id="fluxscale-history-can-contain-uninitialized-object-identifiers">Fluxscale history can contain uninitialized object identifiers<a class="headerlink" href="#fluxscale-history-can-contain-uninitialized-object-identifiers" title="Permanent link">&para;</a></h2>
 <p><code>MSHistoryHandler::addMessage</code> writes every required HISTORY column except
 <code>OBJECT_ID</code>. Repeated CASA 6.7.6.14 fluxscale calls return arbitrary integers

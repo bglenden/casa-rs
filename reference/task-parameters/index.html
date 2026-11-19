@@ -797,6 +797,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#get-alma-antenna-positions-getantposalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Get ALMA Antenna Positions (getantposalma)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1522,6 +1533,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#get-alma-antenna-positions-getantposalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Get ALMA Antenna Positions (getantposalma)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1550,9 +1572,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 633</li>
-<li>Surfaces: 36 (36 task, 0 session)</li>
-<li>Surface bindings: 936</li>
+<li>Concepts: 642</li>
+<li>Surfaces: 37 (37 task, 0 session)</li>
+<li>Surface bindings: 946</li>
 </ul>
 <table>
 <thead>
@@ -1853,6 +1875,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>simalma</code></td>
 <td style="text-align: right;">31</td>
 <td>Simulate ALMA and ACA observations and combine their images</td>
+</tr>
+<tr>
+<td><a href="#surface-getantposalma">Get ALMA Antenna Positions</a><br><code>getantposalma</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">10</td>
+<td>Retrieve antenna positions from the ALMA archive.</td>
 </tr>
 </tbody>
 </table>
@@ -10169,6 +10199,109 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>false</code>; optional</td>
 <td>Simulation</td>
 <td>Replace an existing output file</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-getantposalma"></a></p>
+<h2 id="get-alma-antenna-positions-getantposalma">Get ALMA Antenna Positions (<code>getantposalma</code>)<a class="headerlink" href="#get-alma-antenna-positions-getantposalma" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Retrieve antenna positions from the ALMA archive.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>outfile</code></td>
+<td><code>positions.output.outfile@r1</code></td>
+<td><code>path (file)</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>JSON file for the retrieved antenna positions.</td>
+</tr>
+<tr>
+<td><code>overwrite</code></td>
+<td><code>output.overwrite@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Output</td>
+<td>Replace an existing output file</td>
+</tr>
+<tr>
+<td><code>asdm</code></td>
+<td><code>getantposalma.asdm@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>ALMA Service</td>
+<td>ASDM UID passed to the ALMA antenna-position service.</td>
+</tr>
+<tr>
+<td><code>tw</code></td>
+<td><code>getantposalma.tw@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>ALMA Service</td>
+<td>Optional pair of UTC timestamps defining the measurement window.</td>
+</tr>
+<tr>
+<td><code>snr</code></td>
+<td><code>getantposalma.snr@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"default"</code>; optional</td>
+<td>ALMA Service</td>
+<td>Minimum signal-to-noise ratio or the service default.</td>
+</tr>
+<tr>
+<td><code>search</code></td>
+<td><code>getantposalma.search@r1</code></td>
+<td><code>string</code></td>
+<td><code>"both_latest"</code>; optional</td>
+<td>ALMA Service</td>
+<td>Search algorithm sent to the ALMA service.</td>
+</tr>
+<tr>
+<td><code>hosts</code></td>
+<td><code>getantposalma.hosts@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>["https://asa.alma.cl/uncertainties-service/uncertainties/versions/last/measurements/casa/"]</code>; optional</td>
+<td>ALMA Service</td>
+<td>ALMA service URLs in fallback order.</td>
+</tr>
+<tr>
+<td><code>firstintegration</code></td>
+<td><code>getantposalma.firstintegration@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>ALMA Service</td>
+<td>Exclude measurements flagged as first integrations.</td>
+</tr>
+<tr>
+<td><code>nretry</code></td>
+<td><code>getantposalma.nretry@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>ALMA Service</td>
+<td>Number of retries after the initial round of service requests.</td>
+</tr>
+<tr>
+<td><code>rdelay</code></td>
+<td><code>getantposalma.rdelay@r1</code></td>
+<td><code>float</code></td>
+<td><code>3.0</code>; optional</td>
+<td>ALMA Service</td>
+<td>Seconds between retries.</td>
 </tr>
 </tbody>
 </table>

@@ -17,7 +17,7 @@
 <a href=#17 id=17 data-nosnippet>17</a>
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><span class="kw">crate</span>::convert::holder::{
 <a href=#19 id=19 data-nosnippet>19</a>    DIRECTION_CODES, EPOCH_CODES, FREQUENCY_CODES, Measure, MeasureKind, MeasureValue,
-<a href=#20 id=20 data-nosnippet>20</a>    POSITION_CODES, days_of, direction_cosines, frequency_hz,
+<a href=#20 id=20 data-nosnippet>20</a>    POSITION_CODES, days_of, direction_cosines, frequency_hz, resolve_epoch_code,
 <a href=#21 id=21 data-nosnippet>21</a>};
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">crate</span>::convert::measures::direction_measure;
 <a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span><span class="kw">crate</span>::convert::value::CasaValue;
@@ -94,259 +94,250 @@
 <a href=#94 id=94 data-nosnippet>94</a>    failed()
 <a href=#95 id=95 data-nosnippet>95</a>}
 <a href=#96 id=96 data-nosnippet>96</a>
-<a href=#97 id=97 data-nosnippet>97</a><span class="doccomment">/// casa-rs does not read measure offsets yet.
-<a href=#98 id=98 data-nosnippet>98</a></span><span class="kw">fn </span>offset_refused(off: <span class="kw-2">&amp;</span>RecordArg, lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;) -&gt; bool {
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">if </span>off.<span class="number">0</span>.is_empty() {
-<a href=#100 id=100 data-nosnippet>100</a>        <span class="kw">return </span><span class="bool-val">false</span>;
-<a href=#101 id=101 data-nosnippet>101</a>    }
-<a href=#102 id=102 data-nosnippet>102</a>    lines.push(LogLine::error(
-<a href=#103 id=103 data-nosnippet>103</a>        <span class="string">"measure offsets (off) are not yet implemented in casa-rs"</span>,
-<a href=#104 id=104 data-nosnippet>104</a>    ));
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="bool-val">true
-<a href=#106 id=106 data-nosnippet>106</a></span>}
-<a href=#107 id=107 data-nosnippet>107</a>
-<a href=#108 id=108 data-nosnippet>108</a><span class="doccomment">/// `me.epoch(rf, v0, off)`. An unknown `rf` is UTC, silently, as in CASA.
-<a href=#109 id=109 data-nosnippet>109</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>epoch(
-<a href=#110 id=110 data-nosnippet>110</a>    rf: <span class="kw-2">&amp;</span>str,
-<a href=#111 id=111 data-nosnippet>111</a>    v0: <span class="kw-2">&amp;</span>Variant,
-<a href=#112 id=112 data-nosnippet>112</a>    off: <span class="kw-2">&amp;</span>RecordArg,
-<a href=#113 id=113 data-nosnippet>113</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#114 id=114 data-nosnippet>114</a>) -&gt; CasaValue {
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>time) = quantity_of(v0, lines) <span class="kw">else </span>{
-<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">return </span>failed();
-<a href=#117 id=117 data-nosnippet>117</a>    };
-<a href=#118 id=118 data-nosnippet>118</a>    <span class="kw">if </span>unset(<span class="kw-2">&amp;</span>time) {
-<a href=#119 id=119 data-nosnippet>119</a>        time = Quantity::new(<span class="number">0.0</span>, <span class="string">"d"</span>).expect(<span class="string">"d is a unit"</span>);
-<a href=#120 id=120 data-nosnippet>120</a>    }
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">if </span>!has(<span class="kw-2">&amp;</span>time, Dimension::Time) {
-<a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">return </span>exception(
-<a href=#123 id=123 data-nosnippet>123</a>            lines,
-<a href=#124 id=124 data-nosnippet>124</a>            <span class="macro">format!</span>(
-<a href=#125 id=125 data-nosnippet>125</a>                <span class="string">"Quantum::assure non-conforming unit type '{}'"</span>,
-<a href=#126 id=126 data-nosnippet>126</a>                time.unit().name()
-<a href=#127 id=127 data-nosnippet>127</a>            ),
-<a href=#128 id=128 data-nosnippet>128</a>        );
-<a href=#129 id=129 data-nosnippet>129</a>    }
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">if </span>offset_refused(off, lines) {
-<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">return </span>failed();
-<a href=#132 id=132 data-nosnippet>132</a>    }
-<a href=#133 id=133 data-nosnippet>133</a>    Measure {
-<a href=#134 id=134 data-nosnippet>134</a>        refer: EPOCH_CODES.resolve_or_default(rf),
-<a href=#135 id=135 data-nosnippet>135</a>        value: MeasureValue::Epoch(MjdHighPrec::from_mjd(days_of(<span class="kw-2">&amp;</span>time))),
-<a href=#136 id=136 data-nosnippet>136</a>    }
-<a href=#137 id=137 data-nosnippet>137</a>    .to_value()
-<a href=#138 id=138 data-nosnippet>138</a>}
-<a href=#139 id=139 data-nosnippet>139</a>
-<a href=#140 id=140 data-nosnippet>140</a><span class="doccomment">/// `me.direction(rf, v0, v1, off)`: a longitude and a latitude. An unknown
-<a href=#141 id=141 data-nosnippet>141</a>/// `rf` is J2000, with CASA's warning.
-<a href=#142 id=142 data-nosnippet>142</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>direction(
-<a href=#143 id=143 data-nosnippet>143</a>    rf: <span class="kw-2">&amp;</span>str,
-<a href=#144 id=144 data-nosnippet>144</a>    v0: <span class="kw-2">&amp;</span>Variant,
-<a href=#145 id=145 data-nosnippet>145</a>    v1: <span class="kw-2">&amp;</span>Variant,
-<a href=#146 id=146 data-nosnippet>146</a>    off: <span class="kw-2">&amp;</span>RecordArg,
-<a href=#147 id=147 data-nosnippet>147</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#148 id=148 data-nosnippet>148</a>) -&gt; CasaValue {
-<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>longitude) = quantity_of(v0, lines) <span class="kw">else </span>{
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">return </span>failed();
-<a href=#151 id=151 data-nosnippet>151</a>    };
-<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>latitude) = quantity_of(v1, lines) <span class="kw">else </span>{
-<a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">return </span>failed();
-<a href=#154 id=154 data-nosnippet>154</a>    };
-<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">if </span>unset(<span class="kw-2">&amp;</span>longitude) &amp;&amp; unset(<span class="kw-2">&amp;</span>latitude) {
-<a href=#156 id=156 data-nosnippet>156</a>        longitude = Quantity::new(<span class="number">0.0</span>, <span class="string">"deg"</span>).expect(<span class="string">"deg is a unit"</span>);
-<a href=#157 id=157 data-nosnippet>157</a>        latitude = Quantity::new(<span class="number">90.0</span>, <span class="string">"deg"</span>).expect(<span class="string">"deg is a unit"</span>);
-<a href=#158 id=158 data-nosnippet>158</a>    }
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="comment">// casacore's MVDirection takes cos(latitude) first.
-<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="kw">for </span>angle <span class="kw">in </span>[<span class="kw-2">&amp;</span>latitude, <span class="kw-2">&amp;</span>longitude] {
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">if </span>!has(angle, Dimension::Angle) {
-<a href=#162 id=162 data-nosnippet>162</a>            <span class="kw">return </span>exception(
-<a href=#163 id=163 data-nosnippet>163</a>                lines,
-<a href=#164 id=164 data-nosnippet>164</a>                <span class="macro">format!</span>(<span class="string">"Quantum::cos illegal unit type '{}'"</span>, angle.unit().name()),
-<a href=#165 id=165 data-nosnippet>165</a>            );
-<a href=#166 id=166 data-nosnippet>166</a>        }
-<a href=#167 id=167 data-nosnippet>167</a>    }
-<a href=#168 id=168 data-nosnippet>168</a>    <span class="kw">let </span>refer = DIRECTION_CODES.resolve(rf).unwrap_or_else(|| {
-<a href=#169 id=169 data-nosnippet>169</a>        lines.push(LogLine::warning(
-<a href=#170 id=170 data-nosnippet>170</a>            <span class="string">"Illegal reference frame string.  Reference string set to DEFAULT"</span>,
-<a href=#171 id=171 data-nosnippet>171</a>        ));
-<a href=#172 id=172 data-nosnippet>172</a>        DIRECTION_CODES.default_code()
-<a href=#173 id=173 data-nosnippet>173</a>    });
-<a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">if </span>offset_refused(off, lines) {
-<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">return </span>failed();
-<a href=#176 id=176 data-nosnippet>176</a>    }
-<a href=#177 id=177 data-nosnippet>177</a>    Measure {
-<a href=#178 id=178 data-nosnippet>178</a>        refer,
-<a href=#179 id=179 data-nosnippet>179</a>        value: MeasureValue::Direction(direction_cosines(
-<a href=#180 id=180 data-nosnippet>180</a>            longitude.get_si_value(),
-<a href=#181 id=181 data-nosnippet>181</a>            latitude.get_si_value(),
-<a href=#182 id=182 data-nosnippet>182</a>        )),
-<a href=#183 id=183 data-nosnippet>183</a>    }
-<a href=#184 id=184 data-nosnippet>184</a>    .to_value()
-<a href=#185 id=185 data-nosnippet>185</a>}
-<a href=#186 id=186 data-nosnippet>186</a>
-<a href=#187 id=187 data-nosnippet>187</a><span class="doccomment">/// `me.position(rf, v0, v1, v2, off)`: x, y, z lengths, or a longitude, a
-<a href=#188 id=188 data-nosnippet>188</a>/// latitude and a height (WGS84) or radius (ITRF). An unknown `rf` is ITRF,
-<a href=#189 id=189 data-nosnippet>189</a>/// with casacore's warning.
-<a href=#190 id=190 data-nosnippet>190</a>///
-<a href=#191 id=191 data-nosnippet>191</a>/// As in CASA, values whose second is an angle are reordered to length,
-<a href=#192 id=192 data-nosnippet>192</a>/// longitude, latitude before casacore reads them, and values casacore
-<a href=#193 id=193 data-nosnippet>193</a>/// cannot read leave the position at the origin.
-<a href=#194 id=194 data-nosnippet>194</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>position(
-<a href=#195 id=195 data-nosnippet>195</a>    rf: <span class="kw-2">&amp;</span>str,
-<a href=#196 id=196 data-nosnippet>196</a>    values: [<span class="kw-2">&amp;</span>Variant; <span class="number">3</span>],
-<a href=#197 id=197 data-nosnippet>197</a>    off: <span class="kw-2">&amp;</span>RecordArg,
-<a href=#198 id=198 data-nosnippet>198</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#199 id=199 data-nosnippet>199</a>) -&gt; CasaValue {
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">if let </span>Variant::Record(record) = values[<span class="number">0</span>]
-<a href=#201 id=201 data-nosnippet>201</a>        &amp;&amp; <span class="macro">matches!</span>(
-<a href=#202 id=202 data-nosnippet>202</a>            record.get(<span class="string">"value"</span>),
-<a href=#203 id=203 data-nosnippet>203</a>            <span class="prelude-val">Some</span>(Variant::Numbers(<span class="kw">_</span>) | Variant::Array { .. })
-<a href=#204 id=204 data-nosnippet>204</a>        )
-<a href=#205 id=205 data-nosnippet>205</a>    {
-<a href=#206 id=206 data-nosnippet>206</a>        lines.push(LogLine::error(
-<a href=#207 id=207 data-nosnippet>207</a>            <span class="string">"multi-valued measures are not yet implemented in casa-rs"</span>,
-<a href=#208 id=208 data-nosnippet>208</a>        ));
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">return </span>failed();
-<a href=#210 id=210 data-nosnippet>210</a>    }
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">let </span><span class="kw-2">mut </span>quantities = Vec::with_capacity(<span class="number">3</span>);
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">for </span>value <span class="kw">in </span>values {
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(quantity) = quantity_of(value, lines) <span class="kw">else </span>{
-<a href=#214 id=214 data-nosnippet>214</a>            <span class="kw">return </span>failed();
-<a href=#215 id=215 data-nosnippet>215</a>        };
-<a href=#216 id=216 data-nosnippet>216</a>        quantities.push(quantity);
-<a href=#217 id=217 data-nosnippet>217</a>    }
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">if </span>quantities.iter().all(unset) {
-<a href=#219 id=219 data-nosnippet>219</a>        quantities = <span class="macro">vec!</span>[
-<a href=#220 id=220 data-nosnippet>220</a>            Quantity::new(<span class="number">0.0</span>, <span class="string">"deg"</span>).expect(<span class="string">"deg is a unit"</span>),
-<a href=#221 id=221 data-nosnippet>221</a>            Quantity::new(<span class="number">90.0</span>, <span class="string">"deg"</span>).expect(<span class="string">"deg is a unit"</span>),
-<a href=#222 id=222 data-nosnippet>222</a>            Quantity::new(<span class="number">0.0</span>, <span class="string">"m"</span>).expect(<span class="string">"m is a unit"</span>),
-<a href=#223 id=223 data-nosnippet>223</a>        ];
-<a href=#224 id=224 data-nosnippet>224</a>    }
-<a href=#225 id=225 data-nosnippet>225</a>    <span class="kw">if </span>has(<span class="kw-2">&amp;</span>quantities[<span class="number">1</span>], Dimension::Angle) {
-<a href=#226 id=226 data-nosnippet>226</a>        quantities.rotate_right(<span class="number">1</span>);
-<a href=#227 id=227 data-nosnippet>227</a>    }
-<a href=#228 id=228 data-nosnippet>228</a>    <span class="kw">let </span>refer = POSITION_CODES.resolve(rf).unwrap_or_else(|| {
-<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">if </span>!rf.is_empty() {
-<a href=#230 id=230 data-nosnippet>230</a>            lines.push(LogLine::warning(<span class="macro">format!</span>(
-<a href=#231 id=231 data-nosnippet>231</a>                <span class="string">"Illegal or unknown reference type '{rf}' for position definition. DEFAULT \
-<a href=#232 id=232 data-nosnippet>232</a>                 (ITRF) assumed."
-<a href=#233 id=233 data-nosnippet>233</a>            </span>)));
-<a href=#234 id=234 data-nosnippet>234</a>        }
-<a href=#235 id=235 data-nosnippet>235</a>        POSITION_CODES.default_code()
-<a href=#236 id=236 data-nosnippet>236</a>    });
-<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">if </span>offset_refused(off, lines) {
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">return </span>failed();
-<a href=#239 id=239 data-nosnippet>239</a>    }
-<a href=#240 id=240 data-nosnippet>240</a>    Measure::from_values(MeasureKind::Position, refer, <span class="kw-2">&amp;</span>quantities)
-<a href=#241 id=241 data-nosnippet>241</a>        .unwrap_or(Measure {
-<a href=#242 id=242 data-nosnippet>242</a>            refer,
-<a href=#243 id=243 data-nosnippet>243</a>            value: MeasureValue::Position([<span class="number">0.0</span>; <span class="number">3</span>]),
-<a href=#244 id=244 data-nosnippet>244</a>        })
-<a href=#245 id=245 data-nosnippet>245</a>        .to_value()
-<a href=#246 id=246 data-nosnippet>246</a>}
-<a href=#247 id=247 data-nosnippet>247</a>
-<a href=#248 id=248 data-nosnippet>248</a><span class="doccomment">/// `me.frequency(rf, v0, off)`: a frequency, or a period, wavelength,
-<a href=#249 id=249 data-nosnippet>249</a>/// wavenumber or energy. An unknown `rf` is LSRK, with CASA's warning.
-<a href=#250 id=250 data-nosnippet>250</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>frequency(
-<a href=#251 id=251 data-nosnippet>251</a>    rf: <span class="kw-2">&amp;</span>str,
-<a href=#252 id=252 data-nosnippet>252</a>    v0: <span class="kw-2">&amp;</span>Variant,
-<a href=#253 id=253 data-nosnippet>253</a>    off: <span class="kw-2">&amp;</span>RecordArg,
-<a href=#254 id=254 data-nosnippet>254</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#255 id=255 data-nosnippet>255</a>) -&gt; CasaValue {
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>value) = quantity_of(v0, lines) <span class="kw">else </span>{
-<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">return </span>failed();
+<a href=#97 id=97 data-nosnippet>97</a><span class="doccomment">/// `me.epoch(rf, v0, off)`. An unknown `rf` is UTC, silently, as in CASA.
+<a href=#98 id=98 data-nosnippet>98</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>epoch(
+<a href=#99 id=99 data-nosnippet>99</a>    state: <span class="kw-2">&amp;mut </span><span class="kw">super</span>::State,
+<a href=#100 id=100 data-nosnippet>100</a>    rf: <span class="kw-2">&amp;</span>str,
+<a href=#101 id=101 data-nosnippet>101</a>    v0: <span class="kw-2">&amp;</span>Variant,
+<a href=#102 id=102 data-nosnippet>102</a>    off: <span class="kw-2">&amp;</span>RecordArg,
+<a href=#103 id=103 data-nosnippet>103</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#104 id=104 data-nosnippet>104</a>) -&gt; pyo3::PyResult&lt;CasaValue&gt; {
+<a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>time) = quantity_of(v0, lines) <span class="kw">else </span>{
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(failed());
+<a href=#107 id=107 data-nosnippet>107</a>    };
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">if </span>unset(<span class="kw-2">&amp;</span>time) {
+<a href=#109 id=109 data-nosnippet>109</a>        time = Quantity::new(<span class="number">0.0</span>, <span class="string">"d"</span>).expect(<span class="string">"d is a unit"</span>);
+<a href=#110 id=110 data-nosnippet>110</a>    }
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">if </span>!has(<span class="kw-2">&amp;</span>time, Dimension::Time) {
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(exception(
+<a href=#113 id=113 data-nosnippet>113</a>            lines,
+<a href=#114 id=114 data-nosnippet>114</a>            <span class="macro">format!</span>(
+<a href=#115 id=115 data-nosnippet>115</a>                <span class="string">"Quantum::assure non-conforming unit type '{}'"</span>,
+<a href=#116 id=116 data-nosnippet>116</a>                time.unit().name()
+<a href=#117 id=117 data-nosnippet>117</a>            ),
+<a href=#118 id=118 data-nosnippet>118</a>        ));
+<a href=#119 id=119 data-nosnippet>119</a>    }
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">let </span>refer = resolve_epoch_code(rf).unwrap_or_else(|| EPOCH_CODES.default_code());
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">let </span><span class="kw-2">mut </span>value = MjdHighPrec::from_mjd(days_of(<span class="kw-2">&amp;</span>time));
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">if </span>refer.starts_with(<span class="string">"R_"</span>) {
+<a href=#123 id=123 data-nosnippet>123</a>        value = MjdHighPrec::new(value.day(), <span class="number">0.0</span>);
+<a href=#124 id=124 data-nosnippet>124</a>    }
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">let </span>base = Measure {
+<a href=#126 id=126 data-nosnippet>126</a>        refer,
+<a href=#127 id=127 data-nosnippet>127</a>        value: MeasureValue::Epoch(value),
+<a href=#128 id=128 data-nosnippet>128</a>    };
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">super</span>::offset::finish_definition(state, base, off, lines)
+<a href=#130 id=130 data-nosnippet>130</a>}
+<a href=#131 id=131 data-nosnippet>131</a>
+<a href=#132 id=132 data-nosnippet>132</a><span class="doccomment">/// `me.direction(rf, v0, v1, off)`: a longitude and a latitude. An unknown
+<a href=#133 id=133 data-nosnippet>133</a>/// `rf` is J2000, with CASA's warning.
+<a href=#134 id=134 data-nosnippet>134</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>direction(
+<a href=#135 id=135 data-nosnippet>135</a>    state: <span class="kw-2">&amp;mut </span><span class="kw">super</span>::State,
+<a href=#136 id=136 data-nosnippet>136</a>    rf: <span class="kw-2">&amp;</span>str,
+<a href=#137 id=137 data-nosnippet>137</a>    v0: <span class="kw-2">&amp;</span>Variant,
+<a href=#138 id=138 data-nosnippet>138</a>    v1: <span class="kw-2">&amp;</span>Variant,
+<a href=#139 id=139 data-nosnippet>139</a>    off: <span class="kw-2">&amp;</span>RecordArg,
+<a href=#140 id=140 data-nosnippet>140</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#141 id=141 data-nosnippet>141</a>) -&gt; pyo3::PyResult&lt;CasaValue&gt; {
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>longitude) = quantity_of(v0, lines) <span class="kw">else </span>{
+<a href=#143 id=143 data-nosnippet>143</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(failed());
+<a href=#144 id=144 data-nosnippet>144</a>    };
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>latitude) = quantity_of(v1, lines) <span class="kw">else </span>{
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(failed());
+<a href=#147 id=147 data-nosnippet>147</a>    };
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">if </span>unset(<span class="kw-2">&amp;</span>longitude) &amp;&amp; unset(<span class="kw-2">&amp;</span>latitude) {
+<a href=#149 id=149 data-nosnippet>149</a>        longitude = Quantity::new(<span class="number">0.0</span>, <span class="string">"deg"</span>).expect(<span class="string">"deg is a unit"</span>);
+<a href=#150 id=150 data-nosnippet>150</a>        latitude = Quantity::new(<span class="number">90.0</span>, <span class="string">"deg"</span>).expect(<span class="string">"deg is a unit"</span>);
+<a href=#151 id=151 data-nosnippet>151</a>    }
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="comment">// casacore's MVDirection takes cos(latitude) first.
+<a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">for </span>angle <span class="kw">in </span>[<span class="kw-2">&amp;</span>latitude, <span class="kw-2">&amp;</span>longitude] {
+<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">if </span>!has(angle, Dimension::Angle) {
+<a href=#155 id=155 data-nosnippet>155</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(exception(
+<a href=#156 id=156 data-nosnippet>156</a>                lines,
+<a href=#157 id=157 data-nosnippet>157</a>                <span class="macro">format!</span>(<span class="string">"Quantum::cos illegal unit type '{}'"</span>, angle.unit().name()),
+<a href=#158 id=158 data-nosnippet>158</a>            ));
+<a href=#159 id=159 data-nosnippet>159</a>        }
+<a href=#160 id=160 data-nosnippet>160</a>    }
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">let </span>refer = DIRECTION_CODES.resolve(rf).unwrap_or_else(|| {
+<a href=#162 id=162 data-nosnippet>162</a>        lines.push(LogLine::warning(
+<a href=#163 id=163 data-nosnippet>163</a>            <span class="string">"Illegal reference frame string.  Reference string set to DEFAULT"</span>,
+<a href=#164 id=164 data-nosnippet>164</a>        ));
+<a href=#165 id=165 data-nosnippet>165</a>        DIRECTION_CODES.default_code()
+<a href=#166 id=166 data-nosnippet>166</a>    });
+<a href=#167 id=167 data-nosnippet>167</a>    <span class="kw">let </span>base = Measure {
+<a href=#168 id=168 data-nosnippet>168</a>        refer,
+<a href=#169 id=169 data-nosnippet>169</a>        value: MeasureValue::Direction(direction_cosines(
+<a href=#170 id=170 data-nosnippet>170</a>            longitude.get_si_value(),
+<a href=#171 id=171 data-nosnippet>171</a>            latitude.get_si_value(),
+<a href=#172 id=172 data-nosnippet>172</a>        )),
+<a href=#173 id=173 data-nosnippet>173</a>    };
+<a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">super</span>::offset::finish_definition(state, base, off, lines)
+<a href=#175 id=175 data-nosnippet>175</a>}
+<a href=#176 id=176 data-nosnippet>176</a>
+<a href=#177 id=177 data-nosnippet>177</a><span class="doccomment">/// `me.position(rf, v0, v1, v2, off)`: x, y, z lengths, or a longitude, a
+<a href=#178 id=178 data-nosnippet>178</a>/// latitude and a height (WGS84) or radius (ITRF). An unknown `rf` is ITRF,
+<a href=#179 id=179 data-nosnippet>179</a>/// with casacore's warning.
+<a href=#180 id=180 data-nosnippet>180</a>///
+<a href=#181 id=181 data-nosnippet>181</a>/// As in CASA, values whose second is an angle are reordered to length,
+<a href=#182 id=182 data-nosnippet>182</a>/// longitude, latitude before casacore reads them, and values casacore
+<a href=#183 id=183 data-nosnippet>183</a>/// cannot read leave the position at the origin.
+<a href=#184 id=184 data-nosnippet>184</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>position(
+<a href=#185 id=185 data-nosnippet>185</a>    state: <span class="kw-2">&amp;mut </span><span class="kw">super</span>::State,
+<a href=#186 id=186 data-nosnippet>186</a>    rf: <span class="kw-2">&amp;</span>str,
+<a href=#187 id=187 data-nosnippet>187</a>    values: [<span class="kw-2">&amp;</span>Variant; <span class="number">3</span>],
+<a href=#188 id=188 data-nosnippet>188</a>    off: <span class="kw-2">&amp;</span>RecordArg,
+<a href=#189 id=189 data-nosnippet>189</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#190 id=190 data-nosnippet>190</a>) -&gt; pyo3::PyResult&lt;CasaValue&gt; {
+<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">if let </span>Variant::Record(record) = values[<span class="number">0</span>]
+<a href=#192 id=192 data-nosnippet>192</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(Variant::Numbers(items) | Variant::Array { values: items, .. }) =
+<a href=#193 id=193 data-nosnippet>193</a>            record.get(<span class="string">"value"</span>)
+<a href=#194 id=194 data-nosnippet>194</a>        &amp;&amp; !items.is_empty()
+<a href=#195 id=195 data-nosnippet>195</a>    {
+<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">return </span><span class="kw">super</span>::geometry::define_three(state, MeasureKind::Position, rf, values, off, lines);
+<a href=#197 id=197 data-nosnippet>197</a>    }
+<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">let </span><span class="kw-2">mut </span>quantities = Vec::with_capacity(<span class="number">3</span>);
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">for </span>value <span class="kw">in </span>values {
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(quantity) = quantity_of(value, lines) <span class="kw">else </span>{
+<a href=#201 id=201 data-nosnippet>201</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(failed());
+<a href=#202 id=202 data-nosnippet>202</a>        };
+<a href=#203 id=203 data-nosnippet>203</a>        quantities.push(quantity);
+<a href=#204 id=204 data-nosnippet>204</a>    }
+<a href=#205 id=205 data-nosnippet>205</a>    <span class="kw">if </span>quantities.iter().all(unset) {
+<a href=#206 id=206 data-nosnippet>206</a>        quantities = <span class="macro">vec!</span>[
+<a href=#207 id=207 data-nosnippet>207</a>            Quantity::new(<span class="number">0.0</span>, <span class="string">"deg"</span>).expect(<span class="string">"deg is a unit"</span>),
+<a href=#208 id=208 data-nosnippet>208</a>            Quantity::new(<span class="number">90.0</span>, <span class="string">"deg"</span>).expect(<span class="string">"deg is a unit"</span>),
+<a href=#209 id=209 data-nosnippet>209</a>            Quantity::new(<span class="number">0.0</span>, <span class="string">"m"</span>).expect(<span class="string">"m is a unit"</span>),
+<a href=#210 id=210 data-nosnippet>210</a>        ];
+<a href=#211 id=211 data-nosnippet>211</a>    }
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">if </span>has(<span class="kw-2">&amp;</span>quantities[<span class="number">1</span>], Dimension::Angle) {
+<a href=#213 id=213 data-nosnippet>213</a>        quantities.rotate_right(<span class="number">1</span>);
+<a href=#214 id=214 data-nosnippet>214</a>    }
+<a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">let </span>refer = position_reference(rf, lines);
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">let </span>base = Measure::from_values(MeasureKind::Position, refer, <span class="kw-2">&amp;</span>quantities).unwrap_or(Measure {
+<a href=#217 id=217 data-nosnippet>217</a>        refer,
+<a href=#218 id=218 data-nosnippet>218</a>        value: MeasureValue::Position([<span class="number">0.0</span>; <span class="number">3</span>]),
+<a href=#219 id=219 data-nosnippet>219</a>    });
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">super</span>::offset::finish_definition(state, base, off, lines)
+<a href=#221 id=221 data-nosnippet>221</a>}
+<a href=#222 id=222 data-nosnippet>222</a>
+<a href=#223 id=223 data-nosnippet>223</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>position_reference(rf: <span class="kw-2">&amp;</span>str, lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
+<a href=#224 id=224 data-nosnippet>224</a>    POSITION_CODES.resolve(rf).unwrap_or_else(|| {
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">if </span>!rf.is_empty() {
+<a href=#226 id=226 data-nosnippet>226</a>            lines.push(LogLine::warning(<span class="macro">format!</span>(
+<a href=#227 id=227 data-nosnippet>227</a>                <span class="string">"Illegal or unknown reference type '{rf}' for position definition. DEFAULT \
+<a href=#228 id=228 data-nosnippet>228</a>                 (ITRF) assumed."
+<a href=#229 id=229 data-nosnippet>229</a>            </span>)));
+<a href=#230 id=230 data-nosnippet>230</a>        }
+<a href=#231 id=231 data-nosnippet>231</a>        POSITION_CODES.default_code()
+<a href=#232 id=232 data-nosnippet>232</a>    })
+<a href=#233 id=233 data-nosnippet>233</a>}
+<a href=#234 id=234 data-nosnippet>234</a>
+<a href=#235 id=235 data-nosnippet>235</a><span class="doccomment">/// `me.frequency(rf, v0, off)`: a frequency, or a period, wavelength,
+<a href=#236 id=236 data-nosnippet>236</a>/// wavenumber or energy. An unknown `rf` is LSRK, with CASA's warning.
+<a href=#237 id=237 data-nosnippet>237</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>frequency(
+<a href=#238 id=238 data-nosnippet>238</a>    state: <span class="kw-2">&amp;mut </span><span class="kw">super</span>::State,
+<a href=#239 id=239 data-nosnippet>239</a>    rf: <span class="kw-2">&amp;</span>str,
+<a href=#240 id=240 data-nosnippet>240</a>    v0: <span class="kw-2">&amp;</span>Variant,
+<a href=#241 id=241 data-nosnippet>241</a>    off: <span class="kw-2">&amp;</span>RecordArg,
+<a href=#242 id=242 data-nosnippet>242</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#243 id=243 data-nosnippet>243</a>) -&gt; pyo3::PyResult&lt;CasaValue&gt; {
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>value) = quantity_of(v0, lines) <span class="kw">else </span>{
+<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(failed());
+<a href=#246 id=246 data-nosnippet>246</a>    };
+<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">if </span>unset(<span class="kw-2">&amp;</span>value) {
+<a href=#248 id=248 data-nosnippet>248</a>        value = Quantity::new(<span class="number">0.0</span>, <span class="string">"Hz"</span>).expect(<span class="string">"Hz is a unit"</span>);
+<a href=#249 id=249 data-nosnippet>249</a>    }
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(hz) = frequency_hz(<span class="kw-2">&amp;</span>value) <span class="kw">else </span>{
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(exception(
+<a href=#252 id=252 data-nosnippet>252</a>            lines,
+<a href=#253 id=253 data-nosnippet>253</a>            <span class="macro">format!</span>(
+<a href=#254 id=254 data-nosnippet>254</a>                <span class="string">"Quantum::assure non-conforming unit type '{}'"</span>,
+<a href=#255 id=255 data-nosnippet>255</a>                value.unit().name()
+<a href=#256 id=256 data-nosnippet>256</a>            ),
+<a href=#257 id=257 data-nosnippet>257</a>        ));
 <a href=#258 id=258 data-nosnippet>258</a>    };
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">if </span>unset(<span class="kw-2">&amp;</span>value) {
-<a href=#260 id=260 data-nosnippet>260</a>        value = Quantity::new(<span class="number">0.0</span>, <span class="string">"Hz"</span>).expect(<span class="string">"Hz is a unit"</span>);
-<a href=#261 id=261 data-nosnippet>261</a>    }
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(hz) = frequency_hz(<span class="kw-2">&amp;</span>value) <span class="kw">else </span>{
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">return </span>exception(
-<a href=#264 id=264 data-nosnippet>264</a>            lines,
-<a href=#265 id=265 data-nosnippet>265</a>            <span class="macro">format!</span>(
-<a href=#266 id=266 data-nosnippet>266</a>                <span class="string">"Quantum::assure non-conforming unit type '{}'"</span>,
-<a href=#267 id=267 data-nosnippet>267</a>                value.unit().name()
-<a href=#268 id=268 data-nosnippet>268</a>            ),
-<a href=#269 id=269 data-nosnippet>269</a>        );
-<a href=#270 id=270 data-nosnippet>270</a>    };
-<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span>refer = FREQUENCY_CODES.resolve(rf).unwrap_or_else(|| {
-<a href=#272 id=272 data-nosnippet>272</a>        lines.push(LogLine::warning(<span class="string">"Illegal reference frame string."</span>));
-<a href=#273 id=273 data-nosnippet>273</a>        FREQUENCY_CODES.default_code()
-<a href=#274 id=274 data-nosnippet>274</a>    });
-<a href=#275 id=275 data-nosnippet>275</a>    <span class="kw">if </span>offset_refused(off, lines) {
-<a href=#276 id=276 data-nosnippet>276</a>        <span class="kw">return </span>failed();
-<a href=#277 id=277 data-nosnippet>277</a>    }
-<a href=#278 id=278 data-nosnippet>278</a>    Measure {
-<a href=#279 id=279 data-nosnippet>279</a>        refer,
-<a href=#280 id=280 data-nosnippet>280</a>        value: MeasureValue::Frequency(hz),
-<a href=#281 id=281 data-nosnippet>281</a>    }
-<a href=#282 id=282 data-nosnippet>282</a>    .to_value()
-<a href=#283 id=283 data-nosnippet>283</a>}
-<a href=#284 id=284 data-nosnippet>284</a>
-<a href=#285 id=285 data-nosnippet>285</a><span class="doccomment">/// `me.observatory(name)`: the observatory table's position, in its
-<a href=#286 id=286 data-nosnippet>286</a>/// tabulated frame. The name finds its entry as casacore's `MeasTable`
-<a href=#287 id=287 data-nosnippet>287</a>/// finds it: ignoring case, or by a unique prefix (`me.observatory('ATC')`
-<a href=#288 id=288 data-nosnippet>288</a>/// is ATCA).
-<a href=#289 id=289 data-nosnippet>289</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>observatory(
-<a href=#290 id=290 data-nosnippet>290</a>    name: <span class="kw-2">&amp;</span>str,
-<a href=#291 id=291 data-nosnippet>291</a>    measures: <span class="kw-2">&amp;</span><span class="kw">dyn </span>MeasuresProvider,
-<a href=#292 id=292 data-nosnippet>292</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#293 id=293 data-nosnippet>293</a>) -&gt; CasaValue {
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">match </span>MPosition::from_observatory_name(name, measures) {
-<a href=#295 id=295 data-nosnippet>295</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(position)) =&gt; {
-<a href=#296 id=296 data-nosnippet>296</a>            <span class="kw">let </span>position = <span class="kw">crate</span>::convert::holder::CasaMeasure::Position(position);
-<a href=#297 id=297 data-nosnippet>297</a>            Measure::from_casa(<span class="kw-2">&amp;</span>position).to_value()
-<a href=#298 id=298 data-nosnippet>298</a>        }
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-<a href=#300 id=300 data-nosnippet>300</a>            lines.push(LogLine::error(<span class="string">"Unknown observatory asked for"</span>));
-<a href=#301 id=301 data-nosnippet>301</a>            failed()
-<a href=#302 id=302 data-nosnippet>302</a>        }
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="prelude-val">Err</span>(error) =&gt; exception(lines, error),
-<a href=#304 id=304 data-nosnippet>304</a>    }
-<a href=#305 id=305 data-nosnippet>305</a>}
-<a href=#306 id=306 data-nosnippet>306</a>
-<a href=#307 id=307 data-nosnippet>307</a><span class="doccomment">/// `me.spectralline(name)`: the line's rest frequency, as casacore's
-<a href=#308 id=308 data-nosnippet>308</a>/// `MeasTable::Line` finds it by name and gives it.
-<a href=#309 id=309 data-nosnippet>309</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>spectralline(
-<a href=#310 id=310 data-nosnippet>310</a>    name: <span class="kw-2">&amp;</span>str,
-<a href=#311 id=311 data-nosnippet>311</a>    measures: <span class="kw-2">&amp;</span><span class="kw">dyn </span>MeasuresProvider,
-<a href=#312 id=312 data-nosnippet>312</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#313 id=313 data-nosnippet>313</a>) -&gt; CasaValue {
-<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">match </span>measures.spectral_line_hz(name) {
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(hz)) =&gt; Measure {
-<a href=#316 id=316 data-nosnippet>316</a>            refer: FREQUENCY_CODES
-<a href=#317 id=317 data-nosnippet>317</a>                .resolve(<span class="string">"REST"</span>)
-<a href=#318 id=318 data-nosnippet>318</a>                .expect(<span class="string">"REST is a frequency code"</span>),
-<a href=#319 id=319 data-nosnippet>319</a>            value: MeasureValue::Frequency(hz),
-<a href=#320 id=320 data-nosnippet>320</a>        }
-<a href=#321 id=321 data-nosnippet>321</a>        .to_value(),
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-<a href=#323 id=323 data-nosnippet>323</a>            lines.push(LogLine::error(<span class="string">"Unknown spectral line asked for"</span>));
-<a href=#324 id=324 data-nosnippet>324</a>            failed()
-<a href=#325 id=325 data-nosnippet>325</a>        }
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="prelude-val">Err</span>(error) =&gt; exception(lines, error),
-<a href=#327 id=327 data-nosnippet>327</a>    }
-<a href=#328 id=328 data-nosnippet>328</a>}
-<a href=#329 id=329 data-nosnippet>329</a>
-<a href=#330 id=330 data-nosnippet>330</a><span class="doccomment">/// `me.source(name)`: casatools' `casaMDirection` on `name`.
-<a href=#331 id=331 data-nosnippet>331</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>source(
-<a href=#332 id=332 data-nosnippet>332</a>    name: <span class="kw-2">&amp;</span>Variant,
-<a href=#333 id=333 data-nosnippet>333</a>    measures: <span class="kw-2">&amp;</span>Arc&lt;<span class="kw">dyn </span>MeasuresProvider&gt;,
-<a href=#334 id=334 data-nosnippet>334</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#335 id=335 data-nosnippet>335</a>) -&gt; pyo3::PyResult&lt;CasaValue&gt; {
-<a href=#336 id=336 data-nosnippet>336</a>    <span class="kw">match </span>direction_measure(name, measures) {
-<a href=#337 id=337 data-nosnippet>337</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(direction)) =&gt; <span class="prelude-val">Ok</span>(direction.to_value()),
-<a href=#338 id=338 data-nosnippet>338</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-<a href=#339 id=339 data-nosnippet>339</a>            <span class="kw">if let </span>Variant::Text(text) = name {
-<a href=#340 id=340 data-nosnippet>340</a>                lines.push(LogLine::info(<span class="macro">format!</span>(
-<a href=#341 id=341 data-nosnippet>341</a>                    <span class="string">"Could not understand Direction string {text}\nValid ones are [COMET, MOON, \
-<a href=#342 id=342 data-nosnippet>342</a>                     SUN, PLUTO, NEPTUNE, URANUS, SATURN, JUPITER, MARS, VENUS, MERCURY] or one \
-<a href=#343 id=343 data-nosnippet>343</a>                     of the valid known sources in the data repos"
-<a href=#344 id=344 data-nosnippet>344</a>                </span>)));
-<a href=#345 id=345 data-nosnippet>345</a>            }
-<a href=#346 id=346 data-nosnippet>346</a>            lines.push(LogLine::error(<span class="string">"Unknown source asked for"</span>));
-<a href=#347 id=347 data-nosnippet>347</a>            <span class="prelude-val">Ok</span>(failed())
-<a href=#348 id=348 data-nosnippet>348</a>        }
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="prelude-val">Err</span>(error) =&gt; <span class="prelude-val">Ok</span>(exception(lines, error)),
-<a href=#350 id=350 data-nosnippet>350</a>    }
-<a href=#351 id=351 data-nosnippet>351</a>}
+<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">let </span>refer = FREQUENCY_CODES.resolve(rf).unwrap_or_else(|| {
+<a href=#260 id=260 data-nosnippet>260</a>        lines.push(LogLine::warning(<span class="string">"Illegal reference frame string."</span>));
+<a href=#261 id=261 data-nosnippet>261</a>        FREQUENCY_CODES.default_code()
+<a href=#262 id=262 data-nosnippet>262</a>    });
+<a href=#263 id=263 data-nosnippet>263</a>    <span class="kw">let </span>base = Measure {
+<a href=#264 id=264 data-nosnippet>264</a>        refer,
+<a href=#265 id=265 data-nosnippet>265</a>        value: MeasureValue::Frequency(hz),
+<a href=#266 id=266 data-nosnippet>266</a>    };
+<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">super</span>::offset::finish_definition(state, base, off, lines)
+<a href=#268 id=268 data-nosnippet>268</a>}
+<a href=#269 id=269 data-nosnippet>269</a>
+<a href=#270 id=270 data-nosnippet>270</a><span class="doccomment">/// `me.observatory(name)`: the observatory table's position, in its
+<a href=#271 id=271 data-nosnippet>271</a>/// tabulated frame. The name finds its entry as casacore's `MeasTable`
+<a href=#272 id=272 data-nosnippet>272</a>/// finds it: ignoring case, or by a unique prefix (`me.observatory('ATC')`
+<a href=#273 id=273 data-nosnippet>273</a>/// is ATCA).
+<a href=#274 id=274 data-nosnippet>274</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>observatory(
+<a href=#275 id=275 data-nosnippet>275</a>    name: <span class="kw-2">&amp;</span>str,
+<a href=#276 id=276 data-nosnippet>276</a>    measures: <span class="kw-2">&amp;</span><span class="kw">dyn </span>MeasuresProvider,
+<a href=#277 id=277 data-nosnippet>277</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#278 id=278 data-nosnippet>278</a>) -&gt; CasaValue {
+<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">match </span>MPosition::from_observatory_name(name, measures) {
+<a href=#280 id=280 data-nosnippet>280</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(position)) =&gt; {
+<a href=#281 id=281 data-nosnippet>281</a>            <span class="kw">let </span>position = <span class="kw">crate</span>::convert::holder::CasaMeasure::Position(position);
+<a href=#282 id=282 data-nosnippet>282</a>            Measure::from_casa(<span class="kw-2">&amp;</span>position).to_value()
+<a href=#283 id=283 data-nosnippet>283</a>        }
+<a href=#284 id=284 data-nosnippet>284</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+<a href=#285 id=285 data-nosnippet>285</a>            lines.push(LogLine::error(<span class="string">"Unknown observatory asked for"</span>));
+<a href=#286 id=286 data-nosnippet>286</a>            failed()
+<a href=#287 id=287 data-nosnippet>287</a>        }
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="prelude-val">Err</span>(error) =&gt; exception(lines, error),
+<a href=#289 id=289 data-nosnippet>289</a>    }
+<a href=#290 id=290 data-nosnippet>290</a>}
+<a href=#291 id=291 data-nosnippet>291</a>
+<a href=#292 id=292 data-nosnippet>292</a><span class="doccomment">/// `me.spectralline(name)`: the line's rest frequency, as casacore's
+<a href=#293 id=293 data-nosnippet>293</a>/// `MeasTable::Line` finds it by name and gives it.
+<a href=#294 id=294 data-nosnippet>294</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>spectralline(
+<a href=#295 id=295 data-nosnippet>295</a>    name: <span class="kw-2">&amp;</span>str,
+<a href=#296 id=296 data-nosnippet>296</a>    measures: <span class="kw-2">&amp;</span><span class="kw">dyn </span>MeasuresProvider,
+<a href=#297 id=297 data-nosnippet>297</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#298 id=298 data-nosnippet>298</a>) -&gt; CasaValue {
+<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">match </span>measures.spectral_line_hz(name) {
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(hz)) =&gt; Measure {
+<a href=#301 id=301 data-nosnippet>301</a>            refer: FREQUENCY_CODES
+<a href=#302 id=302 data-nosnippet>302</a>                .resolve(<span class="string">"REST"</span>)
+<a href=#303 id=303 data-nosnippet>303</a>                .expect(<span class="string">"REST is a frequency code"</span>),
+<a href=#304 id=304 data-nosnippet>304</a>            value: MeasureValue::Frequency(hz),
+<a href=#305 id=305 data-nosnippet>305</a>        }
+<a href=#306 id=306 data-nosnippet>306</a>        .to_value(),
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+<a href=#308 id=308 data-nosnippet>308</a>            lines.push(LogLine::error(<span class="string">"Unknown spectral line asked for"</span>));
+<a href=#309 id=309 data-nosnippet>309</a>            failed()
+<a href=#310 id=310 data-nosnippet>310</a>        }
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="prelude-val">Err</span>(error) =&gt; exception(lines, error),
+<a href=#312 id=312 data-nosnippet>312</a>    }
+<a href=#313 id=313 data-nosnippet>313</a>}
+<a href=#314 id=314 data-nosnippet>314</a>
+<a href=#315 id=315 data-nosnippet>315</a><span class="doccomment">/// `me.source(name)`: casatools' `casaMDirection` on `name`.
+<a href=#316 id=316 data-nosnippet>316</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>source(
+<a href=#317 id=317 data-nosnippet>317</a>    name: <span class="kw-2">&amp;</span>Variant,
+<a href=#318 id=318 data-nosnippet>318</a>    measures: <span class="kw-2">&amp;</span>Arc&lt;<span class="kw">dyn </span>MeasuresProvider&gt;,
+<a href=#319 id=319 data-nosnippet>319</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#320 id=320 data-nosnippet>320</a>) -&gt; pyo3::PyResult&lt;CasaValue&gt; {
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">if let </span>Variant::Record(record) = name
+<a href=#322 id=322 data-nosnippet>322</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Ok</span>(values) = <span class="kw">super</span>::record::Measures::read_variant(record)
+<a href=#323 id=323 data-nosnippet>323</a>        &amp;&amp; values.values[<span class="number">0</span>].kind() == MeasureKind::Direction
+<a href=#324 id=324 data-nosnippet>324</a>    {
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(values.into_reference_origin().to_value());
+<a href=#326 id=326 data-nosnippet>326</a>    }
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="kw">match </span>direction_measure(name, measures) {
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(direction)) =&gt; <span class="prelude-val">Ok</span>(direction.to_value()),
+<a href=#329 id=329 data-nosnippet>329</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+<a href=#330 id=330 data-nosnippet>330</a>            <span class="kw">if let </span>Variant::Text(text) = name {
+<a href=#331 id=331 data-nosnippet>331</a>                lines.push(LogLine::info(<span class="macro">format!</span>(
+<a href=#332 id=332 data-nosnippet>332</a>                    <span class="string">"Could not understand Direction string {text}\nValid ones are [COMET, MOON, \
+<a href=#333 id=333 data-nosnippet>333</a>                     SUN, PLUTO, NEPTUNE, URANUS, SATURN, JUPITER, MARS, VENUS, MERCURY] or one \
+<a href=#334 id=334 data-nosnippet>334</a>                     of the valid known sources in the data repos"
+<a href=#335 id=335 data-nosnippet>335</a>                </span>)));
+<a href=#336 id=336 data-nosnippet>336</a>            }
+<a href=#337 id=337 data-nosnippet>337</a>            lines.push(LogLine::error(<span class="string">"Unknown source asked for"</span>));
+<a href=#338 id=338 data-nosnippet>338</a>            <span class="prelude-val">Ok</span>(failed())
+<a href=#339 id=339 data-nosnippet>339</a>        }
+<a href=#340 id=340 data-nosnippet>340</a>        <span class="prelude-val">Err</span>(error) =&gt; <span class="prelude-val">Ok</span>(exception(lines, error)),
+<a href=#341 id=341 data-nosnippet>341</a>    }
+<a href=#342 id=342 data-nosnippet>342</a>}
 </code></pre></div></section></main></body></html>

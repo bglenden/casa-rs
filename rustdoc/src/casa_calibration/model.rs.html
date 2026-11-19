@@ -142,7 +142,7 @@
 <a href=#142 id=142 data-nosnippet>142</a>    ///
 <a href=#143 id=143 data-nosnippet>143</a>    /// - complex `CPARAM` antenna-based tables, or
 <a href=#144 id=144 data-nosnippet>144</a>    /// - float `FPARAM` support for `K Jones`, `Kcross Jones` and the VLA prior families
-<a href=#145 id=145 data-nosnippet>145</a>    ///   `KAntPos Jones`, `EGainCurve`, and `TOpac`
+<a href=#145 id=145 data-nosnippet>145</a>    ///   `KAntPos Jones`, `EGainCurve`, and `TOpac`, plus `B TSYS`
 <a href=#146 id=146 data-nosnippet>146</a>    /// - legacy `BPOLY` bandpass tables
 <a href=#147 id=147 data-nosnippet>147</a>    ///
 <a href=#148 id=148 data-nosnippet>148</a>    /// and carries no error-level validation issues.
@@ -160,7 +160,7 @@
 <a href=#160 id=160 data-nosnippet>160</a>                        CalibrationParameterFamily::Float,
 <a href=#161 id=161 data-nosnippet>161</a>                        <span class="string">"EGainCurve" </span>| <span class="string">"EPowerCurve"
 <a href=#162 id=162 data-nosnippet>162</a>                    </span>)
-<a href=#163 id=163 data-nosnippet>163</a>                    | (CalibrationParameterFamily::Float, <span class="string">"TOpac"</span>)
+<a href=#163 id=163 data-nosnippet>163</a>                    | (CalibrationParameterFamily::Float, <span class="string">"TOpac" </span>| <span class="string">"B TSYS"</span>)
 <a href=#164 id=164 data-nosnippet>164</a>            ) || <span class="self">self</span>.table_subtype == <span class="string">"BPOLY"</span>)
 <a href=#165 id=165 data-nosnippet>165</a>            &amp;&amp; <span class="self">self
 <a href=#166 id=166 data-nosnippet>166</a>                </span>.issues

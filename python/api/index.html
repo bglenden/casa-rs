@@ -1224,6 +1224,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.getantposalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        getantposalma
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.imhead" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2167,6 +2178,17 @@
     <span class="md-ellipsis">
       
         gencal
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.getantposalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        getantposalma
       
     </span>
   </a>
@@ -3997,14 +4019,14 @@ checkout's build.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">41</span>
-<span class="normal">42</span>
-<span class="normal">43</span>
-<span class="normal">44</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">44</span>
 <span class="normal">45</span>
 <span class="normal">46</span>
 <span class="normal">47</span>
-<span class="normal">48</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskBinaryNotFoundError</span><span class="p">(</span><span class="ne">FileNotFoundError</span><span class="p">):</span>
+<span class="normal">48</span>
+<span class="normal">49</span>
+<span class="normal">50</span>
+<span class="normal">51</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskBinaryNotFoundError</span><span class="p">(</span><span class="ne">FileNotFoundError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when a task's executable cannot be found.</span>
 
 <span class="sd">    The message names the step of the search that applied and what it</span>
@@ -4054,10 +4076,7 @@ ran.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 91</span>
-<span class="normal"> 92</span>
-<span class="normal"> 93</span>
-<span class="normal"> 94</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 94</span>
 <span class="normal"> 95</span>
 <span class="normal"> 96</span>
 <span class="normal"> 97</span>
@@ -4107,7 +4126,10 @@ ran.</p>
 <span class="normal">141</span>
 <span class="normal">142</span>
 <span class="normal">143</span>
-<span class="normal">144</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="normal">144</span>
+<span class="normal">145</span>
+<span class="normal">146</span>
+<span class="normal">147</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">TaskCompletion</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""One finished task process: how it ended and what it wrote.</span>
 
@@ -4237,10 +4259,7 @@ ran.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">129</span>
-<span class="normal">130</span>
-<span class="normal">131</span>
-<span class="normal">132</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">132</span>
 <span class="normal">133</span>
 <span class="normal">134</span>
 <span class="normal">135</span>
@@ -4252,7 +4271,10 @@ ran.</p>
 <span class="normal">141</span>
 <span class="normal">142</span>
 <span class="normal">143</span>
-<span class="normal">144</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="normal">144</span>
+<span class="normal">145</span>
+<span class="normal">146</span>
+<span class="normal">147</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""One line saying how the task ended."""</span>
 
     <span class="n">at</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">" (parameter </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">parameter</span><span class="si">!r}</span><span class="s2">)"</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">parameter</span> <span class="k">else</span> <span class="s2">""</span>
@@ -4311,13 +4333,13 @@ how it ended.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">59</span>
-<span class="normal">60</span>
-<span class="normal">61</span>
-<span class="normal">62</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">62</span>
 <span class="normal">63</span>
 <span class="normal">64</span>
-<span class="normal">65</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskExecutionError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
+<span class="normal">65</span>
+<span class="normal">66</span>
+<span class="normal">67</span>
+<span class="normal">68</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskExecutionError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when a task starts and does not succeed; ``completion`` says</span>
 <span class="sd">    how it ended."""</span>
 
@@ -4376,8 +4398,8 @@ how it ended.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">51</span>
-<span class="normal">52</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskInvocationError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">54</span>
+<span class="normal">55</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskInvocationError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when a task's executable was found but could not be started."""</span>
 </code></pre></div></td></tr></table></div>
               </details>
@@ -4420,10 +4442,7 @@ generated parameter checker in both cases.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">68</span>
-<span class="normal">69</span>
-<span class="normal">70</span>
-<span class="normal">71</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">71</span>
 <span class="normal">72</span>
 <span class="normal">73</span>
 <span class="normal">74</span>
@@ -4440,7 +4459,10 @@ generated parameter checker in both cases.</p>
 <span class="normal">85</span>
 <span class="normal">86</span>
 <span class="normal">87</span>
-<span class="normal">88</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskParameterError</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">):</span>
+<span class="normal">88</span>
+<span class="normal">89</span>
+<span class="normal">90</span>
+<span class="normal">91</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskParameterError</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when a task refuses its parameters before it changes anything;</span>
 <span class="sd">    ``completion`` says why (#931).</span>
 
@@ -4513,8 +4535,8 @@ generated parameter checker in both cases.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">55</span>
-<span class="normal">56</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskResultError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">58</span>
+<span class="normal">59</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskResultError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when Rust rejects a successful task's result."""</span>
 </code></pre></div></td></tr></table></div>
               </details>
@@ -5700,7 +5722,7 @@ Accepted only at CASA's default, where CASA reads them, until #979:
 <p>CASA's <code>gencal</code>: its parameters, defaults and return value.
 Accepted only at CASA's default, where CASA reads them, until #979:
 <code>infile</code>, <code>endpoint</code>, <code>timeout</code>, <code>retry</code>, <code>retry_wait_time</code>,
-<code>ant_pos_time_limit</code>, <code>pol</code>, <code>uniform</code>.</p>
+<code>pol</code>.</p>
 
 
             <details class="mkdocstrings-source">
@@ -5759,9 +5781,65 @@ Accepted only at CASA's default, where CASA reads them, until #979:
 <span class="sd">    CASA's ``gencal``: its parameters, defaults and return value.</span>
 <span class="sd">    Accepted only at CASA's default, where CASA reads them, until #979:</span>
 <span class="sd">    ``infile``, ``endpoint``, ``timeout``, ``retry``, ``retry_wait_time``,</span>
-<span class="sd">    ``ant_pos_time_limit``, ``pol``, ``uniform``.</span>
+<span class="sd">    ``pol``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">gencal</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="casars.tasks.getantposalma" class="doc doc-heading">
+            <code class=" language-python"><span class="n">getantposalma</span><span class="p">(</span><span class="n">outfile</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">asdm</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">tw</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">snr</span><span class="o">=</span><span class="s1">'default'</span><span class="p">,</span> <span class="n">search</span><span class="o">=</span><span class="s1">'both_latest'</span><span class="p">,</span> <span class="n">hosts</span><span class="o">=</span><span class="p">[</span><span class="s1">'https://asa.alma.cl/uncertainties-service/uncertainties/versions/last/measurements/casa/'</span><span class="p">],</span> <span class="n">firstintegration</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">nretry</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">rdelay</span><span class="o">=</span><span class="mf">3.0</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.getantposalma" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Retrieve antenna positions from the ALMA archive.</p>
+<p>CASA's <code>getantposalma</code>: its parameters, defaults and return value.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1316</span>
+<span class="normal">1317</span>
+<span class="normal">1318</span>
+<span class="normal">1319</span>
+<span class="normal">1320</span>
+<span class="normal">1321</span>
+<span class="normal">1322</span>
+<span class="normal">1323</span>
+<span class="normal">1324</span>
+<span class="normal">1325</span>
+<span class="normal">1326</span>
+<span class="normal">1327</span>
+<span class="normal">1328</span>
+<span class="normal">1329</span>
+<span class="normal">1330</span>
+<span class="normal">1331</span>
+<span class="normal">1332</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">getantposalma</span><span class="p">(</span>
+    <span class="n">outfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">asdm</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">tw</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">snr</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'default'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">float</span> <span class="o">=</span> <span class="s1">'default'</span><span class="p">,</span>
+    <span class="n">search</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'both_latest'</span><span class="p">,</span>
+    <span class="n">hosts</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="s1">'https://asa.alma.cl/uncertainties-service/uncertainties/versions/last/measurements/casa/'</span><span class="p">],</span>
+    <span class="n">firstintegration</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">nretry</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="n">rdelay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Retrieve antenna positions from the ALMA archive.</span>
+
+<span class="sd">    CASA's ``getantposalma``: its parameters, defaults and return value.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">getantposalma</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -7023,10 +7101,7 @@ and then raised here.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">147</span>
-<span class="normal">148</span>
-<span class="normal">149</span>
-<span class="normal">150</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">150</span>
 <span class="normal">151</span>
 <span class="normal">152</span>
 <span class="normal">153</span>
@@ -7060,7 +7135,10 @@ and then raised here.</p>
 <span class="normal">181</span>
 <span class="normal">182</span>
 <span class="normal">183</span>
-<span class="normal">184</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span>
+<span class="normal">184</span>
+<span class="normal">185</span>
+<span class="normal">186</span>
+<span class="normal">187</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span>
     <span class="n">task</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">parameters</span><span class="p">:</span> <span class="n">SurfaceParameters</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">/</span><span class="p">,</span>
