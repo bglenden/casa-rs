@@ -98,7 +98,15 @@ pub fn parse_parameter_cli_overrides(
                 .catalog
                 .concept(&binding.concept)
                 .ok_or_else(|| format!("missing concept for {}", binding.name))?;
-            let (value, consumed) = if is_bool_domain(&concept.value_domain) {
+            // A CASA variant can keep a Boolean switch while accepting a
+            // wider value domain through the Python and JSON entry points.
+            let variant_switch = matches!(concept.value_domain, ParameterType::Variant)
+                && binding
+                    .projections
+                    .cli
+                    .as_ref()
+                    .is_some_and(|projection| !projection.false_flags.is_empty());
+            let (value, consumed) = if is_bool_domain(&concept.value_domain) || variant_switch {
                 if inline.is_some() {
                     return Err(format!("boolean {flag} does not take a value"));
                 }
