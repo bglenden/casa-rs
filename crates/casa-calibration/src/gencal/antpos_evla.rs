@@ -221,14 +221,14 @@ fn parse_date(year: i32, date: &str, clock: &str) -> Option<MvTime> {
     let month = MONTHS.iter().position(|month| date.starts_with(month))? as u32 + 1;
     let day = date.get(3..)?.parse().ok()?;
     let (hour, minute) = clock.split_once(':')?;
-    MvTime::from_ymd_hms_utc(
-        year,
-        month,
-        day,
-        hour.parse().ok()?,
-        minute.parse().ok()?,
-        0.0,
-    )
+    // Historic archive rows can label posting times past midnight (25:51).
+    // CASA adds that elapsed time to the posted calendar day.
+    let day = MvTime::from_ymd_hms_utc(year, month, day, 0, 0, 0.0)?;
+    let hours: f64 = hour.parse::<i32>().ok()?.into();
+    let minutes: f64 = minute.parse::<i32>().ok()?.into();
+    Some(MvTime::from_mjd_days(
+        day.as_mjd_days() + (hours * 60.0 + minutes) / 1440.0,
+    ))
 }
 
 fn invalid(detail: impl std::fmt::Display) -> GencalError {
@@ -259,5 +259,11 @@ mod tests {
         accumulate(&mut antennas, observed, 2, 2010, lines).unwrap();
         assert_eq!(antennas[0].offset, [0.0, 0.003, 0.0]);
         assert!(antennas[0].moved_after_observation);
+    }
+
+    #[test]
+    fn parses_the_live_archives_posting_times_past_midnight() {
+        let extended = parse_date(2016, "SEP26", "25:51").unwrap();
+        assert_eq!(extended, parse_date(2016, "SEP27", "01:51").unwrap());
     }
 }
