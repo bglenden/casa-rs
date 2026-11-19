@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "task": "calstat",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "567b979d3f9780a690d1aa8afcdc5a7c9dedabb9",
+  "parameters": {
+    "caltable": {
+      "scope": "Existing casacore table or saved view. Supports local, home-relative and configured data paths.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "column-statistics"
+      ]
+    },
+    "axis": {
+      "scope": "Complex amplitude, phase in radians, real or imaginary projection, or a literal scalar or array column.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "column-statistics"
+      ]
+    },
+    "datacolumn": {
+      "scope": "For complex projection axes only, the literal column name with CASA's corrected and model aliases. The default reads GAIN from legacy tables.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "column-statistics"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "column-statistics",
+      "title": "Descriptive calibration statistics",
+      "status": "Implemented",
+      "scope": "CASA scalar and array return records, complex projections, real delays, flags retained in the sample population, literal column aliases, single-precision samples and squares, vector components, saved table views, argument errors and local, home-relative and configured data paths.",
+      "gap": "The documented NaN behavior difference is recorded below.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "deterministic-nan-statistics",
+      "state": "Proposed",
+      "inputs": "A table column with both numeric values and NaN samples.",
+      "casa": "The median, quartile range and bounds can change when the same NaN moves between rows.",
+      "ours": "Preserves deterministic bounds over non-NaN samples, counts every sample and reports undefined moments and quantiles.",
+      "rationale": "The moments and quantiles of the unmasked data are undefined when a sample is NaN.",
+      "impact": "The selected row order does not change the native NaN policy.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Same-input public task and table tool comparisons",
+      "state": "passed",
+      "scope": "CASA scalar and array return records, complex projections, real delays, flags retained in the sample population, literal column aliases, single-precision samples and squares, vector components, saved table views, argument errors and local, home-relative and configured data paths.",
+      "result": "25 result comparisons, 17 error cases, four table-tool comparisons and independent moment checks passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "567b979d3f9780a690d1aa8afcdc5a7c9dedabb9",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calstat_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/calstat-20261119.json",
+      "links": [
+        "tools/casa-compat/calstat_oracle.py"
+      ]
+    }
+  }
+}

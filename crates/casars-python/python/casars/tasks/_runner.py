@@ -211,7 +211,18 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     }
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
-        _validate_required_vis(values, arguments["vis"])
+        _validate_required_path(values, "vis", arguments["vis"])
+    if name == "calstat":
+        _validate_required_path(values, "caltable", arguments["caltable"], search_data=True)
+        for parameter in ("axis", "datacolumn"):
+            value = arguments[parameter]
+            if not isinstance(value, str):
+                message = "null value not allowed" if value is None else "must be of cStr type"
+                raise AssertionError(str({parameter: [message]}))
+        try:
+            return run(name, **values).value
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
     if name == "applycal":
         return _call_applycal(values)
     if name == "gencal":
@@ -433,21 +444,37 @@ def _call_getantposalma(values: dict[str, Any]) -> Any:
         raise AssertionError(str(error)) from error
 
 
-def _validate_required_vis(values: dict[str, Any], vis: Any) -> None:
-    _validate_required_path(values, "vis", vis)
-
-
-def _validate_required_path(values: dict[str, Any], name: str, value: Any) -> None:
-    # CASA's required-path validation runs before calibrater opens the MS.
-    # Keep PathLike as the native API's additional path form.
-    if isinstance(value, (str, PathLike)):
-        path = os.path.expanduser(os.fspath(value))
-        if not path or not os.path.exists(path):
-            raise AssertionError(f"the {name} parameter must be a path that exists ('{path}' does not exist)")
-        if path != os.fspath(value):
-            values[name] = path
+def _validate_required_path(
+    values: dict[str, Any], name: str, argument: Any, *, search_data: bool = False
+) -> None:
+    # CASA validates and expands a required path before opening the table.
+    if isinstance(argument, (str, PathLike)):
+        original = os.fspath(argument)
+        path = os.path.expanduser(original)
+        if (search_data and path and not Path(path).is_absolute()
+                and not path.startswith(("./", "../")) and not os.path.exists(path)):
+            path = _resolve_relative_data_path(path)
+        if path and os.path.exists(path):
+            if path != original:
+                values[name] = path
+            return
     else:
-        raise AssertionError(f"the {name} parameter must be a path that exists ('{value}' does not exist)")
+        path = argument
+    raise AssertionError(f"the {name} parameter must be a path that exists ('{path}' does not exist)")
+
+
+def _resolve_relative_data_path(path: str) -> str:
+    roots = []
+    if configured := os.environ.get("CASA_RS_MEASURESPATH"):
+        roots.append(Path(configured))
+    if installation := os.environ.get("CASAPATH", "").split():
+        roots.append(Path(installation[0]) / "data")
+    roots.append(Path.home() / ".casa" / "data")
+    for root in roots:
+        candidate = root / path
+        if candidate.exists():
+            return str(candidate)
+    return path
 
 
 def _call_applycal(values: dict[str, Any]) -> Any:

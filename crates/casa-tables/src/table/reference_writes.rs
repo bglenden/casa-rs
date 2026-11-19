@@ -74,6 +74,24 @@ fn base_row(chain: &[RefTableDatContents], mut row: usize) -> Result<usize, Tabl
 }
 
 impl Table {
+    pub(crate) fn reference_column_manager_type(
+        &self,
+        column: &str,
+    ) -> Result<Option<String>, TableError> {
+        if !self.is_reference_table()? {
+            return Ok(None);
+        }
+        let source = self.source_path.as_ref().expect("saved reference");
+        let (root, chain) = reference_chain(source.clone(), false)?;
+        let root_table = Table::open_metadata_only(TableOptions::new(root))?;
+        let name = base_name(&chain, column);
+        Ok(root_table
+            .data_manager_info()
+            .iter()
+            .find(|manager| manager.columns.iter().any(|column| column == name))
+            .map(|manager| manager.dm_type.clone()))
+    }
+
     /// Apply cell changes through the saved row/column projection under
     /// the view's already-held write lock. Return false for plain tables.
     pub(super) fn try_save_reference_cells(

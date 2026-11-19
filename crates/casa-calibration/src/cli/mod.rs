@@ -21,6 +21,7 @@
 //! [`CalibrationTaskRequest`]: crate::CalibrationTaskRequest
 //! [`CalibrationTaskResult`]: crate::CalibrationTaskResult
 
+mod calstat;
 mod casa_read;
 mod ft;
 mod getantposalma;
@@ -62,6 +63,9 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    if task.surface() == "calstat" {
+        return calstat::run(task);
+    }
     if task.surface() == "getantposalma" {
         return getantposalma::run(task);
     }
