@@ -5,6 +5,8 @@ mod antpos_file;
 mod power_curve;
 mod tsys;
 
+pub use antpos_file::AntposInputError;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -208,8 +210,8 @@ pub enum GencalError {
     #[error("{0}")]
     InvalidRequest(String),
     /// A supplied ALMA position file or its arguments are invalid.
-    #[error("{0}")]
-    PositionInput(String),
+    #[error(transparent)]
+    PositionInput(#[from] AntposInputError),
     /// A needed value in a CASA table had an unsupported type or shape.
     #[error("{0}")]
     UnsupportedTableValue(String),
@@ -551,12 +553,17 @@ fn antpos_rows(
             "antpos requires three parameters per antenna.".into(),
         ));
     }
-    let broadcast = request.antenna.is_empty() || request.antenna == "*";
+    let selected = match request.antenna.as_str() {
+        "" | "*" => Vec::new(),
+        selector => ms
+            .resolve_specified_antennas(selector)
+            .map_err(|error| invalid(error.to_string()))?,
+    };
+    let broadcast = selected.is_empty();
     let selected = if broadcast {
         (0..antenna_count).collect()
     } else {
-        ms.resolve_specified_antennas(&request.antenna)
-            .map_err(|error| invalid(error.to_string()))?
+        selected
     };
     let rotate = if request.caltype == GencalType::AntposVla {
         let provider =

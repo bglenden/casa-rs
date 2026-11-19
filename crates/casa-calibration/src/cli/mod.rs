@@ -126,9 +126,7 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             .generate(mode.unwrap_or(crate::CalibrationOutputMode::Update))
             .map(CalibrationTaskResult::Gencal)
             .map_err(|error| match error {
-                crate::gencal::GencalError::PositionInput(reason) => {
-                    TaskFailure::validation(reason).at("infile")
-                }
+                crate::GencalError::PositionInput(error) => position_input_failure(error),
                 error => TaskFailure::execution(error.to_string()),
             })?
     } else {
@@ -163,6 +161,28 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     };
     crate::timing::report_process_memory();
     Ok(TaskSuccess::new(value, &result)?.with_text(text))
+}
+
+fn position_input_failure(error: crate::AntposInputError) -> TaskFailure {
+    use crate::AntposInputError;
+
+    let parameter = match &error {
+        AntposInputError::Invalid(_) => {
+            return TaskFailure::validation(error.to_string()).at("infile");
+        }
+        AntposInputError::Io { source, .. } => match source.kind() {
+            std::io::ErrorKind::NotFound => "infile.missing",
+            std::io::ErrorKind::PermissionDenied => "infile.permission",
+            std::io::ErrorKind::IsADirectory => "infile.directory",
+            _ => "infile.io",
+        },
+        AntposInputError::Json(_) => "infile.json",
+        AntposInputError::Key(_) => "infile.key",
+        AntposInputError::Index(_) => "infile.index",
+        AntposInputError::Type(_) => "infile.type",
+        AntposInputError::Attribute => "infile.attribute",
+    };
+    TaskFailure::execution(error.to_string()).at(parameter)
 }
 
 fn refuse_report_in_product(
@@ -230,7 +250,7 @@ fn scientific_paths(
                 r.prior.output_table.clone(),
             ];
             paths.extend(
-                crate::gencal::prior_input_for_report(&r.prior, r.infile.as_deref())
+                crate::gencal::prior_input_for_report(&r.prior, r.infile())
                     .map_err(|error| TaskFailure::validation(error.to_string()).at("vis"))?,
             );
             (paths, &[][..])

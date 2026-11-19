@@ -209,7 +209,8 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
             gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
         },
         polarization: String::new(),
-        infile: None,
+        gaincurve_infile: None,
+        antpos_infile: None,
         uniform: None,
     })
 }

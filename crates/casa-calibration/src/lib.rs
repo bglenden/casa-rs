@@ -82,7 +82,7 @@ pub use fluxscale::{
     FluxScaleError, FluxScaleFieldResult, FluxScaleOptions, FluxScaleReport, FluxScaleRequest,
     FluxScaleSpwResult, fluxscale,
 };
-pub use gencal::{GencalError, GencalReport, GencalRequest, GencalType, gencal};
+pub use gencal::{AntposInputError, GencalError, GencalReport, GencalRequest, GencalType, gencal};
 pub use lookup::{
     CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection,
     LOOKUP_KEPT_ROW_BYTES, LOOKUP_LOADING_ROW_BYTES, TimeInterpolation, TimeInterpolationOptions,

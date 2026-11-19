@@ -568,7 +568,8 @@ fn gencal_reads_casas_values() {
                 gaincurve_table: None,
             },
             polarization: String::new(),
-            infile: None,
+            gaincurve_infile: None,
+            antpos_infile: None,
             uniform: None,
         })
     );
@@ -581,10 +582,25 @@ fn gencal_reads_casas_values() {
     assert!(refused(caltype(""), "caltype").contains("requires a caltype"));
     assert!(caltype("tsys").is_ok());
     assert!(caltype("antposvla").is_ok());
-    for value in ["eop"] {
-        assert!(
-            refused(caltype(value), "caltype").contains("#979"),
-            "{value}"
+    assert!(refused(caltype("eop"), "caltype").contains("#979"));
+}
+
+#[test]
+fn gencal_keeps_the_gaincurve_input_key_on_the_wire() {
+    for (caltype, key) in [("gc", "gaincurve_infile"), ("antpos", "antpos_infile")] {
+        let CalibrationTaskRequest::Gencal(request) = casa(
+            "gencal",
+            json!({"vis": "t.ms", "caltable": "c.cal", "caltype": caltype, "infile": "prior"}),
+        )
+        .unwrap() else {
+            panic!("expected gencal request");
+        };
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert_eq!(encoded[key], "prior");
+        assert!(encoded.get("infile").is_none());
+        assert_eq!(
+            serde_json::from_value::<GencalTaskRequest>(encoded).unwrap(),
+            request
         );
     }
 }

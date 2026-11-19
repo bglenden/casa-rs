@@ -173,13 +173,12 @@ pub struct GencalTaskRequest {
     /// Ordered CASA receptor selector. Empty applies the value to both receptors.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub polarization: String,
-    /// Explicit CASA input table for VLA curves or an ALMA position JSON file.
-    #[serde(
-        default,
-        alias = "gaincurve_infile",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub infile: Option<PathBuf>,
+    /// Explicit CASA gain-curve `infile`, which uses unmodified antenna names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gaincurve_infile: Option<PathBuf>,
+    /// Explicit CASA ALMA antenna-position JSON `infile`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub antpos_infile: Option<PathBuf>,
     /// Fill the full antenna grid when importing SYSCAL. CASA defaults to true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uniform: Option<bool>,
@@ -193,10 +192,17 @@ impl GencalTaskRequest {
         crate::gencal::gencal_with_output_mode(
             &self.prior,
             &self.polarization,
-            self.infile.as_deref(),
+            self.infile(),
             self.uniform.unwrap_or(true),
             mode,
         )
+    }
+
+    pub(crate) fn infile(&self) -> Option<&std::path::Path> {
+        match self.prior.caltype {
+            crate::GencalType::Antpos => self.antpos_infile.as_deref(),
+            _ => self.gaincurve_infile.as_deref(),
+        }
     }
 }
 

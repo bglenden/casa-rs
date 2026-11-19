@@ -213,7 +213,10 @@ fn gencal_rejects_invalid_antpos_and_spw_contracts() {
         gaincurve_table: None,
     })
     .unwrap_err();
-    assert!(err.to_string().contains("requires explicit --antenna"));
+    assert!(
+        err.to_string()
+            .contains("requires resolved antenna selections")
+    );
 
     let err = gencal(&GencalRequest {
         measurement_set: ms_path,

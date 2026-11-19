@@ -62,6 +62,8 @@ pub struct MsCalEngine {
     field_directions: Box<[MDirection]>,
     /// Raw FIELD phase values, used as true-angle offsets for attached ephemerides.
     field_phase_offsets: Box<[[f64; 2]]>,
+    /// Original references for corrections that use the stored phase measure.
+    field_phase_references: Box<[DirectionRef]>,
     /// What each field follows, once attached
     /// ([`Self::with_field_ephemerides`]); empty until then.
     field_motions: Box<[FieldMotion]>,
@@ -161,12 +163,16 @@ impl MsCalEngine {
         let n_field = field.row_count();
         let mut field_directions = Vec::with_capacity(n_field);
         let mut field_phase_offsets = Vec::with_capacity(n_field);
+        let mut field_phase_references = Vec::with_capacity(n_field);
         let mut field_reference_epochs = Vec::with_capacity(n_field);
         for row in 0..n_field {
             let (longitude, latitude) = phase_dir_constant(field.phase_dir(row)?)?;
+            let reference = resolve_direction_reference(field.table(), "FIELD", "PHASE_DIR", row)?;
             field_phase_offsets.push([longitude, latitude]);
+            field_phase_references.push(reference);
             field_directions.push(resolve_field_phase_direction_j2000_with_observatory(
-                ms,
+                MDirection::from_angles(longitude, latitude, reference),
+                &field,
                 row,
                 &observatory_position,
                 Arc::clone(&measures),
@@ -181,6 +187,7 @@ impl MsCalEngine {
             antenna_feed_mounts: antenna_feed_mounts.into_boxed_slice(),
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
+            field_phase_references: field_phase_references.into_boxed_slice(),
             field_motions: Box::new([]),
             calibration_field_directions: false,
             field_reference_epochs: field_reference_epochs.into_boxed_slice(),
@@ -251,12 +258,14 @@ impl MsCalEngine {
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();
+        let field_phase_references = field_directions.iter().map(MDirection::refer).collect();
         Self {
             antenna_mount_alt_az,
             antenna_feed_mounts,
             antenna_positions: antenna_positions.into_boxed_slice(),
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets,
+            field_phase_references,
             field_motions: Box::new([]),
             calibration_field_directions: false,
             field_reference_epochs: Box::new([]),
@@ -850,10 +859,17 @@ impl MsCalEngine {
                 max: 0,
                 context: "antenna position correction reference".to_owned(),
             })?;
-        let direction = self.direction_at(time_mjd_sec, field_id)?;
         if offset_m == [0.0; 3] {
             return Ok([0.0; 3]);
         }
+        let direction = match self.moving_field_reference_direction(field_id, time_mjd_sec)? {
+            Some(direction) => direction,
+            None => {
+                self.field_dir(field_id)?;
+                let [longitude, latitude] = self.field_phase_offsets[field_id];
+                MDirection::from_angles(longitude, latitude, self.field_phase_references[field_id])
+            }
+        };
         // KAntPosJones sets its correction frame to UTC, including for a
         // MeasurementSet whose TIME column is labeled TAI.
         let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
@@ -861,6 +877,15 @@ impl MsCalEngine {
             .measures
             .clone()
             .map_or_else(crate::open_measures_runtime, Ok)?;
+        let direction = if direction.refer() == DirectionRef::J2000 {
+            direction
+        } else {
+            let frame = MeasFrame::new()
+                .with_epoch(epoch.clone())
+                .with_position(antenna.clone())
+                .with_measures(Arc::clone(&measures));
+            direction.convert_to(DirectionRef::J2000, &frame)?
+        };
         let projection = UvwFrame::new(direction.as_angles().into(), epoch, antenna, measures)?;
         let w = projection.baseline_uvw(offset_m)[2];
         Ok([0.0, 0.0, w])
@@ -1345,17 +1370,13 @@ fn resolve_observatory_position(
 }
 
 fn resolve_field_phase_direction_j2000_with_observatory(
-    ms: &MeasurementSet,
+    dir: MDirection,
+    field: &crate::subtables::MsField<'_>,
     field_id: usize,
     observatory_position: &MPosition,
     measures: Arc<dyn MeasuresProvider>,
 ) -> MsResult<MDirection> {
-    let field = ms.field()?;
-    let raw = field.phase_dir(field_id)?;
-    let (lon, lat) = phase_dir_constant(raw)?;
-    let source_ref = resolve_direction_reference(field.table(), "FIELD", "PHASE_DIR", field_id)?;
-    let dir = MDirection::from_angles(lon, lat, source_ref);
-    if source_ref == DirectionRef::J2000 {
+    if dir.refer() == DirectionRef::J2000 {
         return Ok(dir);
     }
     let epoch_ref = detect_epoch_reference(field.table(), "TIME", EpochRef::UTC);

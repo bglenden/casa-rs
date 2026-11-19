@@ -4,6 +4,7 @@
 
 import argparse
 import json
+from json import JSONDecodeError
 import os
 from pathlib import Path
 import subprocess
@@ -16,6 +17,8 @@ import numpy as np
 from applycal_oracle import copy_ms
 from calibration_gencal_gaincurve_oracle import compare_case, refuses
 from calibration_gencal_specify_oracle import apply_both, compare_tables, generate, with_second_window
+from gaincal_oracle import ephemeris_observation
+from record_casa_returns import make_cal_ms
 
 
 def pinned_crash(vis, output, kind, options):
@@ -47,6 +50,31 @@ def file_inputs(root, source, native):
     path.write_text(json.dumps({'metadata': {'product_code': 'antposalma'}, 'data': positions}))
     result, _ = compare_case(root, 'alma-json', alma, 'antpos', {'infile': str(path)}, native)
     results = {'alma-json': result}
+    name, original = next(iter(positions.items()))
+    extended = root / 'extended-position.json'
+    extended.write_text(json.dumps({'metadata': {'product_code': 'antposalma'},
+                                    'data': {name: original + ['unused']}}))
+    results['unused-coordinate'], _ = compare_case(
+        root, 'unused-coordinate', alma, 'antpos', {'infile': str(extended)}, native)
+    for label, content, expected_error in (
+        ('missing-file', None, FileNotFoundError),
+        ('invalid-json', '{', JSONDecodeError),
+        ('no-metadata', '{}', KeyError),
+        ('short-position', json.dumps({'metadata': {'product_code': 'antposalma'},
+                                      'data': {name: original[:2]}}), IndexError),
+    ):
+        infile = root / f'{label}.json'
+        if content is not None:
+            infile.write_text(content)
+        for engine, module in (('casa', casa), ('native', native)):
+            output = root / f'{label}-{engine}.cal'
+            try:
+                generate(module, alma, output, [('antpos', {'infile': str(infile)})])
+            except expected_error:
+                assert not output.exists()
+            else:
+                raise AssertionError(f'{engine} accepted {label}')
+        results[label] = {'refused': True}
     for label, vis, options in (
         ('unrelated-telescope', source, {}),
         ('mixed-antenna', alma, {'antenna': '1'}),
@@ -78,6 +106,19 @@ def file_inputs(root, source, native):
     return results
 
 
+def moving_position(root, native):
+    case = root / 'moving-position'
+    case.mkdir()
+    fixed = case / 'fixed.ms'
+    make_cal_ms(str(fixed), stokes='XX XY YX YY')
+    moving, _ = ephemeris_observation(case, fixed, offset=(.002, -.004))
+    options = {'antenna': '0,1', 'parameter': [17, 28, 34, 40, 59, 63]}
+    result, _ = compare_case(case, 'calibration', fixed, 'antpos', options, native)
+    tables = case / 'calibration'
+    result['apply_nrms'] = apply_both(case, moving, tables / 'casa.cal', tables / 'native.cal', native)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', required=True, type=Path, help='One-window NGC 5921 VLA MS')
@@ -104,6 +145,7 @@ def main():
         'cycle-triple': ('antpos', {'antenna': '27,1', 'parameter': [.1, .2, .3]}),
         'extra-triple': ('antpos', {'antenna': '1', 'parameter': [.1, .2, .3, .4, .5, .6]}),
         'range': ('antpos', {'antenna': '1~3', 'parameter': [.1, .2, .3]}),
+        'empty-antenna-ids': ('antpos', {'antenna': '/VA01&VA02/', 'parameter': [.1, .2, .3]}),
         'legacy-vla': ('antposvla', {'antenna': '1', 'parameter': [1, 0, 0],
                                    'spw': '1', 'pol': 'ignored'}),
         'legacy-repeated': ('antposvla', {'antenna': '1~3', 'parameter': [1, 0, 0]}),
@@ -132,6 +174,7 @@ def main():
         generate(native, vis, candidate, [(kind, options)])
         results[label] = {'table_nrms': compare_tables(candidate, reference)}
     results.update(file_inputs(root, vis, native))
+    results['moving-position'] = moving_position(root, native)
 
     initial = [('antpos', {'antenna': '1', 'parameter': [.03, .01, -.02]})]
     additional = [('antposvla', {'antenna': '1', 'parameter': [.01, -.03, .04]})]

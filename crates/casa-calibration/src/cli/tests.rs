@@ -673,7 +673,8 @@ fn calibrate_gencal_reads_every_parameter_it_emits() {
                 gaincurve_table: None,
             },
             polarization: String::new(),
-            infile: None,
+            gaincurve_infile: None,
+            antpos_infile: None,
             uniform: None,
         })
     );

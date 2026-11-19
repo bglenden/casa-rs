@@ -295,7 +295,8 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
             gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
         },
         polarization: task.text("pol")?.unwrap_or_default(),
-        infile,
+        gaincurve_infile: infile.clone().filter(|_| caltype.is_gain_curve()),
+        antpos_infile: infile.filter(|_| caltype == GencalType::Antpos),
         uniform: (caltype == GencalType::Tsys)
             .then(|| task.flag("uniform"))
             .transpose()?,
