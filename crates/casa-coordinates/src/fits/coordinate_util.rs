@@ -78,12 +78,12 @@ pub fn to_fits_header(cs: &CoordinateSystem, shape: &[usize]) -> FitsHeader {
     try_to_fits_header(cs, shape).expect("coordinate system cannot be represented as FITS")
 }
 
-/// Convert a coordinate system to FITS WCS, returning spectral conversion errors.
+/// Convert a coordinate system to FITS WCS.
 ///
 /// # Errors
 ///
 /// Returns an error if a spectral unit or reference-frame conversion cannot
-/// be expressed in Hz.
+/// be expressed in Hz, or a direction coordinate has a removed axis.
 ///
 /// # Panics
 ///
@@ -112,6 +112,11 @@ pub fn try_to_fits_header(
         let ct = coord.coordinate_type();
         match ct {
             CoordinateType::Direction => {
+                if coord.n_pixel_axes() != 2 {
+                    return Err(CoordinateError::UnsupportedAxisLayout(
+                        "FITS export requires both celestial pixel axes".into(),
+                    ));
+                }
                 emit_direction(coord, &mut h, axis);
                 axis += 2;
             }

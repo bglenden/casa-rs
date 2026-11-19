@@ -324,6 +324,22 @@ fn dropping_a_direction_axis_preserves_header_and_allows_copying() {
     assert_eq!(header.axes.len(), 1);
     assert_eq!(header.axes[0].name, "Declination");
     assert_eq!(header.axes[0].unit, "'");
+    let mut output = PagedImage::<f32>::open(&request.outfile).unwrap();
+    let original = output.set_reference_value(0, 3.0).unwrap();
+    close(original, 0.0, "original declination reference");
+    let circular = GaussianBeam::new(0.001, 0.001, 0.0);
+    assert!(
+        casa_images::convolve2d(&output, &circular)
+            .unwrap_err()
+            .to_string()
+            .contains("both direction axes")
+    );
+    assert!(
+        casa_coordinates::fits::try_to_fits_header(output.coordinates(), output.shape())
+            .unwrap_err()
+            .to_string()
+            .contains("both celestial pixel axes")
+    );
 
     request.imagename = request.outfile;
     request.outfile = scratch.path().join("copy.im");

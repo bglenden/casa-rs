@@ -265,6 +265,12 @@ impl DirectionCoordinate {
         &self.world_units
     }
 
+    /// The projection reference longitude and latitude in radians, including
+    /// the reference of a direction axis removed from the coordinate system.
+    pub fn projection_reference(&self) -> [f64; 2] {
+        self.crval
+    }
+
     /// The stored unit of each visible world axis, in axis order.
     pub fn visible_world_units(&self) -> Vec<String> {
         self.select_axis(self.world_units.clone())
