@@ -33491,6 +33491,10 @@
               "label": "field",
               "group": "Data selection"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "The list is a union of selectors within one calibration table."
           }
         },
         {
