@@ -337,6 +337,15 @@ def _call_plotms(values, arguments):
         except ValueError:
             raise ValueError("avgtime value must be numerical string in seconds (no units)") from None
     validate(arguments)
+    if arguments["showatm"] or arguments["showtsky"]:
+        xaxis = arguments["xaxis"]
+        if xaxis not in ("", "chan", "channel", "freq", "frequency"):
+            raise ValueError("xaxis must be channel or frequency for showatm and showtsky")
+        if arguments["showatm"] and arguments["showtsky"]:
+            print("Warning: you have selected both showatm and showtsky.  Defaulting to showatm=True only.")
+            values["showtsky"] = False
+    elif arguments["showimage"]:
+        values["showimage"] = False
     if not paths and all(isinstance(arguments[name], str) for name in ("vis", "caltable")):
         return None
     for name in ("field", "spw"):

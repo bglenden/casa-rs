@@ -98,7 +98,7 @@ def exports(root, products, native):
     return len(cases), total
 
 
-def compare_text(actual, expected):
+def compare_text(actual, expected, *, value_rtol=1.2e-5):
     a, b = actual.read_text().splitlines(), expected.read_text().splitlines()
     headers = lambda lines: [line for line in lines if line.startswith("#")]
     assert headers(a) == headers(b), (headers(a), headers(b))
@@ -108,7 +108,9 @@ def compare_text(actual, expected):
     for native, reference in zip(a, b, strict=True):
         assert native[2:] == reference[2:], (native, reference)
     coordinates = lambda rows: np.array([r[:2] for r in rows], dtype=float)
-    np.testing.assert_allclose(coordinates(a), coordinates(b), rtol=1.2e-5, atol=1e-7)
+    a, b = coordinates(a), coordinates(b)
+    np.testing.assert_allclose(a[:, 0], b[:, 0], rtol=1.2e-5, atol=1e-7)
+    np.testing.assert_allclose(a[:, 1], b[:, 1], rtol=value_rtol, atol=1e-7)
     return len(a)
 
 
