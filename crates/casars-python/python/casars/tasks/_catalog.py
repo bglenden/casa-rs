@@ -20,24 +20,6 @@ def _explicit(values: Mapping[str, object], names: tuple[str, ...]) -> dict[str,
     return {name: values[name] for name in names if values[name] is not _UNSET}  # type: ignore[misc]
 
 
-def getantposalma(
-    outfile: StrPath = '',
-    overwrite: bool = False,
-    asdm: str = '',
-    tw: str = '',
-    snr: ParameterData = 'default',
-    search: str = 'both_latest',
-    hosts: str | list[str] | tuple[str, ...] = ['https://asa.alma.cl/uncertainties-service/uncertainties/versions/last/measurements/casa/'],
-    firstintegration: bool = True,
-    nretry: int = 0,
-    rdelay: float = 3.0,
-) -> Any:
-    """Retrieve antenna positions from the ALMA archive.
-
-    CASA's ``getantposalma``: its parameters, defaults and return value.
-    """
-    return _call_casa(getantposalma, locals())
-
 def msexplore(
     *,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
@@ -1331,6 +1313,24 @@ def simalma(
     """
     return _call_casa(simalma, locals())
 
-TASK_SURFACES = ('getantposalma', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma')
+def getantposalma(
+    outfile: StrPath = '',
+    overwrite: bool = False,
+    asdm: str = '',
+    tw: str = '',
+    snr: Literal['default'] | int | float = 'default',
+    search: str = 'both_latest',
+    hosts: str | list[str] | tuple[str, ...] = ['https://asa.alma.cl/uncertainties-service/uncertainties/versions/last/measurements/casa/'],
+    firstintegration: bool = True,
+    nretry: int = 0,
+    rdelay: float = 3.0,
+) -> Any:
+    """Retrieve antenna positions from the ALMA archive.
 
-__all__ = ['TASK_SURFACES', 'getantposalma', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma']
+    CASA's ``getantposalma``: its parameters, defaults and return value.
+    """
+    return _call_casa(getantposalma, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma']

@@ -727,6 +727,7 @@ mod tests {
                 "bandpass",
                 "fluxscale",
                 "gencal",
+                "getantposalma",
                 "clearcal",
                 "delmod",
                 "uvsub",

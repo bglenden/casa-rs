@@ -33113,7 +33113,8 @@
               "field": "snr"
             },
             "python": {
-              "name": "snr"
+              "name": "snr",
+              "type_hint": "Literal['default'] | int | float"
             },
             "presentation": {
               "label": "Signal-to-Noise Ratio",
