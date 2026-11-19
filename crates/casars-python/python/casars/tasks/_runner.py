@@ -606,24 +606,28 @@ def _coerce_ms_channel_width(task: str, values: dict[str, Any]) -> None:
     if name not in values:
         return
     value = values[name]
-    if isinstance(value, np.ndarray) and value.ndim <= 1:
-        value = value.tolist()
-    if isinstance(value, (int, np.int32, np.int64)):
-        if isinstance(values[name], np.ndarray):
-            values[name] = value
+    integers = (int, np.int32, np.int64)
+    if isinstance(value, np.ndarray) and value.ndim == 0 and value.dtype.type in integers:
+        values[name] = value.item()
+        return
+    if isinstance(value, integers):
         return
     if name == "width" and isinstance(value, str):
         values[name] = int(value) if value.isdigit() else 1
         return
-    if isinstance(value, (list, tuple)):
-        if all(isinstance(item, (int, np.int32, np.int64)) for item in value):
-            values[name] = list(value)
+    if not isinstance(value, (str, bytes)):
+        try:
+            vector = list(iter(value))
+        except TypeError:
+            vector = None
+        if vector is not None and all(isinstance(item, integers) for item in vector):
+            values[name] = vector
             return
-        if name == "width" and all(isinstance(item, str) for item in value):
+        if name == "width" and vector and all(isinstance(item, str) for item in vector):
             # A numeric string list is converted to a map by CASA's Python
             # task. The processing raises at the subsequent scalar comparison.
-            if value[0].isdigit():
-                list(map(int, value))
+            if vector[0].isdigit():
+                list(map(int, vector))
                 raise TypeError("'>' not supported between instances of 'map' and 'int'")
             raise TypeError("'int' object is not iterable")
     kinds = ["cStr", "cStrVec"] if name == "width" else []

@@ -18,6 +18,7 @@ from ms_data_columns_oracle import add_float_and_lag, clone
 from ms_selection_tasks_oracle import MAIN, add_second_window, casa_table, make_input
 
 SPECTRA = ("WEIGHT_SPECTRUM", "SIGMA_SPECTRUM")
+CORRECTED_WEIGHT = "CORRECTED_WEIGHT_SPECTRUM"
 COMPLEX = ("DATA", "CORRECTED_DATA", "MODEL_DATA")
 SPECTRAL_WINDOW = ("NAME", "NUM_CHAN", "CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION",
                    "REF_FREQUENCY", "TOTAL_BANDWIDTH")
@@ -57,27 +58,32 @@ def channel_parameters(task, width, average=True):
     return {"width": width} if task == "split" else {"chanaverage": average, "chanbin": width}
 
 
-def compare(root, source, task, selector, width, spw="", *, native_width=None, force_spectra=False):
-    case = f"{task}-{source.stem}-{selector}-{width!r}-{spw or 'all-spw'}-{force_spectra}-{native_width!r}"
+def compare(root, source, task, selector, width, spw="", *, native_width=None, force_spectra=False,
+            field="", reference_source=None):
+    case = f"{task}-{source.stem}-{selector}-{width!r}-{spw}-{field}-{force_spectra}-{native_width!r}"
     name = blake2b(case.encode(), digest_size=8).hexdigest()
     targets = [root / f"{task}-{name}-{side}.ms" for side in ("casa", "native")]
     for module, target in zip((casatasks, tasks), targets):
+        vis = reference_source if module == casatasks and reference_source else source
         arg_width = width if module == casatasks or native_width is None else native_width
         params = channel_parameters(task, arg_width, average=not isinstance(width, int) or width > 1)
         if force_spectra:
             params["usewtspectrum"] = True
-        result = getattr(module, task)(vis=str(source), outputvis=str(target), datacolumn=selector,
-                                       spw=spw, **params)
+        result = getattr(module, task)(vis=str(vis), outputvis=str(target), datacolumn=selector,
+                                       spw=spw, field=field, **params)
         assert result is None, (case, module.__name__, result)
     with (table(str(targets[0]), ack=False) as want,
           table(str(targets[1]), ack=False) as got,
           casa_table(targets[1]) as interoperable):
-        optional = set(COMPLEX[1:] + SPECTRA)
+        optional = set(COMPLEX[1:] + SPECTRA + (CORRECTED_WEIGHT,))
         names = optional.intersection(want.colnames())
         assert optional.intersection(got.colnames()) == names, case
         assert want.nrows() == got.nrows(), case
         for name in sorted(set(MAIN) | names):
             for row in range(got.nrows()):
+                if name in SPECTRA and not want.iscelldefined(name, row):
+                    assert not got.iscelldefined(name, row), (case, name, row)
+                    continue
                 actual = np.asarray(got.getcell(name, row))
                 compare_array(f"{case} {name} row {row}", actual, want.getcell(name, row))
                 np.testing.assert_array_equal(np.asarray(interoperable.getcell(name, row)).T, actual,
@@ -144,6 +150,81 @@ getattr(casatasks, task)(vis=source, outputvis=output, spw=spw, datacolumn='data
     assert not output.exists(), output
 
 
+def sparse_spectra(source, target, missing_row, columns=SPECTRA):
+    clone(source, target)
+    with table(str(target), readonly=False, ack=False) as ms:
+        for name in columns:
+            values = ms.getcol(name)
+            ms.removecols(name)
+            ms.addcols(maketabdesc(makearrcoldesc(name, 0, ndim=2, valuetype="float")))
+            for row, value in enumerate(values):
+                if row != missing_row:
+                    ms.putcell(name, row, value)
+
+
+def reject_missing_spectrum(root, source, task, selector, width, name):
+    label = f"{task}-{source.stem}-{width}-{selector}"
+    for module in (casatasks, tasks):
+        target = root / f"{label}-{module.__name__}.ms"
+        try:
+            getattr(module, task)(vis=str(source), outputvis=str(target), datacolumn=selector,
+                                  **channel_parameters(task, width, average=width > 1))
+        except RuntimeError as error:
+            assert f"no array in row 1 in column {name}" in str(error), (label, str(error))
+        else:
+            raise AssertionError((label, module.__name__))
+        if module == tasks:
+            assert not target.exists(), target
+
+
+def verify_sparse_selection_and_segmented_widths(root, sparse, spectra, windows, task):
+    worker = """
+import casatasks, resource, sys
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+task, source, output, case = sys.argv[1:]
+width = 2 if case == 'spectra' else [2, 2]
+opts = {'field': '1', 'datacolumn': 'corrected'} if case == 'spectra' else {
+    'spw': '1:0~3;4~5,0:2~5', 'datacolumn': 'data',
+}
+opts.update({'width': width} if task == 'split' else {'chanaverage': True, 'chanbin': width})
+getattr(casatasks, task)(vis=source, outputvis=output, **opts)
+"""
+    for source, case in ((sparse, "spectra"), (windows, "ranges")):
+        reference = root / f"{task}-{case}-casa-crash.ms"
+        result = subprocess.run([sys.executable, "-c", worker, task, str(source), str(reference), case],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
+        assert result.returncode == -signal.SIGSEGV, (task, case, result.returncode)
+        assert reference.exists(), (task, case)
+    compare(root, sparse, task, "corrected", 2, field="1", reference_source=spectra)
+
+    output = root / f"{task}-segmented-native.ms"
+    getattr(tasks, task)(vis=str(windows), outputvis=str(output), datacolumn="data",
+                         spw="1:0~3;4~5,0:2~5", **channel_parameters(task, [2, 2]))
+    with (table(str(output), ack=False) as native,
+          table(str(output / "DATA_DESCRIPTION"), ack=False) as dd,
+          table(str(output / "SPECTRAL_WINDOW"), ack=False) as windows_table,
+          casa_table(output) as readback):
+        np.testing.assert_array_equal(windows_table.getcol("NAME"), ["SPW1", "SPW0"])
+        np.testing.assert_array_equal(windows_table.getcol("NUM_CHAN"), [3, 2])
+        descriptions = dd.getcol("SPECTRAL_WINDOW_ID")[native.getcol("DATA_DESC_ID")]
+        for spw, expression in enumerate(("1:0~3;4~5", "0:2~5")):
+            expected = root / f"{task}-segmented-{spw}-casa.ms"
+            getattr(casatasks, task)(vis=str(windows), outputvis=str(expected), datacolumn="data",
+                                     spw=expression, **channel_parameters(task, 2))
+            with (table(str(expected), ack=False) as reference,
+                  table(str(expected / "SPECTRAL_WINDOW"), ack=False) as ref_spw):
+                indices = np.flatnonzero(descriptions == spw)
+                assert reference.nrows() == len(indices)
+                for name in ("TIME", "DATA", "FLAG", "WEIGHT", "SIGMA", *SPECTRA):
+                    original = reference.getcol(name)
+                    for i, row in enumerate(indices):
+                        actual = np.asarray(native.getcell(name, int(row)))
+                        compare_array(f"{task} {expression} {name} row {i}", actual, original[i])
+                        np.testing.assert_array_equal(np.asarray(readback.getcell(name, int(row))).T, actual)
+                for name in SPECTRAL_WINDOW:
+                    np.testing.assert_array_equal(windows_table.getcell(name, spw), ref_spw.getcell(name, 0))
+
+
 def verify_sparse_statistics(root, source, task, visibility):
     selector = visibility.lower()
     targets = [root / f"{task}-{selector}-statistics-{side}.ms" for side in ("casa", "native")]
@@ -205,6 +286,17 @@ def main():
         clone(spectra, weight_only, ("SIGMA_SPECTRUM",))
         sigma_only = root / "sigma-only.ms"
         clone(spectra, sigma_only, ("WEIGHT_SPECTRUM",))
+        missing_first = root / "first-spectrum-undefined.ms"
+        sparse_spectra(spectra, missing_first, 0)
+        missing_later = root / "later-spectrum-undefined.ms"
+        sparse_spectra(spectra, missing_later, 1)
+        missing_sigma = root / "later-sigma-undefined.ms"
+        sparse_spectra(spectra, missing_sigma, 1, ("SIGMA_SPECTRUM",))
+        corrected_weight = root / "with-corrected-weight.ms"
+        clone(spectra, corrected_weight)
+        with table(str(corrected_weight), readonly=False, ack=False) as ms:
+            ms.addcols(maketabdesc(makearrcoldesc(CORRECTED_WEIGHT, 0, ndim=2, valuetype="float")))
+            ms.putcol(CORRECTED_WEIGHT, ms.getcol("WEIGHT_SPECTRUM"))
         windows = root / "two-spws.ms"
         clone(spectra, windows)
         add_second_window(windows)
@@ -221,6 +313,8 @@ def main():
         cases += [(scalars, col, 2, "") for col in columns]
         cases += [(weight_only, col, width, "") for col in ("data", "corrected") for width in (1, 2)]
         cases += [(sigma_only, "data", width, "") for width in (1, 2)]
+        cases += [(corrected_weight, "all", width, "") for width in (1, 2)]
+        cases += [(missing_first, "corrected", 2, ""), (missing_sigma, "corrected", 2, "")]
         cases += [(spectra, "data", 2, spw) for spw in ("0:2~6", "0:0~6^2", "0:0~2;4~6")]
         cases += [(windows, "all", 3, "0,1"), (windows, "all", 1, "1,0"),
                   (descending, "data", 2, "")]
@@ -235,6 +329,11 @@ def main():
             reject(root, windows, task, [2, 3], "0", ValueError,
                    f"Number of {name} is different from the number of spw")
             reject(root, windows, task, 2.5, "0", AssertionError, "must be of cInt type")
+            dtype = np.int16 if task == "split" else np.uint32
+            reject(root, windows, task, np.array([2], dtype=dtype), "0", AssertionError, "must be of cIntVec type")
+            reject_missing_spectrum(root, missing_later, task, "corrected", 2, "WEIGHT_SPECTRUM")
+            reject_missing_spectrum(root, missing_sigma, task, "data", 1, "SIGMA_SPECTRUM")
+            verify_sparse_selection_and_segmented_widths(root, missing_first, spectra, windows, task)
             verify_sparse_statistics(root, float_only, task, "FLOAT_DATA")
             verify_sparse_statistics(root, lag_only, task, "LAG_DATA")
             for case, signal_number, spw in (("scalar", signal.SIGFPE, "0"),
@@ -242,7 +341,7 @@ def main():
                                              ("negative", signal.SIGSEGV, "0,1")):
                 verify_width_crash(root, windows, task, case, signal_number, spw)
         reject(root, windows, "split", [], "0", IndexError, "list index out of range")
-        for width in ("2", "bad", 0):
+        for width in ("2", "bad", 0, range(2, 3)):
             compare(root, windows, "split", "data", width, "0")
         reject(root, windows, "mstransform", 1, "0", ValueError, "must be > 1")
         verify_width_crash(root, windows, "mstransform", "empty", signal.SIGSEGV, "0")
@@ -252,8 +351,8 @@ def main():
         with table(str(spectra), ack=False) as source:
             np.testing.assert_array_equal(source.getcol("FLAG"), source_flags)
             np.testing.assert_array_equal(source.getcol("WEIGHT_SPECTRUM"), source_weights)
-        print(f"{2 * len(cases) + 29} channel-averaging outputs and six rejections compared with CASA 6.7.6.14, "
-              "including four sparse-statistics products and seven CASA crash cases")
+        print(f"{2 * len(cases) + 34} channel-averaging outputs and 12 rejections compared with CASA 6.7.6.14, "
+              "including four sparse-statistics products and 11 CASA crash cases")
 
 
 if __name__ == "__main__":

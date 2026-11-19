@@ -173,6 +173,19 @@ pub enum MsTransformError {
     #[error("Did not find and select any data columns.")]
     NoDataColumns,
 
+    /// A spectrum used by the selected rows is undefined in a later cell.
+    #[error(
+        "Table DataManager error: Invalid operation: SSMIndColumn::getShape: no array in row {row} in column {column} of table {path}"
+    )]
+    MissingSpectrumCell {
+        /// Input MAIN table path.
+        path: String,
+        /// Physical input row.
+        row: usize,
+        /// Projected spectral statistics column.
+        column: &'static str,
+    },
+
     /// No complete output bin fits a selected spectral window.
     #[error(
         "Channel selection does not allow to produce any output channel with the requested width"
@@ -495,7 +508,11 @@ fn mstransform_staged(
         .min()
         .expect("nonempty row selection");
     let stage_started_at = Instant::now();
-    let (selected_rows, selected_ddids) = selection_metadata::sort_selected_rows(
+    let selection_metadata::OrderedMainRows {
+        rows: selected_rows,
+        descriptions: selected_ddids,
+        starts_visibility_buffer,
+    } = selection_metadata::sort_selected_rows(
         input.main_table(),
         request,
         selected_rows,
@@ -514,6 +531,8 @@ fn mstransform_staged(
         first_selected_row,
         grammar,
         options.use_weight_spectrum,
+        task_average,
+        &visibility,
     )
     .map_err(|source| MsTransformError::MutateMeasurementSet {
         path: request.input_ms.display().to_string(),
@@ -616,6 +635,7 @@ fn mstransform_staged(
     );
     let stage_started_at = Instant::now();
     let mut touched_spws = BTreeSet::new();
+    let mut spectrum_available = vec![false; spectra.source.len()];
     for batch_start in (0..row_count).step_by(batch_rows.max(1)) {
         let batch_end = (batch_start + batch_rows.max(1)).min(row_count);
         let input_rows = &selected_rows[batch_start..batch_end];
@@ -738,10 +758,31 @@ fn mstransform_staged(
                 .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "SIGMA"))?;
             let weight = select_correlations(weight, "WEIGHT")?;
             let sigma = select_correlations(sigma, "SIGMA")?;
-            for ((name, values), output) in spectrum_values.iter_mut().zip(&mut row_spectra) {
-                *output = values
-                    .next()
-                    .flatten()
+            for (((name, values), output), available) in spectrum_values
+                .iter_mut()
+                .zip(&mut row_spectra)
+                .zip(&mut spectrum_available)
+            {
+                let cell = values.next().flatten();
+                if grammar == RowGrammar::Transform {
+                    if starts_visibility_buffer[row_index] {
+                        // CASA checks the first cell of this visibility
+                        // buffer before reading that buffer's spectra.
+                        *available = cell.is_some();
+                    }
+                    if !*available {
+                        *output = None;
+                        continue;
+                    }
+                    if cell.is_none() {
+                        return Err(MsTransformError::MissingSpectrumCell {
+                            path: request.input_ms.display().to_string(),
+                            row: selected_rows[row_index],
+                            column: name,
+                        });
+                    }
+                }
+                *output = cell
                     .filter(|value| !value.is_empty())
                     .map(|value| select_correlations(value, name))
                     .transpose()?;
@@ -871,7 +912,9 @@ fn mstransform_staged(
                 (
                     averages.weight,
                     averages.sigma,
-                    Some((averages.weight_spectrum, averages.sigma_spectrum)),
+                    spectra
+                        .fill_standard
+                        .then_some((averages.weight_spectrum, averages.sigma_spectrum)),
                 )
             } else if spectra.fill_standard {
                 let values = unaveraged_spectra(
@@ -1292,6 +1335,13 @@ fn transform_array_write_plan(
     Ok((writer, input_batch_rows))
 }
 
+const STANDARD_SPECTRA: [&str; 2] = ["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"];
+const MAIN_SPECTRA: [&str; 3] = [
+    "WEIGHT_SPECTRUM",
+    "SIGMA_SPECTRUM",
+    "CORRECTED_WEIGHT_SPECTRUM",
+];
+
 struct SpectrumProjection {
     source: Vec<&'static str>,
     output: Vec<&'static str>,
@@ -1305,39 +1355,58 @@ impl SpectrumProjection {
         selected_row: usize,
         grammar: RowGrammar,
         force_spectra: bool,
+        task_average: bool,
+        visibility: &VisibilityColumns,
     ) -> Result<Self, TableError> {
-        let source = [
-            "WEIGHT_SPECTRUM",
-            "SIGMA_SPECTRUM",
-            "CORRECTED_WEIGHT_SPECTRUM",
-        ]
-        .into_iter()
-        .filter(|name| {
+        let exists = |name| {
             table
                 .schema()
                 .is_some_and(|schema| schema.contains_column(name))
-        })
-        .collect::<Vec<_>>();
-        let has_weight = source.contains(&"WEIGHT_SPECTRUM");
-        let propagate_weights = grammar == RowGrammar::Transform
-            && has_weight
-            && table
-                .array_shape_uncached(selected_row, "WEIGHT_SPECTRUM")?
-                .is_some();
-        let mut output = source.clone();
-        if grammar == RowGrammar::Transform {
-            output.retain(|&name| name == "CORRECTED_WEIGHT_SPECTRUM");
-            if force_spectra
-                || (has_weight && table.array_shape_uncached(0, "WEIGHT_SPECTRUM")?.is_some())
-            {
-                output.extend(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"]);
-            }
+        };
+        if grammar != RowGrammar::Transform {
+            let source = MAIN_SPECTRA
+                .into_iter()
+                .filter(|&name| exists(name))
+                .collect::<Vec<_>>();
+            return Ok(Self {
+                output: source.clone(),
+                source,
+                propagate_weights: false,
+                fill_standard: false,
+            });
+        }
+        let defined = |row, name| -> Result<bool, TableError> {
+            Ok(exists(name) && table.array_shape_uncached(row, name)?.is_some())
+        };
+        let propagate_weights = defined(selected_row, "WEIGHT_SPECTRUM")?;
+        let fill_standard = force_spectra || propagate_weights;
+        // The selected MS can supply spectra even if row zero of the physical
+        // input has no spectrum. Allocate columns for the selected values.
+        let output = if fill_standard || defined(0, "WEIGHT_SPECTRUM")? {
+            STANDARD_SPECTRA.to_vec()
+        } else {
+            Vec::new()
+        };
+        let mut source = Vec::new();
+        if (task_average || fill_standard) && exists("WEIGHT_SPECTRUM") {
+            source.push("WEIGHT_SPECTRUM");
+        }
+        let needs_sigma = if task_average {
+            visibility
+                .copies()
+                .iter()
+                .any(|column| column.source == OptionalMainColumn::Data)
+        } else {
+            fill_standard && !visibility.corrected_becomes_data()
+        };
+        if needs_sigma && exists("SIGMA_SPECTRUM") {
+            source.push("SIGMA_SPECTRUM");
         }
         Ok(Self {
             source,
             output,
             propagate_weights,
-            fill_standard: (force_spectra || propagate_weights) && grammar == RowGrammar::Transform,
+            fill_standard,
         })
     }
 }
@@ -1630,7 +1699,7 @@ fn materialize_empty_main_table(
         .filter(|column| {
             let name = column.name();
             (is_visibility_column(name) && !visibility.contains_output(name))
-                || (spectra.source.contains(&name) && !spectra.output.contains(&name))
+                || (MAIN_SPECTRA.contains(&name) && !spectra.output.contains(&name))
         })
         .map(|column| column.name().to_string())
         .collect::<Vec<_>>();
@@ -1646,7 +1715,11 @@ fn materialize_empty_main_table(
         OptionalMainColumn::WeightSpectrum,
         OptionalMainColumn::SigmaSpectrum,
     ] {
-        if spectra.output.contains(&column.name()) && !spectra.source.contains(&column.name()) {
+        if spectra.output.contains(&column.name())
+            && !table
+                .schema()
+                .is_some_and(|schema| schema.contains_column(column.name()))
+        {
             table
                 .add_column(crate::column_def::column_schema(column.column_def()), None)
                 .map_err(|source| MsTransformError::MutateMeasurementSet {
