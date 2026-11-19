@@ -1345,6 +1345,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.initweights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        initweights
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.msconvert" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2299,6 +2310,17 @@
     <span class="md-ellipsis">
       
         imsubimage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.initweights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        initweights
       
     </span>
   </a>
@@ -6499,6 +6521,56 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="sd">    ``keepaxes``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">imsubimage</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="casars.tasks.initweights" class="doc doc-heading">
+            <code class=" language-python"><span class="n">initweights</span><span class="p">(</span><span class="n">vis</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">wtmode</span><span class="o">=</span><span class="s1">'nyq'</span><span class="p">,</span> <span class="n">tsystable</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">gainfield</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">interp</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">spwmap</span><span class="o">=</span><span class="p">[],</span> <span class="n">dowtsp</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.initweights" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Initialize MeasurementSet weights and their channel spectra.</p>
+<p>CASA's <code>initweights</code>: its parameters, defaults and return value.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1331</span>
+<span class="normal">1332</span>
+<span class="normal">1333</span>
+<span class="normal">1334</span>
+<span class="normal">1335</span>
+<span class="normal">1336</span>
+<span class="normal">1337</span>
+<span class="normal">1338</span>
+<span class="normal">1339</span>
+<span class="normal">1340</span>
+<span class="normal">1341</span>
+<span class="normal">1342</span>
+<span class="normal">1343</span>
+<span class="normal">1344</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">initweights</span><span class="p">(</span>
+    <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">wtmode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'delwtsp'</span><span class="p">,</span> <span class="s1">'nyq'</span><span class="p">,</span> <span class="s1">'ones'</span><span class="p">,</span> <span class="s1">'tsys'</span><span class="p">,</span> <span class="s1">'weight'</span><span class="p">,</span> <span class="s1">'tinttsys'</span><span class="p">,</span> <span class="s1">'sigma'</span><span class="p">,</span> <span class="s1">'delsigsp'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'nyq'</span><span class="p">,</span>
+    <span class="n">tsystable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">gainfield</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">interp</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">spwmap</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
+    <span class="n">dowtsp</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Initialize MeasurementSet weights and their channel spectra.</span>
+
+<span class="sd">    CASA's ``initweights``: its parameters, defaults and return value.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">initweights</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

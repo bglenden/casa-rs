@@ -808,6 +808,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#initialize-visibility-weights-initweights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Initialize Visibility Weights (initweights)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1544,6 +1555,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#initialize-visibility-weights-initweights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Initialize Visibility Weights (initweights)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1572,9 +1594,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 642</li>
-<li>Surfaces: 37 (37 task, 0 session)</li>
-<li>Surface bindings: 946</li>
+<li>Concepts: 648</li>
+<li>Surfaces: 38 (38 task, 0 session)</li>
+<li>Surface bindings: 953</li>
 </ul>
 <table>
 <thead>
@@ -1883,6 +1905,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">10</td>
 <td>Retrieve antenna positions from the ALMA archive.</td>
+</tr>
+<tr>
+<td><a href="#surface-initweights">Initialize Visibility Weights</a><br><code>initweights</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">7</td>
+<td>Initialize MeasurementSet weights and their channel spectra.</td>
 </tr>
 </tbody>
 </table>
@@ -10302,6 +10332,85 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>3.0</code>; optional</td>
 <td>ALMA Service</td>
 <td>Seconds between retries.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-initweights"></a></p>
+<h2 id="initialize-visibility-weights-initweights">Initialize Visibility Weights (<code>initweights</code>)<a class="headerlink" href="#initialize-visibility-weights-initweights" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Initialize MeasurementSet weights and their channel spectra.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input MeasurementSet path or paths.</td>
+</tr>
+<tr>
+<td><code>wtmode</code></td>
+<td><code>weightinit.wtmode@r1</code></td>
+<td><code>choice (8 values)</code></td>
+<td><code>"nyq"</code>; optional</td>
+<td>Weights</td>
+<td>Method used to initialize the visibility weights.</td>
+</tr>
+<tr>
+<td><code>tsystable</code></td>
+<td><code>weightinit.tsystable@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Tsys calibration table used by the Tsys weight modes.</td>
+</tr>
+<tr>
+<td><code>gainfield</code></td>
+<td><code>weightinit.gainfield@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Select solutions from this field in the Tsys table.</td>
+</tr>
+<tr>
+<td><code>interp</code></td>
+<td><code>weightinit.interp@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Interpolate the Tsys solutions in time and frequency.</td>
+</tr>
+<tr>
+<td><code>spwmap</code></td>
+<td><code>weightinit.spwmap@r1</code></td>
+<td><code>array&lt;integer&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Weights</td>
+<td>Map data spectral windows to Tsys solution windows.</td>
+</tr>
+<tr>
+<td><code>dowtsp</code></td>
+<td><code>weightinit.dowtsp@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Weights</td>
+<td>Create WEIGHT_SPECTRUM when it is absent.</td>
 </tr>
 </tbody>
 </table>

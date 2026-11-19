@@ -4137,6 +4137,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rejected-tsys-weight-initialization-can-leave-empty-spectra" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rejected Tsys weight initialization can leave empty spectra
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#immathmodepola-crashes-with-unboundlocalerror-on-unitless-polithresh" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10505,6 +10516,15 @@ field. For the Uranus fixture, <code>mscal.hadec1()</code> reports a declination
 requested epoch. The <code>calibration_ephemeris_geometry_oracle.py</code> fixture obtains
 the per-epoch phase centres from CASA and evaluates CASA geometry on fixed
 snapshots of those directions (#989).</p>
+<h2 id="rejected-tsys-weight-initialization-can-leave-empty-spectra">Rejected Tsys weight initialization can leave empty spectra<a class="headerlink" href="#rejected-tsys-weight-initialization-can-leave-empty-spectra" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 can add <code>WEIGHT_SPECTRUM</code> and <code>SIGMA_SPECTRUM</code> to a
+MeasurementSet before rejecting <code>initweights(wtmode='tsys', dowtsp=True)</code>
+with an invalid <code>gainfield</code> or interpolation setting. On that failure the
+new columns have undefined cells and the original weights are unchanged.</p>
+<p>casa-rs validates the setup before it creates either column, so a rejected
+call leaves the original spectrum schema available for retry. The paired
+<code>calibration_initweights_tsys_oracle.py</code> cases cover both setup errors
+and the unchanged weight, sigma and flag values (#1524).</p>
 <h2 id="immathmodepola-crashes-with-unboundlocalerror-on-unitless-polithresh"><code>immath(mode="pola")</code> crashes with <code>UnboundLocalError</code> on unitless <code>polithresh</code><a class="headerlink" href="#immathmodepola-crashes-with-unboundlocalerror-on-unitless-polithresh" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-18</li>
