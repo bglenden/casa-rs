@@ -34,6 +34,25 @@ def seed_history(source):
             history.putcell(name, 0, value)
 
 
+def compare_layout(paths, task):
+    with (table(str(paths[0]), ack=False) as reference, table(str(paths[1]), ack=False) as actual,
+          casa_table(paths[1]) as reopen):
+        assert actual.info() == reference.info(), (task, actual.info(), reference.info())
+        assert actual.nrows() == reference.nrows(), task
+        names = reference.keywordnames()
+        assert set(actual.keywordnames()) == set(reopen.keywordnames()) == set(names), task
+        for name in names:
+            expected = reference.getkeyword(name)
+            got = actual.getkeyword(name)
+            if isinstance(expected, str) and expected.startswith("Table: "):
+                target = Path(got.removeprefix("Table: "))
+                assert target == paths[1] / Path(expected.removeprefix("Table: ")).name, (task, name, got)
+                with casa_table(target):
+                    pass
+            else:
+                np.testing.assert_array_equal(got, expected, err_msg=f"{task} keyword {name}")
+
+
 def compare_history(inputs, outputs, task, wall_time):
     paths = [output / "HISTORY" for output in outputs]
     with (table(str(paths[0]), ack=False) as reference, table(str(paths[1]), ack=False) as actual,
@@ -77,9 +96,10 @@ def main():
         cases = (
             ("split", {}, {}),
             ("mstransform", {}, {}),
-            ("split", {"width": [2], "timebin": "25s", "combine": "scan"}, {"msselect": ""}),
+            ("split", {"width": [2], "timebin": "25s", "combine": "scan",
+                       "correlation": ["xx", "yy"]}, {"msselect": ""}),
             ("mstransform", {"chanaverage": True, "chanbin": [2], "timeaverage": True,
-                            "timebin": "25s", "timespan": "scan"}, {}),
+                            "timebin": "25s", "timespan": "scan", "correlation": "xx,yy"}, {}),
         )
         for number, (task, arguments, native_only) in enumerate(cases):
             outputs = [root / f"{task}-{number}-{implementation}.ms"
@@ -91,12 +111,21 @@ def main():
                 result = getattr(module, task)(vis=str(vis), outputvis=str(output), datacolumn="data",
                                                spw="0:0~3", **kwargs)
                 assert result is None, (task, module.__name__, result)
+                for collision in (output, source):
+                    try:
+                        getattr(module, task)(vis=str(vis), outputvis=str(collision),
+                                              datacolumn="data", spw="0:0~3", **kwargs)
+                    except OSError as error:
+                        assert str(error) == f"Output MS {collision} already exists - will not overwrite it."
+                    else:
+                        raise AssertionError((task, module.__name__, collision))
             compare_history(inputs, outputs, task, (before, time() + MJD_UNIX_EPOCH_S))
+            compare_layout(outputs, task)
         with table(str(source / "HISTORY"), ack=False) as history:
             assert history.nrows() == 1
             for name, value in HISTORY.items():
                 np.testing.assert_array_equal(history.getcell(name, 0), value)
-        print("Four HISTORY products compared with CASA 6.7.6.14")
+        print("Four HISTORY products and eight repeated-call collisions compared with CASA 6.7.6.14")
 
 
 if __name__ == "__main__":

@@ -112,8 +112,37 @@ fn task_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
                     DefaultSpec::Conditional { fallback, .. } => Some(fallback),
                     DefaultSpec::Required => None,
                 })?;
+            let value = if matches!(binding.name.as_str(), "vis" | "outputvis")
+                && let ParameterValue::Array(paths) = value
+                && let [path] = paths.as_slice()
+            {
+                path
+            } else {
+                value
+            };
             let printable = match value {
+                ParameterValue::String(value)
+                    if value == "none"
+                        && matches!(
+                            binding.name.as_str(),
+                            "field" | "scan" | "antenna" | "timerange"
+                        ) =>
+                {
+                    r#""""#.into()
+                }
                 ParameterValue::String(value) => format!("\"{value}\""),
+                ParameterValue::Array(values)
+                    if task.surface() == "split" && binding.name == "correlation" =>
+                {
+                    let labels = values
+                        .iter()
+                        .filter_map(|label| match label {
+                            ParameterValue::String(text) => Some(text.to_uppercase()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    format!("\"{}\"", labels.join(", "))
+                }
                 ParameterValue::NumpyScalar { value, .. } => python_repr(value),
                 ParameterValue::EmptyArray { .. } => "[]".into(),
                 value => python_repr(value),

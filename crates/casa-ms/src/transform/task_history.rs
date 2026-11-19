@@ -4,12 +4,12 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use casa_tables::{Table, TableError, TableOptions};
+use casa_tables::{TableError, TableOptions};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::SubtableId;
 
-use super::MsTransformError;
+use super::{MsTransformError, open_staged_subtable_for_write};
 
 /// Resolved arguments recorded in the output MeasurementSet's HISTORY.
 #[derive(Debug, Clone)]
@@ -29,7 +29,7 @@ pub(super) fn append_task_history(
         path: path.display().to_string(),
         source: Box::new(source),
     };
-    let mut table = Table::open(TableOptions::new(&path)).map_err(failure)?;
+    let mut table = open_staged_subtable_for_write(&path).map_err(failure)?;
     let heading = [
         format!("taskname={}", history.task),
         format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),

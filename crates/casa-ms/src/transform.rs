@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use casa_tables::{
     ColumnOverrides, ColumnType, StreamedScalarType, StreamedTiledShapeValueType, Table,
-    TableError, TableOptions,
+    TableError, TableInfo, TableOptions,
 };
 use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Slice};
@@ -40,6 +40,7 @@ use crate::write_session::{
 
 mod channel_average;
 mod correlation_metadata;
+mod flag_commands;
 mod main_arrays;
 mod selection_metadata;
 mod spectral_metadata;
@@ -589,6 +590,18 @@ fn mstransform_staged(
     );
     let stage_started_at = Instant::now();
     copy_subtables(&request.input_ms, &request.output_ms)?;
+    if grammar == RowGrammar::Transform
+        && (task_average || !matches!(request.spw.as_str(), "" | "*"))
+    {
+        flag_commands::rewrite(
+            &input,
+            &request.output_ms,
+            &request.spw,
+            &channel_selection,
+            normalized_width(request.width),
+            options.channel_widths.as_deref(),
+        )?;
+    }
     maybe_log_transform_progress(
         "copy_subtables",
         stage_started_at.elapsed(),
@@ -1882,6 +1895,16 @@ fn materialize_empty_main_table(
             path: output_path.display().to_string(),
             source: Box::new(source),
         })?;
+    if grammar == RowGrammar::Transform {
+        table.set_info(TableInfo {
+            table_type: "Measurement Set".into(),
+            sub_type: "UVFITS".into(),
+            readme: vec![
+                "This is a MeasurementSet Table holding measurements from a Telescope".into(),
+                "This is a measurement set Table holding astronomical observations".into(),
+            ],
+        });
+    }
     let renamed_keywords = visibility
         .copies()
         .iter()
@@ -2169,6 +2192,17 @@ fn is_visibility_column(column: &str) -> bool {
         column,
         "DATA" | "CORRECTED_DATA" | "MODEL_DATA" | "FLOAT_DATA" | "LAG_DATA"
     )
+}
+
+fn open_staged_subtable_for_write(path: &Path) -> Result<Table, TableError> {
+    let options = TableOptions::new(path);
+    #[cfg(unix)]
+    return Table::open_with_lock(
+        options,
+        casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait),
+    );
+    #[cfg(not(unix))]
+    Table::open(options)
 }
 
 fn copy_subtables(input_path: &Path, output_path: &Path) -> Result<(), MsTransformError> {

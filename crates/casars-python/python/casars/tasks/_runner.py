@@ -268,6 +268,12 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             return run(name, **values).value
         except TaskParameterError as error:
             message = error.completion.message or ""
+            if error.completion.parameter == "outputvis":
+                if message.startswith("Output MS "):
+                    raise OSError(message) from error
+                if message.startswith("input and output MeasurementSet paths must differ: "):
+                    path = arguments["outputvis"]
+                    raise OSError(f"Output MS {path} already exists - will not overwrite it.") from error
             if error.completion.parameter == "spw" and message.startswith("invalid spectral-window selection "):
                 raise RuntimeError(message) from error
             if error.completion.parameter == "datacolumn" and message.startswith("unsupported datacolumn "):
