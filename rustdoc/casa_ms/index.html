@@ -58,7 +58,7 @@ observation, scan and spectral window, in CASA’s key order.</dd><dt><a class="
 position, as <code>{'name': ..., 'comment': ...}</code>, and the MeasurementSet’s
 absolute path under <code>'MS'</code>. The <code>main</code> entry, the working flags, is not
 a saved version and is left out, as CASA leaves it out.</dd><dt><a class="fn" href="fn.ms_task_success.html" title="fn casa_ms::ms_task_success">ms_<wbr>task_<wbr>success</a></dt><dd>A MeasurementSet task’s reply: <code>value</code> is what CASA’s task returns
-(<a href="../casa_provider_contracts/casa_value/enum.CasaValue.html#variant.None" title="variant casa_provider_contracts::casa_value::CasaValue::None"><code>CasaValue::None</code></a> for <code>None</code>; <code>crate::casa_return</code> builds the
+([<code>CasaValue::None</code>] for <code>None</code>; <code>crate::casa_return</code> builds the
 records), and <code>result</code> the provider’s report, which a command line
 prints as JSON.</dd><dt><a class="fn" href="fn.open_measures_runtime.html" title="fn casa_ms::open_measures_runtime">open_<wbr>measures_<wbr>runtime</a></dt><dd>Open the production Measures provider used by MeasurementSet-backed applications.</dd><dt><a class="fn" href="fn.table_read_cache_bytes.html" title="fn casa_ms::table_read_cache_bytes">table_<wbr>read_<wbr>cache_<wbr>bytes</a></dt><dd>The budget of the process-wide table-read cache every table read in the
 process shares (<a href="../casa_tables/storage/tiled_stman/fn.table_cache_budget_bytes.html" title="fn casa_tables::storage::tiled_stman::table_cache_budget_bytes"><code>casa_tables::table_cache_budget_bytes</code></a>); it fills as

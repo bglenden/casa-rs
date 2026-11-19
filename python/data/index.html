@@ -895,9 +895,10 @@ coordinates through the CASA Python interface:</p>
 <span class="n">ia</span><span class="o">.</span><span class="n">done</span><span class="p">()</span>
 </code></pre></div>
 
-<p>Use <code>image.open("example.im")</code> on an image tool to reopen the product. Use
-<code>outfile=""</code> with <code>fromshape</code> or <code>fromarray</code> for a temporary image. The
-remaining CASA image and coordinate operations are tracked in
+<p>Use <code>ia.open("example.im")</code> to reopen the product. Use
+<code>outfile=""</code> with <code>fromshape</code> or <code>fromarray</code> for a temporary image. Use <code>ia.setmiscinfo(record)</code> to replace an image’s miscellaneous metadata, and
+<code>ia.sethistory(origin, messages)</code> to append provenance. The remaining CASA
+image and coordinate operations are tracked in
 <a href="https://github.com/bglenden/casa-rs/issues/1027">#1027</a>.</p>
 <h3 id="access-an-existing-image-through-the-data-api">Access an existing image through the Data API<a class="headerlink" href="#access-an-existing-image-through-the-data-api" title="Permanent link">&para;</a></h3>
 <p>Use <code>Image.open(path, writable=False)</code> to open an existing CASA-compatible image. The v1 surface is intentionally narrow:</p>

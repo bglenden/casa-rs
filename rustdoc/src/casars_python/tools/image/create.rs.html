@@ -124,7 +124,7 @@
 <a href=#124 id=124 data-nosnippet>124</a>            <span class="string">"Created {storage} image {filename} of shape {:?} with {pixel_type} valued pixels."</span>,
 <a href=#125 id=125 data-nosnippet>125</a>            <span class="self">self</span>.shape
 <a href=#126 id=126 data-nosnippet>126</a>        );
-<a href=#127 id=127 data-nosnippet>127</a>        image.add_history(creation)<span class="question-mark">?</span>;
+<a href=#127 id=127 data-nosnippet>127</a>        image.append_history_at(<span class="string">"::ImageFactory::createImage"</span>, <span class="kw-2">&amp;</span>[creation])<span class="question-mark">?</span>;
 <a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">if </span>enabled {
 <a href=#129 id=129 data-nosnippet>129</a>            <span class="kw">let </span>(method, args) = <span class="kw">match </span>pixels {
 <a href=#130 id=130 data-nosnippet>130</a>                <span class="prelude-val">Some</span>(pixels) =&gt; (<span class="string">"fromarray"</span>, <span class="macro">format!</span>(<span class="string">"pixels={}"</span>, pixels.history())),
