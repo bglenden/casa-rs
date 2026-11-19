@@ -15,19 +15,6 @@ use super::{PyCoordsys, stub};
 )]
 impl PyCoordsys {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (direction = None, spectral = None, stokes = None, linear = None, tabular = None), text_signature = "($self, direction=False, spectral=False, stokes=[], linear=0, tabular=False)")]
-    fn addcoordinate(
-        &self,
-        direction: Option<&Bound<'_, PyAny>>,
-        spectral: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        tabular: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("addcoordinate")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#type = None), text_signature = "($self, type='direction')")]
     fn conversiontype(&self, r#type: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("conversiontype")
@@ -72,12 +59,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn epoch(&self) -> PyResult<Py<PyAny>> {
-        stub("epoch")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (value, frequnit = None, velocity = None), text_signature = "($self, value, frequnit='', velocity=[])")]
     fn frequencytofrequency(
         &self,
@@ -98,12 +79,6 @@ impl PyCoordsys {
         velunit: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("frequencytovelocity")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (record), text_signature = "($self, record)")]
-    fn fromrecord(&self, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("fromrecord")
     }
 
     /// Not yet implemented in casa-rs.
@@ -130,19 +105,6 @@ impl PyCoordsys {
     #[pyo3(signature = (r#type), text_signature = "($self, type)")]
     fn lineartransform(&self, r#type: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("lineartransform")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (direction = None, spectral = None, stokes = None, linear = None, tabular = None), text_signature = "($self, direction=False, spectral=False, stokes=[], linear=0, tabular=False)")]
-    fn newcoordsys(
-        &self,
-        direction: Option<&Bound<'_, PyAny>>,
-        spectral: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        tabular: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("newcoordsys")
     }
 
     /// Not yet implemented in casa-rs.
@@ -257,12 +219,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn setobserver(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setobserver")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#type, parameters = None), text_signature = "($self, type, parameters=[-1.0])")]
     fn setprojection(
         &self,
@@ -343,12 +299,6 @@ impl PyCoordsys {
         which: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("settabular")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn settelescope(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("settelescope")
     }
 
     /// Not yet implemented in casa-rs.

@@ -29,6 +29,7 @@
     "initweights",
     "listcal",
     "mstransform",
+    "plotbandpass",
     "plotms",
     "plotweather",
     "rerefant",

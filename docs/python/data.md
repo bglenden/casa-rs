@@ -37,10 +37,22 @@ coordinate for a particular axis with `cs.findaxis(world=False, axis=0)`.
 a separate coordinate system, then pass its record to `ia.setcoordsys()` to
 persist the edits to the image.
 
+To build a coordinate system without an image, call
+`tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.
+Use `addcoordinate` to append axes and `fromrecord` to restore a coordinate
+record. Pass `cs.torecord()` as the `csys` argument to `ia.fromshape` or
+`ia.fromarray`. The coordinate record must describe each image axis.
+
+Use `cs.setobserver(name)` and `cs.settelescope(name)` to update observation
+metadata. An unknown telescope name is stored and the setter returns
+`False`. The record retains the last known telescope position.
+
 Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
-`ia.sethistory(origin, messages)` to append provenance. The remaining CASA
-image and coordinate operations are tracked in
+`ia.sethistory(origin, messages)` to append provenance. For an image with stored
+restoring beams, `ia.restoringbeam()` reads the beam quantities and
+`ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid. The remaining
+CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
 
 ### Access an existing image through the Data API

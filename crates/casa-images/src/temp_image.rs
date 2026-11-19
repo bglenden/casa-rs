@@ -61,6 +61,7 @@ pub struct TempImage<T: ImagePixel> {
     units: String,
     misc_info: RecordValue,
     image_info: ImageInfo,
+    image_info_record: Option<RecordValue>,
     masks: Vec<(String, ArrayD<bool>)>,
     default_mask: Option<String>,
     history: Vec<(String, String)>,
@@ -82,6 +83,7 @@ impl<T: ImagePixel> TempImage<T> {
             units: String::new(),
             misc_info: RecordValue::default(),
             image_info: ImageInfo::default(),
+            image_info_record: None,
             masks: Vec::new(),
             default_mask: None,
             history: Vec::new(),
@@ -212,6 +214,22 @@ impl<T: ImagePixel> TempImage<T> {
     /// Replaces the image info.
     pub fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError> {
         self.image_info = info.clone();
+        self.image_info_record = None;
+        Ok(())
+    }
+
+    /// Returns the image info record if it was supplied in casacore form.
+    pub fn image_info_record(&self) -> Option<&RecordValue> {
+        self.image_info_record.as_ref()
+    }
+
+    /// Replaces the image info, retaining the supplied casacore record.
+    ///
+    /// # Errors
+    /// Returns an error before changing the image if the record is invalid.
+    pub fn set_image_info_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
+        self.image_info = ImageInfo::from_record(&record)?;
+        self.image_info_record = Some(record);
         Ok(())
     }
 
@@ -449,7 +467,11 @@ impl<T: ImagePixel> TempImage<T> {
         let data = self.get()?;
         paged.put_slice(&data, &vec![0; self.ndim()])?;
         paged.set_units(self.units.clone())?;
-        paged.set_image_info(&self.image_info)?;
+        if let Some(record) = &self.image_info_record {
+            paged.set_image_info_record(record.clone())?;
+        } else {
+            paged.set_image_info(&self.image_info)?;
+        }
         paged.set_misc_info(self.misc_info.clone())?;
         for (name, mask_data) in &self.masks {
             paged.put_mask(name, mask_data)?;

@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 765
-- Surfaces: 44 (44 task, 0 session)
-- Surface bindings: 1040
+- Concepts: 811
+- Surfaces: 45 (45 task, 0 session)
+- Surface bindings: 1089
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -60,6 +60,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Statistical Weights](#surface-statwt)<br><code>statwt</code> | task | 1 | <code>calibration</code> | 25 | Estimate MeasurementSet weights from visibility variance. |
 | [Calibration Statistics](#surface-calstat)<br><code>calstat</code> | task | 1 | <code>calibration</code> | 3 | Compute descriptive statistics for a calibration table column. |
 | [List Calibration Solutions](#surface-listcal)<br><code>listcal</code> | task | 1 | <code>calibration</code> | 7 | List selected antenna calibration solutions and flags. |
+| [Plot Bandpass](#surface-plotbandpass)<br><code>plotbandpass</code> | task | 1 | <code>calibration</code> | 49 | Plot calibration spectra and channel derivatives. |
 
 <a id="surface-msexplore"></a>
 
@@ -1672,5 +1673,67 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
 | <code>listfile</code> | <code>statistics.listing_file@r1</code> | <code>path (file)</code> | <code>""</code>; optional | Output | Write the solution listing to a new text file. Empty writes to the terminal. |
 | <code>pagerows</code> | <code>statistics.listing_pagerows@r1</code> | <code>integer</code> | <code>50</code>; optional | Output | Maximum rows per page. Zero or a negative value prints a continuous listing. |
+
+<a id="surface-plotbandpass"></a>
+
+## Plot Bandpass (<code>plotbandpass</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Plot calibration spectra and channel derivatives.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>caltable</code> | <code>parameter.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Input calibration table. |
+| <code>antenna</code> | <code>ms.selection.antenna@r5</code> | <code>variant</code> | <code>""</code>; optional | Plot | A comma-delimited string list of antennas (either names or integer indices) for which to display solutions. Default = all antennas. |
+| <code>field</code> | <code>ms.selection.field@r6</code> | <code>variant</code> | <code>""</code>; optional | Plot | A comma-delimited string list of fields (either names or integer indices) for which to display solutions. Default = all fields. |
+| <code>spw</code> | <code>ms.selection.spw@r4</code> | <code>variant</code> | <code>""</code>; optional | Plot | A comma-delimited string list of spws for which to display solutions. Default = all spws. |
+| <code>yaxis</code> | <code>plotbandpass.yaxis@r1</code> | <code>string</code> | <code>"amp"</code>; optional | Plot | The quantity to plot on the y-axis ("amp", "phase", "both", "tsys", append "db" for dB). |
+| <code>xaxis</code> | <code>plotbandpass.xaxis@r1</code> | <code>string</code> | <code>"chan"</code>; optional | Plot | The quantity to plot on the x-axis ("chan" or "freq"). |
+| <code>figfile</code> | <code>plotbandpass.figfile@r1</code> | <code>string</code> | <code>""</code>; optional | Plot | Base name used to derive each saved plot and PDF name. |
+| <code>plotrange</code> | <code>plotbandpass.plotrange@r1</code> | <code>array&lt;float&gt;</code> | <code>[0.0,0.0,0.0,0.0]</code>; optional | Plot | The axes limits to use [x0,x1,y0,y1]. |
+| <code>caltable2</code> | <code>plotbandpass.caltable2@r1</code> | <code>string</code> | <code>""</code>; optional | Input | A second cal table, of type BPOLY or B, to overlay on a B table |
+| <code>overlay</code> | <code>plotbandpass.overlay@r1</code> | <code>string</code> | <code>""</code>; optional | Plot | Show multiple solutions in same frame in different colors (time, antenna, spw, baseband, or time,antenna) |
+| <code>showflagged</code> | <code>plotbandpass.showflagged@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Show the values of the solution, even if flagged |
+| <code>timeranges</code> | <code>plotbandpass.timeranges@r1</code> | <code>string</code> | <code>""</code>; optional | Plot | Show only these timeranges, the first timerange being 0 |
+| <code>buildpdf</code> | <code>plotbandpass.buildpdf@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | If True, assemble all the pngs into a pdf |
+| <code>caltable3</code> | <code>plotbandpass.caltable3@r1</code> | <code>string</code> | <code>""</code>; optional | Input | A third cal table, of type BPOLY, to overlay on the first two tables |
+| <code>markersize</code> | <code>plotbandpass.markersize@r1</code> | <code>integer</code> | <code>3</code>; optional | Plot | Size of points |
+| <code>density</code> | <code>plotbandpass.density@r1</code> | <code>integer</code> | <code>108</code>; optional | Plot | dpi to use in creating PNGs and PDFs (default=108) |
+| <code>interactive</code> | <code>parameter.interactive@r1</code> | <code>bool</code> | <code>true</code>; optional | Plot | Interactive clean. |
+| <code>showpoints</code> | <code>plotbandpass.showpoints@r1</code> | <code>variant</code> | <code>"auto"</code>; optional | Plot | Draw points for the data (default=F for amp, T for phase) |
+| <code>showlines</code> | <code>plotbandpass.showlines@r1</code> | <code>variant</code> | <code>"auto"</code>; optional | Plot | Draw lines connecting the data (default=T for amp, F for phase) |
+| <code>subplot</code> | <code>plotbandpass.subplot@r1</code> | <code>variant</code> | <code>"22"</code>; optional | Plot | 11..81,22,32 or 42 for RowsxColumns (default=22), any 3rd digit is ignored |
+| <code>zoom</code> | <code>plotbandpass.zoom@r1</code> | <code>string</code> | <code>""</code>; optional | Plot | "intersect" will zoom to overlap region of caltable with caltable2 |
+| <code>poln</code> | <code>plotbandpass.poln@r1</code> | <code>variant</code> | <code>""</code>; optional | Plot | Polarizations to plot: "" = all, or "RR","RL","LR","LL","XX","XY","YX","YY","RR,LL","XX,YY" |
+| <code>showatm</code> | <code>plotbandpass.showatm@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Compute and overlay the atmospheric transmission curve |
+| <code>pwv</code> | <code>visualization.pwv@r1</code> | <code>variant</code> | <code>"auto"</code>; optional | Plot | Define the pwv to use for the showatm option: "auto" or value in mm |
+| <code>gs</code> | <code>plotbandpass.gs@r1</code> | <code>string</code> | <code>"gs"</code>; optional | Plot | For buildpdf=T, full path for ghostscript command (in case it is not found) |
+| <code>convert</code> | <code>plotbandpass.convert@r1</code> | <code>string</code> | <code>"convert"</code>; optional | Plot | For buildpdf=T, full path for the ImageMagick convert command (in case it is not found) |
+| <code>chanrange</code> | <code>plotbandpass.chanrange@r1</code> | <code>variant</code> | <code>""</code>; optional | Plot | Set xrange ("5~100") over which to autoscale y-axis for xaxis="freq" |
+| <code>solutionTimeThresholdSeconds</code> | <code>plotbandpass.solution_time_threshold_seconds@r1</code> | <code>variant</code> | <code>30.0</code>; optional | Plot | Consider 2 solutions simultaneous if within this interval in seconds |
+| <code>debug</code> | <code>plotbandpass.debug@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Print verbose messages for debugging purposes |
+| <code>phase</code> | <code>plotbandpass.phase@r1</code> | <code>variant</code> | <code>""</code>; optional | Plot | The y-axis limits to use for phase plots when yaxis="both" |
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; optional | Input | One input MeasurementSet path. |
+| <code>showtsky</code> | <code>plotbandpass.showtsky@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Compute and overlay the sky temperature curve instead of transmission |
+| <code>showfdm</code> | <code>plotbandpass.showfdm@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | when showing TDM spws, draw the locations of the corresponding FDM spws |
+| <code>showatmfield</code> | <code>plotbandpass.showatmfield@r1</code> | <code>variant</code> | <code>""</code>; optional | Plot | for overlay="time", use first observation of this fieldID or name |
+| <code>lo1</code> | <code>plotbandpass.lo1@r1</code> | <code>variant</code> | <code>""</code>; optional | Plot | specify the LO1 setting (in GHz) for the observation ('' = automatic) |
+| <code>showimage</code> | <code>plotbandpass.showimage@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | also show the atmospheric curve for the image sideband (in black) |
+| <code>showatmpoints</code> | <code>plotbandpass.showatmpoints@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Draw atmospheric curve with points instead of a line |
+| <code>parentms</code> | <code>plotbandpass.parentms@r1</code> | <code>string</code> | <code>""</code>; optional | Plot | if showimage=T, name of the parent ms (only needed if the ms has been previously split) |
+| <code>pdftk</code> | <code>plotbandpass.pdftk@r1</code> | <code>string</code> | <code>"pdftk"</code>; optional | Plot | For buildpdf=T, full path for pdftk command (in case it is not found) |
+| <code>channeldiff</code> | <code>plotbandpass.channeldiff@r1</code> | <code>variant</code> | <code>false</code>; optional | Plot | Set to a value &gt; 0 (sigma) to plot derivatives of the solutions |
+| <code>edge</code> | <code>plotbandpass.edge@r1</code> | <code>integer</code> | <code>8</code>; optional | Plot | The number of edge channels to ignore in finding outliers (for channeldiff&gt;0) |
+| <code>resample</code> | <code>plotbandpass.resample@r1</code> | <code>integer</code> | <code>1</code>; optional | Plot | The channel expansion factor to use when computing MAD of derivative (for channeldiff&gt;0) |
+| <code>platformingThreshold</code> | <code>plotbandpass.platforming_threshold@r1</code> | <code>variant</code> | <code>10.0</code>; optional | Plot | if platformingSigma=0, then declare platforming if the amplitude derivative exceeds this percentage of the median |
+| <code>platformingSigma</code> | <code>plotbandpass.platforming_sigma@r1</code> | <code>variant</code> | <code>10.0</code>; optional | Plot | declare platforming if the amplitude derivative exceeds this many times the MAD |
+| <code>basebands</code> | <code>plotbandpass.basebands@r1</code> | <code>variant</code> | <code>""</code>; optional | Plot | A baseband number or list of baseband numbers for which to display solutions. Default = all. |
+| <code>showBasebandNumber</code> | <code>plotbandpass.show_baseband_number@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | Put the baseband converter number (BBC_NO) in the title of each plot |
+| <code>scans</code> | <code>plotbandpass.scans@r1</code> | <code>variant</code> | <code>""</code>; optional | Plot | A scan or list of scans for which to display solutions. Default = all. Does not work with overlay="time". |
+| <code>figfileSequential</code> | <code>plotbandpass.figfile_sequential@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | naming scheme for pngs: False: name by spw/antenna (default), True: figfile.000.png, figfile.001.png, etc. |
+| <code>chanrangeSetXrange</code> | <code>plotbandpass.chanrange_set_xrange@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | If True, then chanrange also sets the xrange to display |
 
 _End of generated reference._

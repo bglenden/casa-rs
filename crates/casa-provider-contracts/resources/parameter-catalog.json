@@ -15546,6 +15546,932 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.antenna",
+      "semantic_revision": 5,
+      "casa_name": "antenna",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "A comma-delimited string list of antennas (either names or integer indices) for which to display solutions. Default = all antennas.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.field",
+      "semantic_revision": 6,
+      "casa_name": "field",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "A comma-delimited string list of fields (either names or integer indices) for which to display solutions. Default = all fields.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.spw",
+      "semantic_revision": 4,
+      "casa_name": "spw",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "A comma-delimited string list of spws for which to display solutions. Default = all spws.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.yaxis",
+      "semantic_revision": 1,
+      "casa_name": "yaxis",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "The quantity to plot on the y-axis (\"amp\", \"phase\", \"both\", \"tsys\", append \"db\" for dB).",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.xaxis",
+      "semantic_revision": 1,
+      "casa_name": "xaxis",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "The quantity to plot on the x-axis (\"chan\" or \"freq\").",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.figfile",
+      "semantic_revision": 1,
+      "casa_name": "figfile",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Base name used to derive each saved plot and PDF name.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.plotrange",
+      "semantic_revision": 1,
+      "casa_name": "plotrange",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "The axes limits to use [x0,x1,y0,y1].",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.caltable2",
+      "semantic_revision": 1,
+      "casa_name": "caltable2",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "A second cal table, of type BPOLY or B, to overlay on a B table",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.overlay",
+      "semantic_revision": 1,
+      "casa_name": "overlay",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Show multiple solutions in same frame in different colors (time, antenna, spw, baseband, or time,antenna)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.showflagged",
+      "semantic_revision": 1,
+      "casa_name": "showflagged",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Show the values of the solution, even if flagged",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.timeranges",
+      "semantic_revision": 1,
+      "casa_name": "timeranges",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Show only these timeranges, the first timerange being 0",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.buildpdf",
+      "semantic_revision": 1,
+      "casa_name": "buildpdf",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "If True, assemble all the pngs into a pdf",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.caltable3",
+      "semantic_revision": 1,
+      "casa_name": "caltable3",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "A third cal table, of type BPOLY, to overlay on the first two tables",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.markersize",
+      "semantic_revision": 1,
+      "casa_name": "markersize",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Size of points",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.density",
+      "semantic_revision": 1,
+      "casa_name": "density",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "dpi to use in creating PNGs and PDFs (default=108)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.showpoints",
+      "semantic_revision": 1,
+      "casa_name": "showpoints",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Draw points for the data (default=F for amp, T for phase)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.showlines",
+      "semantic_revision": 1,
+      "casa_name": "showlines",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Draw lines connecting the data (default=T for amp, F for phase)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.subplot",
+      "semantic_revision": 1,
+      "casa_name": "subplot",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "11..81,22,32 or 42 for RowsxColumns (default=22), any 3rd digit is ignored",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.zoom",
+      "semantic_revision": 1,
+      "casa_name": "zoom",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "\"intersect\" will zoom to overlap region of caltable with caltable2",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.poln",
+      "semantic_revision": 1,
+      "casa_name": "poln",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Polarizations to plot: \"\" = all, or \"RR\",\"RL\",\"LR\",\"LL\",\"XX\",\"XY\",\"YX\",\"YY\",\"RR,LL\",\"XX,YY\"",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.showatm",
+      "semantic_revision": 1,
+      "casa_name": "showatm",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Compute and overlay the atmospheric transmission curve",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "visualization.pwv",
+      "semantic_revision": 1,
+      "casa_name": "pwv",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Define the pwv to use for the showatm option: \"auto\" or value in mm",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.gs",
+      "semantic_revision": 1,
+      "casa_name": "gs",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "For buildpdf=T, full path for ghostscript command (in case it is not found)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.convert",
+      "semantic_revision": 1,
+      "casa_name": "convert",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "For buildpdf=T, full path for the ImageMagick convert command (in case it is not found)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.chanrange",
+      "semantic_revision": 1,
+      "casa_name": "chanrange",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Set xrange (\"5~100\") over which to autoscale y-axis for xaxis=\"freq\"",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.solution_time_threshold_seconds",
+      "semantic_revision": 1,
+      "casa_name": "solutionTimeThresholdSeconds",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Consider 2 solutions simultaneous if within this interval in seconds",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.debug",
+      "semantic_revision": 1,
+      "casa_name": "debug",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Print verbose messages for debugging purposes",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.phase",
+      "semantic_revision": 1,
+      "casa_name": "phase",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "The y-axis limits to use for phase plots when yaxis=\"both\"",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.showtsky",
+      "semantic_revision": 1,
+      "casa_name": "showtsky",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Compute and overlay the sky temperature curve instead of transmission",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.showfdm",
+      "semantic_revision": 1,
+      "casa_name": "showfdm",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "when showing TDM spws, draw the locations of the corresponding FDM spws",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.showatmfield",
+      "semantic_revision": 1,
+      "casa_name": "showatmfield",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "for overlay=\"time\", use first observation of this fieldID or name",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.lo1",
+      "semantic_revision": 1,
+      "casa_name": "lo1",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "specify the LO1 setting (in GHz) for the observation ('' = automatic)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.showimage",
+      "semantic_revision": 1,
+      "casa_name": "showimage",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "also show the atmospheric curve for the image sideband (in black)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.showatmpoints",
+      "semantic_revision": 1,
+      "casa_name": "showatmpoints",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Draw atmospheric curve with points instead of a line",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.parentms",
+      "semantic_revision": 1,
+      "casa_name": "parentms",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "if showimage=T, name of the parent ms (only needed if the ms has been previously split)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.pdftk",
+      "semantic_revision": 1,
+      "casa_name": "pdftk",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "For buildpdf=T, full path for pdftk command (in case it is not found)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.channeldiff",
+      "semantic_revision": 1,
+      "casa_name": "channeldiff",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Set to a value > 0 (sigma) to plot derivatives of the solutions",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.edge",
+      "semantic_revision": 1,
+      "casa_name": "edge",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "The number of edge channels to ignore in finding outliers (for channeldiff>0)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.resample",
+      "semantic_revision": 1,
+      "casa_name": "resample",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "The channel expansion factor to use when computing MAD of derivative (for channeldiff>0)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.platforming_threshold",
+      "semantic_revision": 1,
+      "casa_name": "platformingThreshold",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "if platformingSigma=0, then declare platforming if the amplitude derivative exceeds this percentage of the median",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.platforming_sigma",
+      "semantic_revision": 1,
+      "casa_name": "platformingSigma",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "declare platforming if the amplitude derivative exceeds this many times the MAD",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.basebands",
+      "semantic_revision": 1,
+      "casa_name": "basebands",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "A baseband number or list of baseband numbers for which to display solutions. Default = all.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.show_baseband_number",
+      "semantic_revision": 1,
+      "casa_name": "showBasebandNumber",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Put the baseband converter number (BBC_NO) in the title of each plot",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.scans",
+      "semantic_revision": 1,
+      "casa_name": "scans",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "A scan or list of scans for which to display solutions. Default = all. Does not work with overlay=\"time\".",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.figfile_sequential",
+      "semantic_revision": 1,
+      "casa_name": "figfileSequential",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "naming scheme for pngs: False: name by spw/antenna (default), True: figfile.000.png, figfile.001.png, etc.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotbandpass.chanrange_set_xrange",
+      "semantic_revision": 1,
+      "casa_name": "chanrangeSetXrange",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "If True, then chanrange also sets the xrange to display",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

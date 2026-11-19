@@ -286,11 +286,59 @@ fn emit_stokes(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();
 
+    let (reference, increment) = match coord {
+        CoordinateModel::Stokes(stokes) => {
+            extended_stokes_axis(stokes.stokes()).unwrap_or((crval[0], cdelt[0]))
+        }
+        _ => (crval[0], cdelt[0]),
+    };
     h.set(format!("CTYPE{axis}"), FitsValue::String("STOKES".into()));
-    h.set(format!("CRVAL{axis}"), FitsValue::Float(crval[0]));
+    h.set(format!("CRVAL{axis}"), FitsValue::Float(reference));
     h.set(format!("CRPIX{axis}"), FitsValue::Float(crpix[0] + 1.0));
-    h.set(format!("CDELT{axis}"), FitsValue::Float(cdelt[0]));
+    h.set(format!("CDELT{axis}"), FitsValue::Float(increment));
     h.set(format!("CUNIT{axis}"), FitsValue::String(String::new()));
+}
+
+fn extended_stokes(value: StokesType) -> bool {
+    matches!(value.code(), 0 | 13..=27)
+}
+
+fn fits_stokes_code(value: StokesType) -> i32 {
+    match value {
+        StokesType::I | StokesType::Q | StokesType::U | StokesType::V => value.code(),
+        StokesType::RR => -1,
+        StokesType::LL => -2,
+        StokesType::RL => -3,
+        StokesType::LR => -4,
+        StokesType::XX => -5,
+        StokesType::YY => -6,
+        StokesType::XY => -7,
+        StokesType::YX => -8,
+        StokesType::PFlinear => 6,
+        StokesType::Pangle => 7,
+        _ => 100 + value.code(),
+    }
+}
+
+/// Use the casacore FITS codes for the extended native Stokes domain.
+/// Legacy casa-rs headers used native codes. CASA also uses those numeric
+/// axis parameters when the FITS codes cannot be represented in one axis.
+fn extended_stokes_axis(stokes: &[StokesType]) -> Option<(f64, f64)> {
+    if !stokes.iter().copied().any(extended_stokes) {
+        return None;
+    }
+    let mut codes = stokes.iter().copied().map(fits_stokes_code);
+    let start = codes.next()?;
+    let second = codes.next().unwrap_or(start + 1);
+    let increment = second - start;
+    let mut previous = second;
+    for code in codes {
+        if code - previous != increment {
+            return None;
+        }
+        previous = code;
+    }
+    Some((f64::from(start), f64::from(increment)))
 }
 
 /// Emits FITS keywords for a [`LinearCoordinate`] (or tabular treated as linear).
@@ -797,12 +845,33 @@ fn parse_stokes(
     let crval = h.get_float(&format!("CRVAL{axis}")).unwrap_or(1.0);
     let cdelt = h.get_float(&format!("CDELT{axis}")).unwrap_or(1.0);
     let crpix = h.get_float(&format!("CRPIX{axis}")).unwrap_or(1.0) - 1.0;
+    let code_at = |i| (crval + cdelt * (i as f64 - crpix)).round() as i32;
+    let extended_codes = (0..axis_len).any(|i| matches!(code_at(i), 100..=132));
 
     let mut stokes = Vec::with_capacity(axis_len);
     for i in 0..axis_len {
-        let code = (crval + cdelt * (i as f64 - crpix)).round() as i32;
-        let st = StokesType::from_code(code)
-            .ok_or_else(|| CoordinateError::InvalidRecord(format!("unknown Stokes code {code}")))?;
+        let code = code_at(i);
+        let st = match code {
+            -1 => Some(StokesType::RR),
+            -2 => Some(StokesType::LL),
+            -3 => Some(StokesType::RL),
+            -4 => Some(StokesType::LR),
+            -5 => Some(StokesType::XX),
+            -6 => Some(StokesType::YY),
+            -7 => Some(StokesType::XY),
+            -8 => Some(StokesType::YX),
+            6 if extended_codes => Some(StokesType::PFlinear),
+            7 if extended_codes => Some(StokesType::Pangle),
+            13..=27 => Some(StokesType::Undefined),
+            100..=132 => StokesType::from_code(code - 100),
+            _ => StokesType::from_code(code).filter(|value| !extended_stokes(*value)),
+        }
+        .ok_or_else(|| CoordinateError::InvalidRecord(format!("unknown Stokes code {code}")))?;
+        if st == StokesType::Undefined && stokes.contains(&st) {
+            return Err(CoordinateError::InvalidRecord(
+                "the FITS Stokes axis repeats an undefined value".into(),
+            ));
+        }
         stokes.push(st);
     }
 
@@ -1382,5 +1451,35 @@ mod tests {
         let st = cs2.coordinate(0);
         assert_eq!(st.to_world(&[0.0]).unwrap()[0] as i32, 5); // RR
         assert_eq!(st.to_world(&[3.0]).unwrap()[0] as i32, 8); // LL
+    }
+
+    #[test]
+    fn extended_stokes_codes_match_casa_fits_cards() {
+        // CRVAL and CDELT read from CASA 6.7.6.14 ia.tofits products.
+        for (values, reference, increment) in [
+            (vec![StokesType::RX], 113.0, 1.0),
+            (vec![StokesType::RX, StokesType::RY], 113.0, 1.0),
+            (vec![StokesType::I, StokesType::RX], 1.0, 112.0),
+            (vec![StokesType::RCircular], 125.0, 1.0),
+            (vec![StokesType::Undefined], 100.0, 1.0),
+        ] {
+            let mut coordinates = CoordinateSystem::new();
+            coordinates.add_coordinate(StokesCoordinate::new(values.clone()));
+            let shape = [values.len()];
+            let mut header = to_fits_header(&coordinates, &shape);
+            assert_eq!(header.get_float("CRVAL1"), Some(reference));
+            assert_eq!(header.get_float("CDELT1"), Some(increment));
+            let restored = from_fits_header(&header, &shape).unwrap();
+            let CoordinateModel::Stokes(stokes) = restored.coordinate(0) else {
+                panic!("expected the FITS Stokes axis");
+            };
+            assert_eq!(stokes.stokes(), values);
+            header.set("CRVAL1", FitsValue::Float(13.0));
+            let restored = from_fits_header(&header, &[1]).unwrap();
+            let CoordinateModel::Stokes(stokes) = restored.coordinate(0) else {
+                panic!("expected the FITS Stokes axis");
+            };
+            assert_eq!(stokes.stokes(), [StokesType::Undefined]);
+        }
     }
 }

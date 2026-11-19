@@ -44,6 +44,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 38 | 0 | 0 |
+| plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
 | plotms | plotms | yes | 102 | 102 | 0 | 17 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
@@ -1067,6 +1068,278 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 55, in CASA's order: yes
 - Defaults that differ: none
+
+### plotbandpass
+
+- CASA source: `casatasks/plotbandpass.py`, 49 parameters
+- Implementation: `casatasks/private/task_plotbandpass.py`, `plotbandpass` (line 780): 109 return statements, 0 raise statements
+  - returns at line 885: `()`
+  - returns at line 965: `None`
+  - returns at line 983: `()`
+  - returns at line 989: `()`
+  - returns at line 992: `()`
+  - returns at line 996: `()`
+  - returns at line 999: `()`
+  - returns at line 1003: `vm`
+  - returns at line 1007: `vm`
+  - returns at line 1012: `()`
+  - returns at line 1016: `()`
+  - returns at line 1023: `()`
+  - returns at line 1026: `()`
+  - returns at line 1029: `None`
+  - returns at line 1042: `()`
+  - returns at line 1049: `()`
+  - returns at line 1052: `()`
+  - returns at line 1055: `()`
+  - returns at line 1058: `()`
+  - returns at line 1062: `()`
+  - returns at line 1097: `()`
+  - returns at line 1107: `()`
+  - returns at line 1116: `()`
+  - returns at line 1126: `()`
+  - returns at line 1133: `()`
+  - returns at line 1137: `()`
+  - returns at line 1141: `()`
+  - returns at line 1160: `()`
+  - returns at line 1257: `()`
+  - returns at line 1269: `vm`
+  - returns at line 1279: `()`
+  - returns at line 1308: `()`
+  - returns at line 1316: `()`
+  - returns at line 1410: `None`
+  - returns at line 1420: `None`
+  - returns at line 1437: `None`
+  - returns at line 1523: `None`
+  - returns at line 1560: `()`
+  - returns at line 1590: `None`
+  - returns at line 1593: `None`
+  - returns at line 1597: `None`
+  - returns at line 1621: `None`
+  - returns at line 1624: `None`
+  - returns at line 1627: `None`
+  - returns at line 1652: `None`
+  - returns at line 1664: `()`
+  - returns at line 1677: `()`
+  - returns at line 1688: `()`
+  - returns at line 1697: `()`
+  - returns at line 1708: `()`
+  - returns at line 1712: `()`
+  - returns at line 1726: `()`
+  - returns at line 1729: `()`
+  - returns at line 1732: `()`
+  - returns at line 1738: `()`
+  - returns at line 1741: `()`
+  - returns at line 1750: `()`
+  - returns at line 1753: `()`
+  - returns at line 1764: `vm`
+  - returns at line 1767: `vm`
+  - returns at line 1778: `vm`
+  - returns at line 1781: `vm`
+  - returns at line 1792: `()`
+  - returns at line 1800: `()`
+  - returns at line 1861: `()`
+  - returns at line 1922: `None`
+  - returns at line 1939: `None`
+  - returns at line 1945: `None`
+  - returns at line 1955: `None`
+  - returns at line 1964: `None`
+  - returns at line 1975: `None`
+  - returns at line 2052: `()`
+  - returns at line 2056: `()`
+  - returns at line 2084: `()`
+  - returns at line 2105: `()`
+  - returns at line 2108: `()`
+  - returns at line 2115: `()`
+  - returns at line 2118: `()`
+  - returns at line 2159: `()`
+  - returns at line 2196: `()`
+  - returns at line 2203: `()`
+  - returns at line 2210: `()`
+  - returns at line 2213: `()`
+  - returns at line 2231: `()`
+  - returns at line 2249: `()`
+  - returns at line 2255: `()`
+  - returns at line 2261: `()`
+  - returns at line 2304: `()`
+  - returns at line 2307: `()`
+  - returns at line 2460: `()`
+  - returns at line 2546: `()`
+  - returns at line 2622: `()`
+  - returns at line 2732: `()`
+  - returns at line 2747: `()`
+  - returns at line 2754: `()`
+  - returns at line 2757: `()`
+  - returns at line 3082: `None`
+  - returns at line 3223: `()`
+  - returns at line 3867: `()`
+  - returns at line 3962: `()`
+  - returns at line 3992: `()`
+  - returns at line 4434: `None`
+  - returns at line 4470: `()`
+  - returns at line 4690: `()`
+  - returns at line 4791: `()`
+  - returns at line 4827: `()`
+  - returns at line 5245: `None`
+  - returns at line 5503: `madstats`
+  - returns at line 5507: `()`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the caltable parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 49, in CASA's order: yes
+- Defaults that differ: none
+
+#### plotbandpass parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `e2e135fcea72b6295a72e238e22ab914d31e6a00`. Status counts: Default only: 0, Implemented: 49, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Input table name, either a bandpass solution or a Tsys solution [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `path` (calibration_table) | [paired](#plotbandpass-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | A comma-delimited string list of antennas (either names or integer indices) for which to display solutions. Default = all antennas. [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | A comma-delimited string list of fields (either names or integer indices) for which to display solutions. Default = all fields. [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | A comma-delimited string list of spws for which to display solutions. Default = all spws. [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `yaxis` | `'amp'` | `'amp'`; `yaxis` → `yaxis` | Implemented | The quantity to plot on the y-axis ("amp", "phase", "both", "tsys", append "db" for dB). [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `xaxis` | `'chan'` | `'chan'`; `xaxis` → `xaxis` | Implemented | The quantity to plot on the x-axis ("chan" or "freq"). [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `figfile` | `''` | `''`; `figfile` → `figfile` | Implemented | The name of the plot file to produce. [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `plotrange` | `[0.0, 0.0, 0.0, 0.0]` | `[0.0, 0.0, 0.0, 0.0]`; `plotrange` → `plotrange` | Implemented | The axes limits to use [x0,x1,y0,y1]. [axes](#plotbandpass-behavior-axes)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [paired](#plotbandpass-evidence-paired) |
+| `caltable2` | `''` | `''`; `caltable2` → `caltable2` | Implemented | A second cal table, of type BPOLY or B, to overlay on a B table [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `overlay` | `''` | `''`; `overlay` → `overlay` | Implemented | Show multiple solutions in same frame in different colors (time, antenna, spw, baseband, or time,antenna) [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `showflagged` | `False` | `False`; `showflagged` → `showflagged` | Implemented | Show the values of the solution, even if flagged [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `timeranges` | `''` | `''`; `timeranges` → `timeranges` | Implemented | Show only these timeranges, the first timerange being 0 [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `buildpdf` | `False` | `False`; `buildpdf` → `buildpdf` | Implemented | If True, assemble all the pngs into a pdf [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `caltable3` | `''` | `''`; `caltable3` → `caltable3` | Implemented | A third cal table, of type BPOLY, to overlay on the first two tables [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `markersize` | `3` | `3`; `markersize` → `markersize` | Implemented | Size of points [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotbandpass-evidence-paired) |
+| `density` | `108` | `108`; `density` → `density` | Implemented | dpi to use in creating PNGs and PDFs (default=108) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotbandpass-evidence-paired) |
+| `interactive` | `True` | `True`; `interactive` → `interactive` | Implemented | if False, then run to completion automatically without pause [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `showpoints` | `'auto'` | `'auto'`; `showpoints` → `showpoints` | Implemented | Draw points for the data (default=F for amp, T for phase) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `showlines` | `'auto'` | `'auto'`; `showlines` → `showlines` | Implemented | Draw lines connecting the data (default=T for amp, F for phase) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `subplot` | `'22'` | `'22'`; `subplot` → `subplot` | Implemented | 11..81,22,32 or 42 for RowsxColumns (default=22), any 3rd digit is ignored [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `zoom` | `''` | `''`; `zoom` → `zoom` | Implemented | intersect displays the narrower B solution frequency range. Equal widths prefer the second table. [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `poln` | `''` | `''`; `poln` → `poln` | Implemented | Polarizations to plot: "" = all, or "RR","RL","LR","LL","XX","XY","YX","YY","RR,LL","XX,YY" [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `showatm` | `False` | `False`; `showatm` → `showatm` | Implemented | Compute and overlay the atmospheric transmission curve [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `pwv` | `'auto'` | `'auto'`; `pwv` → `pwv` | Implemented | Define the pwv to use for the showatm option: "auto" or value in mm [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `gs` | `'gs'` | `'gs'`; `gs` → `gs` | Implemented | For buildpdf=T, full path for ghostscript command (in case it is not found) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `convert` | `'convert'` | `'convert'`; `convert` → `convert` | Implemented | For buildpdf=T, full path for the ImageMagick convert command (in case it is not found) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `chanrange` | `''` | `''`; `chanrange` → `chanrange` | Implemented | Set xrange ("5~100") over which to autoscale y-axis for xaxis="freq" [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `solutionTimeThresholdSeconds` | `30.0` | `30.0`; `solutionTimeThresholdSeconds` → `solutionTimeThresholdSeconds` | Implemented | Consider 2 solutions simultaneous if within this interval in seconds [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `debug` | `False` | `False`; `debug` → `debug` | Implemented | Emit verbose information about the calibration table, associated MS, selected axes and planned panels. [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `phase` | `''` | `''`; `phase` → `phase` | Implemented | The y-axis limits to use for phase plots when yaxis="both" [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `vis` | `''` | `''`; `vis` → `vis` | Implemented | name of the ms for this table, in case it does not match the string in the caltable [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `path` (measurement_set) | [paired](#plotbandpass-evidence-paired) |
+| `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Implemented | Compute and overlay the sky temperature curve instead of transmission [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `showfdm` | `False` | `False`; `showfdm` → `showfdm` | Implemented | when showing TDM spws, draw the locations of the corresponding FDM spws [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `showatmfield` | `''` | `''`; `showatmfield` → `showatmfield` | Implemented | Select a field by name or ID for a time overlay and use its first observation. [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `lo1` | `''` | `''`; `lo1` → `lo1` | Implemented | specify the LO1 setting (in GHz) for the observation ('' = automatic) [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `showimage` | `False` | `False`; `showimage` → `showimage` | Implemented | also show the atmospheric curve for the image sideband (in black) [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `showatmpoints` | `False` | `False`; `showatmpoints` → `showatmpoints` | Implemented | Draw atmospheric curve with points instead of a line [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `parentms` | `''` | `''`; `parentms` → `parentms` | Implemented | Identify the parent spectral window by name when the receiver table retains original window IDs. [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `pdftk` | `'pdftk'` | `'pdftk'`; `pdftk` → `pdftk` | Implemented | For buildpdf=T, full path for pdftk command (in case it is not found) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `channeldiff` | `False` | `False`; `channeldiff` → `channeldiff` | Implemented | Set to a value > 0 (sigma) to plot derivatives of the solutions [derivative](#plotbandpass-behavior-derivative)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `edge` | `8` | `8`; `edge` → `edge` | Implemented | The number of edge channels to ignore in finding outliers (for channeldiff>0) [derivative](#plotbandpass-behavior-derivative)<br>Catalog domain: `integer` | [paired](#plotbandpass-evidence-paired) |
+| `resample` | `1` | `1`; `resample` → `resample` | Implemented | Positive integers set the resampling name suffix. In derivative mode, factors above one reproduce the pinned CASA resampleSolution NameError. [derivative](#plotbandpass-behavior-derivative)<br>Catalog domain: `integer` | [paired](#plotbandpass-evidence-paired) |
+| `platformingThreshold` | `10.0` | `10.0`; `platformingThreshold` → `platformingThreshold` | Implemented | Absolute percentage threshold when platformingSigma is zero. [derivative](#plotbandpass-behavior-derivative)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `platformingSigma` | `10.0` | `10.0`; `platformingSigma` → `platformingSigma` | Implemented | MAD multiple when positive. A zero value uses platformingThreshold. [derivative](#plotbandpass-behavior-derivative)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `basebands` | `''` | `''`; `basebands` → `basebands` | Implemented | A baseband number or list of baseband numbers for which to display solutions. Default = all. [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `showBasebandNumber` | `False` | `False`; `showBasebandNumber` → `showBasebandNumber` | Implemented | Put the baseband converter number (BBC_NO) in the title of each plot [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `scans` | `''` | `''`; `scans` → `scans` | Implemented | A scan or list of scans for which to display solutions. Default = all. Does not work with overlay="time". [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `figfileSequential` | `False` | `False`; `figfileSequential` → `figfileSequential` | Implemented | naming scheme for pngs: False: name by spw/antenna (default), True: figfile.000.png, figfile.001.png, etc. [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `chanrangeSetXrange` | `False` | `False`; `chanrangeSetXrange` → `chanrangeSetXrange` | Implemented | If True, then chanrange also sets the xrange to display [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+
+#### plotbandpass interacting modes and task behavior
+
+<a id="plotbandpass-behavior-selection"></a>
+##### Antenna, field, window, scan and solution time
+
+**Implemented** — Select current calibration rows by antenna and field names or IDs, spectral-window and baseband numbers, scan numbers and solution times. Apply the pinned CASA type and domain validation and retain the recorded return type for empty selections.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+<a id="plotbandpass-behavior-spectra"></a>
+##### Bandpass and Tsys plots
+
+**Implemented** — Plot current complex B and real Tsys solutions and legacy BPOLY curves. Read the associated MS metadata, honor flags and receptor choices, and overlay one B or up to two BPOLY companions through the shared plot document.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+<a id="plotbandpass-behavior-axes"></a>
+##### Plot axes and spectral windows
+
+**Implemented** — Use channel or frequency coordinates with amplitude, phase, dB, delay or temperature units. Apply explicit limits, channel windows and the CASA narrower-solution rule for comparison zoom. Draw FDM windows and label mapped baseband numbers.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+<a id="plotbandpass-behavior-presentation"></a>
+##### Page layout, display, PNG and PDF products
+
+**Implemented** — Draw and page through the selected panels, including backward movement, early exit and EOF. Apply marker and line settings, density and calibrated filenames. Assemble PDFs with the selected local converter and document tools.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+<a id="plotbandpass-behavior-atmosphere"></a>
+##### Atmospheric transmission, sky and image-sideband curves
+
+**Implemented** — Evaluate the native ATM profile using the calibration frequency grid, station conditions, pointing and field metadata, and requested or measured PWV. Recover the image oscillator from receiver metadata and parent window names when supplied.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+<a id="plotbandpass-behavior-derivative"></a>
+##### Channel derivatives and platforming
+
+**Implemented** — Plot channel differences, report MAD and standard deviation, and include medians and platforming events in the typed result. Use the configured edge exclusion and thresholds. Reproduce the installed CASA error for derivative resampling greater than one.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+#### plotbandpass deviations and unfinished work
+
+##### integer-platforming-channel-bounds: Proposed
+
+- Inputs: Channel derivatives with enough interior points to enter the platforming check.
+- CASA: Passes floating-point channel offsets to Python range and raises TypeError.
+- casa-rs: Uses integer channel indices and tests the interior derivative against the requested MAD or percentage threshold.
+- Rationale: Keep the documented platforming check functional for wide calibration spectral windows.
+- User impact: An interior amplitude step is reported at a threshold it exceeds and omitted at a larger threshold.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#plotbandpass-evidence-paired).
+
+##### default-atmosphere-without-weather: Proposed
+
+- Inputs: An atmospheric overlay on a bandpass whose associated MS has no WEATHER table.
+- CASA: Raises NameError while referencing needToClose_mymsmd.
+- casa-rs: Evaluates the ATM profile using the station defaults available in the absence of measured weather.
+- Rationale: Allow a transmission or sky-temperature overlay for supported data with missing weather measurements.
+- User impact: The plot includes a finite atmospheric curve and the original calibration spectra.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#plotbandpass-evidence-paired).
+
+#### plotbandpass evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="plotbandpass-evidence-paired"></a>
+##### paired
+
+**Same-input public Python tasks and Matplotlib artist arrays — passed.** 41 plot cases, seven terminal cases, 24 argument and domain cases, 76 rendered panels, paired two-page PDFs and two analytic platforming thresholds passed. Default atmospheric conditions were verified when WEATHER was absent. CASA 6.7.6.14 plots and return values, including selected arrays, axes, titles, companion time grids, physical receptor labels, masking, overlay colors and legends, paging, PNG filenames, PDFs, measured water, wide atmospheric grids and split receivers.
+
+- [tools/casa-compat/plotbandpass_oracle.py](https://github.com/bglenden/casa-rs/blob/e2e135fcea72b6295a72e238e22ab914d31e6a00/tools/casa-compat/plotbandpass_oracle.py)
+- Revision: `e2e135fcea72b6295a72e238e22ab914d31e6a00`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotbandpass_oracle.py`.
+- Receipt: `resources/casa-compat/evidence/plotbandpass-20261119.json`.
 
 ### plotms
 
