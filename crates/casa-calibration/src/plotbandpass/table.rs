@@ -30,6 +30,7 @@ pub(super) struct SolutionRow {
     pub(super) window: i32,
     pub(super) scan: Option<i32>,
     pub(super) time: f64,
+    pub(super) interval: f64,
 }
 
 #[derive(Debug, Default)]
@@ -225,6 +226,9 @@ fn solution_rows(table: &Table, layout: &Layout) -> Result<Vec<SolutionRow>, Str
     let field = integers(table, "FIELD_ID")?;
     let window = integers(table, layout.window_column())?;
     let time = numbers(table, "TIME")?;
+    let intervals = has_column(table, "INTERVAL")
+        .then(|| numbers(table, "INTERVAL"))
+        .transpose()?;
     let scans = (matches!(layout, Layout::Current) && has_column(table, "SCAN_NUMBER"))
         .then(|| integers(table, "SCAN_NUMBER"))
         .transpose()?;
@@ -235,6 +239,7 @@ fn solution_rows(table: &Table, layout: &Layout) -> Result<Vec<SolutionRow>, Str
             window: window[row],
             scan: scans.as_ref().map(|scans| scans[row]),
             time: time[row],
+            interval: intervals.as_ref().map_or(0.0, |values| values[row]),
         })
         .collect())
 }

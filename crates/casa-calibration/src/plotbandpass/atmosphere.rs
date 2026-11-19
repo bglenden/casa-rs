@@ -41,7 +41,6 @@ pub(super) struct AtmosphericCurve {
 
 pub(super) struct AtmosphereContext<'a> {
     options: &'a AtmosphericOptions<'a>,
-    measurement_set: &'a Path,
     site_name: String,
     measures: Arc<MeasuresRuntime>,
     fields: Table,
@@ -49,6 +48,8 @@ pub(super) struct AtmosphereContext<'a> {
     weather: Option<Table>,
     pointing: Option<Table>,
     scan_times: BTreeMap<i32, Vec<ScanTimes>>,
+    water_samples: Vec<(f64, f64)>,
+    oscillators: BTreeMap<i32, f64>,
 }
 
 struct LineOfSight {
@@ -75,7 +76,6 @@ impl<'a> AtmosphereContext<'a> {
             .to_string();
         Ok(Some(Self {
             options,
-            measurement_set,
             site_name,
             measures: Arc::new(
                 MeasuresRuntime::open_discovered(RuntimePolicy::default())
@@ -86,6 +86,16 @@ impl<'a> AtmosphereContext<'a> {
             weather: open_optional(measurement_set, "WEATHER"),
             pointing: open_optional(measurement_set, "POINTING"),
             scan_times: scan_times(measurement_set)?,
+            water_samples: if options.water.contains("auto") {
+                water_samples(measurement_set)
+            } else {
+                Vec::new()
+            },
+            oscillators: if options.image_sideband && options.lo_ghz.is_none() {
+                receiver_oscillators(measurement_set, options.parent_ms)
+            } else {
+                BTreeMap::new()
+            },
         }))
     }
 
@@ -107,14 +117,23 @@ impl<'a> AtmosphereContext<'a> {
             .values()[2];
         let field = self.reference_field(row.field);
         let scan = self.scan_times.get(&field).and_then(|scans| {
-            scans.iter().min_by(|a, b| {
-                (a.mean - row.time)
-                    .abs()
-                    .total_cmp(&(b.mean - row.time).abs())
-            })
+            if self.options.reference_field.is_empty() {
+                scans.iter().min_by(|a, b| {
+                    (a.mean - row.time)
+                        .abs()
+                        .total_cmp(&(b.mean - row.time).abs())
+                })
+            } else {
+                scans.iter().min_by(|a, b| a.mean.total_cmp(&b.mean))
+            }
         });
         let airmass = self.airmass(row, field, scan, &position)?;
-        let water_mm = self.water(row.time);
+        let timestamp = if self.options.reference_field.is_empty() {
+            row.time
+        } else {
+            scan.map_or(row.time, |scan| scan.mean)
+        };
+        let water_mm = self.water(timestamp, row.interval);
         let weather = self
             .weather
             .as_ref()
@@ -291,7 +310,7 @@ impl<'a> AtmosphereContext<'a> {
         Ok(airmass_for_elevation(direction.latitude_rad()))
     }
 
-    fn water(&self, time: f64) -> f64 {
+    fn water(&self, time: f64, interval: f64) -> f64 {
         let default = if self.site_name.contains("ALMA") {
             1.0
         } else {
@@ -303,45 +322,92 @@ impl<'a> AtmosphereContext<'a> {
         if !self.options.water.contains("auto") {
             return self.options.water.parse().unwrap_or(default);
         }
-        ["ASDM_CALWVR", "ASDM_CALATMOSPHERE"]
+        let start = time - interval * 0.5;
+        let end = time + interval * 0.5;
+        let mut water = self
+            .water_samples
             .iter()
-            .find_map(|name| {
-                let table = open_optional(self.measurement_set, name)?;
-                let index = nearest_time(&table, "startValidTime", time)?;
-                match table.cell_accessor(index, "water").ok()?.value().ok()?? {
-                    Value::Scalar(ScalarValue::Float64(value)) if *value >= 1e-8 => {
-                        Some(*value * 1000.0)
-                    }
-                    Value::Array(ArrayValue::Float64(values)) => values
-                        .iter()
-                        .copied()
-                        .next()
-                        .filter(|value| *value >= 1e-8)
-                        .map(|value| value * 1000.0),
-                    _ => None,
-                }
-            })
-            .unwrap_or(default)
+            .filter_map(|&(epoch, value)| (epoch > start && epoch < end).then_some(value))
+            .collect::<Vec<_>>();
+        if water.is_empty() {
+            let closest = self
+                .water_samples
+                .iter()
+                .map(|(epoch, _)| (epoch - start).abs())
+                .min_by(f64::total_cmp)
+                .unwrap_or(f64::INFINITY);
+            water.extend(self.water_samples.iter().filter_map(|&(epoch, value)| {
+                (((epoch - start).abs() - closest).abs() < 1.0).then_some(value)
+            }));
+        }
+        let measured = 1000.0 * median(&water);
+        if measured >= 1e-5 { measured } else { default }
     }
 
     fn local_oscillator(&self, window: i32) -> Option<f64> {
-        if let Some(value) = self.options.lo_ghz {
-            return Some(value);
-        }
-        [Some(self.measurement_set), self.options.parent_ms]
-            .into_iter()
-            .flatten()
-            .find_map(|ms| {
-                let table = open_optional(ms, "ASDM_RECEIVER")?;
-                let key = format!("SpectralWindow_{window}");
-                let row = (0..table.row_count())
-                    .find(|&row| text_cell(&table, row, "spectralWindowId") == Some(&key))?;
-                match array(&table, row, "freqLO").ok()? {
-                    ArrayValue::Float64(values) => values.iter().next().map(|hz| hz * 1e-9),
-                    _ => None,
-                }
-            })
+        self.options
+            .lo_ghz
+            .or_else(|| self.oscillators.get(&window).copied())
     }
+}
+
+fn water_samples(ms: &Path) -> Vec<(f64, f64)> {
+    for name in ["ASDM_CALWVR", "ASDM_CALATMOSPHERE"] {
+        let Some(table) = open_optional(ms, name).filter(|table| table.row_count() > 0) else {
+            continue;
+        };
+        return (0..table.row_count())
+            .filter_map(|row| {
+                let epoch = scalar_number(&table, row, "startValidTime")?;
+                let water = match table.cell_accessor(row, "water").ok()?.value().ok()?? {
+                    Value::Scalar(ScalarValue::Float64(value)) => *value,
+                    Value::Array(ArrayValue::Float64(values)) => values.iter().copied().next()?,
+                    _ => return None,
+                };
+                Some((epoch, water))
+            })
+            .collect();
+    }
+    Vec::new()
+}
+
+fn receiver_oscillators(ms: &Path, parent: Option<&Path>) -> BTreeMap<i32, f64> {
+    let Some(receiver) = open_optional(ms, "ASDM_RECEIVER") else {
+        return BTreeMap::new();
+    };
+    let mut by_window = BTreeMap::new();
+    for row in 0..receiver.row_count() {
+        if let Some(id) = text_cell(&receiver, row, "spectralWindowId")
+            .and_then(|id| id.rsplit_once('_'))
+            .and_then(|(_, id)| id.parse::<i32>().ok())
+            && let Ok(ArrayValue::Float64(frequencies)) = array(&receiver, row, "freqLO")
+            && let Some(hz) = frequencies.iter().next()
+        {
+            by_window.entry(id).or_insert(hz * 1e-9);
+        }
+    }
+    let Some(windows) = open_optional(ms, "SPECTRAL_WINDOW") else {
+        return by_window;
+    };
+    if by_window
+        .last_key_value()
+        .is_none_or(|(&last, _)| last as usize + 1 == windows.row_count())
+    {
+        return by_window;
+    }
+    let Some(original) = parent.and_then(|path| open_optional(path, "SPECTRAL_WINDOW")) else {
+        return BTreeMap::new();
+    };
+    let names = (0..original.row_count())
+        .filter_map(|row| Some((text_cell(&original, row, "NAME")?, row as i32)))
+        .collect::<BTreeMap<_, _>>();
+    (0..windows.row_count())
+        .filter_map(|row| {
+            let name = text_cell(&windows, row, "NAME")?;
+            let unrenumbered = names.get(name)?;
+            Some((row as i32, *by_window.get(unrenumbered)?))
+        })
+        .collect()
 }
 
 struct Conditions {

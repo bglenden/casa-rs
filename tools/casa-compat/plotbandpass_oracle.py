@@ -32,9 +32,9 @@ def fixtures(root):
     ms = root / "source.ms"
     make_cal_ms(str(ms))
     weather = root / "weather.txt"
-    weather.write_text("ANTENNA_ID TIME INTERVAL TEMPERATURE PRESSURE REL_HUMIDITY\n"
-                       "I D D R R R\n"
-                       "0 5084550000 60 270 940 22\n")
+    weather.write_text("ANTENNA_ID TIME INTERVAL TEMPERATURE PRESSURE REL_HUMIDITY WIND_DIRECTION WIND_SPEED\n"
+                       "I D D R R R R R\n"
+                       "0 5084550000 60 270 940 22 0 2\n")
     from casatools import table
     tool = table()
     tool.fromascii(str(ms / "WEATHER"), str(weather), sep=" ")
@@ -151,7 +151,7 @@ def comparisons(root):
         "channels": {},
         "frequency": dict(xaxis="freq"),
         "phase": dict(yaxis="phase", antenna=2, poln="XX"),
-        "decibels": dict(yaxis="ampdb", antenna=["A0"]),
+        "decibels": dict(yaxis="ampdb", antenna="A0"),
         "both": dict(yaxis="both", xaxis="freq", phase=[-10, 5], subplot=22,
                      figfileSequential=True),
         "style": dict(showpoints=True, showlines=False, density=93, markersize=5),
@@ -172,7 +172,17 @@ def comparisons(root):
         "derivative-phase": dict(channeldiff=3, edge=1, yaxis="phase", antenna="A2"),
         "debug": dict(debug=True, solutionTimeThresholdSeconds=45.0, timeranges="0"),
     }
-    panels = sum(pair(root, label, common | options) for label, options in plots.items())
+    failures = []
+
+    def check(label, options, keys=None, compare_plots=True):
+        try:
+            return pair(root, label, common | options, keys, compare_plots)
+        except AssertionError as error:
+            failures.append(label)
+            print(f"comparison failed for {label}: {error}", flush=True)
+            return 0
+
+    panels = sum(check(label, options) for label, options in plots.items())
 
     prompts = {
         "forward": (["", ""], {}),
@@ -184,7 +194,7 @@ def comparisons(root):
         "eof": ([], {}),
     }
     for label, (keys, options) in prompts.items():
-        panels += pair(root, label, common | dict(interactive=True, figfileSequential=True) | options, keys)
+        panels += check(label, dict(interactive=True, figfileSequential=True) | options, keys)
     domains = {
         "bad-axis": dict(xaxis="FREQ"),
         "bad-y-axis": dict(yaxis="delay"),
@@ -209,11 +219,11 @@ def comparisons(root):
         "empty-string-return": dict(resample=0),
     }
     for label, options in domains.items():
-        pair(root, label, common | options, compare_plots=False)
+        check(label, options, compare_plots=False)
 
     pdf = dict(buildpdf=True, figfileSequential=True, density=108, convert="convert",
                gs="gs", pdftk="pdftk")
-    panels += pair(root, "pdf", common | pdf)
+    panels += check("pdf", pdf)
     for implementation in ("casa", "native"):
         summary = subprocess.check_output(
             ["pdfinfo", str(root / f"pdf-{implementation}" / "fixture.pdf")], text=True
@@ -222,6 +232,7 @@ def comparisons(root):
         assert pages.split()[-1] == "2", summary
     print(f"{len(plots)} plot cases, {len(prompts)} terminal cases, {len(domains)} domain cases, "
           f"{panels} rendered panels and paired two-page PDFs", flush=True)
+    assert not failures, failures
 
 
 def main():

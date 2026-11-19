@@ -163,6 +163,19 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         }
     }
     let water = selector_numeric_text(task, "pwv")?;
+    for parameter in ["antenna", "field", "spw"] {
+        if let Some(ParameterValue::Array(values)) = task.value(parameter)
+            && values.iter().any(|value| {
+                matches!(value, ParameterValue::String(text) if text.parse::<i32>().is_err())
+            })
+        {
+            return plain(
+                CasaValue::None,
+                parameter != "spw",
+                "Specify names in a comma-delimited string or pass an array of numeric indices.",
+            );
+        }
+    }
     let parent_ms = task.text("parentms")?.filter(|name| !name.is_empty());
     let request = PlotRequest {
         caltable: &caltable,
@@ -236,6 +249,19 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let panel_limit = completed_pages
         .map(|count| count.saturating_mul(display.layout[0] as usize * display.layout[1] as usize));
     let plan = prepare_bandpass(&request, panel_limit).map_err(TaskFailure::execution)?;
+    if let Some(ChannelRange::Indices([start, end])) = display.channel_range
+        && plan.panels.iter().any(|panel| {
+            !panel.frequency_channels.is_empty()
+                && (end > panel.frequency_channels.len()
+                    || (display.limit_channels && start.max(end) >= panel.frequency_channels.len()))
+        })
+    {
+        return plain(
+            CasaValue::None,
+            true,
+            "Channel range falls outside the calibration spectral window.",
+        );
+    }
     let value = derivative_record(&plan).unwrap_or(CasaValue::None);
     let empty_tuple = !plan.returns_none;
     let pdf = if build_pdf {

@@ -168,6 +168,37 @@ pub(crate) fn prepare_bandpass(
             Some("This dataset does not have a BBC_NO column in SPECTRAL_WINDOW.".into()),
         ));
     }
+    let reference = request.atmosphere.reference_field;
+    if !reference.is_empty()
+        && !fields.iter().any(|&id| {
+            reference.parse::<i32>().ok() == Some(id) || field_name(&source, id) == Some(reference)
+        })
+    {
+        return Ok(empty_plots(
+            source,
+            false,
+            Some(format!(
+                "The showatmfield ({reference}) is outside the selected fields."
+            )),
+        ));
+    }
+    let field_origin = if request
+        .selectors
+        .field
+        .iter()
+        .any(|value| !value.is_empty())
+        && request.selectors.time.iter().all(String::is_empty)
+        && request.selectors.scan.iter().all(String::is_empty)
+    {
+        selected
+            .values()
+            .flatten()
+            .map(|row| row.time_index)
+            .min()
+            .unwrap_or(0)
+    } else {
+        0
+    };
     let requested_times =
         requested_times(selected.values().flatten().copied(), request, time_count);
     for companion in &companions {
@@ -198,6 +229,7 @@ pub(crate) fn prepare_bandpass(
         request,
         time_count,
         fields: &fields,
+        field_origin,
         companions: &companions,
         atmosphere: atmosphere.as_ref(),
         fdm_windows: fdm_windows.as_deref(),
@@ -269,6 +301,7 @@ struct PanelContext<'a, 'request> {
     request: &'a PlotRequest<'request>,
     time_count: usize,
     fields: &'a [i32],
+    field_origin: usize,
     companions: &'a [Companion],
     atmosphere: Option<&'a AtmosphereContext<'request>>,
     fdm_windows: Option<&'a [SolutionWindow]>,
@@ -284,11 +317,10 @@ fn panel(
         source,
         spectra,
         request,
-        time_count,
-        fields,
         companions,
         atmosphere,
         fdm_windows,
+        ..
     } = *context;
     let mut series = Vec::new();
     let mut comparison_count: Option<usize> = None;
@@ -447,15 +479,7 @@ fn panel(
         series.extend(comparison_series.into_iter().flatten());
     }
     let metadata = metadata.ok_or("empty bandpass panel")?;
-    let (title, suffix) = captions(
-        source,
-        key,
-        selected,
-        request.overlay,
-        request.show_baseband_number,
-        time_count,
-        fields,
-    )?;
+    let (title, suffix) = captions(context, key, selected)?;
     let x_limits = metadata.x_limits();
     let atmosphere = if let Some(atmosphere) = atmosphere {
         let first = source.rows[selected[0].row];
@@ -707,14 +731,13 @@ fn antenna_name(source: &Solutions, antenna: i32) -> String {
 }
 
 fn captions(
-    source: &Solutions,
+    context: &PanelContext<'_, '_>,
     key: GroupKey,
     selected: &[SelectedRow],
-    overlay: Overlay,
-    show_baseband: bool,
-    time_count: usize,
-    fields: &[i32],
 ) -> Result<(String, String), String> {
+    let source = context.source;
+    let overlay = context.request.overlay;
+    let fields = context.fields;
     let first = selected[0];
     let row = source.rows[first.row];
     let mut title = Vec::new();
@@ -727,7 +750,7 @@ fn captions(
     if let Some(window) = key.window {
         let original_id = spectral_window(source, window)?.original_id;
         let mut window_title = format!("spw {original_id}");
-        if show_baseband {
+        if context.request.show_baseband_number {
             let baseband = spectral_window(source, window)?.baseband.unwrap_or(-1);
             window_title.push_str(&format!(", bb{baseband}"));
         }
@@ -775,10 +798,13 @@ fn captions(
         let clock = date.get(11..).unwrap_or_default();
         let last = match row.scan {
             Some(scan) => format!("scan{scan}  {clock}"),
-            None => format!("t{index}/{}  {clock}", time_count.saturating_sub(1)),
+            None => format!("t{index}/{}  {clock}", context.time_count.saturating_sub(1)),
         };
         title.push(last);
-        suffix.push(format!("t{index:02}"));
+        suffix.push(format!(
+            "t{:02}",
+            index.saturating_sub(context.field_origin)
+        ));
     }
     Ok((title.join(",  "), suffix.join(".")))
 }
