@@ -1682,7 +1682,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 673</li>
+<li>Concepts: 675</li>
 <li>Surfaces: 42 (42 task, 0 session)</li>
 <li>Surface bindings: 993</li>
 </ul>
@@ -1773,7 +1773,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-mstransform">MSTransform</a><br><code>mstransform</code></td>
 <td>task</td>
-<td style="text-align: right;">6</td>
+<td style="text-align: right;">7</td>
 <td><code>mstransform</code></td>
 <td style="text-align: right;">55</td>
 <td>Materialize a selected MeasurementSet into a new output MS.</td>
@@ -1781,7 +1781,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-split">Split</a><br><code>split</code></td>
 <td>task</td>
-<td style="text-align: right;">6</td>
+<td style="text-align: right;">7</td>
 <td><code>mstransform</code></td>
 <td style="text-align: right;">20</td>
 <td>Create a selected MeasurementSet subset, equivalent to CASA split.</td>
@@ -4911,7 +4911,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="mstransform-mstransform">MSTransform (<code>mstransform</code>)<a class="headerlink" href="#mstransform-mstransform" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>6</code></li>
+<li>Contract version: <code>7</code></li>
 <li>Category: MeasurementSet</li>
 <li>Provider family: <code>mstransform</code></li>
 <li>Summary: Materialize a selected MeasurementSet into a new output MS.</li>
@@ -5034,19 +5034,19 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>array</code></td>
-<td><code>ms.selection.array@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.array@r2</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated ARRAY_ID integers</td>
+<td>CASA subarray selection by ARRAY_ID.</td>
 </tr>
 <tr>
 <td><code>uvrange</code></td>
-<td><code>ms.selection.uvrange@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.uvrange@r4</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>UV range selector.</td>
+<td>Accepts a CASA variant and converts it to selector text during MeasurementSet selection.</td>
 </tr>
 <tr>
 <td><code>observation</code></td>
@@ -5058,11 +5058,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>feed</code></td>
-<td><code>ms.selection.feed@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.feed@r2</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Feed selector.</td>
+<td>CASA feed IDs and feed pair selection.</td>
 </tr>
 <tr>
 <td><code>datacolumn</code></td>
@@ -5374,7 +5374,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="split-split">Split (<code>split</code>)<a class="headerlink" href="#split-split" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>6</code></li>
+<li>Contract version: <code>7</code></li>
 <li>Category: MeasurementSet</li>
 <li>Provider family: <code>mstransform</code></li>
 <li>Summary: Create a selected MeasurementSet subset, equivalent to CASA split.</li>
@@ -5473,19 +5473,19 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>array</code></td>
-<td><code>ms.selection.array@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.array@r2</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated ARRAY_ID integers</td>
+<td>CASA subarray selection by ARRAY_ID.</td>
 </tr>
 <tr>
 <td><code>uvrange</code></td>
-<td><code>ms.selection.uvrange@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.uvrange@r4</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>UV range selector.</td>
+<td>Accepts a CASA variant and converts it to selector text during MeasurementSet selection.</td>
 </tr>
 <tr>
 <td><code>observation</code></td>
@@ -5497,11 +5497,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>feed</code></td>
-<td><code>ms.selection.feed@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.feed@r2</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Feed selector.</td>
+<td>CASA feed IDs and feed pair selection.</td>
 </tr>
 <tr>
 <td><code>datacolumn</code></td>

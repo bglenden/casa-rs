@@ -3801,6 +3801,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-reversed-feed-interval-aborts-measurementset-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A reversed feed interval aborts MeasurementSet selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-bare-field-escape-can-silently-change-the-selection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4262,6 +4273,17 @@
     <span class="md-ellipsis">
       
         Accumulation can terminate during contextual time interpolation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exportfits-drops-characters-when-wrapping-long-history-cards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        exportfits drops characters when wrapping long HISTORY cards
       
     </span>
   </a>
@@ -10164,6 +10186,12 @@ signed 32-bit range. Native tclean rejects an overflowing ID before
 looking it up in FIELD, so it cannot select an unrelated field.
 <a href="https://github.com/bglenden/casa-rs/issues/54">Issue #54</a> and
 <a href="https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.yy">the casacore FIELD grammar</a>.</p>
+<h2 id="a-reversed-feed-interval-aborts-measurementset-selection">A reversed feed interval aborts MeasurementSet selection<a class="headerlink" href="#a-reversed-feed-interval-aborts-measurementset-selection" title="Permanent link">&para;</a></h2>
+<p>With FEED_ID 0 and 2 present, CASA 6.7.6.14 <code>split(feed="2~0&amp;&amp;")</code> aborts
+the Python process. The feed grammar builds an array with negative length
+and the uncaught <code>ArrayShapeError</code> terminates the process.</p>
+<p>The native transform checks the range before reading MAIN. It returns a
+feed selector error and leaves the input and output paths untouched (#1614).</p>
 <h2 id="a-bare-field-escape-can-silently-change-the-selection">A bare FIELD escape can silently change the selection<a class="headerlink" href="#a-bare-field-escape-can-silently-change-the-selection" title="Permanent link">&para;</a></h2>
 <p>Outside a quoted pattern or slash regex, the casacore FIELD scanner prints
 the backslash and consumes the next non-newline byte without adding it to
@@ -10742,6 +10770,27 @@ cumulative rows' scan and observation metadata. In local comparisons,
 the per-scan output matched two independent single-field CASA controls.
 An independent SciPy natural spline matched 52 valid complex factors
 in the spline comparison (#1525).</p>
+<h2 id="exportfits-drops-characters-when-wrapping-long-history-cards"><code>exportfits</code> drops characters when wrapping long <code>HISTORY</code> cards<a class="headerlink" href="#exportfits-drops-characters-when-wrapping-long-history-cards" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-19</li>
+<li>Status: CASA silently loses history text; casa-rs wraps losslessly (#977).</li>
+<li>Affected code: casacore <code>ImageFITSConverter</code> FITS <code>HISTORY</code> card continuation writer.</li>
+</ul>
+<p>In CASA 6.7.6.14, <code>exportfits(..., history=True)</code> wraps logtable lines across
+80-byte FITS <code>HISTORY</code> cards by placing 72 characters on the first card and
+<code>&gt;</code> followed by 71 characters on continuation cards, but skips character index
+143 on card 3 and subsequent continuation cards when the wrapped line spans
+more than 143 characters. On <code>cube_i.im</code> (<code>crates/casa-images/tests/data/exportfits/cube_i.im</code>),
+CASA drops <code>'y'</code> from <code>csys={...}</code> in the 202-character <code>ia.fromshape(...)</code>
+message and drops the closing <code>')'</code> of the 144-character
+<code>ia.setrestoringbeam(...)</code> message (emitting 47 <code>HISTORY</code> cards instead of 48);
+on a synthetic 160-digit <code>"0123..."</code> history entry, CASA drops <code>'3'</code> at index
+143 between <code>&gt;...012</code> and <code>&gt;456...</code>.</p>
+<p>casa-rs (<code>crates/casa-images/src/analysis/exportfits.rs</code>, <code>wrap_fits_history_text</code>)
+splits at 72 characters on the first card and <code>&gt;</code> plus 71 characters on each
+continuation card without skipping characters, emitting all 48 cards on
+<code>cube_i.im</code> so both casa-rs and CASA 6.7.6.14 <code>ia.history(list=False)</code> read back
+all 17 original history entries intact (#977).</p>
 
 
 

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["absolute_time_range","channel_width","data_column","main","observation_text","run","selection","transform_request"]};
+window.SIDEBAR_ITEMS = {"fn":["absolute_time_range","channel_width","data_column","main","run","selection","transform_request","variant_selector","variant_selector_text"]};
