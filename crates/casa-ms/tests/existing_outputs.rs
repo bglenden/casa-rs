@@ -279,17 +279,27 @@ fn read_only_modes_leave_the_measurement_set_unchanged() {
             env!("CARGO_BIN_EXE_flagdata"),
             vec!["--vis", ms_arg, "--mode", "summary"],
         ),
-        (
-            env!("CARGO_BIN_EXE_flagmanager"),
-            vec!["--vis", ms_arg, "--mode", "list"],
-        ),
         (env!("CARGO_BIN_EXE_msexplore"), vec![ms_arg]),
     ] {
         let output = run(binary, &args);
         assert!(output.status.success(), "{binary} {args:?}: {output:?}");
         assert_eq!(snapshot(&ms), before, "{binary} {args:?}");
     }
-    assert!(!flag_versions(&ms).exists());
+    let companion = flag_versions(&ms);
+    assert!(!companion.exists());
+    // Listing a fresh MS initializes CASA's empty companion catalog.
+    for _ in 0..2 {
+        let output = run(
+            env!("CARGO_BIN_EXE_flagmanager"),
+            &["--vis", ms_arg, "--mode", "list"],
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(snapshot(&ms), before);
+        assert_eq!(
+            snapshot(&companion),
+            BTreeMap::from([(PathBuf::from("FLAG_VERSION_LIST"), Vec::new())]),
+        );
+    }
 }
 
 #[test]
