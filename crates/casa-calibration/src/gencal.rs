@@ -84,7 +84,10 @@ impl GencalType {
     }
 
     fn is_specified(self) -> bool {
-        matches!(self, Self::Amp | Self::Ph | Self::Sbd | Self::Mbd)
+        matches!(
+            self,
+            Self::Amp | Self::Ph | Self::Sbd | Self::Mbd | Self::Opac
+        )
     }
 
     pub(crate) fn is_gain_curve(self) -> bool {
@@ -266,7 +269,7 @@ pub(crate) fn gencal_with_output_mode(
         && request.caltype != GencalType::Tsys;
     let mut collapse_spw = true;
     let mut rows = match request.caltype {
-        GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd => {
+        GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd | GencalType::Opac => {
             specified_rows(&ms, request, polarization, updating)?
         }
         GencalType::Antpos => antpos_rows(&ms, request)?,
@@ -278,7 +281,6 @@ pub(crate) fn gencal_with_output_mode(
                 gaincurve_rows(&ms, request, gaincurve_infile)?
             }
         }
-        GencalType::Opac => opacity_rows(&ms, request)?,
         GencalType::Tsys => {
             validate_prior_selection(&ms, request)?;
             let (rows, spectral) = tsys::rows(&ms, uniform)?;
@@ -427,12 +429,13 @@ fn specified_rows(
     } else {
         antennas.into_iter().map(|id| vec![id]).collect()
     };
-    let receptor_groups: &[&[usize]] = match polarization {
-        "" => &[&[0, 1]],
-        "R" | "X" => &[&[0]],
-        "L" | "Y" => &[&[1]],
-        "R,L" | "X,Y" => &[&[0], &[1]],
-        "L,R" | "Y,X" => &[&[1], &[0]],
+    let scalar = request.caltype == GencalType::Opac;
+    let receptor_groups: &[&[usize]] = match (scalar, polarization) {
+        (_, "R" | "X") | (true, "") => &[&[0]],
+        (false, "") => &[&[0, 1]],
+        (false, "L" | "Y") => &[&[1]],
+        (false, "R,L" | "X,Y") => &[&[0], &[1]],
+        (false, "L,R" | "Y,X") => &[&[1], &[0]],
         _ => return Err(invalid("Invalid pol specification".into())),
     };
 
@@ -454,7 +457,7 @@ fn specified_rows(
     let identity = if complex {
         complex_column([Complex32::new(1.0, 0.0); 2])
     } else {
-        f32_column(&[0.0; 2])
+        f32_column(&[0.0; 2][..if scalar { 1 } else { 2 }])
     };
     let mut rows = (0..antenna_count * window_count)
         .map(|row| PriorCalRow {
@@ -499,8 +502,10 @@ fn specified_rows(
                     for receptor in *receptors {
                         match parameters {
                             ArrayValue::Complex32(gains) => gains[[*receptor, 0]] *= value,
-                            ArrayValue::Float32(delays) => delays[[*receptor, 0]] += value.re,
-                            _ => unreachable!("specified prior columns contain gains or delays"),
+                            ArrayValue::Float32(values) => values[[*receptor, 0]] += value.re,
+                            _ => unreachable!(
+                                "specified prior columns contain complex or real parameters"
+                            ),
                         }
                     }
                 }
@@ -723,78 +728,6 @@ pub(crate) fn prior_input_for_report(
         .or_else(default_vla_gaincurve_table))
 }
 
-fn opacity_rows(
-    ms: &MeasurementSet,
-    request: &GencalRequest,
-) -> Result<Vec<PriorCalRow>, GencalError> {
-    let antenna_count = ms
-        .antenna()
-        .map_err(|source| GencalError::OpenMeasurementSet {
-            path: "ANTENNA".to_string(),
-            source: Box::new(source),
-        })?
-        .row_count();
-    let selected_spws = parse_spw_selector(ms, &request.spw)?;
-    // One opacity holds for every selected window, as in CASA's
-    // specifycal; otherwise there is one for each.
-    let opacity = match request.parameter.as_slice() {
-        [one] => vec![*one; selected_spws.len()],
-        values if values.len() == selected_spws.len() => values.to_vec(),
-        values => {
-            return Err(GencalError::InvalidRequest(format!(
-                "opac takes one opacity, or one for each selected SPW (got {} for {} SPWs)",
-                values.len(),
-                selected_spws.len()
-            )));
-        }
-    };
-    let opacities = selected_spws
-        .into_iter()
-        .zip(opacity)
-        .collect::<BTreeMap<_, _>>();
-    let selected_antennas = opacity_antennas(ms, &request.antenna, antenna_count)?;
-    let mut rows = Vec::new();
-    for spw_id in parse_spw_selector(ms, "")? {
-        for antenna_id in 0..antenna_count {
-            rows.push(PriorCalRow {
-                time_seconds: 0.0,
-                interval_seconds: 0.0,
-                field_id: -1,
-                spw_id,
-                antenna_id: antenna_id as i32,
-                observation_id: 0,
-                scan_number: -1,
-                parameters: f32_column(&[if selected_antennas.contains(&(antenna_id as i32)) {
-                    opacities.get(&spw_id).copied().unwrap_or(0.0) as f32
-                } else {
-                    0.0
-                }]),
-                snr_value: 1.0,
-                preserved: None,
-            });
-        }
-    }
-    Ok(rows)
-}
-
-fn opacity_antennas(
-    ms: &MeasurementSet,
-    selector: &str,
-    count: usize,
-) -> Result<BTreeSet<i32>, GencalError> {
-    if selector.trim().is_empty() {
-        return Ok((0..count as i32).collect());
-    }
-    let parameters = vec![0.0; selector.split(',').count() * 3];
-    let selected = parse_antenna_offsets(ms, selector, &parameters)?;
-    if selected.keys().any(|id| *id < 0 || *id >= count as i32) {
-        return Err(GencalError::InvalidRequest(
-            "antenna outside input MS".to_string(),
-        ));
-    }
-    Ok(selected.into_keys().collect())
-}
-
 fn write_prior_caltable(
     ms: &MeasurementSet,
     request: &GencalRequest,
@@ -990,44 +923,6 @@ fn parse_antenna_offsets(
         );
     }
     Ok(offsets)
-}
-
-fn parse_spw_selector(ms: &MeasurementSet, selector: &str) -> Result<Vec<i32>, GencalError> {
-    let count = ms
-        .spectral_window()
-        .map_err(|source| GencalError::OpenMeasurementSet {
-            path: "SPECTRAL_WINDOW".to_string(),
-            source: Box::new(source),
-        })?
-        .row_count() as i32;
-    if selector.trim().is_empty() {
-        return Ok((0..count).collect());
-    }
-    let mut ids = BTreeSet::new();
-    for part in selector.split(',').map(str::trim).filter(|p| !p.is_empty()) {
-        if let Some((start, end)) = part.split_once('~') {
-            let start = start.parse::<i32>().map_err(|_| {
-                GencalError::InvalidRequest(format!("invalid SPW selector {part:?}"))
-            })?;
-            let end = end.parse::<i32>().map_err(|_| {
-                GencalError::InvalidRequest(format!("invalid SPW selector {part:?}"))
-            })?;
-            for id in start.min(end)..=start.max(end) {
-                ids.insert(id);
-            }
-        } else {
-            ids.insert(part.parse::<i32>().map_err(|_| {
-                GencalError::InvalidRequest(format!("invalid SPW selector {part:?}"))
-            })?);
-        }
-    }
-    if ids.iter().any(|id| *id < 0 || *id >= count) {
-        return Err(GencalError::InvalidRequest(format!(
-            "SPW selector {selector:?} is outside 0..{}",
-            count.saturating_sub(1)
-        )));
-    }
-    Ok(ids.into_iter().collect())
 }
 
 fn gaincurves_for_window(

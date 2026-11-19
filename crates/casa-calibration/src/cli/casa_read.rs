@@ -271,24 +271,10 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         other => return Err(not_yet("caltype", other)),
     };
     let antenna = task.text("antenna")?.unwrap_or_default();
-    match caltype {
-        // CASA looks the corrections up (the VLA's position database, the
-        // ALMA tables) when no antenna is named.
-        GencalType::Antpos if antenna.trim().is_empty() => {
-            return Err(not_yet("antenna", &antenna));
-        }
-        // With no window named, CASA takes one opacity for all of them.
-        GencalType::Opac
-            if task.text("spw")?.is_none_or(|spw| spw.trim().is_empty())
-                && task.numbers("parameter")?.len() > 1 =>
-        {
-            return Err(TaskFailure::validation(
-                "opac with spw='' takes one opacity for every window; name the windows to give \
-                 one for each",
-            )
-            .at("parameter"));
-        }
-        _ => {}
+    // CASA looks the corrections up (the VLA's position database, the
+    // ALMA tables) when no antenna is named.
+    if caltype == GencalType::Antpos && antenna.trim().is_empty() {
+        return Err(not_yet("antenna", &antenna));
     }
     Ok(GencalTaskRequest {
         prior: GencalRequest {

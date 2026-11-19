@@ -607,11 +607,10 @@ fn gencal_selects_opacity_antennas_and_refuses_automatic_antpos_lookup() {
         .contains("#979")
     );
     assert!(gencal(json!({"caltype":"opac","antenna":"VA01","parameter":[0.05]})).is_ok());
-    // With no window named, CASA takes one opacity, which holds for all.
-    let message = refused(
-        gencal(json!({"caltype": "opac", "parameter": [0.05, 0.06]})),
-        "parameter",
+    assert!(
+        gencal(json!({"caltype":"opac","antenna":"VA02,VA01","pol":"R",
+                          "parameter":[0.05,0.06]}))
+        .is_ok()
     );
-    assert!(message.contains("one opacity"), "{message}");
     assert!(gencal(json!({"caltype": "opac", "parameter": [0.05]})).is_ok());
 }

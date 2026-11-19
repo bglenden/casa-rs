@@ -6473,12 +6473,25 @@ passes `-1` as an antenna index and aborts in `ArrayBase`. With `spw='*'`
 CASA similarly passes a negative window index and segfaults. A negated
 antenna clause such as `A1;!A3` can pass `-3` and abort after processing A1.
 
-For the specified gain, phase and delay types, casa-rs treats each whole-axis
+For the specified gain, phase, delay and opacity types, casa-rs treats each whole-axis
 `*` as that axis's empty selector, which broadcasts the value. It refuses a
 negative antenna index before publishing the table, preserving any existing
 product. The paired `calibration_gencal_specify_oracle.py` compares the wildcard
 results to CASA's empty selectors and checks safe rejection of the negated
 clause (#32).
+
+## Opacity priors can index a nonexistent second receptor
+
+CASA 6.7.6.14 constructs a scalar solution for `gencal(caltype='opac')`.
+Selecting the second receptor with `pol='L'` or both with `pol='X,Y'`
+terminates the Python process in the calibration array slicer. Casa-rs raises
+a task error and preserves an existing table. The empty selector, `R` and
+`X` select the scalar value.
+
+Source: `synthesis/MeasurementComponents/SolvableVisCal.cc`,
+`SolvableVisCal::specify`. The paired
+`tools/casa-compat/calibration_gencal_opacity_oracle.py` runs the CASA probes
+in isolated processes and checks native table preservation (#32).
 
 ## Fluxscale history can contain uninitialized object identifiers
 
