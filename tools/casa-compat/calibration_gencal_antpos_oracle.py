@@ -106,6 +106,7 @@ def main():
         'range': ('antpos', {'antenna': '1~3', 'parameter': [.1, .2, .3]}),
         'legacy-vla': ('antposvla', {'antenna': '1', 'parameter': [1, 0, 0],
                                    'spw': '1', 'pol': 'ignored'}),
+        'legacy-repeated': ('antposvla', {'antenna': '1~3', 'parameter': [1, 0, 0]}),
     }
     results = {}
     for label, (kind, options) in cases.items():
@@ -124,7 +125,10 @@ def main():
     ):
         pinned_crash(vis, root / f'{label}-crash.cal', kind, options)
         reference, candidate = (root / f'{label}-{engine}.cal' for engine in ('casa', 'native'))
-        generate(casa, vis, reference, [(kind, {**options, 'antenna': '0~27'})])
+        comparison = {**options, 'antenna': '0~27'}
+        if kind == 'antposvla':
+            comparison['parameter'] = options['parameter'] * 28
+        generate(casa, vis, reference, [(kind, comparison)])
         generate(native, vis, candidate, [(kind, options)])
         results[label] = {'table_nrms': compare_tables(candidate, reference)}
     results.update(file_inputs(root, vis, native))

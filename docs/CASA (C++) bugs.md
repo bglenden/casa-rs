@@ -6480,6 +6480,13 @@ product. The paired `calibration_gencal_specify_oracle.py` compares the wildcard
 results to CASA's empty selectors and checks safe rejection of the negated
 clause (#32).
 
+The legacy `antposvla` path also aborts with an empty antenna selector when
+logging an element of the empty antenna array. Casa-rs safely rotates the
+first offset triple and broadcasts it to all antennas. Explicit antenna
+selections retain CASA's repeated in-place rotations when the parameter
+vector cycles. The paired
+`tools/casa-compat/calibration_gencal_antpos_oracle.py` checks both forms (#32).
+
 ## Opacity priors can index a nonexistent second receptor
 
 CASA 6.7.6.14 constructs a scalar solution for `gencal(caltype='opac')`.

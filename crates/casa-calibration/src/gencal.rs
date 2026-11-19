@@ -551,7 +551,8 @@ fn antpos_rows(
             "antpos requires three parameters per antenna.".into(),
         ));
     }
-    let selected = if request.antenna.is_empty() || request.antenna == "*" {
+    let broadcast = request.antenna.is_empty() || request.antenna == "*";
+    let selected = if broadcast {
         (0..antenna_count).collect()
     } else {
         ms.resolve_specified_antennas(&request.antenna)
@@ -587,16 +588,22 @@ fn antpos_rows(
     if updating {
         apply_existing_parameters(request, &mut rows)?;
     }
-    let mut offsets = request.parameter.as_chunks::<3>().0.iter().copied().cycle();
-    for antenna in selected {
-        let [mut x, mut y, z] = offsets.next().expect("nonempty triples");
-        if let Some((sin, cos)) = rotate {
-            (x, y) = (x * cos - y * sin, x * sin + y * cos);
+    let mut offsets = request.parameter.as_chunks::<3>().0.to_vec();
+    let triple_count = offsets.len();
+    for (order, antenna) in selected.into_iter().enumerate() {
+        let offset = &mut offsets[if broadcast { 0 } else { order % triple_count }];
+        // CASA rotates a view of each triple. An explicit selection that
+        // cycles through a short vector rotates the shared triple again.
+        if let Some((sin, cos)) = rotate
+            && (!broadcast || order == 0)
+        {
+            let [x, y, z] = *offset;
+            *offset = [x * cos - y * sin, x * sin + y * cos, z];
         }
         let ArrayValue::Float32(values) = &mut rows[antenna].parameters else {
             unreachable!("antenna positions use real parameters");
         };
-        for (coordinate, delta) in [x, y, z].into_iter().enumerate() {
+        for (coordinate, &delta) in offset.iter().enumerate() {
             values[[coordinate, 0]] += delta as f32;
         }
     }
