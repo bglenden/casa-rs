@@ -33,9 +33,11 @@ ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "m
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
 IMPLEMENTED["coordsys"] = {
-    "addcoordinate", "axesmap", "axiscoordinatetypes", "coordinatetype", "copy", "done", "epoch",
-    "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "names", "naxes", "ncoordinates", "newcoordsys",
-    "observer", "parentname", "referencepixel", "setobserver", "setparentname",
+    "addcoordinate", "axesmap", "axiscoordinatetypes", "conversiontype", "coordinatetype", "copy", "done", "epoch",
+    "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "getconversiontype", "lineartransform",
+    "names", "naxes", "ncoordinates", "newcoordsys",
+    "observer", "parentname", "projection", "referencecode", "referencepixel", "restfrequency",
+    "setobserver", "setparentname",
     "setreferencepixel", "settelescope",
     "stokes", "telescope", "torecord", "type", "units",
 }

@@ -37,6 +37,10 @@ coordinate for a particular axis with `cs.findaxis(world=False, axis=0)`.
 a separate coordinate system, then pass its record to `ia.setcoordsys()` to
 persist the edits to the image.
 
+Use `cs.projection()` to inspect the direction projection and
+`cs.referencecode()` to list stored frames in coordinate order.
+`cs.getconversiontype("direction")` reports the current conversion frame.
+
 To build a coordinate system without an image, call
 `tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.
 Use `addcoordinate` to append axes and `fromrecord` to restore a coordinate
