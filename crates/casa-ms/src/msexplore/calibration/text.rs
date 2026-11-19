@@ -91,7 +91,7 @@ fn coordinate(axis: Axis, value: f64) -> String {
 }
 
 // PlotMS uses the default significant-digit precision of a C++ stream.
-fn significant(value: f64) -> String {
+pub(in crate::msexplore) fn significant(value: f64) -> String {
     if !value.is_finite() || value == 0.0 {
         return value.to_string();
     }

@@ -26,8 +26,10 @@
 
 mod calibration;
 pub mod cli;
+mod plotms_text;
 pub mod task_contract;
 
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -2380,11 +2382,30 @@ fn compact_payload_to_budget(
     Ok(payload)
 }
 
+/// One read-only PlotMS visibility row after calibration.
+pub struct PlotMsCalibratedRow {
+    /// Transient corrected visibility cell.
+    pub corrected_data: ArrayValue,
+    /// Data flags combined with the calibration flags.
+    pub flags: ArrayValue,
+}
+
+/// Selected MAIN rows and their read-only calibration overlay.
+pub struct PlotMsCalibration {
+    /// Selected original MAIN rows in traversal order.
+    pub row_order: Vec<usize>,
+    /// Corrected visibility and flag cells keyed by their original MAIN row.
+    pub rows: HashMap<usize, PlotMsCalibratedRow>,
+    /// Original channel indices for windows with a channel selection.
+    pub channels: BTreeMap<i32, Vec<usize>>,
+}
+
 fn build_msexplore_plot_payload_validated(
     ms: &MeasurementSet,
     selection: &MsSelection,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
+    calibration: Option<&PlotMsCalibration>,
 ) -> Result<MsPlotPayload, String> {
     if spec.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) {
         return build_stacked_amplitude_phase_time_page(ms, selection, spec, point_budget);
@@ -2413,13 +2434,14 @@ fn build_msexplore_plot_payload_validated(
         };
     }
 
-    build_generic_visibility_scatter(ms, selection, spec, point_budget)
+    build_generic_visibility_scatter(ms, selection, spec, point_budget, calibration)
 }
 
 fn build_msexplore_payload_internal(
     ms: &MeasurementSet,
     spec: &MsExploreSpec,
     allow_decimation: bool,
+    calibration: Option<&PlotMsCalibration>,
 ) -> Result<MsPlotPayload, String> {
     spec.validate()?;
     let mut point_budget = PointBudget::limited(spec.max_plot_points, allow_decimation);
@@ -2430,6 +2452,7 @@ fn build_msexplore_payload_internal(
             &spec.selection,
             &spec.plots[0],
             &mut point_budget,
+            calibration,
         )?;
         apply_page_header_lines(&mut payload, header_lines);
         return if allow_decimation {
@@ -2454,8 +2477,13 @@ fn build_msexplore_payload_internal(
     };
     let mut items = Vec::with_capacity(spec.plots.len());
     for plot in &spec.plots {
-        let payload =
-            build_msexplore_plot_payload_validated(ms, &spec.selection, plot, &mut point_budget)?;
+        let payload = build_msexplore_plot_payload_validated(
+            ms,
+            &spec.selection,
+            plot,
+            &mut point_budget,
+            calibration,
+        )?;
         let scatter = match payload {
             MsPlotPayload::Scatter(payload) => payload,
             MsPlotPayload::ListObs(_) => {
@@ -2565,7 +2593,16 @@ pub fn build_msexplore_payload(
     ms: &MeasurementSet,
     spec: &MsExploreSpec,
 ) -> Result<MsPlotPayload, String> {
-    build_msexplore_payload_internal(ms, spec, true)
+    build_msexplore_payload_internal(ms, spec, true, None)
+}
+
+/// Build the same payload with read-only, on-the-fly corrected data and flags.
+pub(crate) fn build_calibrated_plotms_payload(
+    ms: &MeasurementSet,
+    spec: &MsExploreSpec,
+    calibration: &PlotMsCalibration,
+) -> Result<MsPlotPayload, String> {
+    build_msexplore_payload_internal(ms, spec, true, Some(calibration))
 }
 
 /// Open a MeasurementSet path from a full `msexplore` request and build the
@@ -2599,7 +2636,8 @@ pub fn preview_msexplore_flag_edit(
         .as_ref()
         .ok_or_else(|| "msexplore flag-edit preview requires MsPlotSpec.flag_edit".to_string())?;
     let mut point_budget = PointBudget::unlimited();
-    let payload = build_msexplore_plot_payload_validated(ms, selection, spec, &mut point_budget)?;
+    let payload =
+        build_msexplore_plot_payload_validated(ms, selection, spec, &mut point_budget, None)?;
     preview_msexplore_flag_edit_from_payload(ms, payload, flag_edit)
 }
 
@@ -2612,7 +2650,7 @@ pub fn preview_msexplore_flag_edit_for_request(
 ) -> Result<MsFlagEditPreview, String> {
     spec.validate()?;
     validate_flag_edit_request(flag_edit)?;
-    let payload = build_msexplore_payload_internal(ms, spec, false)?;
+    let payload = build_msexplore_payload_internal(ms, spec, false, None)?;
     preview_msexplore_flag_edit_from_payload(ms, payload, flag_edit)
 }
 
@@ -3142,7 +3180,7 @@ pub fn build_msexplore_plot_payload(
 ) -> Result<MsPlotPayload, String> {
     spec.validate()?;
     let mut point_budget = PointBudget::unlimited();
-    build_msexplore_plot_payload_validated(ms, selection, spec, &mut point_budget)
+    build_msexplore_plot_payload_validated(ms, selection, spec, &mut point_budget, None)
 }
 
 /// Open a MeasurementSet path and build the requested plot payload.
@@ -3548,17 +3586,27 @@ fn build_generic_visibility_scatter(
     selection: &MsSelection,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
+    calibration: Option<&PlotMsCalibration>,
 ) -> Result<MsPlotPayload, String> {
     let timing_enabled = VisibilityScatterTiming::enabled();
     let scatter_started = Instant::now();
     let mut checkpoint_started = Instant::now();
     let mut scatter_timing = VisibilityScatterTiming::default();
     if uses_extended_averaging(spec) {
-        return build_generic_visibility_scatter_with_averaging(ms, selection, spec, point_budget);
+        return build_generic_visibility_scatter_with_averaging(
+            ms,
+            selection,
+            spec,
+            point_budget,
+            calibration,
+        );
     }
 
     let listobs_options = selection.to_summary_options();
-    let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
+    let row_numbers = match calibration {
+        Some(calibration) => calibration.row_order.clone(),
+        None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
+    };
     let selected_row_count = row_numbers.len();
     if timing_enabled {
         VisibilityScatterTiming::checkpoint("resolve_selected_rows", &mut checkpoint_started);
@@ -3644,6 +3692,7 @@ fn build_generic_visibility_scatter(
             ms,
             spec.data_column,
             &row_numbers,
+            calibration,
         )?)
     } else {
         None
@@ -3652,10 +3701,11 @@ fn build_generic_visibility_scatter(
         VisibilityScatterTiming::checkpoint("load_visibility_data", &mut checkpoint_started);
     }
     let selected_flags = if needs_flag_grid {
-        Some(SelectedArrayColumn::load(
+        Some(SelectedArrayColumn::load_for_plot(
             ms.main_table(),
             "FLAG",
             &row_numbers,
+            calibration,
         )?)
     } else {
         None
@@ -3902,7 +3952,8 @@ fn build_generic_visibility_scatter(
             vec![selected_correlations[0].clone()]
         };
 
-        let channel_bins = plot_channel_bins(chan_count, spec)?;
+        let channels = calibration.and_then(|input| input.channels.get(&spw_id));
+        let channel_bins = plot_channel_bins_with_selection(chan_count, spec, channels)?;
 
         let field_id_value = selected_field_ids[row_slot];
         let scan_number_value = selected_scan_numbers[row_slot];
@@ -4477,9 +4528,13 @@ fn build_generic_visibility_scatter_with_averaging(
     selection: &MsSelection,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
+    calibration: Option<&PlotMsCalibration>,
 ) -> Result<MsPlotPayload, String> {
     let listobs_options = selection.to_summary_options();
-    let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
+    let row_numbers = match calibration {
+        Some(calibration) => calibration.row_order.clone(),
+        None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
+    };
 
     let needs_visibility_grid = spec.x_axis.is_visibility_math()
         || spec.y_axes.iter().copied().any(MsAxis::is_visibility_math);
@@ -4495,11 +4550,13 @@ fn build_generic_visibility_scatter_with_averaging(
             ms,
             spec.data_column,
             &row_numbers,
+            calibration,
         )?)
     } else {
         None
     };
-    let selected_flags = SelectedArrayColumn::load(ms.main_table(), "FLAG", &row_numbers)?;
+    let selected_flags =
+        SelectedArrayColumn::load_for_plot(ms.main_table(), "FLAG", &row_numbers, calibration)?;
     let selected_weights = SelectedArrayColumn::load(ms.main_table(), "WEIGHT", &row_numbers)?;
     let selected_sigmas = SelectedArrayColumn::load(ms.main_table(), "SIGMA", &row_numbers)?;
     let selected_flag_rows = selected_bool_values(ms.main_table(), "FLAG_ROW", &row_numbers)?;
@@ -4749,7 +4806,8 @@ fn build_generic_visibility_scatter_with_averaging(
             vec![selected_correlations[0].clone()]
         };
 
-        let channel_bins = plot_channel_bins(chan_count, spec)?;
+        let channels = calibration.and_then(|input| input.channels.get(&spw_id));
+        let channel_bins = plot_channel_bins_with_selection(chan_count, spec, channels)?;
 
         let field_id_value = selected_field_ids[row_slot];
         let scan_number_value = selected_scan_numbers[row_slot];
@@ -5319,7 +5377,7 @@ fn build_stacked_page_child(
     child.style.title = Some(title.to_string());
     child.style.ylabel = None;
     child.y_axes = vec![y_axis];
-    match build_generic_visibility_scatter(ms, selection, &child, point_budget)? {
+    match build_generic_visibility_scatter(ms, selection, &child, point_budget, None)? {
         MsPlotPayload::Scatter(payload) => Ok(payload),
         _ => Err("internal error: stacked subplot lowered to a non-scatter payload".to_string()),
     }
@@ -5381,6 +5439,27 @@ fn channel_bins(chan_count: usize, avgchannel: Option<usize>) -> Result<Vec<Chan
         });
         start = end;
         ordinal += 1;
+    }
+    Ok(bins)
+}
+
+fn plot_channel_bins_with_selection(
+    chan_count: usize,
+    spec: &MsPlotSpec,
+    channels: Option<&Vec<usize>>,
+) -> Result<Vec<ChannelBin>, String> {
+    let Some(channels) = channels else {
+        return plot_channel_bins(chan_count, spec);
+    };
+    let mut bins = Vec::new();
+    for run in channels.chunk_by(|first, second| *second == first + 1) {
+        let offset = run[0];
+        for mut bin in plot_channel_bins(run.len(), spec)? {
+            bin.start += offset;
+            bin.end += offset;
+            bin.ordinal = bins.len();
+            bins.push(bin);
+        }
     }
     Ok(bins)
 }
@@ -6218,116 +6297,133 @@ fn selected_uvw_values(
         .collect()
 }
 
-struct SelectedArrayColumn {
-    column: &'static str,
-    values: Vec<Option<ArrayValue>>,
+enum SelectedArrayValues<'a> {
+    Stored(Vec<Option<ArrayValue>>),
+    Calibrated(Vec<Option<&'a ArrayValue>>),
 }
 
-impl SelectedArrayColumn {
+struct SelectedArrayColumn<'a> {
+    column: &'static str,
+    values: SelectedArrayValues<'a>,
+}
+
+impl<'a> SelectedArrayColumn<'a> {
     fn load(table: &Table, column: &'static str, row_indices: &[usize]) -> Result<Self, String> {
         let values = table
             .column_accessor(column)
             .map_err(|error| error.to_string())?
             .array_cells_owned(row_indices)
             .map_err(|error| error.to_string())?;
-        Ok(Self { column, values })
+        Ok(Self {
+            column,
+            values: SelectedArrayValues::Stored(values),
+        })
+    }
+
+    fn load_for_plot(
+        table: &Table,
+        column: &'static str,
+        rows: &[usize],
+        calibration: Option<&'a PlotMsCalibration>,
+    ) -> Result<Self, String> {
+        let cell: fn(&PlotMsCalibratedRow) -> &ArrayValue = match column {
+            "CORRECTED_DATA" => |row| &row.corrected_data,
+            "FLAG" => |row| &row.flags,
+            _ => return Self::load(table, column, rows),
+        };
+        let Some(calibration) = calibration else {
+            return Self::load(table, column, rows);
+        };
+        let values = rows
+            .iter()
+            .map(|row| calibration.rows.get(row).map(cell))
+            .collect();
+        Ok(Self {
+            column,
+            values: SelectedArrayValues::Calibrated(values),
+        })
     }
 
     fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
-        self.values
-            .get(row_slot)
-            .and_then(|value| value.as_ref())
-            .ok_or_else(|| {
-                format!(
-                    "msexplore requires {} data for selected row slot {}",
-                    self.column, row_slot
-                )
-            })
+        let value = match &self.values {
+            SelectedArrayValues::Stored(values) => values.get(row_slot).and_then(Option::as_ref),
+            SelectedArrayValues::Calibrated(values) => values.get(row_slot).copied().flatten(),
+        };
+        value.ok_or_else(|| {
+            format!(
+                "msexplore requires {} data for selected row slot {row_slot}",
+                self.column
+            )
+        })
     }
 }
 
-enum PreparedSelectedDataSource {
-    Single(SelectedArrayColumn),
+enum PreparedSelectedDataSource<'a> {
+    Single(SelectedArrayColumn<'a>),
     Difference {
-        left: SelectedArrayColumn,
-        right: SelectedArrayColumn,
+        left: SelectedArrayColumn<'a>,
+        right: SelectedArrayColumn<'a>,
         scalar: bool,
     },
     Ratio {
-        numerator: SelectedArrayColumn,
-        denominator: SelectedArrayColumn,
+        numerator: SelectedArrayColumn<'a>,
+        denominator: SelectedArrayColumn<'a>,
         scalar: bool,
     },
 }
 
-impl PreparedSelectedDataSource {
+impl<'a> PreparedSelectedDataSource<'a> {
     fn new(
         ms: &MeasurementSet,
         column: MsDataColumn,
         row_indices: &[usize],
+        calibration: Option<&'a PlotMsCalibration>,
     ) -> Result<Self, String> {
+        let load = |name| {
+            SelectedArrayColumn::load_for_plot(ms.main_table(), name, row_indices, calibration)
+        };
         match column {
-            MsDataColumn::Data => Ok(Self::Single(SelectedArrayColumn::load(
-                ms.main_table(),
-                "DATA",
-                row_indices,
-            )?)),
-            MsDataColumn::Corrected => Ok(Self::Single(SelectedArrayColumn::load(
-                ms.main_table(),
-                "CORRECTED_DATA",
-                row_indices,
-            )?)),
-            MsDataColumn::Model => Ok(Self::Single(SelectedArrayColumn::load(
-                ms.main_table(),
-                "MODEL_DATA",
-                row_indices,
-            )?)),
+            MsDataColumn::Data => Ok(Self::Single(load("DATA")?)),
+            MsDataColumn::Corrected => Ok(Self::Single(load("CORRECTED_DATA")?)),
+            MsDataColumn::Model => Ok(Self::Single(load("MODEL_DATA")?)),
             MsDataColumn::CorrectedMinusModel => Ok(Self::Difference {
-                left: SelectedArrayColumn::load(ms.main_table(), "CORRECTED_DATA", row_indices)?,
-                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
+                left: load("CORRECTED_DATA")?,
+                right: load("MODEL_DATA")?,
                 scalar: false,
             }),
             MsDataColumn::CorrectedMinusModelScalar => Ok(Self::Difference {
-                left: SelectedArrayColumn::load(ms.main_table(), "CORRECTED_DATA", row_indices)?,
-                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
+                left: load("CORRECTED_DATA")?,
+                right: load("MODEL_DATA")?,
                 scalar: true,
             }),
             MsDataColumn::DataMinusModel => Ok(Self::Difference {
-                left: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
-                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
+                left: load("DATA")?,
+                right: load("MODEL_DATA")?,
                 scalar: false,
             }),
             MsDataColumn::DataMinusModelScalar => Ok(Self::Difference {
-                left: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
-                right: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
+                left: load("DATA")?,
+                right: load("MODEL_DATA")?,
                 scalar: true,
             }),
             MsDataColumn::CorrectedDivModel => Ok(Self::Ratio {
-                numerator: SelectedArrayColumn::load(
-                    ms.main_table(),
-                    "CORRECTED_DATA",
-                    row_indices,
-                )?,
-                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
+                numerator: load("CORRECTED_DATA")?,
+                denominator: load("MODEL_DATA")?,
                 scalar: false,
             }),
             MsDataColumn::CorrectedDivModelScalar => Ok(Self::Ratio {
-                numerator: SelectedArrayColumn::load(
-                    ms.main_table(),
-                    "CORRECTED_DATA",
-                    row_indices,
-                )?,
-                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
+                numerator: load("CORRECTED_DATA")?,
+                denominator: load("MODEL_DATA")?,
                 scalar: true,
             }),
             MsDataColumn::DataDivModel => Ok(Self::Ratio {
-                numerator: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
-                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
+                numerator: load("DATA")?,
+                denominator: load("MODEL_DATA")?,
                 scalar: false,
             }),
             MsDataColumn::DataDivModelScalar => Ok(Self::Ratio {
-                numerator: SelectedArrayColumn::load(ms.main_table(), "DATA", row_indices)?,
-                denominator: SelectedArrayColumn::load(ms.main_table(), "MODEL_DATA", row_indices)?,
+                numerator: load("DATA")?,
+                denominator: load("MODEL_DATA")?,
                 scalar: true,
             }),
         }
@@ -6581,8 +6677,8 @@ mod tests {
                 .expect("add main row");
         }
 
-        let source =
-            PreparedSelectedDataSource::new(&ms, MsDataColumn::Data, &[2, 0]).expect("prefetch");
+        let source = PreparedSelectedDataSource::new(&ms, MsDataColumn::Data, &[2, 0], None)
+            .expect("prefetch");
         let first = source.row(0).expect("selected row 0");
         let second = source.row(1).expect("selected row 1");
 
@@ -8075,22 +8171,26 @@ mod tests {
         }
 
         let difference =
-            PreparedSelectedDataSource::new(&ms, MsDataColumn::CorrectedMinusModel, &[0, 1])
+            PreparedSelectedDataSource::new(&ms, MsDataColumn::CorrectedMinusModel, &[0, 1], None)
                 .unwrap();
         assert_eq!(
             difference.row(0).unwrap().values[0],
             Complex64::new(10.0, 0.0)
         );
 
-        let scalar_ratio =
-            PreparedSelectedDataSource::new(&ms, MsDataColumn::CorrectedDivModelScalar, &[0, 1])
-                .unwrap();
+        let scalar_ratio = PreparedSelectedDataSource::new(
+            &ms,
+            MsDataColumn::CorrectedDivModelScalar,
+            &[0, 1],
+            None,
+        )
+        .unwrap();
         let scalar_ratio_row = scalar_ratio.row(0).unwrap();
         assert_eq!(scalar_ratio_row.values[0], Complex64::new(6.0, 0.0));
         assert!(scalar_ratio.row(1).unwrap().values[1].re.is_nan());
 
         let direct_ratio =
-            PreparedSelectedDataSource::new(&ms, MsDataColumn::DataDivModel, &[0]).unwrap();
+            PreparedSelectedDataSource::new(&ms, MsDataColumn::DataDivModel, &[0], None).unwrap();
         assert_eq!(
             direct_ratio.row(0).unwrap().values[1],
             Complex64::new(5.0, 0.0)
