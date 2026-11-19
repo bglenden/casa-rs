@@ -17,7 +17,8 @@ import numpy as np
 from bpoly_oracle import multiwindow_data
 from calibration_rerefant_oracle import reference_fixture
 from calibration_smoothcal_oracle import (
-    apply_round_trip, columns, compare_mapping, copy_ms, fixture, opened,
+    apply_round_trip, assert_detached_tables, columns, compare_mapping, copy_ms, fixture,
+    link_control_files, opened,
 )
 from gaincal_oracle import ephemeris_observation
 
@@ -263,20 +264,9 @@ def accumulate(root, driver, vis, gains, solved):
     for name, table in [('gain', gains), ('scalar', scalar)]:
         paired_accumulation(root, driver, vis, table, table, name)
     paired_accumulation(root, driver, vis, gains, gains, 'in-place', interp='nearest', alias=True)
-    linked = root/'file-linked.cal'
-    copy_ms(gains, linked)
-    link_sources = []
-    for i, relative in enumerate(('table.dat', 'SPECTRAL_WINDOW/table.dat')):
-        table_file = linked/relative
-        storage_file = root/f'outside-{i}.dat'
-        table_file.rename(storage_file)
-        table_file.symlink_to(storage_file)
-        link_sources.append((relative, storage_file, storage_file.read_bytes()))
+    linked, originals = link_control_files(root, gains)
     _, independent = paired_accumulation(root, driver, vis, linked, gains, 'file-linked-input')
-    for relative, storage_file, original in link_sources:
-        assert storage_file.read_bytes() == original
-        assert (linked/relative).is_symlink()
-        assert not (independent/relative).is_symlink()
+    assert_detached_tables(linked, independent, originals)
 
     control = root/'ordered.cal'
     ordered_view(solved, control)

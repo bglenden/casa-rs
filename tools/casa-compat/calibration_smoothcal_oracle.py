@@ -136,6 +136,26 @@ def apply_round_trip(root, native, vis, case):
 
 
 
+def link_control_files(root, source):
+    linked = root/'file-linked.cal'
+    copy_ms(source, linked)
+    originals = []
+    for i, relative in enumerate(('table.dat', 'SPECTRAL_WINDOW/table.dat')):
+        table_file = linked/relative
+        storage_file = root/f'outside-{i}.dat'
+        table_file.rename(storage_file)
+        table_file.symlink_to(storage_file)
+        originals.append((relative, storage_file, storage_file.read_bytes()))
+    return linked, originals
+
+
+def assert_detached_tables(linked, output, originals):
+    for relative, storage_file, original in originals:
+        assert storage_file.read_bytes() == original
+        assert (linked/relative).is_symlink()
+        assert not (output/relative).is_symlink()
+
+
 def compare(root, native, vis, source, name, options, *, in_place=False, fringe_median=False):
     products = []
     for engine, api in (('casa', casa), ('native', native)):
@@ -279,8 +299,11 @@ def main():
         handle.unlock()
         handle.close()
     compare_mapping(columns(locked), original, False)
+    linked, originals = link_control_files(root, gains)
+    compare(root, native, vis, linked, 'file-linked-input', {})
+    assert_detached_tables(linked, root/'native-file-linked-input.cal', originals)
     apply_round_trip(root, native, vis, 'mean-edges')
-    print('28 paired CASA smoothcal case groups and four downstream applications')
+    print('29 paired CASA smoothcal case groups and four downstream applications')
 
 
 if __name__ == '__main__':

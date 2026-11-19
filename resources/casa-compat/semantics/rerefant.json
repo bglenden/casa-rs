@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "rerefant",
   "casa_version": "6.7.6.14",
-  "audit_revision": "bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c",
+  "audit_revision": "16e213dafe7d3b43d85e6c1392052289bfe487ca",
   "parameters": {
     "vis": {
       "scope": "MeasurementSet supplying antenna identifiers and positions.",
@@ -60,7 +60,7 @@
       "id": "table-operation",
       "title": "Calibration table operation",
       "status": "Implemented",
-      "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables.",
+      "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot.",
       "gap": "The documented CASA behavior differences are recorded below.",
       "evidence": [
         "paired"
@@ -85,10 +85,10 @@
     "paired": {
       "kind": "Same-input Python task and casacore interchange",
       "state": "passed",
-      "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables.",
-      "result": "23 paired case groups and four downstream applications passed.",
+      "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot.",
+      "result": "24 paired case groups and four downstream applications passed.",
       "casa_version": "6.7.6.14",
-      "revision": "bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c",
+      "revision": "16e213dafe7d3b43d85e6c1392052289bfe487ca",
       "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>",
       "receipt": "resources/casa-compat/evidence/calibration-table-maintenance-20261119.json",
       "links": [
