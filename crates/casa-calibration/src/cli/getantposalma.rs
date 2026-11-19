@@ -4,13 +4,14 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
-use casa_types::quanta::{Quantity, Unit, time::MvTime};
+use casa_types::quanta::{Quantity, Unit};
 use serde_json::{Map, Value, json};
 use tempfile::{Builder, NamedTempFile};
+use time::OffsetDateTime;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let outfile = required(task, "outfile")?;
@@ -34,7 +35,6 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let tw = task.required_text("tw")?;
     let search = task.required_text("search")?;
     let first = task.flag("firstintegration")?;
-    let attempts = Retry::read(task)?;
     let mut metadata = Map::from_iter([
         ("caltype".into(), json!("ALMA antenna positions")),
         (
@@ -44,8 +44,6 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         ("product_code".into(), json!("antposalma")),
         ("outfile".into(), json!(outfile)),
         ("hosts".into(), json!(hosts)),
-        ("nretry".into(), json!(attempts.count)),
-        ("rdelay".into(), json!(attempts.delay_seconds)),
     ]);
     let mut query = vec![("asdm", Value::from(asdm))];
     if !tw.is_empty() {
@@ -59,6 +57,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         query.push(("search", Value::from(search)));
     }
     query.push(("firstIntegration", Value::from(first)));
+    let attempts = Retry::read(task)?;
+    metadata.insert("nretry".into(), json!(attempts.count));
+    metadata.insert("rdelay".into(), json!(attempts.delay_seconds));
     let (url, data) = retrieve(&hosts, &query_string(&query), attempts)?;
     metadata.extend(
         query
@@ -66,7 +67,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             .map(|(name, value)| (name.to_string(), value)),
     );
     metadata.insert("successful_url".into(), Value::from(url));
-    metadata.insert("timestamp".into(), Value::from(timestamp()?));
+    metadata.insert("timestamp".into(), Value::from(timestamp()));
     publish(
         &destination,
         overwrite,
@@ -100,8 +101,16 @@ fn validate_window(tw: &str) -> Result<(), TaskFailure> {
         ));
     };
     let days = Unit::new("d").expect("known time unit");
+    let angles = Unit::new("deg").expect("known angle unit");
     let parse = |label, text: &str| {
-        Quantity::read(text).ok().and_then(|time| time.get_value_in(&days).ok())
+        Quantity::read(text).ok().and_then(|time| {
+            time.get_value_in(&days).or_else(|_| {
+                time.get_value_in(&angles).map(|degrees| degrees / 360.0)
+            }).ok()
+        })
+            // The pinned CASA task compares timestamps formatted as FITS
+            // with whole seconds, including when the input is an angle.
+            .map(|days| (days * 86_400.0).round())
             .ok_or_else(|| invalid("tw", format!("{label} time {text} does not appear to have a valid format. The correct format is of the form YYYY-MM-DDThh:mm:ss.")))
     };
     if parse("Begin", begin)? >= parse("End", end)? {
@@ -177,6 +186,9 @@ fn query_string(parameters: &[(&str, Value)]) -> String {
                 Value::String(text) => text.clone(),
                 Value::Bool(true) => "True".to_string(),
                 Value::Bool(false) => "False".to_string(),
+                Value::Number(value) if value.is_f64() => {
+                    python_float(value.as_f64().expect("known JSON float"))
+                }
                 value => value.to_string(),
             };
             let mut encoded = format!("{name}=");
@@ -195,6 +207,21 @@ fn query_string(parameters: &[(&str, Value)]) -> String {
         })
         .collect::<Vec<_>>()
         .join("&")
+}
+
+fn python_float(value: f64) -> String {
+    let magnitude = value.abs();
+    if magnitude != 0.0 && !(1.0e-4..1.0e16).contains(&magnitude) {
+        let scientific = format!("{value:e}");
+        let (mantissa, exponent) = scientific.split_once('e').expect("exponential format");
+        let exponent = exponent.parse::<i32>().expect("integer exponent");
+        return format!("{mantissa}e{exponent:+03}");
+    }
+    let mut text = value.to_string();
+    if !text.contains('.') {
+        text.push_str(".0");
+    }
+    text
 }
 
 fn retrieve(
@@ -261,19 +288,16 @@ fn query_host(agent: &ureq::Agent, url: &str) -> Result<Option<String>, ureq::Er
     Ok((!text.is_empty()).then_some(text))
 }
 
-fn timestamp() -> Result<String, TaskFailure> {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| TaskFailure::execution(error.to_string()))?
-        .as_secs_f64();
-    let time = MvTime::from_mjd_seconds(seconds + 40_587.0 * 86_400.0);
-    Ok(format!(
-        "{:04}-{:02}-{:02} {}",
-        time.year(),
-        time.month(),
-        time.month_day(),
-        time.format_time(6)
-    ))
+fn timestamp() -> String {
+    let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+    format!(
+        "{} {:02}:{:02}:{:02}.{:06}",
+        now.date(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.microsecond(),
+    )
 }
 
 fn publish(path: &Path, overwrite: bool, document: &Value) -> Result<(), TaskFailure> {

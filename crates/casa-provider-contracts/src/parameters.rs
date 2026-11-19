@@ -388,6 +388,8 @@ pub enum NormalizationRule {
     CasaField,
     /// Preserve an archive URL or remote identifier passed as service data.
     ServiceReference,
+    /// A CASA variant whose CLI spelling may be a bare number or a string.
+    NumericVariant,
     Trim,
     Lowercase,
     Path,

@@ -34,6 +34,7 @@ thiserror.workspace = true
 tracing.workspace = true
 ureq = "3"
 tempfile = "3"
+time = { version = "0.3", features = ["local-offset"] }
 
 [dev-dependencies]
 casa-simulation = { path = "../casa-simulation" }

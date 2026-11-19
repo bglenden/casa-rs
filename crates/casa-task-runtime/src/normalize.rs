@@ -375,6 +375,7 @@ fn apply_rule(
     match rule {
         NormalizationRule::Identity
         | NormalizationRule::TcleanField
+        | NormalizationRule::NumericVariant
         | NormalizationRule::ServiceReference => Ok(value),
         NormalizationRule::Trim => map_strings(value, |value| Ok(value.trim().to_string())),
         NormalizationRule::Lowercase => {

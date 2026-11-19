@@ -10,7 +10,7 @@
         "resource_kind": "file"
       },
       "normalization": {
-        "kind": "path"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -67,7 +67,7 @@
         "kind": "variant"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "numeric_variant"
       },
       "base_constraints": [],
       "unit_dimension": null,

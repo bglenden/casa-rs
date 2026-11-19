@@ -297,6 +297,9 @@ def _call_gencal(values: dict[str, Any]) -> Any:
 def _call_getantposalma(values: dict[str, Any]) -> Any:
     import numpy as np
 
+    outfile = values.get("outfile")
+    if isinstance(outfile, (str, PathLike)):
+        values["outfile"] = os.path.expanduser(os.fspath(outfile))
     hosts = values.get("hosts")
     if hosts is not None and not isinstance(hosts, str):
         try:

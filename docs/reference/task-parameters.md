@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 633
-- Surfaces: 36 (36 task, 0 session)
-- Surface bindings: 936
+- Concepts: 642
+- Surfaces: 37 (37 task, 0 session)
+- Surface bindings: 946
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -52,6 +52,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Tsdimaging](#surface-tsdimaging)<br><code>tsdimaging</code> | task | 1 | <code>single_dish</code> | 33 | Grid total-power spectra by pointing into a CASA image and weight image. |
 | [Concat](#surface-concat)<br><code>concat</code> | task | 1 | <code>concat</code> | 9 | Concatenate simulated interferometric MeasurementSets with per-input weights. |
 | [SimALMA](#surface-simalma)<br><code>simalma</code> | task | 1 | <code>simalma</code> | 31 | Simulate ALMA and ACA observations and combine their images |
+| [Get ALMA Antenna Positions](#surface-getantposalma)<br><code>getantposalma</code> | task | 1 | <code>calibration</code> | 10 | Retrieve antenna positions from the ALMA archive. |
 
 <a id="surface-msexplore"></a>
 
@@ -1456,5 +1457,28 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>graphics</code> | <code>parameter.graphics@r2</code> | <code>choice (5 values)</code> | <code>"both"</code>; optional | Simulation | Graphics output. |
 | <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Simulation | Verbose logging. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Simulation | Replace an existing output file |
+
+<a id="surface-getantposalma"></a>
+
+## Get ALMA Antenna Positions (<code>getantposalma</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Retrieve antenna positions from the ALMA archive.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>outfile</code> | <code>positions.output.outfile@r1</code> | <code>path (file)</code> | <code>""</code>; optional | Output | JSON file for the retrieved antenna positions. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
+| <code>asdm</code> | <code>getantposalma.asdm@r1</code> | <code>string</code> | <code>""</code>; optional | ALMA Service | ASDM UID passed to the ALMA antenna-position service. |
+| <code>tw</code> | <code>getantposalma.tw@r1</code> | <code>string</code> | <code>""</code>; optional | ALMA Service | Optional pair of UTC timestamps defining the measurement window. |
+| <code>snr</code> | <code>getantposalma.snr@r1</code> | <code>variant</code> | <code>"default"</code>; optional | ALMA Service | Minimum signal-to-noise ratio or the service default. |
+| <code>search</code> | <code>getantposalma.search@r1</code> | <code>string</code> | <code>"both_latest"</code>; optional | ALMA Service | Search algorithm sent to the ALMA service. |
+| <code>hosts</code> | <code>getantposalma.hosts@r1</code> | <code>array&lt;string&gt;</code> | <code>["https://asa.alma.cl/uncertainties-service/uncertainties/versions/last/measurements/casa/"]</code>; optional | ALMA Service | ALMA service URLs in fallback order. |
+| <code>firstintegration</code> | <code>getantposalma.firstintegration@r1</code> | <code>bool</code> | <code>true</code>; optional | ALMA Service | Exclude measurements flagged as first integrations. |
+| <code>nretry</code> | <code>getantposalma.nretry@r1</code> | <code>integer</code> | <code>0</code>; optional | ALMA Service | Number of retries after the initial round of service requests. |
+| <code>rdelay</code> | <code>getantposalma.rdelay@r1</code> | <code>float</code> | <code>3.0</code>; optional | ALMA Service | Seconds between retries. |
 
 _End of generated reference._

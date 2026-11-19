@@ -4,11 +4,13 @@
 
 import argparse
 from contextlib import contextmanager
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import inspect
 import json
 import os
 from pathlib import Path
+import subprocess
 from threading import Thread
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -61,7 +63,9 @@ def output(module, path, **options):
     assert module.getantposalma(str(path), **options) is None
     result = json.loads(path.read_text())
     assert result['metadata'].pop('outfile') == str(path)
-    assert result['metadata'].pop('timestamp')
+    timestamp = datetime.fromisoformat(result['metadata'].pop('timestamp'))
+    modified = datetime.fromtimestamp(path.stat().st_mtime)
+    assert abs((timestamp - modified).total_seconds()) < 5
     return result
 
 
@@ -87,6 +91,8 @@ def successful_requests(root, endpoint, calls, native):
                   ['retry', 'retry']),
         ('numpy-inputs', {'hosts': np.asarray([endpoint + '/positions']), 'snr': np.int64(9),
                           'rdelay': np.float32(2.5), 'search': np.str_('auto')}, ['positions']),
+        ('angular-window', {'hosts': endpoint + '/positions', 'tw': '12deg,15deg', 'snr': 1e-5},
+                           ['positions']),
     ):
         values, sequences = [], []
         for name, engine in (('casa', casa), ('native', native)):
@@ -115,6 +121,7 @@ def errors_and_replacement(root, endpoint, calls, native):
             ('missing-asdm', {'asdm': ''}, ValueError),
             ('bad-window-count', {'tw': '2023-03-14T00:40:20'}, ValueError),
             ('bad-window-time', {'tw': 'today-ish,2023-03-14T00:40:20'}, ValueError),
+            ('subsecond-window', {'tw': '2023-03-14T00:40:20.1,2023-03-14T00:40:20.2'}, ValueError),
             ('reversed-window', {'tw': ','.join(reversed(WINDOW.split(',')))}, ValueError),
             ('negative-snr', {'snr': -1}, ValueError),
             ('bad-snr', {'snr': '5'}, ValueError),
@@ -139,6 +146,17 @@ def errors_and_replacement(root, endpoint, calls, native):
         (directory / 'prior').write_text('prior directory output')
         output(engine, directory, **valid)
         results['overwrite'] = {'replaced_file_and_directory': True}
+        lexical = root / f'lexical-{name}'
+        physical = root / f'physical-{name}'
+        for parent in (lexical, physical / 'child'):
+            parent.mkdir(parents=True)
+        (lexical / 'link').symlink_to(physical / 'child', target_is_directory=True)
+        (lexical / 'pos.json').write_text('unrelated output')
+        (physical / 'pos.json').write_text('prior output')
+        output(engine, lexical / 'link' / '..' / 'pos.json', **valid)
+        assert (lexical / 'pos.json').read_text() == 'unrelated output'
+        assert json.loads((physical / 'pos.json').read_text())['data']
+        results['symlink-parent'] = {'unrelated_output_preserved': True}
         calls.clear()
         try:
             engine.getantposalma(asdm=ASDM, hosts=valid['hosts'])
@@ -148,6 +166,15 @@ def errors_and_replacement(root, endpoint, calls, native):
             raise AssertionError(f'{name} accepted an omitted outfile')
         results['missing-outfile'] = {'refused': True}
     return results
+
+
+def native_cli(root, endpoint, calls, binary):
+    destination = root / 'cli-service.json'
+    subprocess.run([str(binary), 'getantposalma', '--outfile', str(destination), '--asdm', ASDM,
+                    '--hosts', endpoint + '/positions', '--snr', '5.25'], check=True)
+    assert calls[-1][1]['snr'] == ['5.25']
+    assert json.loads(destination.read_text())['metadata']['snr'] == 5.25
+    return {'numeric_snr': True}
 
 
 def calibrated_positions(root, vis, native):
@@ -213,6 +240,7 @@ def main():
     with frozen_service(positions_for(vis)) as (endpoint, calls):
         results = successful_requests(root, endpoint, calls, native)
         results.update(errors_and_replacement(root, endpoint, calls, native))
+        results['numeric-cli'] = native_cli(root, endpoint, calls, args.native_bin.resolve())
     results['gencal'] = calibrated_positions(root, vis, native)
     results['routine-service-options'] = routine_parameters(root, vis, native)
     if args.live:
