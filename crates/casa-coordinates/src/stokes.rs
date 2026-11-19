@@ -367,13 +367,14 @@ mod tests {
 
     #[test]
     fn stokes_code_roundtrip() {
-        for code in (1..=12).chain(28..=32) {
+        // Native CASA records support unspecified (0) and the entire
+        // casacore enumeration, including mixed correlations.
+        for code in 0..=32 {
             let st = StokesType::from_code(code).unwrap();
             assert_eq!(st.code(), code);
             assert_eq!(StokesType::from_name(st.name()), Some(st));
         }
-        assert!(StokesType::from_code(0).is_none());
-        assert!(StokesType::from_code(13).is_none());
+        assert!(StokesType::from_code(-1).is_none());
         assert!(StokesType::from_code(33).is_none());
     }
 
