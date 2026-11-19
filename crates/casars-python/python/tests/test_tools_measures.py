@@ -38,6 +38,7 @@ LOGGER = "casars.tools.measures"
 CASA = casa_signatures("measures")
 
 IMPLEMENTED = {
+    "doppler", "radialvelocity", "todoppler", "tofrequency", "toradialvelocity", "torestfrequency",
     "addxvalue", "cometangdiam", "cometdist", "cometname", "comettopo", "comettype", "direction", "dirshow", "doframe", "done", "epoch", "framenow", "frequency", "getoffset", "getref",
     "gettype", "getvalue", "ismeasure", "linelist", "listcodes", "measure", "observatory", "obslist",
     "posangle", "position", "separation", "show", "source", "sourcelist", "spectralline", "type",
@@ -421,7 +422,7 @@ def test_framenow_sets_an_epoch() -> None:
 @pytest.mark.parametrize("method", sorted(NOT_YET_IMPLEMENTED))
 def test_unimplemented_methods_raise_not_implemented(method: str) -> None:
     required = [entry for entry in CASA["methods"][method] if entry["default"] is None]
-    with pytest.raises(NotImplementedError, match=rf"^measures\.{method} is not yet implemented in casa-rs \(#1053\)$"):
+    with pytest.raises(NotImplementedError, match=rf"^measures\.{method} is not yet implemented in casa-rs \(#1252\)$"):
         getattr(measures(), method)(*[{} for _ in required])
 
 

@@ -31,7 +31,7 @@ fn failed() -> CasaValue {
 
 /// casatools' `measures::casaQuantityFromVar`: `None` after logging CASA's
 /// messages for a string or record it cannot read.
-fn quantity_of(value: &Variant, lines: &mut Vec<LogLine>) -> Option<Quantity> {
+pub(super) fn quantity_of(value: &Variant, lines: &mut Vec<LogLine>) -> Option<Quantity> {
     let fail = |lines: &mut Vec<LogLine>, first: String, holder: &str| {
         lines.push(LogLine::error(first));
         lines.push(LogLine::error(format!("Exception Reported: {holder}")));

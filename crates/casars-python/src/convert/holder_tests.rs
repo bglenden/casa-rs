@@ -110,13 +110,13 @@ fn records_read_and_write_as_measure_holder_does() {
             .message()
             .starts_with("bogus is an unknown measure type")
     );
+    // Doppler is now implemented. CASA's captured doppler_default case in
+    // casa_measures_spectral.json records zero RADIO velocity in m/s.
     let doppler = record("doppler", "RADIO", &[(0.0, "")]);
-    assert!(
-        Measure::from_record(&doppler)
-            .unwrap_err()
-            .message()
-            .contains("not yet implemented in casa-rs")
-    );
+    let read = Measure::from_record(&doppler).unwrap();
+    assert_eq!(read.measure.refer, "RADIO");
+    assert_eq!(read.measure.kind().tell_me(), "Doppler");
+    assert_eq!(record_values(&read.measure), [0.0]);
     let wrong_unit = record("epoch", "UTC", &[(1.0, "deg")]);
     assert_eq!(
         Measure::from_record(&wrong_unit).unwrap_err().message(),

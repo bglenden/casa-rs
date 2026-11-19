@@ -2,21 +2,22 @@
  "schema_version": 1,
  "tool": "measures",
  "casa_version": "6.7.6.14",
- "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "audit_revision": "8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7",
  "methods": {
   "addxvalue": {
    "status": "Partial",
-   "issue": 1053,
-   "scope": "Returns direction cosines or the position vector for scalar supported records, and an empty record for epoch and frequency. Measure offsets, multivalued records and unsupported measure kinds are refused explicitly; cyclic or excessively deep records are rejected safely.",
+   "issue": 1252,
+   "scope": "Returns direction cosines or the position vector for scalar supported records, resolving nested offsets; returns an empty record for epoch, frequency, Doppler and radial velocity. Vector direction/position extras and remaining measure kinds are unfinished; cyclic or excessively deep records are rejected safely.",
    "evidence": [
     "signature",
-    "addxvalue-casa"
+    "addxvalue-casa",
+    "spectral-casa"
    ]
   },
   "asbaseline": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
     "refusals"
@@ -24,8 +25,8 @@
   },
   "baseline": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
     "refusals"
@@ -33,7 +34,7 @@
   },
   "cometangdiam": {
    "status": "Partial",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Returns CASA's -1 rad sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
@@ -42,7 +43,7 @@
   },
   "cometdist": {
    "status": "Partial",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Returns CASA's -1 AU sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
@@ -51,7 +52,7 @@
   },
   "cometname": {
    "status": "Partial",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Returns the empty name and CASA warning when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
@@ -60,7 +61,7 @@
   },
   "comettopo": {
    "status": "Partial",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Returns CASA's dimensionless zero vector and warning when no topocentric comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
@@ -69,7 +70,7 @@
   },
   "comettype": {
    "status": "Partial",
-   "issue": 1053,
+   "issue": 1252,
    "scope": "Returns CASA's none type when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
@@ -89,15 +90,17 @@
    "scope": "Shows measures as CASA shows them.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "spectral-casa"
    ]
   },
   "doframe": {
    "status": "Implemented",
-   "scope": "Sets the frame's epoch, position and direction.",
+   "scope": "Sets explicit epoch, position, direction and radial-velocity frame elements. The initial frame is empty under the recorded owner decision.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "spectral-casa"
    ]
   },
   "done": {
@@ -109,18 +112,17 @@
    ]
   },
   "doppler": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Defines Doppler measures in all CASA conventions and aliases, including scalar quantities, reference offsets, default/invalid-reference behavior and CASA Python argument forms.",
    "evidence": [
     "signature",
-    "refusals"
+    "spectral-casa"
    ]
   },
   "earthmagnetic": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
     "refusals"
@@ -136,8 +138,8 @@
   },
   "expand": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
     "refusals"
@@ -145,8 +147,8 @@
   },
   "framecomet": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
     "refusals"
@@ -171,11 +173,12 @@
   },
   "getoffset": {
    "status": "Partial",
-   "issue": 1053,
-   "scope": "Returns scalar offsets for direction, epoch, position and frequency records, preserving scalar metadata and integer values. Array-valued and nested offsets and unsupported measure kinds are explicitly refused; cyclic and excessively deep records are rejected safely.",
+   "issue": 1252,
+   "scope": "Copies valid scalar/vector/nested offsets for direction, epoch, position, frequency, Doppler and radial velocity without aliasing mutable containers or losing large integers. Remaining measure kinds are unfinished; recursive and object-array records are rejected safely.",
    "evidence": [
     "signature",
-    "getoffset-casa"
+    "getoffset-casa",
+    "spectral-casa"
    ]
   },
   "getref": {
@@ -183,7 +186,8 @@
    "scope": "Queries measure records as CASA does.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "spectral-casa"
    ]
   },
   "gettype": {
@@ -191,7 +195,8 @@
    "scope": "Queries measure records as CASA does.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "spectral-casa"
    ]
   },
   "getvalue": {
@@ -199,7 +204,8 @@
    "scope": "Queries measure records as CASA does.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "spectral-casa"
    ]
   },
   "ismeasure": {
@@ -207,7 +213,8 @@
    "scope": "Queries measure records as CASA does.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "spectral-casa"
    ]
   },
   "linelist": {
@@ -223,7 +230,8 @@
    "scope": "The measures data's observatories and sources, and casacore's reference codes.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "spectral-casa"
    ]
   },
   "measure": {
@@ -232,7 +240,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "undefined-frequency-casa"
+    "undefined-frequency-casa",
+    "spectral-casa"
    ]
   },
   "observatory": {
@@ -271,18 +280,17 @@
    ]
   },
   "radialvelocity": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Defines radial-velocity measures in all CASA reference codes, including scalar quantities, offsets and CASA Python argument forms. Cross-reference conversions require explicit frame elements under the existing owner decision.",
    "evidence": [
     "signature",
-    "refusals"
+    "spectral-casa"
    ]
   },
   "rise": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
     "refusals"
@@ -290,8 +298,8 @@
   },
   "riseset": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simutil.ephemeris calls it; ephemeris is not implemented either.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simutil.ephemeris calls it; ephemeris is not implemented either.",
    "evidence": [
     "signature",
     "refusals"
@@ -307,8 +315,8 @@
   },
   "shift": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
     "refusals"
@@ -319,13 +327,14 @@
    "scope": "Shows measures as CASA shows them.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "spectral-casa"
    ]
   },
   "showframe": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
     "refusals"
@@ -357,45 +366,41 @@
    ]
   },
   "todoppler": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Converts raw frequency or radial-velocity records to Doppler conventions, with CASA rest-frequency readers and scalar/vector records. Frequency-vector results use independent CASA scalar controls where its vector path rejects valid inputs.",
    "evidence": [
     "signature",
-    "refusals"
+    "spectral-casa"
    ]
   },
   "tofrequency": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Converts Doppler records to frequencies using CASA QuantumHolder rest-frequency units, resolving Doppler offsets and preserving vector elements rather than CASA truncation.",
    "evidence": [
     "signature",
-    "refusals"
+    "spectral-casa"
    ]
   },
   "toradialvelocity": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Converts Doppler records to radial-velocity references, resolving Doppler offsets and preserving all vector elements, checked against independent CASA scalar calls.",
    "evidence": [
     "signature",
-    "refusals"
+    "spectral-casa"
    ]
   },
   "torestfrequency": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Derives rest frequency from raw frequency and resolved Doppler records, with scalar broadcasting and every vector result checked against independent CASA scalar calls.",
    "evidence": [
     "signature",
-    "refusals"
+    "spectral-casa"
    ]
   },
   "touvw": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
     "refusals"
@@ -411,8 +416,8 @@
   },
   "uvw": {
    "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "issue": 1252,
+   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
     "refusals"
@@ -490,6 +495,21 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "spectral-vector-data-loss",
+   "record": "Measures spectral conversions reject or truncate valid vectors",
+   "inputs": "Frequency/Doppler vectors passed to spectral helpers; cyclic list/dictionary arguments passed to doppler or todoppler.",
+   "casa": "CASA 6.7.6.14 truncates tofrequency, toradialvelocity and torestfrequency vectors, rejects a valid unframed todoppler frequency vector, and terminates with SIGSEGV on the recorded cyclic arguments.",
+   "ours": "Preserves every scalar-control result with scalar broadcasting; rejects cyclic/deep inputs with catchable ValueError and restores capture state after failure.",
+   "rationale": "Correct scientific data loss, process crashes and behavior contradicting the scalar helper intent.",
+   "impact": "Vector callers receive all requested results. Invalid cyclic arguments no longer terminate the process.",
+   "evidence": [
+    "spectral-casa",
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md CASA deviations: correct CASA crashes, data loss and contradictions of evident intent."
   }
  ],
  "evidence": {
@@ -501,16 +521,18 @@
     "crates/casars-python/python/tests/data/casa_measures_signatures.json",
     "crates/casars-python/python/tests/test_tools_measures.py",
     "crates/casars-python/src/tools/measures/surface.rs"
-   ]
+   ],
+   "source_revision": "3f8e6726c60d3ff270d57063befec54302d1fe07"
   },
   "refusals": {
    "kind": "Refusal test",
    "state": "recorded",
-   "scope": "Each method casa-rs does not implement raises NotImplementedError naming #1053.",
+   "scope": "Each method casa-rs does not implement raises NotImplementedError naming #1252.",
    "links": [
     "crates/casars-python/python/tests/test_tools_measures.py",
     "crates/casars-python/src/tools/mod.rs"
-   ]
+   ],
+   "source_revision": "3f8e6726c60d3ff270d57063befec54302d1fe07"
   },
   "casa-values": {
    "kind": "CASA-probed values",
@@ -523,7 +545,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool measures (bg-mac-mini)",
-   "receipt": "resources/casa-compat/evidence/me-on-casa-20261103.json"
+   "receipt": "resources/casa-compat/evidence/me-on-casa-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "bugs-record": {
    "kind": "Deviation record",
@@ -531,7 +554,8 @@
    "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
    "links": [
     "docs/CASA (C++) bugs.md"
-   ]
+   ],
+   "source_revision": "3f8e6726c60d3ff270d57063befec54302d1fe07"
   },
   "casa-lists": {
    "kind": "CASA-recorded values",
@@ -540,7 +564,8 @@
    "scope": "me.obslist, me.sourcelist and me.linelist.",
    "links": [
     "crates/casars-python/python/tests/test_tools_measures.py"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "casa-observatories": {
    "kind": "CASA-recorded values",
@@ -549,7 +574,8 @@
    "scope": "me.observatory for every name me.obslist gives.",
    "links": [
     "crates/casars-python/python/tests/test_tools_measures.py"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "casa-names": {
    "kind": "CASA-recorded values",
@@ -558,7 +584,8 @@
    "scope": "How me.observatory, me.spectralline and me.source find an entry by name.",
    "links": [
     "crates/casars-python/python/tests/test_tools_measures.py"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "undefined-frequency-casa": {
    "kind": "CASA-recorded values",
@@ -618,6 +645,24 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "a960cd5c5fea86dea9badc358b58397374b11c2a"
+  },
+  "spectral-casa": {
+   "kind": "CASA 6.7.6.14 scalar/vector/offset comparisons and release performance",
+   "state": "passed",
+   "scope": "Six spectral methods and their shared query/frame/offset paths; full measures acceptance remains open.",
+   "result": "558 CASA 6.7.6.14 cases plus 3 isolated safety regressions pass. All eight shared-code review findings have independent regressions and are repaired. The affected 920-test Python batch and 61 Rust/provider tests pass across the recorded runs; optional skips are excluded. All 12 release cases are faster than CASA, minimum 5.2370x.",
+   "links": [
+    "tools/simulation/measures_spectral_oracle.py",
+    "tools/simulation/measures_spectral_benchmark.py",
+    "crates/casars-python/python/tests/data/casa_measures_spectral.json",
+    "crates/casars-python/python/tests/test_measures_spectral.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7",
+   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+   "revision": "cecd62488304f66d95405494bbe2eae2de115e55",
+   "command": "target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_spectral.py; CASAPY tools/simulation/measures_spectral_benchmark.py --backend casa --repeat 1000 --samples 7; CASAPY tools/simulation/measures_spectral_benchmark.py --backend casars --repeat 1000 --samples 7",
+   "receipt": "resources/casa-compat/evidence/me-spectral-equivalence-20261119.json"
   }
  }
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! casacore's `MeasureHolder`: an epoch, direction, position or frequency
+//! casacore's scalar `MeasureHolder`: epoch, direction, position, frequency,
+//! Doppler and radial-velocity values
 //! with any of its kind's reference codes, read from and written to the
 //! measure records CASA's tools exchange.
 //!
@@ -24,15 +25,17 @@
 //!   shifted, so `me.position('WGS84', '10deg', '20deg', '0m')` has a
 //!   height of 1e-6 m, as in CASA.
 //!
-//! Divergence: measure offsets and multi-valued measures (quantity records
-//! with more than one value) are not yet implemented in casa-rs; reading one
-//! fails with a message that says so.
+//! The measures tool's record envelope handles vectors and reference offsets,
+//! reusing [`Measure::record_definition`] to parse metadata and units once.
+//! This scalar holder is also used by task parameter conversion.
 
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use casa_types::measures::radial_velocity::MRadialVelocity;
 use casa_types::measures::{EpochRef, MEpoch, MPosition, MjdHighPrec, PositionRef};
 use casa_types::quanta::{Dimension, Quantity, UnitDim, unique_prefix_index};
 
@@ -51,6 +54,8 @@ pub(crate) enum MeasureKind {
     Direction,
     Position,
     Frequency,
+    Doppler,
+    RadialVelocity,
 }
 
 /// A kind's reference codes, in casacore's `allMyTypes` order: the normal
@@ -176,6 +181,40 @@ impl Codes {
     }
 }
 
+/// CASA's canonical Doppler names and aliases (`MDoppler::allMyTypes`).
+pub(crate) const DOPPLER_CODES: Codes = Codes {
+    all: &[
+        "RADIO",
+        "Z",
+        "RATIO",
+        "BETA",
+        "GAMMA",
+        "OPTICAL",
+        "TRUE",
+        "RELATIVISTIC",
+    ],
+    extra: 0,
+    aliases: &[("Z", "OPTICAL"), ("BETA", "TRUE"), ("RELATIVISTIC", "TRUE")],
+    default: "RADIO",
+};
+/// CASA's radial-velocity reference codes.
+pub(crate) const RADIAL_VELOCITY_CODES: Codes = Codes {
+    all: &[
+        "LSRK", "LSRD", "BARY", "GEO", "TOPO", "GALACTO", "LGROUP", "CMB",
+    ],
+    extra: 0,
+    aliases: &[],
+    default: "LSRK",
+};
+/// Exact speed of light, used by casacore's `MVDoppler` velocity quantities.
+pub(crate) const C_MPS: f64 = 299_792_458.0;
+
+pub(crate) fn doppler_ref(code: &str) -> Result<DopplerRef, String> {
+    (if code == "TRUE" { "BETA" } else { code })
+        .parse()
+        .map_err(|e: casa_types::measures::MeasureError| e.to_string())
+}
+
 impl MeasureKind {
     /// The kind's reference codes.
     pub(crate) fn codes(self) -> &'static Codes {
@@ -184,6 +223,8 @@ impl MeasureKind {
             Self::Direction => &DIRECTION_CODES,
             Self::Position => &POSITION_CODES,
             Self::Frequency => &FREQUENCY_CODES,
+            Self::Doppler => &DOPPLER_CODES,
+            Self::RadialVelocity => &RADIAL_VELOCITY_CODES,
         }
     }
 
@@ -194,6 +235,8 @@ impl MeasureKind {
             Self::Direction => "direction",
             Self::Position => "position",
             Self::Frequency => "frequency",
+            Self::Doppler => "doppler",
+            Self::RadialVelocity => "radialvelocity",
         }
     }
 
@@ -204,6 +247,8 @@ impl MeasureKind {
             Self::Direction => "Direction",
             Self::Position => "Position",
             Self::Frequency => "Frequency",
+            Self::Doppler => "Doppler",
+            Self::RadialVelocity => "Radialvelocity",
         }
     }
 }
@@ -220,6 +265,10 @@ pub(crate) enum MeasureValue {
     Position([f64; 3]),
     /// Hz.
     Frequency(f64),
+    /// Dimensionless Doppler convention value (velocity quantities are v/c).
+    Doppler(f64),
+    /// Radial velocity in m/s.
+    RadialVelocity(f64),
 }
 
 /// A measure: a value and a canonical reference code of its kind.
@@ -236,6 +285,8 @@ pub(crate) enum CasaMeasure {
     Direction(MDirection),
     Position(MPosition),
     Frequency(MFrequency),
+    Doppler(MDoppler),
+    RadialVelocity(MRadialVelocity),
 }
 
 /// A record [`Measure::from_record`] could not read.
@@ -272,6 +323,14 @@ fn illegal_quantity() -> HolderError {
     HolderError::Invalid("Illegal quantity in MeasureHolder::fromRecord\n".to_string())
 }
 
+/// Parsed reference and quantities, shared by scalar and vector records.
+pub(crate) struct MeasureDefinition {
+    pub(crate) kind: MeasureKind,
+    pub(crate) refer: &'static str,
+    pub(crate) quantities: Vec<Quantity>,
+    pub(crate) warning: Option<String>,
+}
+
 impl Measure {
     /// The measure's kind.
     pub(crate) fn kind(&self) -> MeasureKind {
@@ -280,6 +339,8 @@ impl Measure {
             MeasureValue::Direction(_) => MeasureKind::Direction,
             MeasureValue::Position(_) => MeasureKind::Position,
             MeasureValue::Frequency(_) => MeasureKind::Frequency,
+            MeasureValue::Doppler(_) => MeasureKind::Doppler,
+            MeasureValue::RadialVelocity(_) => MeasureKind::RadialVelocity,
         }
     }
 
@@ -287,6 +348,17 @@ impl Measure {
     pub(crate) fn from_record(
         record: &BTreeMap<String, Variant>,
     ) -> Result<ReadMeasure, HolderError> {
+        let definition = Self::record_definition(record)?;
+        Ok(ReadMeasure {
+            measure: Self::from_values(definition.kind, definition.refer, &definition.quantities)?,
+            warning: definition.warning,
+        })
+    }
+
+    /// Parse the record's kind, reference and units once, before evaluating values.
+    pub(crate) fn record_definition(
+        record: &BTreeMap<String, Variant>,
+    ) -> Result<MeasureDefinition, HolderError> {
         let (Some(Variant::Text(kind)), Some(Variant::Text(refer))) =
             (record.get("type"), record.get("refer"))
         else {
@@ -297,7 +369,9 @@ impl Measure {
             "direction" => MeasureKind::Direction,
             "position" => MeasureKind::Position,
             "frequency" => MeasureKind::Frequency,
-            "doppler" | "radialvelocity" | "baseline" | "uvw" | "earthmagnetic" => {
+            "doppler" => MeasureKind::Doppler,
+            "radialvelocity" => MeasureKind::RadialVelocity,
+            "baseline" | "uvw" | "earthmagnetic" => {
                 return Err(HolderError::Invalid(format!(
                     "{kind} measures are not yet implemented in casa-rs"
                 )));
@@ -329,9 +403,10 @@ impl Measure {
                 "measure offsets are not yet implemented in casa-rs".to_string(),
             ));
         }
-        let values = record_values(record)?;
-        Ok(ReadMeasure {
-            measure: Self::from_values(kind, code, &values)?,
+        Ok(MeasureDefinition {
+            kind,
+            refer: code,
+            quantities: record_values(record)?,
             warning,
         })
     }
@@ -347,33 +422,55 @@ impl Measure {
             MeasureKind::Direction => direction_value(values)?,
             MeasureKind::Position => position_value(values)?,
             MeasureKind::Frequency => frequency_value(values)?,
+            MeasureKind::Doppler => MeasureValue::Doppler(velocity_value(values, true)?),
+            MeasureKind::RadialVelocity => {
+                MeasureValue::RadialVelocity(velocity_value(values, false)?)
+            }
         };
         Ok(Self { refer, value })
     }
 
-    /// `MeasureHolder::toRecord`.
-    pub(crate) fn to_value(self) -> CasaValue {
-        let mut fields = vec![
-            (
-                "type",
-                CasaValue::Text(self.kind().record_type().to_string()),
-            ),
-            ("refer", CasaValue::Text(self.refer.to_string())),
-        ];
+    /// The ordered numeric components of `MeasureHolder::toRecord`.
+    pub(crate) fn quantity_values(self) -> [f64; 3] {
         match self.value {
-            MeasureValue::Epoch(mjd) => fields.push(("m0", CasaValue::quantity(mjd.as_mjd(), "d"))),
+            MeasureValue::Epoch(mjd) => [mjd.as_mjd(), 0.0, 0.0],
             MeasureValue::Direction(cosines) => {
-                let (longitude, latitude) = direction_angles(cosines);
-                fields.push(("m0", CasaValue::quantity(longitude, "rad")));
-                fields.push(("m1", CasaValue::quantity(latitude, "rad")));
+                let (lon, lat) = direction_angles(cosines);
+                [lon, lat, 0.0]
             }
             MeasureValue::Position(xyz) => {
-                let (longitude, latitude, length) = position_spherical(xyz);
-                fields.push(("m0", CasaValue::quantity(longitude, "rad")));
-                fields.push(("m1", CasaValue::quantity(latitude, "rad")));
-                fields.push(("m2", CasaValue::quantity(length, "m")));
+                let (lon, lat, length) = position_spherical(xyz);
+                [lon, lat, length]
             }
-            MeasureValue::Frequency(hz) => fields.push(("m0", CasaValue::quantity(hz, "Hz"))),
+            MeasureValue::Frequency(hz) => [hz, 0.0, 0.0],
+            MeasureValue::Doppler(value) => [value * C_MPS, 0.0, 0.0],
+            MeasureValue::RadialVelocity(value) => [value, 0.0, 0.0],
+        }
+    }
+
+    /// Units of the ordered record components.
+    pub(crate) fn quantity_units(self) -> &'static [&'static str] {
+        match self.kind() {
+            MeasureKind::Epoch => &["d"],
+            MeasureKind::Direction => &["rad", "rad"],
+            MeasureKind::Position => &["rad", "rad", "m"],
+            MeasureKind::Frequency => &["Hz"],
+            MeasureKind::Doppler | MeasureKind::RadialVelocity => &["m/s"],
+        }
+    }
+
+    /// `MeasureHolder::toRecord`.
+    pub(crate) fn to_value(self) -> CasaValue {
+        let values = self.quantity_values();
+        let mut fields = vec![
+            (
+                "type".to_owned(),
+                CasaValue::Text(self.kind().record_type().to_owned()),
+            ),
+            ("refer".to_owned(), CasaValue::Text(self.refer.to_owned())),
+        ];
+        for (i, &unit) in self.quantity_units().iter().enumerate() {
+            fields.push((format!("m{i}"), CasaValue::quantity(values[i], unit)));
         }
         CasaValue::record(fields)
     }
@@ -406,6 +503,17 @@ impl Measure {
                 hz,
                 FrequencyRef::from_str(self.refer).map_err(|_| unsupported("frequency"))?,
             )),
+            MeasureValue::Doppler(value) => {
+                CasaMeasure::Doppler(MDoppler::new(value, doppler_ref(self.refer)?))
+            }
+            MeasureValue::RadialVelocity(value) => {
+                CasaMeasure::RadialVelocity(MRadialVelocity::new(
+                    value,
+                    self.refer
+                        .parse()
+                        .map_err(|_| unsupported("radialvelocity"))?,
+                ))
+            }
         })
     }
 
@@ -437,8 +545,32 @@ impl Measure {
                 refer: FREQUENCY_CODES.resolve_or_default(frequency.refer().as_str()),
                 value: MeasureValue::Frequency(frequency.hz()),
             },
+            CasaMeasure::Doppler(value) => Self {
+                refer: DOPPLER_CODES.resolve_or_default(value.refer().as_str()),
+                value: MeasureValue::Doppler(value.value()),
+            },
+            CasaMeasure::RadialVelocity(value) => Self {
+                refer: RADIAL_VELOCITY_CODES.resolve_or_default(value.refer().as_str()),
+                value: MeasureValue::RadialVelocity(value.ms()),
+            },
         }
     }
+}
+
+fn velocity_value(values: &[Quantity], doppler: bool) -> Result<f64, HolderError> {
+    let value = match values {
+        [] => return Ok(0.0),
+        [value] => value,
+        _ => return Err(illegal_quantity()),
+    };
+    if doppler && value.unit().val().dim.is_dimensionless() {
+        return Ok(value.get_si_value());
+    }
+    let speed = UnitDim::basis(Dimension::Length) / UnitDim::basis(Dimension::Time);
+    if value.unit().val().dim != speed {
+        return Err(illegal_quantity());
+    }
+    Ok(value.get_si_value() / if doppler { C_MPS } else { 1.0 })
 }
 
 /// The `m0`, `m1`, `m2` quantities of a measure record, up to the first
