@@ -3289,6 +3289,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#comet-numeric-queries-can-terminate-without-an-epoch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Comet numeric queries can terminate without an epoch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#component-spectrum-changes-can-discard-data" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9085,6 +9096,17 @@ the raw CASA magnetic outputs and separately captures CASA's direction
 conversion at the same angles. The normalized FK4 controls return
 finite vectors in both directions and preserve the input strength
 (#1252).</p>
+<h2 id="comet-numeric-queries-can-terminate-without-an-epoch">Comet numeric queries can terminate without an epoch<a class="headerlink" href="#comet-numeric-queries-can-terminate-without-an-epoch" title="Permanent link">&para;</a></h2>
+<p>After loading <code>Ganymede_55437-56293dUTC.tab</code> with an empty observing frame,
+CASA 6.7.6.14 terminates with SIGSEGV in both <code>cometdist()</code> and
+<code>cometangdiam()</code>. The binding dereferences the frame's epoch without
+checking whether one was set. This also applies when <code>done()</code> empties
+the frame while retaining the active table for the comet queries.</p>
+<p>Casa-rs reports the missing epoch and returns the same <code>-1 AU</code> or
+<code>-1 rad</code> sentinel that CASA uses when the table has no sample at a
+requested epoch. Setting an epoch enables the queries on the retained
+table again. The oracle runs each missing-epoch probe in its own process
+with core files disabled (#1252).</p>
 <h2 id="component-spectrum-changes-can-discard-data">Component spectrum changes can discard data<a class="headerlink" href="#component-spectrum-changes-can-discard-data" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-06</li>
