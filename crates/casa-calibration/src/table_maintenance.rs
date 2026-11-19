@@ -32,6 +32,28 @@ pub fn create_calibration_table(
     caltype: &str,
     single_channel: bool,
 ) -> Result<(), String> {
+    let writer = prepare_empty_calibration_table(
+        measurement_set,
+        destination,
+        partype,
+        caltype,
+        single_channel,
+    )?;
+    let _destination_lock = if destination.exists() {
+        Some(TableWriteLock::acquire_to_reread(destination, 1).map_err(error_text)?)
+    } else {
+        None
+    };
+    writer.save_main().map_err(error_text)
+}
+
+pub(crate) fn prepare_empty_calibration_table<'a>(
+    measurement_set: &'a MeasurementSet,
+    destination: &Path,
+    partype: &str,
+    caltype: &str,
+    single_channel: bool,
+) -> Result<CalibrationTableWriter<'a>, String> {
     if destination.as_os_str().is_empty() {
         return Err("an output calibration table is required".into());
     }
@@ -57,11 +79,6 @@ pub fn create_calibration_table(
         CalibrationOutputMode::Replace,
     )
     .map_err(error_text)?;
-    let _destination_lock = if destination.exists() {
-        Some(TableWriteLock::acquire_to_reread(destination, 1).map_err(error_text)?)
-    } else {
-        None
-    };
     let mut template =
         MeasurementSet::create_memory(MeasurementSetBuilder::new()).map_err(error_text)?;
     for id in [
@@ -86,7 +103,7 @@ pub fn create_calibration_table(
         make_windows_single_channel(&writer.output_path().join("SPECTRAL_WINDOW"))
             .map_err(error_text)?;
     }
-    writer.save_main().map_err(error_text)
+    Ok(writer)
 }
 
 fn copy_standard_rows(source: &Table, target: &mut Table) -> Result<(), String> {

@@ -20,6 +20,7 @@
 //! storage stack, so every on-disk assumption made here is exercised against
 //! the same table reader/writer substrate used elsewhere in the repo.
 
+mod accumulate;
 mod antpos_vla;
 mod bandpass;
 mod calibration_service;
@@ -65,6 +66,7 @@ pub use uvsub::{
     subtract_visibility_model, subtract_visibility_model_holding, visibility_model_source_paths,
 };
 
+pub use accumulate::{CalibrationAccumulationRequest, accumulate_calibration};
 pub use output::CalibrationOutputMode;
 pub use table_maintenance::{create_calibration_table, update_calibration_table};
 

@@ -115,7 +115,7 @@ fn stage_subtables(
     Ok(())
 }
 
-fn update_spectral_window_flags(table: &Table, staging: &Path) -> Result<(), String> {
+pub(crate) fn update_spectral_window_flags(table: &Table, staging: &Path) -> Result<(), String> {
     let path = staging.join("SPECTRAL_WINDOW");
     let mut spectrum = Table::open(TableOptions::new(&path)).map_err(error_text)?;
     let rows = (0..table.row_count()).collect::<Vec<_>>();
