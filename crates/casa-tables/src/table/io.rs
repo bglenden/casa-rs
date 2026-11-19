@@ -2134,17 +2134,30 @@ fn build_group_rows_from_current_cells(
     row_count: usize,
     col_descs: &[crate::storage::table_control::ColumnDescContents],
 ) -> Result<Vec<RecordValue>, TableError> {
-    (0..row_count)
-        .map(|row_index| {
-            let mut fields = Vec::with_capacity(col_descs.len());
-            for col_desc in col_descs {
-                if let Some(value) = current_value_for_column(table, row_index, col_desc)? {
-                    fields.push(RecordField::new(col_desc.col_name.clone(), value));
+    let mut rows: Vec<_> = (0..row_count)
+        .map(|_| RecordValue::new(Vec::with_capacity(col_descs.len())))
+        .collect();
+    let indices = (0..row_count).collect::<Vec<_>>();
+    for col_desc in col_descs {
+        let name = &col_desc.col_name;
+        if col_desc.is_array && !col_desc.is_record() {
+            // Managers such as IncrementalStMan scan array storage even for
+            // a single row. Read the column once while rebuilding the group.
+            let values = table.get_array_cells_owned_uncached(name, &indices)?;
+            for (row, value) in rows.iter_mut().zip(values) {
+                if let Some(value) = value {
+                    row.push(RecordField::new(name.clone(), Value::Array(value)));
                 }
             }
-            Ok(RecordValue::new(fields))
-        })
-        .collect()
+        } else {
+            for (index, row) in rows.iter_mut().enumerate() {
+                if let Some(value) = current_value_for_column(table, index, col_desc)? {
+                    row.push(RecordField::new(name.clone(), value));
+                }
+            }
+        }
+    }
+    Ok(rows)
 }
 
 fn collect_column_values_from_current_cells(

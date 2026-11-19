@@ -519,14 +519,7 @@ fn persist_updates(
     writer.flush()?;
     drop(writer);
     lock.record_write();
-    // StandardStMan has sparse paths for scalar columns and array columns
-    // separately. Mixing them in one request rewrites the entire manager.
-    table
-        .prepare_write()
-        .save_selected_rows(&columns[..columns.len() - 1], &rows)?;
-    table
-        .prepare_write()
-        .save_selected_rows(&["FLAG_ROW"], &rows)?;
+    table.prepare_write().save_selected_rows(&columns, &rows)?;
     table.discard_persisted_cell_updates(&columns, &rows);
     Ok(())
 }
