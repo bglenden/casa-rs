@@ -353,7 +353,12 @@ fn variant_selector(task: &TaskInvocation<'_>, name: &str) -> Result<Option<Stri
     if let ParameterValue::String(raw) = value {
         if matches!(name, "field" | "spw" | "scan" | "antenna" | "timerange") {
             let text = task_selection_text(task, name)?;
-            return Ok((!text.trim().is_empty()).then_some(text));
+            let present = if name == "spw" {
+                !text.is_empty()
+            } else {
+                !text.trim().is_empty()
+            };
+            return Ok(present.then_some(text));
         }
         return Ok((!raw.is_empty()).then(|| raw.clone()));
     }
