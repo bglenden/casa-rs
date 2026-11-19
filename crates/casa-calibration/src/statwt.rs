@@ -7,8 +7,12 @@ mod grouping;
 mod output;
 mod robust;
 
-use casa_ms::{MeasurementSet, MsError, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
+use casa_ms::{
+    MeasurementSet, MsError, MsResult, MsSelection, MsSelectionError, ResolvedMsSelection,
+    ResolvedMsSelectionRow,
+};
 use casa_tables::{Table, TableWriteLock};
+use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder};
 
@@ -31,6 +35,24 @@ pub enum StatWtDataColumn {
 }
 
 impl StatWtDataColumn {
+    /// Interpret the case-insensitive CASA data-column selector.
+    pub fn parse(value: &str) -> MsResult<Self> {
+        let value = value.to_ascii_lowercase();
+        if value.starts_with('d') {
+            Ok(Self::Data)
+        } else if value.starts_with('c') {
+            Ok(Self::Corrected)
+        } else if value.starts_with("residual_") {
+            Ok(Self::ResidualData)
+        } else if value.starts_with("residual") {
+            Ok(Self::ResidualCorrected)
+        } else {
+            Err(MsError::InvalidInput(format!(
+                "unknown statwt data column {value:?}"
+            )))
+        }
+    }
+
     fn visibility_column(self) -> &'static str {
         match self {
             Self::Data | Self::ResidualData => "DATA",
@@ -56,6 +78,13 @@ pub enum StatWtTimeBin {
     Seconds(f64),
 }
 
+impl StatWtTimeBin {
+    /// Read a positive duration with time units.
+    pub fn duration(value: &str) -> MsResult<Self> {
+        physical_width(value, "s", "timebin").map(Self::Seconds)
+    }
+}
+
 /// Boundaries and correlations to combine within a time bin.
 #[derive(Clone, Copy, Default)]
 pub struct StatWtCombine {
@@ -69,6 +98,19 @@ pub struct StatWtCombine {
     pub fields: bool,
 }
 
+impl StatWtCombine {
+    /// Parse the CASA combination selector.
+    pub fn parse(value: &str) -> Self {
+        let folded = value.to_ascii_lowercase();
+        Self {
+            correlations: value.contains("corr"),
+            scans: folded.contains("scan"),
+            states: folded.contains("state"),
+            fields: folded.contains("field"),
+        }
+    }
+}
+
 /// How channels within a spectral window contribute to each estimate.
 #[derive(Clone, Copy)]
 pub enum StatWtChannelBin {
@@ -78,6 +120,28 @@ pub enum StatWtChannelBin {
     Channels(usize),
     /// Bin channels up to a frequency difference from the first channel.
     Hertz(f64),
+}
+
+impl StatWtChannelBin {
+    /// Read the all-channel marker or a positive quantity with frequency units.
+    pub fn parse(value: &str) -> MsResult<Self> {
+        if value == "spw" {
+            Ok(Self::Window)
+        } else {
+            physical_width(value, "Hz", "chanbin").map(Self::Hertz)
+        }
+    }
+}
+
+fn physical_width(value: &str, unit: &str, argument: &str) -> MsResult<f64> {
+    let invalid = || MsError::InvalidInput(format!("invalid statwt {argument} {value:?}"));
+    let unit = Unit::new(unit).expect("known unit");
+    let quantity: Quantity = value.parse().map_err(|_| invalid())?;
+    let width = quantity.get_value_in(&unit).map_err(|_| invalid())?;
+    if width <= 0.0 || !width.is_finite() {
+        return Err(invalid());
+    }
+    Ok(width)
 }
 
 /// Options for visibility weight estimation.
@@ -105,6 +169,27 @@ pub struct StatWtOptions {
     pub weight_range: Option<[f64; 2]>,
 }
 
+/// Interpret CASA's optional inclusive `wtrange`.
+pub fn statwt_weight_range(bounds: &[f64]) -> MsResult<Option<[f64; 2]>> {
+    match bounds {
+        [] => Ok(None),
+        &[left, right] if left >= 0.0 && right >= 0.0 && left != right => {
+            Ok(Some([left.min(right), left.max(right)]))
+        }
+        _ => Err(MsError::InvalidInput(
+            "wtrange requires two distinct nonnegative bounds".into(),
+        )),
+    }
+}
+
+/// Resolve the CASA selectors used by the task and the attached MS tool.
+pub fn resolve_statwt_selection(
+    ms: &MeasurementSet,
+    selection: &MsSelection,
+) -> Result<ResolvedMsSelection, MsSelectionError> {
+    crate::session::resolve_casa_calibration_selection(ms, selection)
+}
+
 /// Statistical summary of the estimated weights over previously unflagged data.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub struct StatWtSummary {
@@ -125,6 +210,14 @@ pub fn estimate_statwt(
     options: &StatWtOptions,
     mut lock: Option<&mut TableWriteLock>,
 ) -> MsResult<StatWtSummary> {
+    if selection.selected_rows.is_empty() {
+        return Err(MsError::InvalidInput(
+            "MeasurementSet has zero selected rows".into(),
+        ));
+    }
+    if options.minimum_samples < 2 {
+        return Err(MsError::InvalidInput("minsamp must be at least 2".into()));
+    }
     if matches!(options.time_bin, StatWtTimeBin::Timestamps(0))
         || matches!(options.time_bin, StatWtTimeBin::Seconds(value) if value <= 0.0 || !value.is_finite())
     {

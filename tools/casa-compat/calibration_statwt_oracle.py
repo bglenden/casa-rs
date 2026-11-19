@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 import casatasks as casa
+import casatools
 import numpy as np
 
 from applycal_oracle import copy_ms
@@ -49,22 +50,46 @@ def read(path):
                 if name in table.colnames()}
 
 
-def compare_case(root, base, native, name, options):
+def compare_case(root, base, native, name, options, *, through_tool=False):
     products = []
     reports = []
     for api, engine in ((casa, "casa"), (native, "native")):
         vis = root / f"{engine}-{name}.ms"
         copy_ms(base, vis)
         before = read(vis)
-        preview = api.statwt(str(vis), flagbackup=True, preview=True, **options)
+        if through_tool:
+            if engine == 'casa':
+                factory = casatools.ms
+            else:
+                from casars.tools import ms as factory
+
+            def run(preview):
+                tool = factory()
+                assert tool.statwt() == {}
+                assert tool.open(str(vis), nomodify=preview, lock=True)
+                try:
+                    supplied = dict(options)
+                    assert tool.msselect({'field': 'FLUX'}, onlyparse=True)
+                    if 'field' in supplied:
+                        assert tool.msselect({'field': supplied.pop('field')})
+                        assert tool.msselect({'spw': '0:2~5'})
+                        assert not tool.msselect({'unknown': 'ignored'})
+                    return tool.statwt(preview=preview, **supplied)
+                finally:
+                    tool.close()
+        else:
+            def run(preview):
+                return api.statwt(str(vis), flagbackup=preview, preview=preview, **options)
+        preview = run(True)
         assert list(preview) == ["mean", "variance"]
         assert not Path(str(vis) + ".flagversions").exists()
         after = read(vis)
         assert after.keys() == before.keys()
         for column, values in after.items():
             np.testing.assert_array_equal(values, before[column], err_msg=column)
-        report = api.statwt(str(vis), flagbackup=False, **options)
-        assert report == preview
+        report = run(False)
+        for key in report:
+            np.testing.assert_allclose(report[key], preview[key], rtol=2e-7, atol=0, err_msg=(engine, name, key))
         reports.append(report)
         result = read(vis)
         for column in (name for name in ("DATA", "CORRECTED_DATA", "MODEL_DATA") if name in before):
@@ -167,7 +192,32 @@ def main():
     ])
     for name, source_ms, options in channels:
         compare_case(root, source_ms, native, name, options)
-    print(f"{len(cases) + len(timed) + len(channels)} matched CASA classical statwt workflows")
+    outliers = root / 'outliers.ms'
+    copy_ms(weighted, outliers)
+    with opened(outliers, True) as table:
+        values = table.getcol('CORRECTED_DATA')
+        values[0, 3, ::14] += 200 + 80j
+        values[1, 6, ::13] -= 50 + 300j
+        table.putcol('CORRECTED_DATA', values)
+    robust = [
+        ('hinges-default', {'statalg': 'hinges-fences'}),
+        ('hinges-fences', {'statalg': 'hinges-fences', 'fence': 1.5, 'chanbin': 4}),
+        ('chauvenet-default', {'statalg': 'chauvenet'}),
+        ('chauvenet-limited', {'statalg': 'chauvenet', 'zscore': 1.75, 'maxiter': 2}),
+        ('fit-half-mean', {'statalg': 'fit-half'}),
+        ('fit-half-median', {'statalg': 'fit-half', 'center': 'median', 'lside': False}),
+        ('fit-half-zero', {'statalg': 'fit-half', 'center': 'zero', 'combine': 'corr'}),
+    ]
+    for name, options in robust:
+        compare_case(root, outliers, native, name, {'timebin': 3, 'slidetimebin': True, **options})
+    tools = [
+        ('tool-default', base, {}),
+        ('tool-selection', spectra, {'field': 'FLUX', 'statalg': 'hinges-fences', 'fence': 1.5, 'chanbin': 4}),
+        ('tool-variants', weighted, {'chanbin': '1MHz', 'timebin': '25s', 'slidetimebin': True, 'datacolumn': 'data'}),
+    ]
+    for name, source_ms, options in tools:
+        compare_case(root, source_ms, native, name, options, through_tool=True)
+    print(f"{len(cases) + len(timed) + len(channels) + len(robust) + len(tools)} matched CASA statwt workflows")
 
 
 if __name__ == "__main__":

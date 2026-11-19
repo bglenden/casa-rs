@@ -3,6 +3,7 @@
 //! with its signature (ADR-0017, #1025). A method casa-rs does not implement
 //! yet raises `NotImplementedError` naming #1030 (`stubs.rs`).
 
+mod statwt;
 mod stubs;
 pub(crate) mod surface;
 
@@ -37,6 +38,7 @@ struct AttachedMs {
     path: PathBuf,
     writable: bool,
     sources: Vec<PathBuf>,
+    selected_rows: Option<Vec<usize>>,
     write_locks: BTreeMap<PathBuf, TableWriteLock>,
     read_locks: BTreeMap<PathBuf, Table>,
 }
@@ -49,6 +51,7 @@ impl AttachedMs {
             path,
             writable,
             sources,
+            selected_rows: None,
             write_locks: BTreeMap::new(),
             read_locks: BTreeMap::new(),
         };

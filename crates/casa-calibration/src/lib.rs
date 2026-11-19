@@ -61,7 +61,7 @@ mod writer;
 
 pub use statwt::{
     StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtOptions,
-    StatWtSummary, StatWtTimeBin, estimate_statwt,
+    StatWtSummary, StatWtTimeBin, estimate_statwt, resolve_statwt_selection, statwt_weight_range,
 };
 
 pub use uvsub::{

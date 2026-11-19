@@ -165,7 +165,7 @@ impl StatWtAlgorithm {
                     }
                 }
                 return if count == 0 {
-                    0.0
+                    f64::NAN
                 } else {
                     variance / f64::from(count)
                 };
