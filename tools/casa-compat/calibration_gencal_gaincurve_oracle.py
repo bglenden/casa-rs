@@ -90,7 +90,7 @@ def protects_curve_input(root, vis, source, native):
                                   (source / 'inside.cal', {})):
         try:
             generate(native, vis, output_table, [('gc', options)])
-        except RuntimeError as error:
+        except (ValueError, RuntimeError) as error:
             assert 'overlap' in str(error)
         else:
             raise AssertionError('gencal accepted an output inside its gain-curve input')
