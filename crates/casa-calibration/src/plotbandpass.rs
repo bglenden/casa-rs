@@ -25,6 +25,7 @@ pub(crate) use document::{BandpassPage, ChannelRange, DisplayOptions, pages};
 use selection::{GroupKey, SelectedRow, groups};
 pub(crate) use selection::{Overlay, Selectors};
 use spectrum::{Curve, Derivative, Ordinate, platforming};
+use statistics::StatisticsGrid;
 pub(crate) use statistics::derivative_record;
 use table::{SolutionWindow, Solutions, Spectrum};
 
@@ -54,6 +55,9 @@ pub(crate) struct BandpassPlots {
     pub(crate) caltable: PathBuf,
     pub(crate) measurement_set: Option<PathBuf>,
     pub(crate) panels: Vec<BandpassPanel>,
+    statistics: Option<StatisticsGrid>,
+    pub(crate) polynomial: bool,
+    immediate_combined_overlay: bool,
 }
 
 pub(crate) struct BandpassPanel {
@@ -103,8 +107,12 @@ enum PlatformingTime {
     Index(usize),
 }
 
-pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlots, String> {
+pub(crate) fn prepare_bandpass(
+    request: &PlotRequest<'_>,
+    panel_limit: Option<usize>,
+) -> Result<BandpassPlots, String> {
     let source = Solutions::open(request.caltable, request.vis)?;
+    let polynomial = source.subtype == "BPOLY";
     let companions = request
         .companion_tables
         .iter()
@@ -116,6 +124,9 @@ pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlot
             caltable: source.path,
             measurement_set: source.measurement_set,
             panels: Vec::new(),
+            statistics: None,
+            polynomial,
+            immediate_combined_overlay: false,
         });
     }
     let (selected, time_count) = groups(
@@ -134,6 +145,9 @@ pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlot
             caltable: source.path,
             measurement_set: source.measurement_set,
             panels: Vec::new(),
+            statistics: None,
+            polynomial,
+            immediate_combined_overlay: false,
         });
     }
     let requested_times =
@@ -144,28 +158,46 @@ pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlot
     let mut panels = Vec::new();
     let spectra = select_spectra(&source, &selected)?;
     let ordinates = ordinates(&source, request.y_axis)?;
+    let statistics = (request.derivative_sigma > 0.0 && !polynomial).then(|| {
+        StatisticsGrid::new(
+            selected.values().flatten().map(|selected| {
+                let row = source.rows[selected.row];
+                (
+                    antenna_name(&source, row.antenna),
+                    row.window,
+                    selected.time_index,
+                    spectra[&selected.row].shape()[0],
+                )
+            }),
+            &ordinates,
+        )
+    });
     let atmosphere = AtmosphereContext::open(&source, &request.atmosphere)?;
     let fdm_windows = fdm_windows(&source, request.show_fdm && request.frequency_axis);
-    for (key, rows) in selected {
+    let context = PanelContext {
+        source: &source,
+        spectra: &spectra,
+        request,
+        time_count,
+        companions: &companions,
+        atmosphere: atmosphere.as_ref(),
+        fdm_windows: fdm_windows.as_deref(),
+    };
+    'groups: for (key, rows) in selected {
         for &axis in &ordinates {
-            panels.push(panel(
-                &source,
-                &spectra,
-                key,
-                &rows,
-                axis,
-                request,
-                time_count,
-                &companions,
-                atmosphere.as_ref(),
-                fdm_windows.as_deref(),
-            )?);
+            if panel_limit.is_some_and(|limit| panels.len() >= limit) {
+                break 'groups;
+            }
+            panels.push(panel(&context, key, &rows, axis)?);
         }
     }
     Ok(BandpassPlots {
         caltable: source.path,
         measurement_set: source.measurement_set,
         panels,
+        statistics,
+        polynomial,
+        immediate_combined_overlay: request.overlay.antenna && request.overlay.time,
     })
 }
 
@@ -193,18 +225,31 @@ fn select_spectra(
         .collect()
 }
 
+struct PanelContext<'a, 'request> {
+    source: &'a Solutions,
+    spectra: &'a BTreeMap<usize, table::Spectrum>,
+    request: &'a PlotRequest<'request>,
+    time_count: usize,
+    companions: &'a [Companion],
+    atmosphere: Option<&'a AtmosphereContext<'request>>,
+    fdm_windows: Option<&'a [SolutionWindow]>,
+}
+
 fn panel(
-    source: &Solutions,
-    spectra: &BTreeMap<usize, table::Spectrum>,
+    context: &PanelContext<'_, '_>,
     key: GroupKey,
     selected: &[SelectedRow],
     ordinate: Ordinate,
-    request: &PlotRequest<'_>,
-    time_count: usize,
-    companions: &[Companion],
-    atmosphere: Option<&AtmosphereContext<'_>>,
-    fdm_windows: Option<&[SolutionWindow]>,
 ) -> Result<BandpassPanel, String> {
+    let PanelContext {
+        source,
+        spectra,
+        request,
+        time_count,
+        companions,
+        atmosphere,
+        fdm_windows,
+    } = *context;
     let mut series = Vec::new();
     let mut comparison_count: Option<usize> = None;
     let mut metadata = None;

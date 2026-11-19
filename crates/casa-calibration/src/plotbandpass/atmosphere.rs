@@ -51,6 +51,12 @@ pub(super) struct AtmosphereContext<'a> {
     scan_times: BTreeMap<i32, Vec<ScanTimes>>,
 }
 
+struct LineOfSight {
+    profile: ProfileParameters,
+    water_mm: f64,
+    airmass: f64,
+}
+
 impl<'a> AtmosphereContext<'a> {
     pub(super) fn open(
         source: &'a Solutions,
@@ -125,15 +131,13 @@ impl<'a> AtmosphereContext<'a> {
             atmosphere: AtmosphereType::MidlatitudeWinter,
             ..ProfileParameters::default()
         };
-        let mut curves = vec![self.evaluate(
-            window,
-            frequency,
-            &parameters,
+        let conditions = LineOfSight {
+            profile: parameters,
             water_mm,
             airmass,
-            frequency_axis,
-            None,
-        )?];
+        };
+        let mut curves =
+            vec![self.evaluate(window, frequency, &conditions, frequency_axis, None)?];
         if self.options.image_sideband
             && let Some(lo) = self.local_oscillator(window.original_id)
         {
@@ -142,15 +146,7 @@ impl<'a> AtmosphereContext<'a> {
                 .iter()
                 .map(|frequency| 2.0 * lo_hz - frequency)
                 .collect::<Vec<_>>();
-            curves.push(self.evaluate(
-                window,
-                &image,
-                &parameters,
-                water_mm,
-                airmass,
-                frequency_axis,
-                Some(lo_hz),
-            )?);
+            curves.push(self.evaluate(window, &image, &conditions, frequency_axis, Some(lo_hz))?);
         }
         Ok(curves)
     }
@@ -159,9 +155,7 @@ impl<'a> AtmosphereContext<'a> {
         &self,
         window: &SolutionWindow,
         frequency: &[f64],
-        parameters: &ProfileParameters,
-        water_mm: f64,
-        airmass: f64,
+        conditions: &LineOfSight,
         frequency_axis: bool,
         image_lo_hz: Option<f64>,
     ) -> Result<AtmosphericCurve, String> {
@@ -186,8 +180,12 @@ impl<'a> AtmosphereContext<'a> {
         )
         .map_err(|error| error.to_string())?;
         let model_frequencies = grid.frequencies_hz().collect::<Vec<_>>();
-        let profile = AtmosphereProfile::new(parameters).map_err(|error| error.to_string())?;
+        let profile =
+            AtmosphereProfile::new(&conditions.profile).map_err(|error| error.to_string())?;
         let absorption = AbsorptionProfile::new(profile, grid);
+        let LineOfSight {
+            water_mm, airmass, ..
+        } = *conditions;
         let water_m = water_mm * 1e-3;
         let zenith = Sky::zenith(water_m);
         let mut y = (0..channels)

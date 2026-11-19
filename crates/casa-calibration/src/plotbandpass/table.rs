@@ -68,6 +68,8 @@ enum Layout {
     Legacy { spectral_ids: Vec<i32> },
 }
 
+type TableCoordinates = (Vec<SolutionWindow>, Vec<String>, Vec<String>);
+
 impl Solutions {
     pub(super) fn open(path: &Path, vis: Option<&Path>) -> Result<Self, String> {
         let table = open(path)?;
@@ -166,7 +168,7 @@ impl Layout {
         table: &Table,
         owner: &Path,
         measurement_set: Option<&Path>,
-    ) -> Result<(Vec<SolutionWindow>, Vec<String>, Vec<String>), String> {
+    ) -> Result<TableCoordinates, String> {
         match self {
             Self::Current => Ok((
                 windows(&linked(table, owner, "SPECTRAL_WINDOW")?)?,

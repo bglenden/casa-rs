@@ -17,6 +17,9 @@ struct Reply {
     pages: Vec<BandpassPage>,
     pdf: Option<PdfOutput>,
     empty_tuple: bool,
+    sequential: bool,
+    polynomial: bool,
+    resample: u32,
 }
 
 #[derive(Serialize)]
@@ -137,15 +140,19 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             pages: Vec::new(),
             pdf: None,
             empty_tuple: true,
+            sequential: display.sequential_names,
+            polynomial: false,
+            resample: display.resample,
         };
         return TaskSuccess::new(CasaValue::None, &reply);
     }
-    let plan = prepare_bandpass(&request).map_err(TaskFailure::execution)?;
-    let value = if request.derivative_sigma > 0.0 {
-        derivative_record(&plan)
-    } else {
-        CasaValue::None
-    };
+    let completed_pages = std::env::var("CASARS_BANDPASS_COMPLETED_PAGES")
+        .ok()
+        .and_then(|text| text.parse::<usize>().ok());
+    let panel_limit = completed_pages
+        .map(|count| count.saturating_mul(display.layout[0] as usize * display.layout[1] as usize));
+    let plan = prepare_bandpass(&request, panel_limit).map_err(TaskFailure::execution)?;
+    let value = derivative_record(&plan).unwrap_or(CasaValue::None);
     let empty_tuple = !request.show_baseband_number || !plan.panels.is_empty();
     let pdf = if build_pdf {
         Some(PdfOutput {
@@ -159,10 +166,18 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     } else {
         None
     };
+    let polynomial = plan.polynomial;
     let reply = Reply {
-        pages: pages(plan, &display).map_err(TaskFailure::execution)?,
+        pages: if completed_pages.is_none() {
+            pages(plan, &display).map_err(TaskFailure::execution)?
+        } else {
+            Vec::new()
+        },
         pdf,
         empty_tuple,
+        sequential: display.sequential_names,
+        polynomial,
+        resample: display.resample,
     };
     TaskSuccess::new(value, &reply)
         .map(|success| success.with_note("Use casars.tasks.plotbandpass to render the figures."))

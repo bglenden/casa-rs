@@ -6,22 +6,70 @@ from .._plot_document import render_document
 
 
 def render_bandpass(reply, workspace):
-    from matplotlib import pyplot as plt
-
     pages = reply["pages"]
     if not pages:
-        return
+        return 0, False
+    from matplotlib import pyplot as plt
+
     options = {"axes.formatter.useoffset": False, "axes.grid": True}
     with plt.style.context("classic"), plt.rc_context(options):
-        products = [draw_page(plt, page, workspace) for page in pages]
+        products, completed, immediate = browse_pages(plt, reply, workspace)
+    if immediate:
+        return completed, True
+    if len(products) == 1 and reply["sequential"] and not reply["polynomial"]:
+        product = products[0]
+        name = product.name.split(".000.png", 1)[0] + ".png"
+        target = product.with_name(name)
+        product.replace(target)
+        products[0] = target
     if reply["pdf"] is not None:
-        make_pdf(reply["pdf"], [path for path in products if path is not None], workspace)
+        make_pdf(reply["pdf"], products, workspace)
+    return completed, False
 
 
-def draw_page(plt, page, workspace):
+def browse_pages(plt, reply, workspace):
+    pages = reply["pages"]
+    interactive = pages[0]["figure"]["show"]
+    figure = plt.figure() if interactive else None
+    products = []
+    completed = current = 0
+    while current < len(pages):
+        page = pages[current]
+        path = draw_page(plt, page, workspace, figure, reply, len(products))
+        if path is not None:
+            products.append(path)
+        completed = max(completed, current + 1)
+        command = input("Press return for next page (b for backwards, q to quit): ") if page["prompt"] else ""
+        if "q" in command:
+            if page["quit_immediately"]:
+                return products, completed, True
+            if path is not None:
+                products.append(save_page(figure, page, workspace, reply, len(products)))
+            break
+        if "b" in command:
+            current = max(0, current - 1)
+        else:
+            current += 1
+        if figure is not None and current < len(pages):
+            figure.clear()
+    return products, completed, False
+
+
+def save_page(figure, page, workspace, reply, sequence):
+    path = workspace / page["figure"]["output_file"]
+    if reply["sequential"]:
+        ending = f'.resample{reply["resample"]}.png' if reply["resample"] > 1 else ".png"
+        stem = path.name.removesuffix(ending).rsplit(".", 1)[0]
+        path = path.with_name(f"{stem}.{sequence:03}{ending}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, format="png", dpi=page["density"])
+    return path
+
+
+def draw_page(plt, page, workspace, figure, reply, sequence):
     plot = page["figure"]
     document = plot["document"]
-    figure, axes = render_document(document, use_native_limits=False)
+    figure, axes = render_document(document, figure=figure, use_native_limits=False)
     path = None
     try:
         if len(document["panels"]) == 1:
@@ -40,11 +88,11 @@ def draw_page(plt, page, workspace):
             if fdm is not None:
                 draw_fdm_windows(axis, fdm)
         if plot["output_file"] is not None:
-            path = workspace / plot["output_file"]
-            path.parent.mkdir(parents=True, exist_ok=True)
-            figure.savefig(path, format="png", dpi=page["density"])
+            path = save_page(figure, page, workspace, reply, sequence)
         if plot["show"]:
             figure.show()
+            figure.canvas.draw_idle()
+            figure.canvas.flush_events()
     finally:
         if not plot["show"]:
             plt.close(figure)

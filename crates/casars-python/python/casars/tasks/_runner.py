@@ -10,7 +10,7 @@ stdout says how it ended. A Python task call neither loads nor saves Last.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import functools
 from http import HTTPStatus
 import inspect
@@ -556,7 +556,10 @@ def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCom
     return _execute_task(task, resolved, workspace, None)
 
 
-def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None) -> TaskCompletion:
+def _execute_task(
+    task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None,
+    *, bandpass_completed_pages: int | None = None,
+) -> TaskCompletion:
     invocation = resolved.provider_invocation()
     executable = _task_executable(task)
     command = (executable, *invocation.args)
@@ -565,6 +568,10 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
         environment.pop("CASARS_PLOT_PAYLOAD", None)
     if payload is not None:
         environment["CASARS_PLOT_PAYLOAD"] = str(payload)
+    if task == "plotbandpass":
+        environment.pop("CASARS_BANDPASS_COMPLETED_PAGES", None)
+        if bandpass_completed_pages is not None:
+            environment["CASARS_BANDPASS_COMPLETED_PAGES"] = str(bandpass_completed_pages)
     try:
         # The task runs in its own session, so a terminal's Ctrl-C reaches
         # Python alone, which passes it on once, in a terminal as in a
@@ -627,11 +634,17 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
         raise TaskParameterError(completion)
     if not completion.successful:
         raise TaskExecutionError(completion)
-    if task == "plotbandpass":
+    if task == "plotbandpass" and bandpass_completed_pages is None:
         from json import loads
         from ._bandpass_plot import render_bandpass
 
-        render_bandpass(loads(stdout)["result"], workspace)
+        reply = loads(stdout)["result"]
+        completed, immediate = render_bandpass(reply, workspace)
+        if immediate:
+            return replace(completion, value=None)
+        if completion.value is not None and completed < len(reply["pages"]):
+            partial = _execute_task(task, resolved, workspace, payload, bandpass_completed_pages=completed)
+            return replace(completion, value=partial.value)
     return completion
 
 

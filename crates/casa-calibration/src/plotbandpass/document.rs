@@ -59,6 +59,8 @@ pub(crate) struct BandpassPage {
     y_limits: Vec<Option<[f64; 2]>>,
     atmosphere: Vec<Vec<AtmosphericCurve>>,
     fdm: Vec<Option<Vec<FdmWindow>>>,
+    prompt: bool,
+    quit_immediately: bool,
 }
 
 pub(crate) fn pages(
@@ -70,12 +72,16 @@ pub(crate) fn pages(
         .checked_mul(columns as usize)
         .filter(|&capacity| capacity > 0)
         .ok_or("bandpass subplot needs a positive grid size")?;
-    let count = plot.panels.len().div_ceil(capacity);
     let subtitle = plot
         .measurement_set
         .as_deref()
         .and_then(|path| path.file_name())
         .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+    let with_phase_page = capacity == 1
+        && plot
+            .panels
+            .iter()
+            .any(|panel| panel.ordinate == super::Ordinate::Phase);
     plot.panels
         .chunks(capacity)
         .enumerate()
@@ -110,7 +116,8 @@ pub(crate) fn pages(
             document
                 .validate_payload(0)
                 .map_err(|error| error.to_string())?;
-            let output_file = output_file(display, &source[source.len() - 1].suffix, index, count);
+            let last = &source[source.len() - 1];
+            let output_file = output_file(display, &last.suffix, index);
             Ok(BandpassPage {
                 figure: PlotFigure {
                     document,
@@ -124,17 +131,16 @@ pub(crate) fn pages(
                     .map(|panel| panel.atmosphere.clone())
                     .collect(),
                 fdm: source.iter().map(|panel| panel.fdm.clone()).collect(),
+                prompt: display.interactive && source.len() == capacity,
+                quit_immediately: plot.polynomial
+                    || plot.immediate_combined_overlay
+                    || (with_phase_page && last.ordinate != super::Ordinate::Phase),
             })
         })
         .collect()
 }
 
-fn output_file(
-    display: &DisplayOptions<'_>,
-    suffix: &str,
-    page: usize,
-    count: usize,
-) -> Option<PathBuf> {
+fn output_file(display: &DisplayOptions<'_>, suffix: &str, page: usize) -> Option<PathBuf> {
     if display.figfile.is_empty() {
         return None;
     }
@@ -142,14 +148,12 @@ fn output_file(
         .figfile
         .split_once(".png")
         .map_or(display.figfile, |(base, _)| base);
-    let name = if count == 1 && display.sequential_names {
-        name.to_string()
-    } else if display.sequential_names {
+    let name = if display.sequential_names {
         format!("{name}.{page:03}")
     } else {
         format!("{name}.{suffix}")
     };
-    if display.resample > 1 && (count > 1 || !display.sequential_names) {
+    if display.resample > 1 {
         Some(format!("{name}.resample{}.png", display.resample).into())
     } else {
         Some(format!("{name}.png").into())
