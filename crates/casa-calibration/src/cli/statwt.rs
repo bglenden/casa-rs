@@ -4,18 +4,22 @@
 use casa_ms::{MeasurementSet, MsSelection, save_next_flag_backup};
 use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+use casa_types::quanta::{Quantity, Unit};
 
-use crate::{ClassicScalarStatWt, StatWtDataColumn, classical_scalar_statwt};
+use crate::{
+    ClassicScalarStatWt, StatWtCombine, StatWtDataColumn, StatWtTimeBin, classical_scalar_statwt,
+};
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("vis")?;
     let options = options(task)?;
+    let selectdata = task.flag("selectdata")?;
     let selector = |name: &str| {
         task.text(name)
-            .map(|value| value.filter(|text| !text.is_empty()))
+            .map(|value| value.filter(|text| selectdata && !text.is_empty()))
     };
     let selection = MsSelection {
-        selectdata: task.flag("selectdata")?,
+        selectdata,
         field: selector("field")?,
         spw: selector("spw")?,
         intent: selector("intent")?,
@@ -77,9 +81,6 @@ fn options(task: &TaskInvocation<'_>) -> Result<ClassicScalarStatWt, TaskFailure
             return Err(unavailable(name));
         }
     }
-    if task.value("timebin") != Some(&ParameterValue::Integer(1)) || task.flag("slidetimebin")? {
-        return Err(unavailable("timebin"));
-    }
     if task.flag("excludechans")? {
         return Err(unavailable("excludechans"));
     }
@@ -87,12 +88,15 @@ fn options(task: &TaskInvocation<'_>) -> Result<ClassicScalarStatWt, TaskFailure
         .text("combine")?
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let combine_correlations = combined.split(',').any(|part| part.trim() == "corr");
-    if combined
-        .split(',')
-        .any(|part| matches!(part.trim(), "scan" | "state" | "field"))
-    {
-        return Err(unavailable("combine"));
+    let mut combine = StatWtCombine::default();
+    for item in combined.split(',').map(str::trim) {
+        match item {
+            "corr" => combine.correlations = true,
+            "scan" => combine.scans = true,
+            "state" => combine.states = true,
+            "field" => combine.fields = true,
+            _ => {}
+        }
     }
     let minimum_samples = usize::try_from(task.integer("minsamp")?).unwrap_or(0);
     if minimum_samples < 2 {
@@ -113,9 +117,34 @@ fn options(task: &TaskInvocation<'_>) -> Result<ClassicScalarStatWt, TaskFailure
     Ok(ClassicScalarStatWt {
         data_column,
         minimum_samples,
-        combine_correlations,
+        combine,
+        time_bin: time_bin(task)?,
+        sliding: task.flag("slidetimebin")?,
         weight_range,
     })
+}
+
+fn time_bin(task: &TaskInvocation<'_>) -> Result<StatWtTimeBin, TaskFailure> {
+    let bad_value = || {
+        TaskFailure::execution("timebin requires a positive timestamp count or a duration")
+            .at("timebin")
+    };
+    match task.value("timebin") {
+        Some(ParameterValue::Integer(value)) if *value > 0 => usize::try_from(*value)
+            .map(StatWtTimeBin::Timestamps)
+            .map_err(|_| bad_value()),
+        Some(ParameterValue::String(value)) => {
+            let seconds = Unit::new("s").expect("seconds");
+            let quantity: Quantity = value.parse().map_err(|_| bad_value())?;
+            let width = quantity.get_value_in(&seconds).map_err(|_| bad_value())?;
+            if width > 0.0 && width.is_finite() {
+                Ok(StatWtTimeBin::Seconds(width))
+            } else {
+                Err(bad_value())
+            }
+        }
+        _ => Err(bad_value()),
+    }
 }
 
 fn parse_data_column(value: &str) -> Result<StatWtDataColumn, TaskFailure> {

@@ -122,6 +122,15 @@ fn ft_messages(task: &TaskInvocation<'_>) -> Vec<String> {
 }
 
 fn effective(task: &TaskInvocation<'_>, name: &str) -> Option<ParameterValue> {
+    if task.surface() == "statwt"
+        && task.value("selectdata") == Some(&ParameterValue::Bool(false))
+        && matches!(
+            name,
+            "field" | "spw" | "intent" | "array" | "observation" | "scan"
+        )
+    {
+        return Some(ParameterValue::String(String::new()));
+    }
     let mut current = value(task, name)?;
     // The provider uses an MS-path vector and "none" selector sentinels;
     // CASA's public applycal parameters and HISTORY use a path and empty strings.

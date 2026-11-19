@@ -2,11 +2,10 @@
 //! Estimate visibility weights from the scatter within baseline and data bins.
 
 mod classic;
-
-use std::collections::BTreeMap;
+mod grouping;
 
 use casa_ms::{MeasurementSet, MsError, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
-use casa_tables::{RequiredScalarColumnValues, Table, TableWriteLock};
+use casa_tables::{Table, TableWriteLock};
 use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{Array1, ArrayD, Axis};
 
@@ -45,15 +44,41 @@ impl StatWtDataColumn {
     }
 }
 
-/// Options for the classical scalar-weight workflow in one-integration bins.
+/// How the task sets the width of a statistical time bin.
+#[derive(Clone, Copy)]
+pub enum StatWtTimeBin {
+    /// Count distinct timestamps in the selected time series.
+    Timestamps(usize),
+    /// Bin using the elapsed time in seconds.
+    Seconds(f64),
+}
+
+/// Boundaries and correlations to combine within a time bin.
+#[derive(Clone, Copy, Default)]
+pub struct StatWtCombine {
+    /// Combine all visibility correlations.
+    pub correlations: bool,
+    /// Cross scan boundaries.
+    pub scans: bool,
+    /// Cross observational state boundaries.
+    pub states: bool,
+    /// Cross field boundaries.
+    pub fields: bool,
+}
+
+/// Options for the classical scalar-weight workflow.
 #[derive(Clone, Copy)]
 pub struct ClassicScalarStatWt {
     /// The main-table data to estimate weights from.
     pub data_column: StatWtDataColumn,
     /// The minimum number of unflagged samples in a bin.
     pub minimum_samples: usize,
-    /// Aggregate all correlations in each baseline bin.
-    pub combine_correlations: bool,
+    /// Combine correlations or data across selected boundaries.
+    pub combine: StatWtCombine,
+    /// The number of timestamps or seconds per time bin.
+    pub time_bin: StatWtTimeBin,
+    /// Use a centered window for each timestamp.
+    pub sliding: bool,
     /// Optional inclusive bounds on acceptable weights.
     pub weight_range: Option<[f32; 2]>,
 }
@@ -67,18 +92,7 @@ pub struct StatWtSummary {
     pub variance: f64,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct BaselineGroup {
-    array: i32,
-    scan: i32,
-    state: i32,
-    field: i32,
-    data_description: i32,
-    antenna1: i32,
-    antenna2: i32,
-}
-
-/// Estimate classical scalar weights in one-integration time bins.
+/// Estimate classical scalar weights in block or sliding time bins.
 ///
 /// The caller supplies the MeasurementSet selection held by either the task
 /// or the existing MS tool. Pass a MAIN write lock to persist weights and
@@ -89,55 +103,65 @@ pub fn classical_scalar_statwt(
     options: ClassicScalarStatWt,
     mut lock: Option<&mut TableWriteLock>,
 ) -> MsResult<StatWtSummary> {
+    if matches!(options.time_bin, StatWtTimeBin::Timestamps(0))
+        || matches!(options.time_bin, StatWtTimeBin::Seconds(value) if value <= 0.0 || !value.is_finite())
+    {
+        return Err(MsError::InvalidInput(
+            "statwt time bin must be positive".into(),
+        ));
+    }
     let table = ms.main_table_mut();
-    let rows = selection.row_indices().collect::<Vec<_>>();
-    let groups = baseline_groups(table, selection, &rows)?;
+    let groups = grouping::groups(
+        table,
+        selection,
+        options.combine,
+        options.time_bin,
+        options.sliding,
+    )?;
     let mut summary = Moments::default();
     let mut pending = Vec::new();
     let mut pending_bytes = 0;
     let column = options.data_column.output_column();
-    for group in groups.values() {
-        for integration in
-            group.chunk_by(|left, right| left.time_mjd_seconds == right.time_mjd_seconds)
-        {
-            let (samples, channel_indices) =
-                read_integration(table, selection, options.data_column, integration)?;
-            let weights = estimate_scalar_weights(
-                &samples,
-                &channel_indices,
+    for group in groups {
+        let (samples, channels) = read_group(table, selection, options.data_column, &group.rows)?;
+        let estimate = |range: std::ops::Range<usize>| {
+            estimate_scalar_weights(
+                &samples[range],
+                &channels,
                 options.minimum_samples,
-                options.combine_correlations,
+                options.combine.correlations,
+            )
+        };
+        let shared = (!options.sliding).then(|| estimate(0..samples.len()));
+        for (index, (&row, sample)) in group.rows.iter().zip(&samples).enumerate() {
+            let estimate_for_row;
+            let weights = if let Some(shared) = &shared {
+                shared
+            } else {
+                estimate_for_row = estimate(group.window(index, options.time_bin));
+                &estimate_for_row
+            };
+            add_summary(
+                &mut summary,
+                sample,
+                weights,
+                &channels,
+                options.combine.correlations,
             );
-            for (row, sample) in integration.iter().zip(samples) {
-                if options.combine_correlations {
-                    if (0..weights.len())
-                        .any(|correlation| sample.has_unflagged(correlation, &channel_indices))
-                    {
-                        summary.add(f64::from(weights[0]));
-                    }
-                } else {
-                    for (correlation, &weight) in weights.iter().enumerate() {
-                        if sample.has_unflagged(correlation, &channel_indices) {
-                            summary.add(f64::from(weight));
-                        }
-                    }
-                }
-                if let Some(lock) = &mut lock {
-                    pending_bytes += sample.flags.len() + weights.len() * size_of::<f32>();
-                    pending.push(RowUpdate::new(
-                        row.row_index,
-                        sample,
-                        &weights,
-                        &channel_indices,
-                        column == "SIGMA",
-                        options.weight_range,
-                    ));
-                    if pending_bytes >= casa_ms::write_session::TARGET_BATCH_BYTES
-                        || pending.len() == 65_536
-                    {
-                        persist_updates(table, column, &mut pending, lock)?;
-                        pending_bytes = 0;
-                    }
+            if let Some(lock) = &mut lock {
+                pending_bytes += sample.flags.len() + weights.len() * size_of::<f32>();
+                pending.push(RowUpdate::new(
+                    row.row_index,
+                    sample,
+                    weights,
+                    &channels,
+                    options,
+                ));
+                if pending_bytes >= casa_ms::write_session::TARGET_BATCH_BYTES
+                    || pending.len() == 65_536
+                {
+                    persist_updates(table, column, &mut pending, lock)?;
+                    pending_bytes = 0;
                 }
             }
         }
@@ -151,6 +175,26 @@ pub fn classical_scalar_statwt(
     })
 }
 
+fn add_summary(
+    summary: &mut Moments,
+    sample: &Samples,
+    weights: &[f32],
+    channels: &[usize],
+    combine: bool,
+) {
+    if combine {
+        if (0..weights.len()).any(|correlation| sample.has_unflagged(correlation, channels)) {
+            summary.add(f64::from(weights[0]));
+        }
+    } else {
+        for (correlation, &weight) in weights.iter().enumerate() {
+            if sample.has_unflagged(correlation, channels) {
+                summary.add(f64::from(weight));
+            }
+        }
+    }
+}
+
 struct RowUpdate {
     row: usize,
     values: ArrayValue,
@@ -161,16 +205,21 @@ struct RowUpdate {
 impl RowUpdate {
     fn new(
         row: usize,
-        mut sample: Samples,
+        sample: &Samples,
         weights: &[f32],
         channels: &[usize],
-        sigma: bool,
-        range: Option<[f32; 2]>,
+        options: ClassicScalarStatWt,
     ) -> Self {
+        let mut flags = sample.flags.clone();
+        let sigma = options.data_column.output_column() == "SIGMA";
         for (correlation, &weight) in weights.iter().enumerate() {
-            if weight == 0.0 || range.is_some_and(|[low, high]| weight < low || weight > high) {
+            if weight == 0.0
+                || options
+                    .weight_range
+                    .is_some_and(|[low, high]| weight < low || weight > high)
+            {
                 for &channel in channels {
-                    sample.flags[[correlation, channel]] = true;
+                    flags[[correlation, channel]] = true;
                 }
             }
         }
@@ -181,6 +230,9 @@ impl RowUpdate {
                     weight
                 } else if weight > 0.0 {
                     weight.sqrt().recip()
+                } else if matches!(options.time_bin, StatWtTimeBin::Seconds(_)) && !options.sliding
+                {
+                    0.0
                 } else {
                     -1.0
                 }
@@ -189,8 +241,8 @@ impl RowUpdate {
         Self {
             row,
             values: ArrayValue::Float32(Array1::from_vec(values).into_dyn()),
-            row_flagged: sample.flags.iter().all(|&flag| flag),
-            flags: ArrayValue::Bool(sample.flags),
+            row_flagged: flags.iter().all(|&flag| flag),
+            flags: ArrayValue::Bool(flags),
         }
     }
 }
@@ -222,41 +274,6 @@ fn persist_updates(
     Ok(())
 }
 
-fn baseline_groups<'a>(
-    table: &Table,
-    selection: &'a ResolvedMsSelection,
-    rows: &[usize],
-) -> MsResult<BTreeMap<BaselineGroup, Vec<&'a ResolvedMsSelectionRow>>> {
-    let mut metadata = table
-        .required_scalar_columns_owned_for_rows(&["ARRAY_ID", "SCAN_NUMBER", "STATE_ID"], rows)?;
-    let mut take_column = |name: &str| match metadata.remove(name) {
-        Some(RequiredScalarColumnValues::Int32(values)) => Ok(values),
-        _ => Err(MsError::InvalidInput(format!("{name} must be int32"))),
-    };
-    let arrays = take_column("ARRAY_ID")?;
-    let scans = take_column("SCAN_NUMBER")?;
-    let states = take_column("STATE_ID")?;
-    let mut groups = BTreeMap::<_, Vec<_>>::new();
-    for (index, row) in selection.selected_rows.iter().enumerate() {
-        let key = BaselineGroup {
-            array: arrays[index],
-            scan: scans[index],
-            state: states[index],
-            field: row.field_id,
-            data_description: row.data_desc_id,
-            antenna1: row.antenna1_id.min(row.antenna2_id),
-            antenna2: row.antenna1_id.max(row.antenna2_id),
-        };
-        groups.entry(key).or_default().push(row);
-    }
-    for group in groups.values_mut() {
-        group.sort_unstable_by(|left, right| {
-            left.time_mjd_seconds.total_cmp(&right.time_mjd_seconds)
-        });
-    }
-    Ok(groups)
-}
-
 struct Samples {
     values: ArrayD<Complex32>,
     flags: ArrayD<bool>,
@@ -270,7 +287,7 @@ impl Samples {
     }
 }
 
-fn read_integration(
+fn read_group(
     table: &Table,
     selection: &ResolvedMsSelection,
     column: StatWtDataColumn,

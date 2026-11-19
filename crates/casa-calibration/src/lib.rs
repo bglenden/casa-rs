@@ -58,7 +58,10 @@ mod uvmodelfit;
 mod uvsub;
 mod writer;
 
-pub use statwt::{ClassicScalarStatWt, StatWtDataColumn, StatWtSummary, classical_scalar_statwt};
+pub use statwt::{
+    ClassicScalarStatWt, StatWtCombine, StatWtDataColumn, StatWtSummary, StatWtTimeBin,
+    classical_scalar_statwt,
+};
 
 pub use uvsub::{
     subtract_visibility_model, subtract_visibility_model_holding, visibility_model_source_paths,

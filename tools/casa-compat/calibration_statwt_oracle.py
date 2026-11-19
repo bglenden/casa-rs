@@ -109,7 +109,23 @@ def main():
     ]
     for name, options in cases:
         compare_case(root, base, native, name, options)
-    print(f"{len(cases)} matched CASA classical statwt workflows")
+    gapped = root / "gapped.ms"
+    copy_ms(base, gapped)
+    with opened(gapped, True) as table:
+        times = table.getcol("TIME")
+        timestamps = np.unique(times)
+        times[(times >= timestamps[1]) & (times <= timestamps[5])] += 25
+        table.putcol("TIME", times)
+    timed = [
+        ("timestamp-blocks", {"timebin": 2}),
+        ("seconds-blocks", {"timebin": "20s"}),
+        ("timestamp-sliding", {"timebin": 2, "slidetimebin": True}),
+        ("seconds-sliding", {"timebin": "20s", "slidetimebin": True}),
+        ("combine-boundaries", {"timebin": "120s", "combine": "field,scan,state"}),
+    ]
+    for name, options in timed:
+        compare_case(root, gapped, native, name, {"datacolumn": "data", **options})
+    print(f"{len(cases) + len(timed)} matched CASA classical statwt workflows")
 
 
 if __name__ == "__main__":
