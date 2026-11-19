@@ -8,6 +8,8 @@ import pytest
 
 from casars.tools import measures, table
 from test_measures_geometry import snapshot
+from test_measures_rise_set import assert_record
+from test_measures_spectral import compare as compare_spectral
 
 
 ORACLE = json.loads(
@@ -95,7 +97,13 @@ def test_comet_states_match_casa(case, snapshot, synthetic, monkeypatch):
             else:
                 result = getattr(tool, name)(*args)
             assert type(result).__name__ == step["python_type"]
-            compare(result, step["native_result"] if "native_result" in step else step["result"])
+            expected = step["native_result"] if "native_result" in step else step["result"]
+            if name == "measure" and expected.get("type") in ("frequency", "radialvelocity"):
+                compare_spectral(result, expected)
+            elif name in ("measure", "rise", "riseset"):
+                assert_record(result, expected)
+            else:
+                compare(result, expected)
     finally:
         tool.done()
 

@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
 use casa_tables::ColumnType;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::quanta::{Quantity, Unit, UnitVal, casacore};
 use casa_types::{PrimitiveType, ScalarValue, Value};
 
@@ -21,7 +22,10 @@ pub struct CometTable {
     origin_mjd: f64,
     step_days: f64,
     topocentre_m: Option<[f64; 3]>,
+    table_reference: DirectionRef,
+    input_reference: DirectionRef,
     mean_radius_au: Option<f64>,
+    au_m: f64,
     zero_range_au: f64,
     bracket: Mutex<Option<Bracket>>,
 }
@@ -32,6 +36,17 @@ struct Bracket {
     start_mjd: f64,
     start_au: [f64; 3],
     end_au: [f64; 3],
+}
+
+/// A direction and distance interpolated on the native comet table grid.
+#[derive(Debug)]
+pub struct CometDirection {
+    /// The interpolation expressed in the table's conversion axes.
+    pub direction: MDirection,
+    /// The length of the interpolated position, in metres.
+    pub distance_m: f64,
+    /// Casacore first removes observer parallax unless the table is APP.
+    pub remove_parallax: bool,
 }
 
 impl CometTable {
@@ -102,18 +117,17 @@ impl CometTable {
         let distance_km = number("GeoDist")?;
         let longitude = number("GeoLong")?.to_radians();
         let latitude = number("GeoLat")?.to_radians();
-        let is_topocentric = match keywords.get("posrefsys") {
-            Some(Value::Scalar(ScalarValue::String(reference))) => {
-                let reference = reference.to_ascii_uppercase();
-                !["J2000", "B1950", "APP", "ICRS"]
-                    .iter()
-                    .any(|code| reference.contains(code))
-                    && reference.contains("TOPO")
-            }
-            None => distance_km != 0.0,
+        let explicit = match keywords.get("posrefsys") {
+            Some(Value::Scalar(ScalarValue::String(reference))) => Some(comet_reference(reference)),
+            None => None,
             _ => return Err(invalid("posrefsys")),
         };
-        let topocentre_m = is_topocentric.then(|| {
+        let table_reference = explicit.unwrap_or(if distance_km != 0.0 {
+            DirectionRef::TOPO
+        } else {
+            DirectionRef::APP
+        });
+        let topocentre_m = (table_reference == DirectionRef::TOPO).then(|| {
             cartesian(
                 if distance_km == 0.0 {
                     1e-6
@@ -146,7 +160,10 @@ impl CometTable {
             origin_mjd,
             step_days,
             topocentre_m,
+            table_reference,
+            input_reference: explicit.unwrap_or(DirectionRef::APP),
             mean_radius_au,
+            au_m: au.val().factor,
             zero_range_au: 1e-6 / au.val().factor,
             bracket: Mutex::new(None),
         })
@@ -179,6 +196,23 @@ impl CometTable {
     /// native MJD grid and return its norm in AU. The last row is the upper
     /// endpoint of the last bracket and is excluded as an observation date.
     pub fn distance_au(&self, mjd: f64) -> Result<Option<f64>, MeasuresDataError> {
+        self.position_au(mjd).map(|position| position.map(norm))
+    }
+
+    /// Interpolate the comet at the epoch expressed as TDB MJD. Casacore
+    /// uses this value directly as the coordinate on the table's native grid.
+    pub fn direction_at(&self, mjd: f64) -> Result<Option<CometDirection>, MeasuresDataError> {
+        let Some(xyz) = self.position_au(mjd)? else {
+            return Ok(None);
+        };
+        Ok(Some(CometDirection {
+            direction: MDirection::from_cosines(xyz, self.input_reference),
+            distance_m: norm(xyz) * self.au_m,
+            remove_parallax: self.table_reference != DirectionRef::APP,
+        }))
+    }
+
+    fn position_au(&self, mjd: f64) -> Result<Option<[f64; 3]>, MeasuresDataError> {
         let index = ((mjd - self.origin_mjd) / self.step_days).floor() - 1.0;
         if !(0.0..(self.table.row_count() - 1) as f64).contains(&index) {
             return Ok(None);
@@ -195,16 +229,28 @@ impl CometTable {
         }
         let bracket = cache.as_ref().expect("comet bracket is loaded");
         let fraction = (mjd - bracket.start_mjd) / self.step_days;
-        let xyz: [f64; 3] = std::array::from_fn(|i| {
+        Ok(Some(std::array::from_fn(|i| {
             bracket.start_au[i] + fraction * (bracket.end_au[i] - bracket.start_au[i])
-        });
-        Ok(Some(
-            xyz.iter()
-                .map(|component| component * component)
-                .sum::<f64>()
-                .sqrt(),
-        ))
+        })))
     }
+}
+
+fn comet_reference(reference: &str) -> DirectionRef {
+    let reference = reference.to_ascii_uppercase();
+    [
+        DirectionRef::J2000,
+        DirectionRef::B1950,
+        DirectionRef::APP,
+        DirectionRef::ICRS,
+        DirectionRef::TOPO,
+    ]
+    .into_iter()
+    .find(|code| reference.contains(code.as_str()))
+    .unwrap_or(DirectionRef::APP)
+}
+
+fn norm(xyz: [f64; 3]) -> f64 {
+    xyz.iter().map(|part| part * part).sum::<f64>().sqrt()
 }
 
 // RecordInterface::asDouble promotes integer and float scalar keywords.

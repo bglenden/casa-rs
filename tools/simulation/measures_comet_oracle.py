@@ -63,7 +63,10 @@ SYNTHETIC = {
     },
     "variants": {
         "topocentric": {},
+        "explicit_topocentric": {"posrefsys": "TOPO"},
         "explicit_j2000": {"posrefsys": "ICRF/J2000.0"},
+        "explicit_icrs": {"posrefsys": "ICRS"},
+        "explicit_b1950": {"posrefsys": "B1950"},
         "no_radius": {"meanrad": None},
         "bad_grid": {"MJD0": 55000.},
         "bad_version_date": {"VS_DATE": "not a date"},
@@ -201,6 +204,65 @@ for variant in SYNTHETIC["variants"]:
         epoch("55564d" if variant == "zero_range" else "55564.5d"),
         *query_steps(),
     ]
+
+definitions = measures()
+direction = definitions.direction("COMET")
+shifted = definitions.direction("COMET", "17deg", "35deg")
+vla = definitions.observatory("VLA")
+frequency = definitions.frequency("TOPO", "1GHz")
+velocity = definitions.radialvelocity("TOPO", "10km/s")
+definitions.done()
+
+def conversions(*references, source=direction):
+    return [("measure", source, reference) for reference in references]
+
+def comet_frame(table_entry, position, date="2011/01/03/17:00:00"):
+    steps = [epoch(date)] + ([position] if position else [])
+    if table_entry:
+        steps.append(table_entry)
+    return steps
+
+
+targets = ("APP", "J2000", "ICRS", "TOPO", "HADEC", "AZEL")
+ordinary = explicit()
+j2000 = explicit("JPL-Horizons/Ganymede_55197-59214dUTC_J2000.tab")
+alma = ("set_alma",)
+show = [("doframe", direction), ("showframe",)]
+for label, source in (("app", ordinary), ("j2000", j2000)):
+    for site, position in (("alma", alma), ("vla", ("doframe", vla))):
+        sequences[f"direction_{label}_{site}"] = (
+            comet_frame(source, position) + conversions(*targets) + show
+        )
+    sequences[f"direction_{label}_without_observatory"] = (
+        comet_frame(source, None) + conversions(*targets)
+    )
+for variant in ("topocentric", "explicit_topocentric", "explicit_icrs", "explicit_b1950"):
+    sequences[f"direction_{variant}"] = (
+        comet_frame(("framecomet", {"synthetic": variant}), alma, "55564.5d")
+        + conversions(*targets) + show + [("rise", direction), ("riseset", direction)]
+    )
+sequences.update({
+    "direction_outside_table": (
+        comet_frame(ordinary, alma, "2009/01/03/17:00:00")
+        + conversions("APP", "TOPO", "J2000") + show
+    ),
+    "direction_no_table": comet_frame(None, alma) + conversions("APP", "TOPO", "J2000", "COMET"),
+    "direction_shifted_record": (
+        comet_frame(ordinary, alma) + conversions("J2000", "TOPO", source=shifted)
+    ),
+    "direction_rise_set": (
+        comet_frame(ordinary, alma) + [("rise", direction), ("riseset", direction)]
+    ),
+    "direction_spectral_context": (
+        comet_frame(ordinary, alma) + show
+        + [("measure", frequency, "BARY"), ("measure", velocity, "LSRK")]
+    ),
+    "direction_table_lifetime": (
+        comet_frame(ordinary, alma) + show + conversions("J2000")
+        + [explicit("JPL-Horizons/absent.tab"), ("showframe",)] + conversions("J2000")
+        + [("done",), ("showframe",)] + comet_frame(None, alma) + conversions("J2000")
+    ),
+})
 
 with TemporaryDirectory() as temp:
     scratch = Path(temp)

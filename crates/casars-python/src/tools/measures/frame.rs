@@ -186,6 +186,14 @@ pub(super) fn convert(
         Ok(frame) => frame,
         Err(error) => return Ok(Err(error)),
     };
+    let frame = if matches!(
+        measure.value,
+        MeasureValue::Frequency(_) | MeasureValue::RadialVelocity(_)
+    ) {
+        with_comet_direction(state, frame)
+    } else {
+        frame
+    };
     let converted = (|| {
         let unsupported =
             |kind: &str| format!("the {target} {kind} frame is not yet implemented in casa-rs");
@@ -239,24 +247,52 @@ pub(super) fn convert(
     Ok(converted.map(|converted| Measure::from_casa(&converted)))
 }
 
+fn with_comet_direction(state: &State, frame: MeasFrame) -> MeasFrame {
+    if frame
+        .direction()
+        .is_some_and(|dir| dir.refer() == DirectionRef::COMET)
+    {
+        // Resolve the active sky position for the Doppler projection. If it
+        // cannot be resolved, the actual conversion decides whether it needs
+        // a direction, just as it would with any other incomplete frame.
+        let j2000 =
+            super::comet::resolve_direction(state, &frame).and_then(|(direction, distance)| {
+                direction.convert_with_parallax(DirectionRef::J2000, &frame, distance)
+            });
+        if let Ok(direction) = j2000 {
+            return frame.with_direction(direction);
+        }
+    }
+    frame
+}
+
 pub(super) fn convert_direction(
     state: &mut State,
     direction: &MDirection,
     target: DirectionRef,
     frame: &MeasFrame,
 ) -> Result<MDirection, casa_types::measures::MeasureError> {
-    use casa_types::measures::MeasureError;
-
-    let refer = direction.refer();
-    if refer == DirectionRef::COMET && target != refer && state.frame.comet.is_some() {
-        return Err(MeasureError::NotYetImplemented {
-            route: format!("COMET → {target} (casa-rs #1252)"),
-        });
-    }
-    if refer == target {
+    if direction.refer() == target {
         return direction.convert_to(target, frame);
     }
     let (resolved, distance_m) = resolve_direction(state, direction, frame)?;
+    let resolved = if direction.refer() == DirectionRef::COMET
+        && resolved.refer() == DirectionRef::B1950
+        && matches!(
+            target,
+            DirectionRef::APP
+                | DirectionRef::TOPO
+                | DirectionRef::HADEC
+                | DirectionRef::ITRF
+                | DirectionRef::AZEL
+                | DirectionRef::AZELSW
+                | DirectionRef::AZELGEO
+                | DirectionRef::AZELSWGEO
+        ) {
+        resolved.to_apparent(frame)?
+    } else {
+        resolved
+    };
     resolved.convert_with_parallax(target, frame, distance_m)
 }
 
@@ -269,7 +305,10 @@ pub(super) fn resolve_direction(
     use casa_types::measures::MeasureError;
 
     let refer = direction.refer();
-    if refer.casacore_code() < 32 || refer == DirectionRef::COMET {
+    if refer == DirectionRef::COMET {
+        return super::comet::resolve_direction(state, frame);
+    }
+    if refer.casacore_code() < 32 {
         return Ok((direction.clone(), 0.0));
     }
     if frame.epoch().is_none() {
