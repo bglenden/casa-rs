@@ -1,5 +1,7 @@
 """Independent CASA 6.7.6.14 geometry-tool acceptance."""
 import json
+import os
+import tarfile
 from pathlib import Path
 
 import numpy as np
@@ -7,9 +9,10 @@ import pytest
 
 from casars.tools import measures
 
-CASES = json.loads(
+ORACLE = json.loads(
     (Path(__file__).with_name("data") / "casa_measures_geometry.json").read_text()
-)["cases"]
+)
+CASES = ORACLE["cases"]
 COMPONENTS = ("m0", "m1", "m2")
 
 
@@ -67,8 +70,29 @@ def compare(actual, expected):
         assert actual == expected
 
 
+@pytest.fixture(scope="module")
+def snapshot(tmp_path_factory):
+    # Earth orientation affects the strict position-to-baseline comparison.
+    # Match the reference epoch, ephemerides and EOP tables on every host.
+    provenance_name = ".casa-rs-measures-provenance.json"
+    if configured := os.environ.get("CASA_RS_MEASURESPATH"):
+        configured = Path(configured)
+        provenance = configured / provenance_name
+        if provenance.is_file() and json.loads(provenance.read_text()) == ORACLE["measures_snapshot"]:
+            return configured
+    archive = Path(__file__).resolve().parents[3] / "casa-measures-data" / "data"
+    expected = json.loads((archive / "casa-measures-runtime.provenance.json").read_text())
+    assert expected == ORACLE["measures_snapshot"], "regenerate the fixture for the bundled measures snapshot"
+    root = tmp_path_factory.mktemp("geometry-measures")
+    with tarfile.open(archive / "casa-measures-runtime.tar.gz") as bundled:
+        bundled.extractall(root, filter="data")
+    (root / provenance_name).write_text(json.dumps(expected))
+    return root
+
+
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case["name"])
-def test_geometry_matches_independent_casa(case):
+def test_geometry_matches_independent_casa(case, snapshot, monkeypatch):
+    monkeypatch.setenv("CASA_RS_MEASURESPATH", str(snapshot))
     tool = measures()
     try:
         tool.done()

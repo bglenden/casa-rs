@@ -4,6 +4,7 @@
 import argparse
 import gc
 import json
+import os
 import statistics
 import subprocess
 import time
@@ -14,14 +15,17 @@ from casaconfig import config
 config.data_auto_update = False
 config.measures_auto_update = False
 
-from casatools import measures as casa_measures, version_string
-
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--backend", choices=["casa", "casars"], required=True)
 parser.add_argument("--out", type=Path, required=True)
+parser.add_argument("--measures-data", type=Path, required=True)
 parser.add_argument("--repeat", type=int, default=1000)
 parser.add_argument("--samples", type=int, default=7)
 args = parser.parse_args()
+config.measurespath = str(args.measures_data.resolve())
+config.datapath = [config.measurespath, *config.datapath]
+os.environ["CASA_RS_MEASURESPATH"] = config.measurespath
+from casatools import measures as casa_measures, version_string
 assert version_string() == "6.7.6-14"
 
 factory = casa_measures

@@ -10,12 +10,15 @@ import resource
 from casaconfig import config
 config.data_auto_update=False
 config.measures_auto_update=False
-from casatools import measures,quanta,version_string
 import numpy as np
 resource.setrlimit(resource.RLIMIT_CORE,(0,0))
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--out',type=Path,required=True)
+p.add_argument('--measures-data', type=Path, required=True)
 a=p.parse_args()
+config.measurespath = str(a.measures_data.resolve())
+config.datapath = [config.measurespath, *config.datapath]
+from casatools import measures,quanta,version_string
 assert version_string()=='6.7.6-14'
 
 def clean(v):
@@ -155,5 +158,5 @@ for kind,base in [('direction',m.direction('J2000','10deg','20deg')),('position'
         if name.startswith('m'):value['value']=[value['value'],value['value']*2]
     capture('addxvalue_vector_'+kind,'addxvalue',[vector])
 m.done()
-a.out.write_text(json.dumps({'casatools':version_string(),'cases':cases},indent=2)+'\n')
+a.out.write_text(json.dumps({'casatools':version_string(),'measures_snapshot': json.loads((a.measures_data / '.casa-rs-measures-provenance.json').read_text()),'cases':cases},indent=2)+'\n')
 print(len(cases),'cases')
