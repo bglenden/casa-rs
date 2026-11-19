@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Resolve which scalar and spectral weight columns statwt writes.
 
-use casa_ms::{MsError, MsResult, ResolvedMsSelection};
+use casa_ms::{MsError, MsResult};
 use casa_tables::{Table, TableWriteLock};
 use casa_types::{ArrayValue, Value};
 use ndarray::{Array1, ArrayD, IxDyn, ShapeBuilder};
@@ -10,6 +10,7 @@ use crate::weight_spectra::{NewSpectra, SIGMA_SPECTRUM, WEIGHT_SPECTRUM, has_col
 
 use super::StatWtDataColumn;
 
+#[derive(PartialEq, Eq)]
 pub(super) struct Output {
     weight: bool,
     sigma: bool,
@@ -23,7 +24,7 @@ impl Output {
         table: &mut Table,
         column: StatWtDataColumn,
         split_channels: bool,
-        selection: &ResolvedMsSelection,
+        selection: &[usize],
         lock: Option<&mut TableWriteLock>,
     ) -> MsResult<Self> {
         let sigma = column.raw();
@@ -137,10 +138,9 @@ fn initialized(table: &Table, column: &str) -> MsResult<bool> {
     })
 }
 
-fn check_weight_spectrum(table: &Table, selection: &ResolvedMsSelection) -> MsResult<()> {
+fn check_weight_spectrum(table: &Table, selection: &[usize]) -> MsResult<()> {
     let reader = table.column_accessor(WEIGHT_SPECTRUM)?;
-    let rows = selection.row_indices().collect::<Vec<_>>();
-    for batch in rows.chunks(256) {
+    for batch in selection.chunks(256) {
         let missing = match reader.array_shapes_uncached(batch) {
             Ok(shapes) => shapes.iter().position(Option::is_none),
             Err(_) => reader

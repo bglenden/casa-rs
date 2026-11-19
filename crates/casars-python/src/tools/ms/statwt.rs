@@ -2,11 +2,10 @@
 //! Statistical weight estimation on the attached MeasurementSet.
 
 use casa_calibration::{
-    StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtOptions,
-    StatWtTimeBin, estimate_statwt, resolve_statwt_selection, statwt_weight_range,
+    StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,
+    StatWtTimeBin, estimate_statwt, statwt_weight_range,
 };
-use casa_ms::{MeasurementSet, MsSelection};
-use casa_tables::TableWriteLock;
+use casa_ms::MsSelection;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyDictMethods, PyList, PyListMethods, PyString};
 
@@ -32,14 +31,14 @@ impl PyMsTool {
             let Some(attached) = attached.as_mut() else {
                 return Ok(false);
             };
-            let ms = MeasurementSet::open(&attached.path).map_err(runtime_error)?;
-            let Ok(resolved) = resolve_statwt_selection(&ms, &request) else {
+            let ms = StatWtMs::open(&attached.path, false).map_err(runtime_error)?;
+            let Ok(resolved) = ms.select(&request) else {
                 return Ok(false);
             };
             if onlyparse {
                 return Ok(true);
             }
-            let mut selected = resolved.row_indices().collect::<Vec<_>>();
+            let mut selected = resolved.iter().map(|row| row.row_index).collect::<Vec<_>>();
             if let Some(previous) = &attached.selected_rows {
                 selected.retain(|row| previous.binary_search(row).is_ok());
             }
@@ -107,28 +106,28 @@ impl PyMsTool {
                 return Err(runtime_error("MeasurementSet is not writable"));
             }
             let mut transient = None;
-            let lock = if preview {
+            let locks = if preview {
                 None
-            } else if let Some(lock) = attached.write_locks.get_mut(&attached.path) {
-                Some(lock)
+            } else if !attached.write_locks.is_empty() {
+                Some(&mut attached.write_locks)
             } else {
-                Some(transient.insert(
-                    TableWriteLock::acquire_to_reread(&attached.path, 0).map_err(runtime_error)?,
-                ))
+                Some(
+                    transient
+                        .insert(StatWtMs::write_locks(&attached.sources).map_err(runtime_error)?),
+                )
             };
-            let mut ms = MeasurementSet::open(&attached.path).map_err(runtime_error)?;
-            let mut selected =
-                resolve_statwt_selection(&ms, &MsSelection::default()).map_err(runtime_error)?;
+            let mut ms = StatWtMs::open(&attached.path, false).map_err(runtime_error)?;
+            let mut selected = ms.select(&MsSelection::default()).map_err(runtime_error)?;
             if let Some(rows) = &attached.selected_rows {
-                selected
-                    .selected_rows
-                    .retain(|row| rows.binary_search(&row.row_index).is_ok());
+                selected.retain(|row| rows.binary_search(&row.row_index).is_ok());
             }
             let report =
-                estimate_statwt(&mut ms, &selected, &options, lock).map_err(runtime_error)?;
+                estimate_statwt(&mut ms, &selected, &options, locks).map_err(runtime_error)?;
             drop(ms);
-            if let Some(lock) = transient {
-                lock.release().map_err(runtime_error)?;
+            if let Some(locks) = transient {
+                for lock in locks.into_values() {
+                    lock.release().map_err(runtime_error)?;
+                }
             }
             Ok(Some(report))
         })?;

@@ -6,11 +6,12 @@ mod classic;
 mod grouping;
 mod output;
 mod robust;
+mod storage;
 
-use casa_ms::{
-    MeasurementSet, MsError, MsResult, MsSelection, MsSelectionError, ResolvedMsSelection,
-    ResolvedMsSelectionRow,
-};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use casa_ms::{MsError, MsResult, ResolvedMsSelectionRow};
 use casa_tables::{Table, TableWriteLock};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
@@ -20,6 +21,7 @@ use channels::Channels;
 use classic::{Moments, VisibilityMoments};
 use output::Output;
 pub use robust::StatWtAlgorithm;
+pub use storage::StatWtMs;
 
 use crate::solve::grouping::{VisibilityModels, correlation_types_for_ddid};
 
@@ -184,14 +186,6 @@ pub fn statwt_weight_range(bounds: &[f64]) -> MsResult<Option<[f64; 2]>> {
     }
 }
 
-/// Resolve the CASA selectors used by the task and the attached MS tool.
-pub fn resolve_statwt_selection(
-    ms: &MeasurementSet,
-    selection: &MsSelection,
-) -> Result<ResolvedMsSelection, MsSelectionError> {
-    crate::session::resolve_casa_calibration_selection(ms, selection)
-}
-
 /// Statistical summary of the estimated weights over previously unflagged data.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub struct StatWtSummary {
@@ -207,12 +201,12 @@ pub struct StatWtSummary {
 /// or the existing MS tool. Pass a MAIN write lock to persist weights and
 /// flags. Without a write lock this reports the same statistics in preview.
 pub fn estimate_statwt(
-    ms: &mut MeasurementSet,
-    selection: &ResolvedMsSelection,
+    ms: &mut StatWtMs,
+    selection: &[ResolvedMsSelectionRow],
     options: &StatWtOptions,
-    mut lock: Option<&mut TableWriteLock>,
+    mut locks: Option<&mut BTreeMap<PathBuf, TableWriteLock>>,
 ) -> MsResult<StatWtSummary> {
-    if selection.selected_rows.is_empty() {
+    if selection.is_empty() {
         return Err(MsError::InvalidInput(
             "MeasurementSet has zero selected rows".into(),
         ));
@@ -234,15 +228,14 @@ pub fn estimate_statwt(
             "statwt channel bin must be positive".into(),
         ));
     }
-    let channel_plans = channels::prepare(ms, selection, options)?;
+    let channel_plans = channels::prepare(ms.metadata(), selection, options)?;
     let models = options
         .data_column
         .residual()
-        .then(|| VisibilityModels::new(ms, &selection.selected_rows))
-        .transpose()
-        .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        .then(|| ms.models(selection))
+        .transpose()?;
     let groups = grouping::groups(
-        ms.main_table(),
+        ms,
         selection,
         options.combine,
         options.time_bin,
@@ -251,15 +244,9 @@ pub fn estimate_statwt(
     let mut summary = Moments::default();
     let mut pending = Vec::new();
     let mut pending_bytes = 0;
-    let output = Output::prepare(
-        ms.main_table_mut(),
-        options.data_column,
-        !matches!(options.channel_bin, StatWtChannelBin::Window),
-        selection,
-        lock.as_deref_mut(),
-    )?;
+    let output = ms.output(selection, options, locks.as_deref_mut())?;
     let columns = output.columns();
-    let polarizations = ms.polarization()?;
+    let polarizations = ms.metadata().polarization()?;
     let correlation_count = (0..polarizations.row_count())
         .map(|row| polarizations.num_corr(row).map(|count| count as usize))
         .collect::<MsResult<Vec<_>>>()?;
@@ -292,7 +279,7 @@ pub fn estimate_statwt(
             .iter()
             .flat_map(|group| group.rows.iter().copied())
             .collect::<Vec<_>>();
-        let samples = read_samples(ms, options.data_column, models.as_ref(), &rows)?;
+        let samples = read_samples(ms, options.data_column, models.as_deref(), &rows)?;
         let mut offset = 0;
         for group in batch {
             let channel_plan = &channel_plans[&group.rows[0].spectral_window_id];
@@ -340,7 +327,7 @@ pub fn estimate_statwt(
                     output.spectral,
                     options.combine.correlations,
                 );
-                if let Some(lock) = &mut lock {
+                if let Some(locks) = &mut locks {
                     let update = RowUpdate::new(
                         row.row_index,
                         sample,
@@ -360,15 +347,15 @@ pub fn estimate_statwt(
                     if pending_bytes >= casa_ms::write_session::TARGET_BATCH_BYTES
                         || pending.len() == 65_536
                     {
-                        persist_updates(ms.main_table_mut(), &columns, &mut pending, lock)?;
+                        ms.persist(&columns, &mut pending, locks)?;
                         pending_bytes = 0;
                     }
                 }
             }
         }
     }
-    if let Some(lock) = lock {
-        persist_updates(ms.main_table_mut(), &columns, &mut pending, lock)?;
+    if let Some(locks) = locks {
+        ms.persist(&columns, &mut pending, locks)?;
     }
     Ok(StatWtSummary {
         mean: summary.mean(),
@@ -514,7 +501,6 @@ fn persist_updates(
     if pending.is_empty() {
         return Ok(());
     }
-    pending.sort_unstable_by_key(|update| update.row);
     let mut columns = weight_columns.to_vec();
     columns.extend(["FLAG", "FLAG_ROW"]);
     let rows: Vec<_> = pending.iter().map(|update| update.row).collect();
@@ -544,28 +530,23 @@ struct Samples {
 }
 
 fn read_samples(
-    ms: &MeasurementSet,
+    ms: &StatWtMs,
     column: StatWtDataColumn,
-    models: Option<&VisibilityModels>,
+    models: Option<&[VisibilityModels]>,
     integration: &[&ResolvedMsSelectionRow],
 ) -> MsResult<Vec<Samples>> {
-    let table = ms.main_table();
     let indices = integration
         .iter()
         .map(|row| row.row_index)
         .collect::<Vec<_>>();
-    let read = |name| {
-        table
-            .column_accessor(name)?
-            .array_cells_owned_uncached(&indices)
-    };
+    let read = |name| ms.array_cells(name, &indices);
     let data = read(column.visibility_column())?;
     let flags = read("FLAG")?;
     let scratch = models
         .is_some_and(|models| {
             integration
                 .iter()
-                .any(|row| models.reads_column(row.field_id))
+                .any(|row| models[ms.by_row(row.row_index).0].reads_column(row.field_id))
         })
         .then(|| read("MODEL_DATA"))
         .transpose()?;
@@ -586,23 +567,27 @@ fn read_samples(
                 row.row_index
             )));
         }
-        let model = if models.is_some_and(|models| models.reads_column(row.field_id)) {
-            match &scratch.as_ref().expect("read scratch model for its field")[index] {
-                Some(ArrayValue::Complex32(model)) => Some(std::borrow::Cow::Borrowed(model)),
-                _ => {
-                    return Err(MsError::InvalidInput(format!(
-                        "MODEL_DATA is undefined at row {}",
-                        row.row_index
-                    )));
+        let model = if let Some(models) = models {
+            let (part, physical_ms, physical_row) = ms.by_row(row.row_index);
+            let model = &models[part];
+            if model.reads_column(row.field_id) {
+                match &scratch.as_ref().expect("read scratch model for its field")[index] {
+                    Some(ArrayValue::Complex32(model)) => Some(std::borrow::Cow::Borrowed(model)),
+                    _ => {
+                        return Err(MsError::InvalidInput(format!(
+                            "MODEL_DATA is undefined at row {}",
+                            row.row_index
+                        )));
+                    }
                 }
+            } else {
+                let codes = correlation_types_for_ddid(physical_ms, row.data_desc_id)
+                    .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+                model
+                    .predict(physical_ms, physical_row, &codes, &flags)
+                    .map_err(|error| MsError::InvalidInput(error.to_string()))?
+                    .map(std::borrow::Cow::Owned)
             }
-        } else if let Some(models) = models {
-            let correlation_types = correlation_types_for_ddid(ms, row.data_desc_id)
-                .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-            models
-                .predict(ms, row.row_index, &correlation_types, &flags)
-                .map_err(|error| MsError::InvalidInput(error.to_string()))?
-                .map(std::borrow::Cow::Owned)
         } else {
             None
         };

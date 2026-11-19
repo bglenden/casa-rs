@@ -4,10 +4,9 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use casa_ms::{MsError, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
-use casa_tables::{RequiredScalarColumnValues, Table};
+use casa_ms::{MsResult, ResolvedMsSelectionRow};
 
-use super::{StatWtCombine, StatWtTimeBin};
+use super::{StatWtCombine, StatWtMs, StatWtTimeBin};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Boundary {
@@ -64,38 +63,24 @@ impl Group<'_> {
 }
 
 pub(super) fn groups<'a>(
-    table: &Table,
-    selection: &'a ResolvedMsSelection,
+    ms: &StatWtMs,
+    selection: &'a [ResolvedMsSelectionRow],
     combine: StatWtCombine,
     time_bin: StatWtTimeBin,
     sliding: bool,
 ) -> MsResult<Vec<Group<'a>>> {
-    let rows = selection.row_indices().collect::<Vec<_>>();
-    let mut metadata = table.required_scalar_columns_owned_for_rows(
-        &["ARRAY_ID", "SCAN_NUMBER", "STATE_ID", "EXPOSURE"],
-        &rows,
-    )?;
-    let Some(RequiredScalarColumnValues::Float64(exposures)) = metadata.remove("EXPOSURE") else {
-        return Err(MsError::InvalidInput("EXPOSURE must be float64".into()));
-    };
-    let mut take_column = |name: &str| match metadata.remove(name) {
-        Some(RequiredScalarColumnValues::Int32(values)) => Ok(values),
-        _ => Err(MsError::InvalidInput(format!("{name} must be int32"))),
-    };
-    let arrays = take_column("ARRAY_ID")?;
-    let scans = take_column("SCAN_NUMBER")?;
-    let states = take_column("STATE_ID")?;
+    let metadata = ms.row_metadata(selection)?;
     let mut groups = BTreeMap::<_, Vec<_>>::new();
-    for (index, row) in selection.selected_rows.iter().enumerate() {
+    for (row, metadata) in selection.iter().zip(metadata) {
         let key = Boundary {
-            scan: if combine.scans { 0 } else { scans[index] },
-            state: if combine.states { 0 } else { states[index] },
+            scan: if combine.scans { 0 } else { metadata.scan },
+            state: if combine.states { 0 } else { metadata.state },
             field: if combine.fields { 0 } else { row.field_id },
         };
         groups
-            .entry((arrays[index], row.data_desc_id))
+            .entry((metadata.array, row.data_desc_id))
             .or_default()
-            .push((row, key, exposures[index]));
+            .push((row, key, metadata.exposure));
     }
     let mut ordered = Vec::new();
     for rows in groups.values_mut() {

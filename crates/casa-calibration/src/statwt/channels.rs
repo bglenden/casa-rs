@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use casa_ms::{MeasurementSet, MsError, MsResult, ResolvedMsSelection};
+use casa_ms::{MeasurementSet, MsError, MsResult, ResolvedMsSelectionRow};
 
 use super::{StatWtChannelBin, StatWtOptions};
 
@@ -15,13 +15,13 @@ pub(super) struct Channels {
 
 pub(super) fn prepare(
     ms: &MeasurementSet,
-    selection: &ResolvedMsSelection,
+    selection: &[ResolvedMsSelectionRow],
     options: &StatWtOptions,
 ) -> MsResult<BTreeMap<i32, Channels>> {
     let fitted = ms.resolve_spw_selector(&options.fit_spw)?;
     let windows = ms.spectral_window()?;
     let mut channels = BTreeMap::new();
-    for row in &selection.selected_rows {
+    for row in selection {
         let spw = row.spectral_window_id;
         let std::collections::btree_map::Entry::Vacant(entry) = channels.entry(spw) else {
             continue;

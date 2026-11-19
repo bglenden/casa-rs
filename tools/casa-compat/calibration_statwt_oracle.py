@@ -13,6 +13,7 @@ import numpy as np
 
 from applycal_oracle import copy_ms
 from calibration_initweights_oracle import opened
+from gaincal_oracle import amplitude_data, gain_and_apply
 from record_casa_returns import make_cal_ms
 
 
@@ -50,7 +51,7 @@ def read(path):
                 if name in table.colnames()}
 
 
-def compare_case(root, base, native, name, options, *, through_tool=False):
+def compare_case(root, base, native, name, options, *, through_tool=False, field_rows=None):
     products = []
     reports = []
     for api, engine in ((casa, "casa"), (native, "native")):
@@ -79,7 +80,9 @@ def compare_case(root, base, native, name, options, *, through_tool=False):
                     tool.close()
         else:
             def run(preview):
-                return api.statwt(str(vis), flagbackup=preview, preview=preview, **options)
+                supplied = dict(options)
+                supplied.setdefault('flagbackup', preview)
+                return api.statwt(str(vis), preview=preview, **supplied)
         preview = run(True)
         assert list(preview) == ["mean", "variance"]
         assert not Path(str(vis) + ".flagversions").exists()
@@ -92,11 +95,16 @@ def compare_case(root, base, native, name, options, *, through_tool=False):
             np.testing.assert_allclose(report[key], preview[key], rtol=2e-7, atol=0, err_msg=(engine, name, key))
         reports.append(report)
         result = read(vis)
+        if options.get('flagbackup'):
+            snapshot = Path(str(vis) + '.flagversions') / 'flags.statwt_1'
+            with opened(snapshot) as backup:
+                for column in ('FLAG', 'FLAG_ROW'):
+                    np.testing.assert_array_equal(backup.getcol(column), before[column])
         for column in (name for name in ("DATA", "CORRECTED_DATA", "MODEL_DATA") if name in before):
             np.testing.assert_array_equal(result[column], before[column], err_msg=column)
-        if options.get("field") and options.get("selectdata", True):
+        if (field_rows is not None or options.get("field")) and options.get("selectdata", True):
             with opened(vis) as table:
-                excluded = table.getcol("FIELD_ID") != 0
+                excluded = table.getcol("FIELD_ID") != (field_rows if field_rows is not None else 0)
             for column in ("WEIGHT", "SIGMA", "FLAG", "FLAG_ROW", *SPECTRA):
                 if column in before:
                     np.testing.assert_array_equal(result[column][..., excluded], before[column][..., excluded])
@@ -107,6 +115,61 @@ def compare_case(root, base, native, name, options, *, through_tool=False):
     for column in products[0]:
         np.testing.assert_allclose(products[1][column], products[0][column], rtol=2e-7, atol=0,
                                    err_msg=column)
+
+
+def compare_downstream(root, base, native):
+    amplitude = amplitude_data(root, base)
+    prepared = {}
+    for spectrum in (False, True):
+        for name, api in (('casa', casa), ('native', native)):
+            path = root / f'downstream-{spectrum}-{name}.ms'
+            copy_ms(amplitude, path)
+            api.initweights(str(path), wtmode='nyq', dowtsp=spectrum)
+            api.statwt(str(path), datacolumn='data', chanbin=4 if spectrum else 'spw',
+                       timebin=3, flagbackup=False)
+            prepared[spectrum, name] = path
+        for calwt in (False, True):
+            case = root / f'downstream-{spectrum}-calwt-{calwt}'
+            case.mkdir()
+            result = gain_and_apply(
+                case, prepared[spectrum, 'casa'], native, 'G', 'inf', calmode='ap', minblperant=2,
+                apply_options={'calwt': [calwt]}, native_source=prepared[spectrum, 'native'],
+            )
+            expected = read(next(case.glob('*-casa.ms')))
+            actual = read(next(case.glob('*-native.ms')))
+            for column in ('SIGMA', *SPECTRA):
+                if column in expected:
+                    np.testing.assert_allclose(actual[column], expected[column], rtol=1e-3, atol=0,
+                                               err_msg=column)
+            print(f'{case.name} {result}')
+
+
+def compare_new_selected_spectrum(root, base, native):
+    products = []
+    for engine, api in (('casa', casa), ('native', native)):
+        vis = root / f'{engine}-new-selected-spectrum.ms'
+        copy_ms(base, vis)
+        original = read(vis)
+        args = {'field': 'FLUX', 'chanbin': 3, 'flagbackup': False}
+        if engine == 'casa':
+            try:
+                api.statwt(str(vis), **args)
+            except RuntimeError as error:
+                assert 'known issue' in str(error)
+            else:
+                raise AssertionError('CASA did not expose its selected-spectrum creation issue')
+            seeded = read(vis)
+            for column in original:
+                np.testing.assert_array_equal(seeded[column], original[column])
+        api.statwt(str(vis), **args)
+        result = read(vis)
+        with opened(vis) as table:
+            excluded = table.getcol('FIELD_ID') != 0
+        expected = np.broadcast_to(original['WEIGHT'][:, None, :], result['WEIGHT_SPECTRUM'].shape)
+        np.testing.assert_array_equal(result['WEIGHT_SPECTRUM'][..., excluded], expected[..., excluded])
+        products.append(result)
+    for column, expected in products[0].items():
+        np.testing.assert_allclose(products[1][column], expected, rtol=2e-7, atol=0, err_msg=column)
 
 
 def main():
@@ -137,6 +200,7 @@ def main():
         ("minimum-and-range", {"minsamp": 8, "wtrange": [0.04, 0.08]}),
         ("residual-data", {"datacolumn": "residual_data"}),
         ("residual-corrected", {"datacolumn": "residual"}),
+        ("flag-backup", {"flagbackup": True, "minsamp": 9}),
     ]
     for name, options in cases:
         compare_case(root, base, native, name, options)
@@ -192,6 +256,17 @@ def main():
     ])
     for name, source_ms, options in channels:
         compare_case(root, source_ms, native, name, options)
+    no_model = root / 'no-model.ms'
+    copy_ms(base, no_model)
+    with opened(no_model, True) as table:
+        table.removecols('MODEL_DATA')
+    compare_case(root, no_model, native, 'residual-without-model', {'datacolumn': 'residual_data'})
+    virtual = root / 'virtual-model.ms'
+    copy_ms(no_model, virtual)
+    casa.setjy(str(virtual), field='FLUX', standard='manual', reffreq='1GHz',
+               fluxdensity=[2., 0., 0., 0.], spix=-0.7, usescratch=False)
+    compare_case(root, virtual, native, 'residual-virtual-model', {'datacolumn': 'residual', 'field': 'FLUX'})
+    compare_new_selected_spectrum(root, base, native)
     outliers = root / 'outliers.ms'
     copy_ms(weighted, outliers)
     with opened(outliers, True) as table:
@@ -217,7 +292,8 @@ def main():
     ]
     for name, source_ms, options in tools:
         compare_case(root, source_ms, native, name, options, through_tool=True)
-    print(f"{len(cases) + len(timed) + len(channels) + len(robust) + len(tools)} matched CASA statwt workflows")
+    compare_downstream(root, base, native)
+    print(f"{len(cases) + len(timed) + len(channels) + len(robust) + len(tools) + 7} matched CASA statwt workflows")
 
 
 if __name__ == "__main__":

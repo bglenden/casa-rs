@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read the CASA statistical-weighting task surface.
 
-use casa_ms::{MeasurementSet, MsSelection, save_next_flag_backup};
+use casa_ms::{
+    MeasurementSet, MsSelection, save_next_flag_backup, save_next_partition_flag_backup,
+};
 use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use crate::{
-    StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtOptions,
-    StatWtTimeBin, estimate_statwt, resolve_statwt_selection, statwt_weight_range,
+    StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,
+    StatWtTimeBin, estimate_statwt, statwt_weight_range, visibility_model_source_paths,
 };
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -29,27 +31,28 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         ..MsSelection::default()
     };
     let result = if task.flag("preview")? {
-        #[cfg(unix)]
-        let mut ms = MeasurementSet::open_retained_read(&path).map_err(runtime_error)?;
-        #[cfg(not(unix))]
-        let mut ms = MeasurementSet::open(&path).map_err(runtime_error)?;
-        let selection = resolve_statwt_selection(&ms, &selection).map_err(runtime_error)?;
+        let mut ms = StatWtMs::open(&path, true).map_err(runtime_error)?;
+        let selection = ms.select(&selection).map_err(runtime_error)?;
         estimate_statwt(&mut ms, &selection, &options, None).map_err(runtime_error)?
     } else {
-        let mut opened = super::multi_ms::OpenedMs::open(&path)?;
-        let selection =
-            resolve_statwt_selection(&opened.measurement_set, &selection).map_err(runtime_error)?;
+        let paths = visibility_model_source_paths(&path).map_err(runtime_error)?;
+        let mut locks = StatWtMs::write_locks(&paths).map_err(runtime_error)?;
+        let mut ms = StatWtMs::open(&path, false).map_err(runtime_error)?;
+        let selection = ms.select(&selection).map_err(runtime_error)?;
         if task.flag("flagbackup")? {
-            save_next_flag_backup(&opened.measurement_set, "statwt").map_err(runtime_error)?;
+            if paths.len() == 1 && path.canonicalize().is_ok_and(|path| paths[0] == path) {
+                let ms = MeasurementSet::open(&paths[0]).map_err(runtime_error)?;
+                save_next_flag_backup(&ms, "statwt").map_err(runtime_error)?;
+            } else {
+                save_next_partition_flag_backup(&path, &paths, "statwt").map_err(runtime_error)?;
+            }
         }
-        let result = estimate_statwt(
-            &mut opened.measurement_set,
-            &selection,
-            &options,
-            Some(&mut opened.lock),
-        )
-        .map_err(runtime_error)?;
-        opened.release()?;
+        let result = estimate_statwt(&mut ms, &selection, &options, Some(&mut locks))
+            .map_err(runtime_error)?;
+        drop(ms);
+        for lock in locks.into_values() {
+            lock.release().map_err(runtime_error)?;
+        }
         super::history::record_task(task, &path);
         result
     };
