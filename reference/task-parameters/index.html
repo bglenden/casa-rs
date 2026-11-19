@@ -831,6 +831,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#plot-weather-plotweather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plot Weather (plotweather)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#initialize-visibility-weights-initweights" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1633,6 +1644,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#plot-weather-plotweather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plot Weather (plotweather)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#initialize-visibility-weights-initweights" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1704,9 +1726,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 677</li>
-<li>Surfaces: 43 (43 task, 0 session)</li>
-<li>Surface bindings: 1000</li>
+<li>Concepts: 680</li>
+<li>Surfaces: 44 (44 task, 0 session)</li>
+<li>Surface bindings: 1004</li>
 </ul>
 <table>
 <thead>
@@ -2031,6 +2053,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">5</td>
 <td>Change the reference antenna in a calibration table.</td>
+</tr>
+<tr>
+<td><a href="#surface-plotweather">Plot Weather</a><br><code>plotweather</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">4</td>
+<td>Estimate zenith opacity and plot MeasurementSet weather.</td>
 </tr>
 <tr>
 <td><a href="#surface-initweights">Initialize Visibility Weights</a><br><code>initweights</code></td>
@@ -10624,6 +10654,61 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>""</code>; optional</td>
 <td>Reference antenna</td>
 <td>Reference antenna name or id for solve workflows</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-plotweather"></a></p>
+<h2 id="plot-weather-plotweather">Plot Weather (<code>plotweather</code>)<a class="headerlink" href="#plot-weather-plotweather" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Estimate zenith opacity and plot MeasurementSet weather.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r3</code></td>
+<td><code>path (measurement_set)</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>One input MeasurementSet path.</td>
+</tr>
+<tr>
+<td><code>seasonal_weight</code></td>
+<td><code>calibration.seasonal_weight@r1</code></td>
+<td><code>variant</code></td>
+<td><code>0.5</code>; optional</td>
+<td>Weather model</td>
+<td>Weight of the seasonal model in the opacity estimate.</td>
+</tr>
+<tr>
+<td><code>doPlot</code></td>
+<td><code>calibration.weather_plot@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Plot</td>
+<td>Create a weather summary plot when station data are available.</td>
+</tr>
+<tr>
+<td><code>plotName</code></td>
+<td><code>calibration.weather_plot_name@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>Name of the weather summary plot file.</td>
 </tr>
 </tbody>
 </table>

@@ -903,8 +903,10 @@ a separate coordinate system, then pass its record to <code>ia.setcoordsys()</co
 persist the edits to the image.</p>
 <p>Use <code>ia.open("example.im")</code> to reopen the product. Use
 <code>outfile=""</code> with <code>fromshape</code> or <code>fromarray</code> for a temporary image. Use <code>ia.setmiscinfo(record)</code> to replace an image’s miscellaneous metadata, and
-<code>ia.sethistory(origin, messages)</code> to append provenance. The remaining CASA
-image and coordinate operations are tracked in
+<code>ia.sethistory(origin, messages)</code> to append provenance. For an image with stored
+restoring beams, <code>ia.restoringbeam()</code> reads the beam quantities and
+<code>ia.restoringbeam(mbret="matrix")</code> reads a per-plane beam grid. The remaining
+CASA image and coordinate operations are tracked in
 <a href="https://github.com/bglenden/casa-rs/issues/1027">#1027</a>.</p>
 <h3 id="access-an-existing-image-through-the-data-api">Access an existing image through the Data API<a class="headerlink" href="#access-an-existing-image-through-the-data-api" title="Permanent link">&para;</a></h3>
 <p>Use <code>Image.open(path, writable=False)</code> to open an existing CASA-compatible image. The v1 surface is intentionally narrow:</p>

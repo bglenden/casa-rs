@@ -1422,6 +1422,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.plotweather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plotweather
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.rerefant" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2442,6 +2453,17 @@
     <span class="md-ellipsis">
       
         plotms
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.plotweather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plotweather
       
     </span>
   </a>
@@ -5043,16 +5065,16 @@ generated parameter checker in both cases.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1402</span>
-<span class="normal">1403</span>
-<span class="normal">1404</span>
-<span class="normal">1405</span>
-<span class="normal">1406</span>
-<span class="normal">1407</span>
-<span class="normal">1408</span>
-<span class="normal">1409</span>
-<span class="normal">1410</span>
-<span class="normal">1411</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">calstat</span><span class="p">(</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1414</span>
+<span class="normal">1415</span>
+<span class="normal">1416</span>
+<span class="normal">1417</span>
+<span class="normal">1418</span>
+<span class="normal">1419</span>
+<span class="normal">1420</span>
+<span class="normal">1421</span>
+<span class="normal">1422</span>
+<span class="normal">1423</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">calstat</span><span class="p">(</span>
     <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">axis</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'amplitude'</span><span class="p">,</span>
     <span class="n">datacolumn</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'gain'</span><span class="p">,</span>
@@ -6694,20 +6716,20 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1354</span>
-<span class="normal">1355</span>
-<span class="normal">1356</span>
-<span class="normal">1357</span>
-<span class="normal">1358</span>
-<span class="normal">1359</span>
-<span class="normal">1360</span>
-<span class="normal">1361</span>
-<span class="normal">1362</span>
-<span class="normal">1363</span>
-<span class="normal">1364</span>
-<span class="normal">1365</span>
-<span class="normal">1366</span>
-<span class="normal">1367</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">initweights</span><span class="p">(</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1366</span>
+<span class="normal">1367</span>
+<span class="normal">1368</span>
+<span class="normal">1369</span>
+<span class="normal">1370</span>
+<span class="normal">1371</span>
+<span class="normal">1372</span>
+<span class="normal">1373</span>
+<span class="normal">1374</span>
+<span class="normal">1375</span>
+<span class="normal">1376</span>
+<span class="normal">1377</span>
+<span class="normal">1378</span>
+<span class="normal">1379</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">initweights</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">wtmode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'delwtsp'</span><span class="p">,</span> <span class="s1">'nyq'</span><span class="p">,</span> <span class="s1">'ones'</span><span class="p">,</span> <span class="s1">'tsys'</span><span class="p">,</span> <span class="s1">'weight'</span><span class="p">,</span> <span class="s1">'tinttsys'</span><span class="p">,</span> <span class="s1">'sigma'</span><span class="p">,</span> <span class="s1">'delsigsp'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'nyq'</span><span class="p">,</span>
     <span class="n">tsystable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -6744,20 +6766,20 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1413</span>
-<span class="normal">1414</span>
-<span class="normal">1415</span>
-<span class="normal">1416</span>
-<span class="normal">1417</span>
-<span class="normal">1418</span>
-<span class="normal">1419</span>
-<span class="normal">1420</span>
-<span class="normal">1421</span>
-<span class="normal">1422</span>
-<span class="normal">1423</span>
-<span class="normal">1424</span>
-<span class="normal">1425</span>
-<span class="normal">1426</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">listcal</span><span class="p">(</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1425</span>
+<span class="normal">1426</span>
+<span class="normal">1427</span>
+<span class="normal">1428</span>
+<span class="normal">1429</span>
+<span class="normal">1430</span>
+<span class="normal">1431</span>
+<span class="normal">1432</span>
+<span class="normal">1433</span>
+<span class="normal">1434</span>
+<span class="normal">1435</span>
+<span class="normal">1436</span>
+<span class="normal">1437</span>
+<span class="normal">1438</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">listcal</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -7326,6 +7348,50 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TaskCompletion</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""Plot MeasurementSet visibility data with CASA plotms-style selections and axes."""</span>
     <span class="k">return</span> <span class="n">_run</span><span class="p">(</span><span class="s2">"plotms"</span><span class="p">,</span> <span class="n">_explicit</span><span class="p">(</span><span class="nb">locals</span><span class="p">(),</span> <span class="p">(</span><span class="s1">'vis'</span><span class="p">,</span> <span class="s1">'format'</span><span class="p">,</span> <span class="s1">'output'</span><span class="p">,</span> <span class="s1">'overwrite'</span><span class="p">,</span> <span class="s1">'selectdata'</span><span class="p">,</span> <span class="s1">'field'</span><span class="p">,</span> <span class="s1">'spw'</span><span class="p">,</span> <span class="s1">'timerange'</span><span class="p">,</span> <span class="s1">'uvrange'</span><span class="p">,</span> <span class="s1">'antenna'</span><span class="p">,</span> <span class="s1">'scan'</span><span class="p">,</span> <span class="s1">'correlation'</span><span class="p">,</span> <span class="s1">'observation'</span><span class="p">,</span> <span class="s1">'array'</span><span class="p">,</span> <span class="s1">'intent'</span><span class="p">,</span> <span class="s1">'feed'</span><span class="p">,</span> <span class="s1">'msselect'</span><span class="p">,</span> <span class="s1">'page_spec'</span><span class="p">,</span> <span class="s1">'preset'</span><span class="p">,</span> <span class="s1">'x_axis'</span><span class="p">,</span> <span class="s1">'y_axis'</span><span class="p">,</span> <span class="s1">'y_axis2'</span><span class="p">,</span> <span class="s1">'datacolumn'</span><span class="p">,</span> <span class="s1">'color_by'</span><span class="p">,</span> <span class="s1">'avgchannel'</span><span class="p">,</span> <span class="s1">'avgtime'</span><span class="p">,</span> <span class="s1">'avgscan'</span><span class="p">,</span> <span class="s1">'avgfield'</span><span class="p">,</span> <span class="s1">'avgbaseline'</span><span class="p">,</span> <span class="s1">'avgantenna'</span><span class="p">,</span> <span class="s1">'avgspw'</span><span class="p">,</span> <span class="s1">'scalar'</span><span class="p">,</span> <span class="s1">'freqframe'</span><span class="p">,</span> <span class="s1">'restfreq'</span><span class="p">,</span> <span class="s1">'veldef'</span><span class="p">,</span> <span class="s1">'iteraxis'</span><span class="p">,</span> <span class="s1">'gridrows'</span><span class="p">,</span> <span class="s1">'gridcols'</span><span class="p">,</span> <span class="s1">'xselfscale'</span><span class="p">,</span> <span class="s1">'yselfscale'</span><span class="p">,</span> <span class="s1">'xsharedaxis'</span><span class="p">,</span> <span class="s1">'ysharedaxis'</span><span class="p">,</span> <span class="s1">'title'</span><span class="p">,</span> <span class="s1">'xlabel'</span><span class="p">,</span> <span class="s1">'ylabel'</span><span class="p">,</span> <span class="s1">'symbol_size'</span><span class="p">,</span> <span class="s1">'showlegend'</span><span class="p">,</span> <span class="s1">'legendposition'</span><span class="p">,</span> <span class="s1">'showmajorgrid'</span><span class="p">,</span> <span class="s1">'showminorgrid'</span><span class="p">,</span> <span class="s1">'headeritems'</span><span class="p">,</span> <span class="s1">'max_points'</span><span class="p">,</span> <span class="s1">'plot_output'</span><span class="p">,</span> <span class="s1">'plot_format'</span><span class="p">,</span> <span class="s1">'flag_action'</span><span class="p">,</span> <span class="s1">'flag_xmin'</span><span class="p">,</span> <span class="s1">'flag_xmax'</span><span class="p">,</span> <span class="s1">'flag_ymin'</span><span class="p">,</span> <span class="s1">'flag_ymax'</span><span class="p">,</span> <span class="s1">'flag_plotindex'</span><span class="p">,</span> <span class="s1">'flag_panel'</span><span class="p">,</span> <span class="s1">'flag_extcorr'</span><span class="p">,</span> <span class="s1">'flag_extchannel'</span><span class="p">,</span> <span class="s1">'flag_selected'</span><span class="p">,</span> <span class="s1">'flag_apply'</span><span class="p">,</span> <span class="s1">'flag_output'</span><span class="p">)))</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="casars.tasks.plotweather" class="doc doc-heading">
+            <code class=" language-python"><span class="n">plotweather</span><span class="p">(</span><span class="n">vis</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">seasonal_weight</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">doPlot</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">plotName</span><span class="o">=</span><span class="s1">''</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.plotweather" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Estimate zenith opacity and plot MeasurementSet weather.</p>
+<p>CASA's <code>plotweather</code>: its parameters, defaults and return value.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1354</span>
+<span class="normal">1355</span>
+<span class="normal">1356</span>
+<span class="normal">1357</span>
+<span class="normal">1358</span>
+<span class="normal">1359</span>
+<span class="normal">1360</span>
+<span class="normal">1361</span>
+<span class="normal">1362</span>
+<span class="normal">1363</span>
+<span class="normal">1364</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plotweather</span><span class="p">(</span>
+    <span class="n">vis</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">seasonal_weight</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+    <span class="n">doPlot</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">plotName</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Estimate zenith opacity and plot MeasurementSet weather.</span>
+
+<span class="sd">    CASA's ``plotweather``: its parameters, defaults and return value.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">plotweather</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -7969,19 +8035,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1369</span>
-<span class="normal">1370</span>
-<span class="normal">1371</span>
-<span class="normal">1372</span>
-<span class="normal">1373</span>
-<span class="normal">1374</span>
-<span class="normal">1375</span>
-<span class="normal">1376</span>
-<span class="normal">1377</span>
-<span class="normal">1378</span>
-<span class="normal">1379</span>
-<span class="normal">1380</span>
-<span class="normal">1381</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1381</span>
 <span class="normal">1382</span>
 <span class="normal">1383</span>
 <span class="normal">1384</span>
@@ -8000,7 +8054,19 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="normal">1397</span>
 <span class="normal">1398</span>
 <span class="normal">1399</span>
-<span class="normal">1400</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">statwt</span><span class="p">(</span>
+<span class="normal">1400</span>
+<span class="normal">1401</span>
+<span class="normal">1402</span>
+<span class="normal">1403</span>
+<span class="normal">1404</span>
+<span class="normal">1405</span>
+<span class="normal">1406</span>
+<span class="normal">1407</span>
+<span class="normal">1408</span>
+<span class="normal">1409</span>
+<span class="normal">1410</span>
+<span class="normal">1411</span>
+<span class="normal">1412</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">statwt</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">selectdata</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
