@@ -251,6 +251,19 @@ impl MeasurementSet {
     /// # Errors
     /// Returns the same parse or ANTENNA subtable errors as the baseline selector.
     pub fn resolve_reference_antennas(&self, text: &str) -> MsResult<Vec<usize>> {
+        self.resolve_antenna1_indices(text, false)
+    }
+
+    /// Resolve the ordered antenna indices used by `calibrater.specifycal`.
+    ///
+    /// # Errors
+    /// Returns parse or ANTENNA errors and refuses a negative antenna index.
+    /// CASA can pass that index straight to a calibration array and abort.
+    pub fn resolve_specified_antennas(&self, text: &str) -> MsResult<Vec<usize>> {
+        self.resolve_antenna1_indices(text, true)
+    }
+
+    fn resolve_antenna1_indices(&self, text: &str, reject_negative: bool) -> MsResult<Vec<usize>> {
         if text.is_empty() {
             return Ok(Vec::new());
         }
@@ -263,7 +276,15 @@ impl MeasurementSet {
                     Term::Ordered(_) => continue,
                 };
                 for id in ids {
-                    if (!clause.negate || id == 0) && !seen[id] {
+                    if clause.negate && id != 0 {
+                        if reject_negative {
+                            return Err(MsError::InvalidInput(format!(
+                                "antenna selector {text:?} produces a negative calibration index for antenna {id}"
+                            )));
+                        }
+                        continue;
+                    }
+                    if !seen[id] {
                         seen[id] = true;
                         antennas.push(id);
                     }

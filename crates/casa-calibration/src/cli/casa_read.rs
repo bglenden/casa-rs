@@ -30,8 +30,8 @@ use crate::{
     ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassFrequencyInterval,
     BandpassSolveCombine, BandpassSolveCuts, BandpassType, CalibrationTaskRequest,
     ExecuteApplyTaskRequest, FluxScaleRequest, GainNormalization, GainSolveCombine,
-    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalTaskRequest,
-    GencalType, RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest,
+    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalRequest,
+    GencalTaskRequest, GencalType, RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest,
     load_apply_specs_from_callib,
 };
 
@@ -258,6 +258,10 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         "" => {
             return Err(TaskFailure::validation("gencal requires a caltype").at("caltype"));
         }
+        "amp" => GencalType::Amp,
+        "ph" => GencalType::Ph,
+        "sbd" => GencalType::Sbd,
+        "mbd" => GencalType::Mbd,
         "antpos" => GencalType::Antpos,
         "gceff" => GencalType::Gceff,
         "opac" => GencalType::Opac,
@@ -284,13 +288,16 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         _ => {}
     }
     Ok(GencalTaskRequest {
-        measurement_set: task.path("vis")?,
-        output_table: PathBuf::from(task.required_text("caltable")?),
-        caltype,
-        antenna,
-        spw: task.text("spw")?.unwrap_or_default(),
-        parameter: task.numbers("parameter")?,
-        gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
+        prior: GencalRequest {
+            measurement_set: task.path("vis")?,
+            output_table: PathBuf::from(task.required_text("caltable")?),
+            caltype,
+            antenna,
+            spw: task.text("spw")?.unwrap_or_default(),
+            parameter: task.numbers("parameter")?,
+            gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
+        },
+        polarization: task.text("pol")?.unwrap_or_default(),
     })
 }
 

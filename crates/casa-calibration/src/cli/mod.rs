@@ -213,6 +213,7 @@ fn scientific_paths(request: &CalibrationTaskRequest) -> Vec<std::path::PathBuf>
             (vec![r.input_ms.clone(), r.output_ms.clone()], &[][..])
         }
         CalibrationTaskRequest::Gencal(r) => {
+            let r = &r.prior;
             let mut paths = vec![r.measurement_set.clone(), r.output_table.clone()];
             if r.caltype == crate::GencalType::Gceff
                 && let Some(source) = r

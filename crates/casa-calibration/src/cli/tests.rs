@@ -663,13 +663,16 @@ fn calibrate_gencal_reads_every_parameter_it_emits() {
     assert_eq!(
         request("calibrate", &args).expect("gencal"),
         CalibrationTaskRequest::Gencal(GencalTaskRequest {
-            measurement_set: PathBuf::from("tutorial.ms"),
-            output_table: PathBuf::from("cal.tau"),
-            caltype: GencalType::Opac,
-            antenna: String::new(),
-            spw: "0,1".into(),
-            parameter: vec![0.1, 0.2],
-            gaincurve_table: None,
+            prior: crate::GencalRequest {
+                measurement_set: PathBuf::from("tutorial.ms"),
+                output_table: PathBuf::from("cal.tau"),
+                caltype: GencalType::Opac,
+                antenna: String::new(),
+                spw: "0,1".into(),
+                parameter: vec![0.1, 0.2],
+                gaincurve_table: None,
+            },
+            polarization: String::new(),
         })
     );
     // `calibrate`'s gencal mode needs its caltype set.

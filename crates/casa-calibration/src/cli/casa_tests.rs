@@ -558,13 +558,16 @@ fn gencal_reads_casas_values() {
         )
         .expect("gencal"),
         CalibrationTaskRequest::Gencal(GencalTaskRequest {
-            measurement_set: PathBuf::from("tutorial.ms"),
-            output_table: PathBuf::from("cal.tau"),
-            caltype: GencalType::Opac,
-            antenna: String::new(),
-            spw: "0,1".into(),
-            parameter: vec![0.1, 0.2],
-            gaincurve_table: None,
+            prior: crate::GencalRequest {
+                measurement_set: PathBuf::from("tutorial.ms"),
+                output_table: PathBuf::from("cal.tau"),
+                caltype: GencalType::Opac,
+                antenna: String::new(),
+                spw: "0,1".into(),
+                parameter: vec![0.1, 0.2],
+                gaincurve_table: None,
+            },
+            polarization: String::new(),
         })
     );
     let caltype = |value: &str| {
@@ -576,7 +579,7 @@ fn gencal_reads_casas_values() {
     assert!(refused(caltype(""), "caltype").contains("requires a caltype"));
     // CASA's gc is the gain curve alone; casa-rs's gceff always folds in
     // the efficiency.
-    for value in ["amp", "gc", "eff", "tsys"] {
+    for value in ["gc", "eff", "tsys"] {
         assert!(
             refused(caltype(value), "caltype").contains("#979"),
             "{value}"

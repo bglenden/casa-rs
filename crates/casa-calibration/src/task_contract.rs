@@ -165,7 +165,15 @@ pub struct StatsTaskRequest {
 }
 
 /// Request for generating one externally specified calibration table.
-pub type GencalTaskRequest = GencalRequest;
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GencalTaskRequest {
+    /// Input, output and parameters of the prior calibration table.
+    #[serde(flatten)]
+    pub prior: GencalRequest,
+    /// Ordered CASA receptor selector. Empty applies the value to both receptors.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub polarization: String,
+}
 
 /// Request for planning an `applycal`-class operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -528,11 +536,13 @@ impl CalibrationTaskRequest {
             )
             .map(CalibrationTaskResult::FluxScale)
             .map_err(|error| error.to_string()),
-            Self::Gencal(request) => {
-                crate::gencal::gencal_with_output_mode(request, mode.unwrap_or(Update))
-                    .map(CalibrationTaskResult::Gencal)
-                    .map_err(|error| error.to_string())
-            }
+            Self::Gencal(request) => crate::gencal::gencal_with_output_mode(
+                &request.prior,
+                &request.polarization,
+                mode.unwrap_or(Update),
+            )
+            .map(CalibrationTaskResult::Gencal)
+            .map_err(|error| error.to_string()),
         }
     }
 }

@@ -6428,6 +6428,20 @@ Reproduction: `tools/casa-compat/fluxscale_oracle.py` builds the three-window
 input; the negative-order crash must be run in a separate Python process.
 Regression: `casa-calibration`'s spectral-fit tests and captured CASA gain data.
 
+## Explicit gencal wildcards can index outside the calibration array
+
+In CASA 6.7.6.14, `gencal(vis, caltable, 'amp', antenna='*', parameter=2.0)`
+passes `-1` as an antenna index and aborts in `ArrayBase`. With `spw='*'`
+CASA similarly passes a negative window index and segfaults. A negated
+antenna clause such as `A1;!A3` can pass `-3` and abort after processing A1.
+
+For the specified gain, phase and delay types, casa-rs treats each whole-axis
+`*` as that axis's empty selector, which broadcasts the value. It refuses a
+negative antenna index before publishing the table, preserving any existing
+product. The paired `calibration_gencal_specify_oracle.py` compares the wildcard
+results to CASA's empty selectors and checks safe rejection of the negated
+clause (#32).
+
 ## Fluxscale history can contain uninitialized object identifiers
 
 `MSHistoryHandler::addMessage` writes every required HISTORY column except
