@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read the fixed sampling grid of a casacore MeasComet table.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use casa_tables::ColumnType;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{PrimitiveType, ScalarValue, Value};
 
-use crate::{DEFAULT_MEASURES_ENV, MeasuresDataError, RuntimeTable, default_measures_path};
+use crate::{MeasuresDataError, RuntimeTable};
 
 const REQUIRED_COLUMNS: [&str; 5] = ["MJD", "RA", "DEC", "Rho", "RadVel"];
 
@@ -33,11 +33,9 @@ struct Bracket {
 }
 
 impl CometTable {
-    /// Open an explicit table or a path relative to the detected runtime's
-    /// ephemerides or geodetic directory, using casacore's fixed-grid metadata.
+    /// Open the requested casacore table and validate its fixed-grid metadata.
     pub fn open(path: &Path) -> Result<Self, MeasuresDataError> {
-        let path = resolve(path)?;
-        let table = RuntimeTable::open(&path)?;
+        let table = RuntimeTable::open(path)?;
         let invalid = |reason| {
             MeasuresDataError::TableRead(format!(
                 "invalid comet table {}: {reason}",
@@ -205,30 +203,6 @@ fn keyword_double(value: Option<&Value>) -> Option<f64> {
         _ => return None,
     };
     number.is_finite().then_some(number)
-}
-
-fn resolve(path: &Path) -> Result<PathBuf, MeasuresDataError> {
-    if path.is_dir() {
-        return Ok(path.to_owned());
-    }
-    if !path.as_os_str().is_empty() && path.is_relative() {
-        // MeasIERS::findTab checks only the requested table in these two
-        // directories. Opening an ephemeris needs no other measures catalogs.
-        let root = match std::env::var_os(DEFAULT_MEASURES_ENV) {
-            Some(root) => PathBuf::from(root),
-            None => default_measures_path()?,
-        };
-        for directory in ["ephemerides", "geodetic"] {
-            let table = root.join(directory).join(path);
-            if table.is_dir() {
-                return Ok(table);
-            }
-        }
-    }
-    Err(MeasuresDataError::MissingData(format!(
-        "comet table {}",
-        path.display()
-    )))
 }
 
 fn scalar(table: &RuntimeTable, name: &str, row: usize) -> Result<f64, MeasuresDataError> {

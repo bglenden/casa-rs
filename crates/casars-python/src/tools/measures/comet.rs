@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The active MeasComet table and the queries CASA exposes on it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use casa_measures_data::CometTable;
+use casa_measures_data::{CometTable, MeasuresDataError};
 use pyo3::prelude::*;
 
 use super::{PyMeasures, State, arguments};
@@ -16,7 +16,11 @@ fn load(state: &mut State, name: &str, lines: &mut Vec<LogLine>) -> CasaValue {
     if name.is_empty() {
         return CasaValue::Bool(false);
     }
-    match CometTable::open(Path::new(name)) {
+    let path = Path::new(name);
+    let loaded = resolve(path)
+        .ok_or_else(|| MeasuresDataError::MissingData(format!("comet table {}", path.display())))
+        .and_then(|table| CometTable::open(&table));
+    match loaded {
         Ok(comet) => {
             state.comet = Some(comet);
             CasaValue::Bool(true)
@@ -28,6 +32,24 @@ fn load(state: &mut State, name: &str, lines: &mut Vec<LogLine>) -> CasaValue {
             CasaValue::Bool(false)
         }
     }
+}
+
+fn resolve(path: &Path) -> Option<PathBuf> {
+    if path.is_dir() {
+        return Some(path.to_owned());
+    }
+    if path.is_absolute() {
+        return None;
+    }
+    let root = match std::env::var_os("CASA_RS_MEASURESPATH") {
+        Some(root) => PathBuf::from(root),
+        None => PathBuf::from(std::env::var_os("HOME")?).join(".casa/data"),
+    };
+    // MeasIERS::findTab checks the named table in these two directories.
+    ["ephemerides", "geodetic"]
+        .into_iter()
+        .map(|directory| root.join(directory).join(path))
+        .find(|table| table.is_dir())
 }
 
 fn read_distance_or_diameter(
