@@ -60,6 +60,11 @@ pub(crate) fn initialize(
     if matches!(mode, Mode::DeleteWeightSpectrum | Mode::DeleteSigmaSpectrum) {
         return remove_column(ms.main_table_mut(), mode.removed_column(), lock);
     }
+    if ms.main_table().row_count() == 0 {
+        return Err(MsError::InvalidInput(
+            "weight initialization requires at least one MeasurementSet row".into(),
+        ));
+    }
 
     let spectrum = create_spectrum || has_column(ms.main_table(), WEIGHT_SPECTRUM);
     let layout = Layout::read(ms, mode)?;
@@ -112,8 +117,13 @@ pub(crate) fn initialize_tsys(
     for start in (0..main.row_count()).step_by(batch_rows) {
         let rows: Vec<_> = (start..(start + batch_rows).min(main.row_count())).collect();
         write_values(main, &rows, columns, &mut spectra, lock, |_, row| {
-            plan.values(row, spectrum)
-                .map_err(|error| MsError::InvalidInput(error.to_string()))
+            let values = plan
+                .values(row, spectrum)
+                .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+            Ok(values.map_or_else(
+                || WeightRow::Missing(plan.row_shape(row)),
+                WeightRow::Update,
+            ))
         })?;
     }
     spectra.publish(main, lock)
@@ -310,8 +320,13 @@ fn write_batch(
                 })
             })
             .collect();
-        Ok(arrays)
+        Ok(WeightRow::Update(arrays))
     })
+}
+
+enum WeightRow {
+    Update(Vec<ArrayValue>),
+    Missing([usize; 2]),
 }
 
 fn write_values(
@@ -320,7 +335,7 @@ fn write_values(
     columns: &[&'static str],
     spectra: &mut NewSpectra,
     lock: &mut TableWriteLock,
-    mut values: impl FnMut(usize, usize) -> MsResult<Vec<ArrayValue>>,
+    mut values: impl FnMut(usize, usize) -> MsResult<WeightRow>,
 ) -> MsResult<()> {
     let changed: Vec<_> = columns
         .iter()
@@ -330,11 +345,20 @@ fn write_values(
     let mut writer = (!changed.is_empty())
         .then(|| main.row_accessor_mut().prepare(&changed))
         .transpose()?;
+    let mut rows_written = Vec::with_capacity(rows.len());
     for (index, &row) in rows.iter().enumerate() {
+        let arrays = match values(index, row)? {
+            WeightRow::Update(arrays) => arrays,
+            WeightRow::Missing(shape) => {
+                spectra.append_unity(shape)?;
+                continue;
+            }
+        };
         if let Some(writer) = &mut writer {
             writer.seek(row)?;
+            rows_written.push(row);
         }
-        for (&name, value) in columns.iter().zip(values(index, row)?) {
+        for (&name, value) in columns.iter().zip(arrays) {
             if spectra.append(name, &value)? {
                 continue;
             }
@@ -345,10 +369,12 @@ fn write_values(
     }
     if let Some(mut writer) = writer {
         writer.flush()?;
-        drop(writer);
+    }
+    if !rows_written.is_empty() {
         lock.record_write();
-        main.prepare_write().save_selected_rows(&changed, rows)?;
-        main.discard_persisted_cell_updates(&changed, rows);
+        main.prepare_write()
+            .save_selected_rows(&changed, &rows_written)?;
+        main.discard_persisted_cell_updates(&changed, &rows_written);
     }
     Ok(())
 }

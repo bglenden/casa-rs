@@ -2857,6 +2857,59 @@ fn incremental_selected_array_cell_writes_retain_at_most_one_cell_and_no_rows() 
     std::fs::remove_dir_all(&root).expect("cleanup test dir");
 }
 
+#[test]
+fn adding_a_streamed_tiled_shape_rejects_incompatible_type_and_rank() {
+    use crate::{
+        StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledShapeWriter,
+    };
+
+    let scratch = tempfile::tempdir().expect("temporary directory");
+    let root = scratch.path().join("table");
+    let schema = TableSchema::new(vec![ColumnSchema::scalar("ID", PrimitiveType::Int32)]).unwrap();
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "ID",
+            Value::Scalar(ScalarValue::Int32(0)),
+        )]))
+        .unwrap();
+    table.save(TableOptions::new(&root)).unwrap();
+    let mut table = Table::open(TableOptions::new(&root)).unwrap();
+    table
+        .add_column(
+            ColumnSchema::array_variable("SPECTRUM", PrimitiveType::Float32, Some(2)),
+            None,
+        )
+        .unwrap();
+    for (shape, kind) in [
+        (vec![2, 2], StreamedTiledShapeValueType::Float64),
+        (vec![4], StreamedTiledShapeValueType::Float32),
+    ] {
+        let mut tile = shape.clone();
+        tile.push(1);
+        let mut writer = StreamingTiledShapeWriter::create(
+            scratch.path().join("stream"),
+            kind,
+            vec![StreamedTiledShapeCubeLayout::new(shape.clone(), 1, tile)],
+            4096,
+            true,
+        )
+        .unwrap();
+        match kind {
+            StreamedTiledShapeValueType::Float64 => writer.push_f64_row(&shape, &[1.0; 4]).unwrap(),
+            _ => writer.push_f32_row(&shape, &[1.0; 4]).unwrap(),
+        }
+        let result = table
+            .prepare_write()
+            .add_streamed_tiled_shape_column("SPECTRUM", writer.finish().unwrap());
+        assert!(
+            matches!(result, Err(TableError::Storage(message)) if message.contains("type or rank"))
+        );
+        let reopened = Table::open(TableOptions::new(&root)).unwrap();
+        assert!(!reopened.schema().unwrap().contains_column("SPECTRUM"));
+    }
+}
+
 /// A selected-row save whose rows span the hypercubes of a heterogeneous
 /// `TiledShapeStMan` patches each row into its own cube.
 #[test]

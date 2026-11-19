@@ -12,6 +12,7 @@ import numpy as np
 
 from applycal_oracle import copy_ms
 from calibration_initweights_oracle import UNCHANGED, add_spectra, compare, fixture, main_columns, opened
+from record_casa_returns import make_cal_ms
 
 
 def make_table(root, vis):
@@ -122,12 +123,19 @@ def main():
     cal = make_table(root, base)
     flagged = root / "flagged.cal"
     flagged_table(cal, flagged)
+    missing_window = root / "one-window.cal"
+    copy_ms(cal, missing_window)
+    with opened(missing_window, write=True) as handle:
+        handle.removerows(np.flatnonzero(handle.getcol("SPECTRAL_WINDOW_ID") == 1))
     cases = []
     for mode in ("tsys", "tinttsys"):
         for create, existing in ((False, ""), (True, ""), (False, "partial"), (True, "full")):
             cases.append((dict(wtmode=mode, tsystable=str(cal), dowtsp=create), existing, False, None))
     for create in (False, True):
         cases.append((dict(wtmode="tsys", tsystable=str(flagged), dowtsp=create), "", False, None))
+    for create, existing in ((False, ""), (True, ""), (False, "partial")):
+        cases.append((dict(wtmode="tsys", tsystable=str(missing_window), dowtsp=create), existing,
+                      False, None))
     for field, interp, mapping in (
         ("1", "nearest,linear", [1, 0]),
         ("nearest", "linear,linear", [0, 1]),
@@ -143,13 +151,19 @@ def main():
                            spwmap=mapping, dowtsp=True), "", True, None))
     cases.extend([
         (dict(wtmode="tsys", tsystable=str(cal), dowtsp=True), "", False, None, True),
+        (dict(wtmode="tsys", tsystable="~/" + os.path.relpath(cal, Path.home())), "", False, None),
         (dict(wtmode="tsys", tsystable=str(root / "missing.cal")), "", False, Exception),
         (dict(wtmode="tsys", tsystable=str(cal), gainfield="999", dowtsp=True), "", False, RuntimeError),
         (dict(wtmode="tsys", tsystable=str(cal), interp="bad", dowtsp=True), "", False, RuntimeError),
     ])
     for index, options in enumerate(cases):
         test_case(root, base, native, index, *options)
-    print(f"{len(cases)} matched CASA Tsys initweights cases")
+    stokes_i = root / "stokes-i.ms"
+    make_cal_ms(str(stokes_i), stokes="I")
+    for index, create in enumerate((False, True), start=len(cases)):
+        test_case(root, stokes_i, native, index, dict(wtmode="tsys", tsystable=str(cal),
+                  dowtsp=create), "", False)
+    print(f"{len(cases) + 2} matched CASA Tsys initweights cases")
 
 
 if __name__ == "__main__":

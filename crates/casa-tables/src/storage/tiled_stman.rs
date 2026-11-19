@@ -6908,6 +6908,13 @@ impl StreamedTiledShapeColumn {
         self.row_count
     }
 
+    pub(crate) fn matches_descriptor(&self, desc: &ColumnDescContents) -> bool {
+        desc.is_array
+            && desc.shape.is_empty()
+            && desc.data_type == self.value_type.casacore_type()
+            && (self.cell_rank == 0 || desc.nrdim < 1 || desc.nrdim as usize == self.cell_rank)
+    }
+
     pub fn bytes_written(&self) -> usize {
         self.cubes.iter().map(|cube| cube.bytes_written).sum()
     }

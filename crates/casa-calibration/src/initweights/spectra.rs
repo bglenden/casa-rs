@@ -110,6 +110,18 @@ impl NewSpectra {
         Ok(true)
     }
 
+    pub(super) fn append_unity(&mut self, shape: [usize; 2]) -> MsResult<()> {
+        if !self.writers.is_empty() {
+            let ones = vec![1.0; shape[0] * shape[1]];
+            for writer in self.writers.values_mut() {
+                writer
+                    .push_f32_row(&shape, &ones)
+                    .map_err(TableError::from)?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn publish(self, main: &mut Table, lock: &mut TableWriteLock) -> MsResult<()> {
         let finished = self
             .writers

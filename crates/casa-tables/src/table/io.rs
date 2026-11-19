@@ -1322,6 +1322,24 @@ impl Table {
                 desc.keywords = keywords.clone();
             }
 
+            if streamed
+                .as_ref()
+                .is_some_and(|stream| !stream.matches_descriptor(&desc))
+            {
+                return Err(TableError::Storage(format!(
+                    "streamed column {column:?} does not match the declared array type or rank"
+                )));
+            }
+            if let Some(stream) = &streamed
+                && stream.row_count() != self.row_count()
+            {
+                return Err(TableError::Storage(format!(
+                    "streamed column {column:?} has {} rows but the table has {}",
+                    stream.row_count(),
+                    self.row_count(),
+                )));
+            }
+
             let seq_nr = table_dat
                 .column_set
                 .data_managers
@@ -1332,13 +1350,6 @@ impl Table {
             self.note_persisted_write(&source_path);
             let pending_values = self.inner.pending_array_cells(column);
             if let Some(streamed) = streamed {
-                if streamed.row_count() != self.row_count() {
-                    return Err(TableError::Storage(format!(
-                        "streamed column {column:?} has {} rows but the table has {}",
-                        streamed.row_count(),
-                        self.row_count(),
-                    )));
-                }
                 crate::install_streamed_tiled_shape_column(&source_path, seq_nr, column, streamed)?;
             } else if changed_rows.is_empty()
                 && pending_values.is_none_or(|values| values.is_empty())

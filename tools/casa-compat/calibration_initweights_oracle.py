@@ -179,6 +179,21 @@ def compare_across_batches(root, base, native):
                                        err_msg=column)
 
 
+def compare_empty_ms(root, base, native):
+    for name, api in (("casa", casa), ("native", native)):
+        vis = root / f"{name}-empty.ms"
+        with opened(base) as original:
+            empty = original.copy(str(vis), deep=True, valuecopy=True, norows=True)
+            empty.done()
+        try:
+            api.initweights(str(vis))
+        except RuntimeError:
+            with opened(vis) as main:
+                assert main.nrows() == 0
+        else:
+            raise AssertionError(f"{name} accepted an empty MeasurementSet")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -206,7 +221,8 @@ def main():
     compare_case(args.work, base, native, "nyq", False, "tiled-partial")
     compare_mms(args.work, base, native)
     compare_across_batches(args.work, base, native)
-    print(f"{len(cases) + 4} matched CASA initweights cases")
+    compare_empty_ms(args.work, base, native)
+    print(f"{len(cases) + 5} matched CASA initweights cases")
 
 
 if __name__ == "__main__":

@@ -81,20 +81,22 @@ impl TsysPlan {
     }
 
     pub(crate) fn row_shapes(&self) -> impl Iterator<Item = [usize; 2]> + '_ {
-        self.plan.selected_rows.iter().map(|row| {
-            [
-                self.correlations[&row.data_desc_id].len(),
-                window(&self.plan.measurement_set_spectral_windows, row.data_spw_id).num_chan
-                    as usize,
-            ]
-        })
+        (0..self.plan.selected_rows.len()).map(|index| self.row_shape(index))
+    }
+
+    pub(crate) fn row_shape(&self, index: usize) -> [usize; 2] {
+        let row = &self.plan.selected_rows[index];
+        [
+            self.correlations[&row.data_desc_id].len(),
+            window(&self.plan.measurement_set_spectral_windows, row.data_spw_id).num_chan as usize,
+        ]
     }
 
     pub(crate) fn values(
         &self,
         index: usize,
         spectrum: bool,
-    ) -> Result<Vec<ArrayValue>, ApplyExecutionError> {
+    ) -> Result<Option<Vec<ArrayValue>>, ApplyExecutionError> {
         let row = &self.plan.selected_rows[index];
         let plan = &self.plan.calibration_tables[0];
         let data_spw = window(&self.plan.measurement_set_spectral_windows, row.data_spw_id);
@@ -104,7 +106,13 @@ impl TsysPlan {
             .find(|mapping| mapping.data_spw_id == row.data_spw_id)
             .expect("planned data spectral window")
             .calibration_spw_id;
-        let cal_spw = window(&plan.calibration_spectral_windows, cal_spw_id);
+        let Some(cal_spw) = plan
+            .calibration_spectral_windows
+            .iter()
+            .find(|window| window.spw_id == cal_spw_id)
+        else {
+            return Ok(None);
+        };
         let field = plan
             .resolved_nearest_gainfields
             .iter()
@@ -131,6 +139,7 @@ impl TsysPlan {
             bandwidth,
             spectrum,
         )
+        .map(Some)
     }
 
     fn temperatures(
@@ -203,14 +212,17 @@ fn temperature_weights(
     let mut weight_spectrum = ArrayD::<f32>::zeros(shape.clone());
     let mut sigma_spectrum = ArrayD::<f32>::zeros(shape);
     for index in 0..correlations.len() {
-        let (p, q) = bandpass::receptors(correlations, index).ok_or_else(|| {
-            ApplyExecutionError::UnsupportedCorrelationLayout {
-                data_desc_id: -1,
-                correlation_types: correlations
-                    .iter()
-                    .map(|code| stokes_name(*code).into())
-                    .collect(),
-            }
+        let pair = if correlations.len() == 1 {
+            Some((0, 0))
+        } else {
+            bandpass::receptors(correlations, index)
+        };
+        let (p, q) = pair.ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
+            data_desc_id: -1,
+            correlation_types: correlations
+                .iter()
+                .map(|code| stokes_name(*code).into())
+                .collect(),
         })?;
         if spectrum {
             let mut row_weights = Vec::with_capacity(channels);

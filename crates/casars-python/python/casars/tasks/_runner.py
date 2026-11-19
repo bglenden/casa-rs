@@ -253,6 +253,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
 def _call_initweights(values: dict[str, Any]) -> Any:
     import numpy as np
 
+    if isinstance(values.get("tsystable"), str):
+        values["tsystable"] = os.path.expanduser(values["tsystable"])
     if "spwmap" in values:
         mapping = values["spwmap"]
         try:
