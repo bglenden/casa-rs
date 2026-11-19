@@ -289,6 +289,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             return run(name, **values).value
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
+    if name == "flagdata":
+        _coerce_flagdata_summary(values)
     return run(name, **values).value
 
 
@@ -333,6 +335,29 @@ def _bandpass_statistics(value):
     if isinstance(value, float):
         return np.float64(value)
     return value
+
+
+def _coerce_flagdata_summary(values: dict[str, Any]) -> None:
+    import numpy as np
+
+    errors: dict[str, list[str]] = {}
+    for parameter, expected, casa_type in (
+        ("spwchan", bool, "cBool"),
+        ("spwcorr", bool, "cBool"),
+        ("name", str, "cStr"),
+    ):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if value is None:
+            errors[parameter] = ["null value not allowed"]
+        elif expected is bool and isinstance(value, np.bool_):
+            # CASA admits these scalars but leaves the summary options disabled.
+            values[parameter] = False
+        elif not isinstance(value, expected):
+            errors[parameter] = [f"must be of {casa_type} type"]
+    if errors:
+        raise AssertionError(str(dict(sorted(errors.items()))))
 
 
 def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:

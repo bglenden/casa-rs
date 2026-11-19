@@ -24,6 +24,11 @@ pub const FLAGDATA_SUMMARY_NAME: &str = "Summary";
 /// total samples, overall and per antenna, array, correlation, field,
 /// observation, scan and spectral window, in CASA's key order.
 pub fn flagdata_summary_record(summary: &FlagSummaryBreakdown) -> CasaValue {
+    flagdata_named_summary_record(summary, FLAGDATA_SUMMARY_NAME)
+}
+
+/// Serialize a summary using the name supplied to the flagdata task.
+pub fn flagdata_named_summary_record(summary: &FlagSummaryBreakdown, name: &str) -> CasaValue {
     let axis = |counts: &BTreeMap<String, FlagCounts>| {
         CasaValue::dict(
             counts
@@ -31,19 +36,28 @@ pub fn flagdata_summary_record(summary: &FlagSummaryBreakdown) -> CasaValue {
                 .map(|(key, counts)| (key.clone(), counts_record(*counts))),
         )
     };
-    CasaValue::dict([
+    let mut fields = vec![
         ("antenna", axis(&summary.antenna)),
         ("array", axis(&summary.array)),
         ("correlation", axis(&summary.correlation)),
         ("field", axis(&summary.field)),
         ("flagged", CasaValue::float(summary.overall.flagged as f64)),
-        ("name", CasaValue::string(FLAGDATA_SUMMARY_NAME)),
+        ("name", CasaValue::string(name)),
         ("observation", axis(&summary.observation)),
         ("scan", axis(&summary.scan)),
         ("spw", axis(&summary.spw)),
+    ];
+    if let Some(counts) = &summary.spw_channel {
+        fields.push(("spw:channel", axis(counts)));
+    }
+    if let Some(counts) = &summary.spw_correlation {
+        fields.push(("spw:correlation", axis(counts)));
+    }
+    fields.extend([
         ("total", CasaValue::float(summary.overall.total as f64)),
         ("type", CasaValue::string("summary")),
-    ])
+    ]);
+    CasaValue::dict(fields)
 }
 
 fn counts_record(counts: FlagCounts) -> CasaValue {

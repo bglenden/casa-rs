@@ -24,7 +24,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | delmod | delmod | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
-| flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
+| flagdata | flagdata | yes | 76 | 76 | 0 | 49 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
 | ft | ft | yes | 15 | 15 | 0 | 0 | 0 | 0 |
@@ -362,7 +362,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `autocorr`, `inpfile`, `reason`, `tbuff`, `uvrange`, `timerange`, `correlation`, `intent`, `array`, `observation`, `feed`, `clipminmax`, `clipoutside`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `quackincrement`, `tolerance`, `addantenna`, `lowerlimit`, `upperlimit`, `ntime`, `combinescans`, `timefit`, `freqfit`, `maxnpieces`, `flagdimension`, `usewindowstats`, `halfwin`, `winsize`, `antint_ref_antenna`, `minchanfrac`, `verbose`, `growaround`, `flagneartime`, `flagnearfreq`, `minrel`, `maxrel`, `minabs`, `maxabs`, `spwchan`, `spwcorr`, `basecnt`, `fieldcnt`, `name`, `display`, `savepars`, `cmdreason`, `outfile`, `overwrite`, `writeflags`
+- Accepted only at CASA's default until #978: `autocorr`, `inpfile`, `reason`, `tbuff`, `uvrange`, `timerange`, `correlation`, `intent`, `array`, `observation`, `feed`, `clipminmax`, `clipoutside`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `quackincrement`, `tolerance`, `addantenna`, `lowerlimit`, `upperlimit`, `ntime`, `combinescans`, `timefit`, `freqfit`, `maxnpieces`, `flagdimension`, `usewindowstats`, `halfwin`, `winsize`, `antint_ref_antenna`, `minchanfrac`, `verbose`, `growaround`, `flagneartime`, `flagnearfreq`, `minrel`, `maxrel`, `minabs`, `maxabs`, `basecnt`, `fieldcnt`, `display`, `savepars`, `cmdreason`, `outfile`, `overwrite`, `writeflags`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 76, in CASA's order: yes
 - Defaults that differ: none

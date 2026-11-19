@@ -8,9 +8,10 @@ use std::process::ExitCode;
 
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest, QuackMode,
-    flagdata_empty_record, flagdata_path, flagdata_summary_record, flagdata_task_schema_bundle,
-    ms_task_success, parse_numeric_id_selector, task_selection_text,
+    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
+    FlagSummaryOptions, QuackMode, flagdata_empty_record, flagdata_named_summary_record,
+    flagdata_path, flagdata_task_schema_bundle, ms_task_success, parse_numeric_id_selector,
+    task_selection_text,
 };
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
@@ -43,10 +44,10 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = flagdata_request(task)?;
     let report = flagdata_path(task.path("vis")?, &request)
         .map_err(|error| TaskFailure::execution(error.to_string()))?;
-    let value = report
-        .summary
-        .as_ref()
-        .map_or_else(flagdata_empty_record, flagdata_summary_record);
+    let value = match &report.summary {
+        Some(summary) => flagdata_named_summary_record(summary, &task.required_text("name")?),
+        None => flagdata_empty_record(),
+    };
     ms_task_success(value, &Some(report))
 }
 
@@ -78,6 +79,10 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         action,
         data_column: data_column(&task.required_text("datacolumn")?)?,
         flagbackup: task.flag("flagbackup")?,
+        summary_options: FlagSummaryOptions {
+            spwchan: task.flag("spwchan")?,
+            spwcorr: task.flag("spwcorr")?,
+        },
         clipzeros: task.flag("clipzeros")?,
         quackinterval: task.number("quackinterval")?,
         quackmode: quackmode(&task.required_text("quackmode")?)?,

@@ -42,6 +42,15 @@ impl FlagCounts {
     }
 }
 
+/// Extra counts requested by CASA's flagdata summary task.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FlagSummaryOptions {
+    /// Report counts for each selected channel in its spectral window.
+    pub spwchan: bool,
+    /// Report counts for each correlation in its spectral window.
+    pub spwcorr: bool,
+}
+
 /// CASA's flagdata summary of a selection: the counts overall and broken
 /// down by each axis CASA's summary agent reports.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -60,6 +69,12 @@ pub struct FlagSummaryBreakdown {
     pub scan: BTreeMap<String, FlagCounts>,
     /// Per spectral window id.
     pub spw: BTreeMap<String, FlagCounts>,
+    /// Per spectral window and selected channel index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spw_channel: Option<BTreeMap<String, FlagCounts>>,
+    /// Per spectral window and correlation name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spw_correlation: Option<BTreeMap<String, FlagCounts>>,
     /// The whole selection.
     pub overall: FlagCounts,
 }
@@ -150,8 +165,9 @@ pub(super) fn report(
     ms: &MeasurementSet,
     rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
+    options: FlagSummaryOptions,
 ) -> Result<FlagDataReport, FlaggingError> {
-    let summary = summarize(ms, rows, channel_selections)?;
+    let summary = summarize(ms, rows, channel_selections, options)?;
     let report = FlagDataReport {
         mode: FlagDataMode::Summary,
         selected_rows: rows.len(),
@@ -180,9 +196,14 @@ fn summarize(
     ms: &MeasurementSet,
     rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
+    options: FlagSummaryOptions,
 ) -> Result<FlagSummaryBreakdown, FlaggingError> {
     let lookup = Lookup::read(ms)?;
-    let mut summary = FlagSummaryBreakdown::default();
+    let mut summary = FlagSummaryBreakdown {
+        spw_channel: options.spwchan.then(BTreeMap::new),
+        spw_correlation: options.spwcorr.then(BTreeMap::new),
+        ..FlagSummaryBreakdown::default()
+    };
     for block in rows.chunks(BLOCK_ROWS) {
         let ids = BlockIds::read(ms, block)?;
         for (slot, &row) in block.iter().enumerate() {
@@ -244,7 +265,28 @@ fn add_row(
             .entry(name.to_string())
             .or_default()
             .add(counts);
+        if let Some(spw_correlation) = &mut summary.spw_correlation {
+            spw_correlation
+                .entry(format!("{spw}:{name}"))
+                .or_default()
+                .add(counts);
+        }
         row_counts.add(counts);
+    }
+    if let Some(spw_channel) = &mut summary.spw_channel {
+        // CASA indexes the selected channel vector within each window.
+        for (index, &channel) in selected.iter().enumerate() {
+            let flagged = (0..correlations)
+                .filter(|&correlation| flags[[correlation, channel]])
+                .count() as u64;
+            spw_channel
+                .entry(format!("{spw}:{index}"))
+                .or_default()
+                .add(FlagCounts {
+                    flagged,
+                    total: correlations as u64,
+                });
+        }
     }
     let antenna = |id: i32| -> Result<String, FlaggingError> {
         lookup
