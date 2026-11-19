@@ -212,6 +212,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
         _validate_required_path(values, "vis", arguments["vis"])
+    if name == "listcal":
+        return _call_listcal(values, arguments)
     if name == "calstat":
         _validate_required_path(values, "caltable", arguments["caltable"], search_data=True)
         for parameter in ("axis", "datacolumn"):
@@ -276,6 +278,44 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
+
+
+def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
+    for name in ("vis", "caltable"):
+        _validate_required_path(values, name, arguments[name], search_data=True)
+    for name in ("field", "antenna", "spw", "listfile"):
+        if not isinstance(arguments[name], str):
+            message = "null value not allowed" if arguments[name] is None else "must be of cStr type"
+            raise AssertionError(str({name: [message]}))
+    if isinstance(values.get("pagerows"), bool):
+        values["pagerows"] = int(values["pagerows"])
+    try:
+        completion = run("listcal", **values)
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
+    report = completion.result
+    if not isinstance(report, dict):
+        raise TaskResultError("listcal did not produce its listing report")
+    if report["listfile"] is not None:
+        print(f"Writing output to file: {report['listfile']}")
+        return
+    prompt = True
+    quit_requested = False
+    solutions = 0
+    for part in report["listing"]["parts"]:
+        print(part["text"], end="")
+        solutions = part["solutions"]
+        if prompt and part["prompt"]:
+            try:
+                response = input("Type Q to quit, A to list all, or RETURN to continue [continue]: ")
+            except EOFError:
+                response = ""
+            command = response[:1].lower()
+            quit_requested |= command == "q"
+            prompt &= command != "a"
+        if quit_requested and part["last_in_integration"]:
+            break
+    print(f"\nListed {solutions} antenna solutions.\n")
 
 
 def _call_initweights(values: dict[str, Any]) -> Any:

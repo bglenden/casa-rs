@@ -42,6 +42,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imstat | imstat | yes | 20 | 20 | 0 | 0 | 0 | 0 |
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 7 | 0 | 0 |
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
+| listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 43 | 0 | 0 |
 | plotms | plotms | pending | 102 | pending | | | | |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
@@ -985,6 +986,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **Matched release performance — planned.** Scheduled during the programme performance qualification in #979. End-to-end throughput, I/O and compute phases, workers and memory.
 
 - [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
+
+### listcal
+
+- CASA source: `casatasks/listcal.py`, 7 parameters
+- Implementation: `casatasks/private/task_listcal.py`, `listcal` (line 6): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 7, in CASA's order: yes
+- Defaults that differ: none
 
 ### mstransform
 
