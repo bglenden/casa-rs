@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import functools
 from http import HTTPStatus
 import inspect
-from json import JSONDecodeError
+from json import JSONDecodeError, loads
 import os
 from os import PathLike
 from pathlib import Path
@@ -211,7 +211,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     }
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
-        _validate_required_vis(values, arguments["vis"])
+        _validate_required_path(values, "vis", arguments["vis"])
     if name == "applycal":
         return _call_applycal(values)
     if name == "gencal":
@@ -277,7 +277,7 @@ def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> A
         raise AssertionError("{'vis': ['null value not allowed']}")
     if not isinstance(vis, str):
         raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
-    _validate_required_vis(values, vis)
+    _validate_required_path(values, "vis", vis, search_data=True)
     types = {
         "seasonal_weight": ((float, int, np.int32, np.int64, np.float32, np.float64), "cFloat", float),
         "doPlot": ((bool, np.bool_), "cBool", bool),
@@ -421,21 +421,37 @@ def _call_getantposalma(values: dict[str, Any]) -> Any:
         raise AssertionError(str(error)) from error
 
 
-def _validate_required_vis(values: dict[str, Any], vis: Any) -> None:
-    _validate_required_path(values, "vis", vis)
-
-
-def _validate_required_path(values: dict[str, Any], name: str, value: Any) -> None:
-    # CASA's required-path validation runs before calibrater opens the MS.
-    # Keep PathLike as the native API's additional path form.
-    if isinstance(value, (str, PathLike)):
-        path = os.path.expanduser(os.fspath(value))
-        if not path or not os.path.exists(path):
-            raise AssertionError(f"the {name} parameter must be a path that exists ('{path}' does not exist)")
-        if path != os.fspath(value):
-            values[name] = path
+def _validate_required_path(
+    values: dict[str, Any], name: str, argument: Any, *, search_data: bool = False
+) -> None:
+    # CASA validates and expands a required path before opening the table.
+    if isinstance(argument, (str, PathLike)):
+        original = os.fspath(argument)
+        path = os.path.expanduser(original)
+        if (search_data and path and not Path(path).is_absolute()
+                and not path.startswith(("./", "../")) and not os.path.exists(path)):
+            path = _resolve_relative_data_path(path)
+        if path and os.path.exists(path):
+            if path != original:
+                values[name] = path
+            return
     else:
-        raise AssertionError(f"the {name} parameter must be a path that exists ('{value}' does not exist)")
+        path = argument
+    raise AssertionError(f"the {name} parameter must be a path that exists ('{path}' does not exist)")
+
+
+def _resolve_relative_data_path(path: str) -> str:
+    roots = []
+    if configured := os.environ.get("CASA_RS_MEASURESPATH"):
+        roots.append(Path(configured))
+    if installation := os.environ.get("CASAPATH", "").split():
+        roots.append(Path(installation[0]) / "data")
+    roots.append(Path.home() / ".casa" / "data")
+    for root in roots:
+        candidate = root / path
+        if candidate.exists():
+            return str(candidate)
+    return path
 
 
 def _call_applycal(values: dict[str, Any]) -> Any:
@@ -586,9 +602,7 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
     if not completion.successful:
         raise TaskExecutionError(completion)
     if task == "plotweather":
-        import json
-
-        plot = json.loads(stdout)["result"]["plot"]
+        plot = loads(stdout)["result"]["plot"]
         if plot is not None:
             from ._weather_plot import render_weather
 

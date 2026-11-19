@@ -45,9 +45,9 @@ pub const CALIBRATION_SURFACES: [&str; 17] = [
     "uvmodelfit",
     "smoothcal",
     "rerefant",
+    "plotweather",
     "initweights",
     "statwt",
-    "plotweather",
 ];
 
 /// Build the current shared calibration protocol descriptor.
@@ -740,9 +740,9 @@ mod tests {
                 "uvmodelfit",
                 "smoothcal",
                 "rerefant",
+                "plotweather",
                 "initweights",
                 "statwt",
-                "plotweather",
             ]
         );
         assert!(
