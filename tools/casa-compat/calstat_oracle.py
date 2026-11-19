@@ -3,6 +3,7 @@
 """Compare public calibration statistics and table views with CASA 6.7.6.14."""
 
 import argparse
+from contextlib import chdir
 import inspect
 import os
 from pathlib import Path
@@ -108,6 +109,9 @@ def run(root, native, native_table):
     compare(native.calstat(str(spaced)), casa.calstat(str(spaced)))
     home_relative = f'~/{os.path.relpath(legacy, Path.home())}'
     compare(native.calstat(home_relative), casa.calstat(home_relative))
+    with chdir(root):
+        data_table = 'geodetic/TAI_UTC'
+        compare(native.calstat(data_table, 'MJD'), casa.calstat(data_table, 'MJD'))
     compare(native.calstat(str(gain), 'phase', 'cparam'), casa.calstat(str(gain), 'phase', 'cparam'))
 
     expected_nan = casa.calstat(str(legacy), 'NAN')['NAN']
@@ -144,6 +148,8 @@ def run(root, native, native_table):
         (str(gain), 1, 'CPARAM'),
         (str(gain), np.array('amp'), 'CPARAM'),
         (str(gain), 'amp', np.array('CPARAM')),
+        (str(gain), 'amp', Path('CPARAM')),
+        (str(gain), None, 'CPARAM'),
         (str(gain), 'amplitude', 1),
     ]
     for parameters in invalid_types:
@@ -184,7 +190,7 @@ def run(root, native, native_table):
     np.testing.assert_allclose(expected['var'], cast.var(ddof=1), rtol=2e-7)
     samples = cast.astype(np.float32)
     assert expected['sumsq'] == np.square(samples).sum(dtype=np.float64)
-    print(f'{len(successes) + 5} public statistics comparisons, {len(errors) + len(invalid_types) + 2} errors, '
+    print(f'{len(successes) + 6} public statistics comparisons, {len(errors) + len(invalid_types) + 2} errors, '
           'four table-tool comparisons, NaN behavior and independent moment checks passed')
 
 

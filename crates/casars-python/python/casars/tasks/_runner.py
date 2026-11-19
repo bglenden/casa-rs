@@ -213,7 +213,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
         _validate_required_path(values, "vis", arguments["vis"])
     if name == "calstat":
-        _validate_required_path(values, "caltable", arguments["caltable"])
+        _validate_required_path(values, "caltable", arguments["caltable"], search_data=True)
         for parameter in ("axis", "datacolumn"):
             value = arguments[parameter]
             if not isinstance(value, str):
@@ -390,11 +390,16 @@ def _call_getantposalma(values: dict[str, Any]) -> Any:
         raise AssertionError(str(error)) from error
 
 
-def _validate_required_path(values: dict[str, Any], name: str, argument: Any) -> None:
+def _validate_required_path(
+    values: dict[str, Any], name: str, argument: Any, *, search_data: bool = False
+) -> None:
     # CASA validates and expands a required path before opening the table.
     if isinstance(argument, (str, PathLike)):
         original = os.fspath(argument)
         path = os.path.expanduser(original)
+        if (search_data and path and not Path(path).is_absolute()
+                and not path.startswith(("./", "../")) and not os.path.exists(path)):
+            path = _resolve_relative_data_path(path)
         if path and os.path.exists(path):
             if path != original:
                 values[name] = path
@@ -402,6 +407,20 @@ def _validate_required_path(values: dict[str, Any], name: str, argument: Any) ->
     else:
         path = argument
     raise AssertionError(f"the {name} parameter must be a path that exists ('{path}' does not exist)")
+
+
+def _resolve_relative_data_path(path: str) -> str:
+    roots = []
+    if configured := os.environ.get("CASA_RS_MEASURESPATH"):
+        roots.append(Path(configured))
+    if installation := os.environ.get("CASAPATH", "").split():
+        roots.append(Path(installation[0]) / "data")
+    roots.append(Path.home() / ".casa" / "data")
+    for root in roots:
+        candidate = root / path
+        if candidate.exists():
+            return str(candidate)
+    return path
 
 
 def _call_applycal(values: dict[str, Any]) -> Any:
