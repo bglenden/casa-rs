@@ -3008,7 +3008,7 @@ fn fast_gain_curve_values(
         path: path.display().to_string(),
         source,
     })?;
-    let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees() as f32;
+    let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees();
     let mut values = [0.0_f32; FAST_GAIN_RECEPTOR_LIMIT];
     let mut flags = [false; FAST_GAIN_RECEPTOR_LIMIT];
     for receptor in 0..grid.receptor_count {
@@ -3190,19 +3190,13 @@ fn materialize_row_dependent_grid(
                 path: path.display().to_string(),
                 source,
             })?;
-            let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees() as f32;
+            let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees();
             let mut values = Vec::with_capacity(grid.receptor_count);
             let mut flags = Vec::with_capacity(grid.receptor_count);
             for receptor in 0..grid.receptor_count {
-                let base = receptor * 4;
-                let mut gain = grid.coefficients[[base, 0]];
-                let mut angle_power = 1.0_f32;
-                for coeff_index in 1..4 {
-                    angle_power *= za_degrees;
-                    gain += grid.coefficients[[base + coeff_index, 0]] * angle_power;
-                }
+                let (gain, flagged) = grid.evaluate(receptor, za_degrees);
                 values.push(Complex32::new(gain, 0.0));
-                flags.push((0..4).any(|coeff_index| grid.flags[[base + coeff_index, 0]]));
+                flags.push(flagged);
             }
             Ok(Arc::new(CalibrationGrid::Complex(GainGrid {
                 receptor_count: grid.receptor_count,
@@ -3957,7 +3951,7 @@ impl GainCurveGrid {
                 path: context.path.display().to_string(),
                 source,
             })?;
-        let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees() as f32;
+        let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees();
         let receptor = receptor.min(self.receptor_count.saturating_sub(1));
         let (gain, flagged) = self.evaluate(receptor, za_degrees);
         Ok(GainSample {
@@ -3966,15 +3960,14 @@ impl GainCurveGrid {
         })
     }
 
-    fn evaluate(&self, receptor: usize, za_degrees: f32) -> (f32, bool) {
+    fn evaluate(&self, receptor: usize, za_degrees: f64) -> (f32, bool) {
         if self.power {
             let terms = crate::gencal::POWER_CURVE_TERMS;
             let base = receptor * terms;
-            let angle = f64::from(za_degrees);
             let mut loss = f64::from(self.coefficients[[base, 0]]);
             let mut angle_power = 1.0;
             for index in 1..terms {
-                angle_power *= angle;
+                angle_power *= za_degrees;
                 loss += f64::from(self.coefficients[[base + index, 0]]) * angle_power;
             }
             return if loss >= 0.0 {
@@ -3983,6 +3976,7 @@ impl GainCurveGrid {
                 (0.0, true)
             };
         }
+        let za_degrees = za_degrees as f32;
         let base = receptor * 4;
         let mut gain = self.coefficients[[base, 0]];
         let mut angle_power = 1.0_f32;
