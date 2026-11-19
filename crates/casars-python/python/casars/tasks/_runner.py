@@ -282,13 +282,24 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
 
 def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
     for name in ("vis", "caltable"):
-        _validate_required_path(values, name, arguments[name], search_data=True)
+        value = arguments[name]
+        if not isinstance(value, str):
+            raise AssertionError(f"the {name} parameter must be a path that exists ('{value}' does not exist)")
+        _validate_required_path(values, name, value, search_data=True)
     for name in ("field", "antenna", "spw", "listfile"):
         if not isinstance(arguments[name], str):
             message = "null value not allowed" if arguments[name] is None else "must be of cStr type"
             raise AssertionError(str({name: [message]}))
-    if isinstance(values.get("pagerows"), bool):
-        values["pagerows"] = int(values["pagerows"])
+    pagerows = arguments["pagerows"]
+    if not isinstance(pagerows, int):
+        import numpy as np
+
+        if not isinstance(pagerows, (np.int32, np.int64)):
+            message = "null value not allowed" if pagerows is None else "must be of cInt type"
+            raise AssertionError(str({"pagerows": [message]}))
+        values["pagerows"] = int(pagerows)
+    elif isinstance(pagerows, bool):
+        values["pagerows"] = int(pagerows)
     try:
         completion = run("listcal", **values)
     except (TypeError, ValueError) as error:
@@ -300,7 +311,8 @@ def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
     prompt = True
     quit_requested = False
     solutions = 0
-    for part in report["listing"]["parts"]:
+    listing = report["listing"]
+    for part in listing["parts"]:
         print(part["text"], end="")
         solutions = part["solutions"]
         if prompt and part["prompt"]:
@@ -313,6 +325,9 @@ def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
             prompt &= command != "a"
         if quit_requested and part["last_in_integration"]:
             break
+    else:
+        if listing["error"] is not None:
+            raise RuntimeError(listing["error"])
     print(f"\nListed {solutions} antenna solutions.\n")
 
 
@@ -551,6 +566,9 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
     executable = _task_executable(task)
     command = (executable, *invocation.args)
     environment = dict(os.environ)
+    if task == "listcal":
+        # A later listing error takes effect only when the reader reaches it.
+        environment["CASARS_LISTCAL_PAGED_REPLY"] = "1"
     if task in {"simobserve", "simanalyze", "simalma"}:
         environment.pop("CASARS_PLOT_PAYLOAD", None)
     if payload is not None:

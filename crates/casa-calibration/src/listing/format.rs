@@ -158,13 +158,10 @@ impl<'a> Window<'a> {
                         let gain = values
                             .get(index)
                             .ok_or("CPARAM dimensions do not match the listing")?;
-                        write!(
-                            text,
-                            "{:>5.3} {:>6.1} {mark} ",
-                            gain.norm(),
-                            gain.arg().to_degrees()
-                        )
-                        .unwrap();
+                        write_parameter(text, gain.norm(), 5, 3);
+                        text.push(' ');
+                        write_parameter(text, gain.arg().to_degrees(), 6, 1);
+                        write!(text, " {mark} ").unwrap();
                     }
                     ArrayValue::Float32(values) => {
                         let value = *values
@@ -175,7 +172,8 @@ impl<'a> Window<'a> {
                         } else {
                             value
                         };
-                        write!(text, "{printed:>10.5}   {mark} ").unwrap();
+                        write_parameter(text, printed, 10, 5);
+                        write!(text, "   {mark} ").unwrap();
                     }
                     _ => return Err("unsupported calibration parameter array".into()),
                 }
@@ -183,6 +181,19 @@ impl<'a> Window<'a> {
         }
         text.push('\n');
         Ok(())
+    }
+}
+
+fn write_parameter(text: &mut String, value: f32, width: usize, precision: usize) {
+    if value.is_nan() {
+        let nan = if value.is_sign_negative() {
+            "-nan"
+        } else {
+            "nan"
+        };
+        write!(text, "{nan:>width$}").unwrap();
+    } else {
+        write!(text, "{value:>width$.precision$}").unwrap();
     }
 }
 
@@ -217,7 +228,7 @@ pub(super) struct Listing {
 }
 
 impl Listing {
-    pub(super) fn new(page_rows: i64) -> Self {
+    pub(super) fn new(page_rows: i32) -> Self {
         Self {
             parts: Vec::new(),
             text: String::new(),
@@ -291,13 +302,14 @@ impl Listing {
         });
     }
 
-    pub(super) fn finish(mut self) -> CalibrationListing {
+    pub(super) fn finish(mut self, error: Option<String>) -> CalibrationListing {
         if !self.text.is_empty() {
-            self.flush(false, true);
+            self.flush(false, error.is_none());
         }
         CalibrationListing {
             parts: self.parts,
             solutions: self.solutions,
+            error,
         }
     }
 }

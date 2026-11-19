@@ -24,13 +24,22 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let field = task.text("field")?.unwrap_or_default();
     let antenna = task.text("antenna")?.unwrap_or_default();
     let spw = task.text("spw")?.unwrap_or_default();
-    let page_rows = task.integer("pagerows")?;
+    // CASA's Python bridge passes a long to Calibrater's signed Int.
+    let page_rows = task.integer("pagerows")? as i32;
     let ms = MeasurementSet::open(&vis)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     let listing = list_calibration(&ms, &path, &field, &antenna, &spw, page_rows)
         .map_err(TaskFailure::execution)?;
-    let text = listing.lines();
     let listfile = task.text("listfile")?.filter(|path| !path.is_empty());
+    let paged_reply = listfile.is_none()
+        && page_rows > 0
+        && std::env::var_os("CASARS_LISTCAL_PAGED_REPLY").is_some();
+    if let Some(error) = &listing.error
+        && (!paged_reply || listing.parts.is_empty())
+    {
+        return Err(TaskFailure::execution(error.clone()));
+    }
+    let text = listing.lines();
     if let Some(path) = listfile {
         publish_listing(Path::new(&path), &text)?;
         let message = format!("Writing output to file: {path}\n");

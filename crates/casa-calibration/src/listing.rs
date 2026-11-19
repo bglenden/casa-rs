@@ -34,6 +34,7 @@ pub(crate) struct ListingPart {
 pub(crate) struct CalibrationListing {
     pub(crate) parts: Vec<ListingPart>,
     pub(crate) solutions: usize,
+    pub(crate) error: Option<String>,
 }
 
 impl CalibrationListing {
@@ -57,16 +58,18 @@ pub(crate) fn list_calibration(
     field: &str,
     antenna: &str,
     spw: &str,
-    page_rows: i64,
+    page_rows: i32,
 ) -> Result<CalibrationListing, String> {
     let table = Table::open(TableOptions::new(input)).map_err(display)?;
-    let subtype = table.info().sub_type.as_str();
     if table.info().table_type != TABLE_INFO_TYPE {
         return Err(format!("{} is not a calibration table", input.display()));
     }
-    if matches!(subtype.to_ascii_uppercase().as_str(), "BPOLY" | "GSPLINE") {
-        return Err("GSPLINE and BPOLY tables cannot currently be listed".into());
-    }
+    let subtype = listing_subtype(&table.info().sub_type)?;
+    let ms_name = ms
+        .path()
+        .map(std::path::absolute)
+        .transpose()
+        .map_err(display)?;
     let fields = ms.resolve_field_selector(field).map_err(display)?;
     let antennas = ms.resolve_specified_antennas(antenna).map_err(display)?;
     let windows = ms
@@ -101,17 +104,52 @@ pub(crate) fn list_calibration(
     let complex = table
         .schema()
         .is_some_and(|schema| schema.column(COL_CPARAM).is_some());
+    let source = ListingSource {
+        table: &table,
+        input,
+        ms_name: ms_name.as_deref(),
+        subtype,
+        complex,
+        fields: &fields,
+        antennas: &antennas,
+        names: &names,
+    };
     let mut listing = Listing::new(page_rows);
-    for (spw, rows) in headers {
-        let range = &ranges[&spw];
+    let result = headers
+        .into_iter()
+        .try_for_each(|(spw, rows)| source.window(&mut listing, spw, &rows, &ranges[&spw]));
+    Ok(listing.finish(result.err()))
+}
+
+struct ListingSource<'a> {
+    table: &'a Table,
+    input: &'a Path,
+    ms_name: Option<&'a Path>,
+    subtype: &'a str,
+    complex: bool,
+    fields: &'a [i32],
+    antennas: &'a [usize],
+    names: &'a TableNames,
+}
+
+impl ListingSource<'_> {
+    fn window(
+        &self,
+        listing: &mut Listing,
+        spw: usize,
+        rows: &[Header],
+        range: &ChannelRange,
+    ) -> Result<(), String> {
+        let names = self.names;
         let channels = names
             .channels
             .get(spw)
             .copied()
             .ok_or("missing calibration spectral window")?;
         let selected = channels_in_table(range, channels)?;
-        let params = table
-            .column_accessor(if complex { COL_CPARAM } else { COL_FPARAM })
+        let params = self
+            .table
+            .column_accessor(if self.complex { COL_CPARAM } else { COL_FPARAM })
             .map_err(display)?;
         let first = params.array_cell(rows[0].row).map_err(display)?;
         let receptors = first
@@ -127,14 +165,15 @@ pub(crate) fn list_calibration(
             .max()
             .unwrap_or(0)
             .max(5);
-        let window = Window::new(subtype, complex, receptors, channels, field_width);
-        let data = solution_rows(&rows, &fields, &antennas, &params, &table)?;
-        listing.start_window(&window, spw, rows[0].time, input, ms.path());
-        for group in antennas.chunks(window.antennas_per_line()) {
+        validate_integrations(rows, names.antennas.len())?;
+        let window = Window::new(self.subtype, self.complex, receptors, channels, field_width);
+        let data = solution_rows(rows, self.fields, self.antennas, &params, self.table)?;
+        listing.start_window(&window, spw, rows[0].time, self.input, self.ms_name);
+        for group in self.antennas.chunks(window.antennas_per_line()) {
             let mut first_heading = true;
-            for integration in rows.chunk_by(|a, b| a.time == b.time && a.field == b.field) {
+            for integration in rows.chunks_exact(names.antennas.len()) {
                 let at = &integration[0];
-                if !fields.is_empty() && !fields.contains(&at.field) {
+                if !self.fields.is_empty() && !self.fields.contains(&at.field) {
                     continue;
                 }
                 let values = group
@@ -159,8 +198,112 @@ pub(crate) fn list_calibration(
                 listing.end_integration();
             }
         }
+        Ok(())
     }
-    Ok(listing.finish())
+}
+
+fn listing_subtype(subtype: &str) -> Result<&str, String> {
+    let upper = subtype.to_ascii_uppercase();
+    let base = upper.strip_suffix(" JONES").unwrap_or(&upper);
+    let name = match base {
+        "B" => "B Jones",
+        "G" => "G Jones",
+        "T" | "T NOISE" => "T Jones",
+        "TF" | "TF NOISE" => "Tf Jones",
+        "J" => "J Jones",
+        "JF" => "Jf Jones",
+        "XJ" => "X Jones",
+        "XF" => "Xf Jones",
+        "K" => "K Jones",
+        "KCROSS" => "Kcross Jones",
+        "KMBD" => "KMBD Jones",
+        "POSANG" => "PosAng Jones",
+        "GLINXPH" | "XY+QU" => "GlinXph Jones",
+        "GLINXPHF" | "XYF+QU" => "GlinXphf Jones",
+        "XPARANG" | "XPARANG+QU" => "Xparang Jones",
+        "XFPARANG" | "XFPARANG+QU" => "Xfparang Jones",
+        "TFOPAC" => "TfOpac",
+        "TOPAC" => "TOpac",
+        "BPOLY" | "GSPLINE" => {
+            return Err("GSPLINE and BPOLY tables cannot currently be listed".into());
+        }
+        "M" | "A" | "N" | "MF" | "X" | "M MUELLER" | "A MUELLER" | "A NOISE" | "MF MUELLER"
+        | "X MUELLER" => {
+            return Err(format!(
+                "baseline calibration {subtype} does not provide an antenna listing"
+            ));
+        }
+        "EP" | "LJ" => {
+            return Err(format!(
+                "{subtype} is unavailable to the calibration listing tool"
+            ));
+        }
+        _ => {
+            let prefix = base.split('+').next().unwrap_or(base);
+            match prefix {
+                "D" | "DLIN" => "D Jones",
+                "DF" | "DFLIN" => "Df Jones",
+                "DLLS" => "DLLS Jones",
+                "DFLLS" => "DfLLS Jones",
+                "DGEN" | "DGENERAL" => "Dgen Jones",
+                "DFGEN" | "DFGENERAL" => "Dfgen Jones",
+                _ if upper.contains("EVLAGAIN") => {
+                    return Err("regenerate the EVLA switched-power table with gencal".into());
+                }
+                _ if upper.contains("SDSKY_OTF") => {
+                    return Err(format!(
+                        "{subtype} is unavailable to the calibration listing tool"
+                    ));
+                }
+                _ if [
+                    "KANTPOS",
+                    "TSYS",
+                    "EVLASWP",
+                    "GAINCURVE",
+                    "POWERCURVE",
+                    "TEC",
+                    "F JONES",
+                    "FRINGE",
+                    "ACCOR",
+                    "ZENITHDELAY",
+                    "SDSKY_PS",
+                    "SDSKY_RASTER",
+                    "SDGAIN_OTFD",
+                ]
+                .iter()
+                .any(|token| upper.contains(token)) =>
+                {
+                    subtype
+                }
+                _ => return Err(format!("unknown calibration type {subtype:?}")),
+            }
+        }
+    };
+    Ok(name)
+}
+
+fn validate_integrations(rows: &[Header], antennas: usize) -> Result<(), String> {
+    if antennas == 0 || !rows.len().is_multiple_of(antennas) {
+        return Err("calibration table has an incomplete antenna integration".into());
+    }
+    let mut seen = vec![false; antennas];
+    for block in rows.chunks_exact(antennas) {
+        seen.fill(false);
+        let first = block[0];
+        for row in block {
+            if row.time != first.time
+                || row.field != first.field
+                || row.antenna >= antennas
+                || std::mem::replace(&mut seen[row.antenna], true)
+            {
+                return Err(format!(
+                    "inconsistent antenna integration beginning at row {}",
+                    first.row
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 struct TableNames {
@@ -253,9 +396,6 @@ fn row_headers(
             field,
             antenna,
         });
-    }
-    for rows in windows.values_mut() {
-        rows.sort_by(|a, b| a.time.total_cmp(&b.time).then(a.field.cmp(&b.field)));
     }
     Ok(windows)
 }
