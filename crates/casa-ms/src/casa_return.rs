@@ -29,6 +29,26 @@ pub fn flagdata_summary_record(summary: &FlagSummaryBreakdown) -> CasaValue {
 
 /// Serialize a summary using the name supplied to the flagdata task.
 pub fn flagdata_named_summary_record(summary: &FlagSummaryBreakdown, name: &str) -> CasaValue {
+    if let Some(by_field) = &summary.by_field {
+        let mut record = BTreeMap::from([
+            ("name".to_string(), CasaValue::string(name)),
+            ("type".to_string(), CasaValue::string("summary")),
+        ]);
+        record.extend(by_field.iter().map(|(field, counts)| {
+            (
+                field.clone(),
+                CasaValue::dict(flagdata_summary_fields(counts, None)),
+            )
+        }));
+        return CasaValue::dict(record);
+    }
+    CasaValue::dict(flagdata_summary_fields(summary, Some(name)))
+}
+
+fn flagdata_summary_fields(
+    summary: &FlagSummaryBreakdown,
+    name: Option<&str>,
+) -> Vec<(&'static str, CasaValue)> {
     let axis = |counts: &BTreeMap<String, FlagCounts>| {
         CasaValue::dict(
             counts
@@ -36,28 +56,38 @@ pub fn flagdata_named_summary_record(summary: &FlagSummaryBreakdown, name: &str)
                 .map(|(key, counts)| (key.clone(), counts_record(*counts))),
         )
     };
-    let mut fields = vec![
-        ("antenna", axis(&summary.antenna)),
-        ("array", axis(&summary.array)),
+    let mut fields = vec![("antenna", axis(&summary.antenna))];
+    if let Some(counts) = &summary.antenna_scan {
+        fields.push(("antenna:scan", axis(counts)));
+    }
+    fields.push(("array", axis(&summary.array)));
+    if let Some(counts) = &summary.baseline {
+        fields.push(("baseline", axis(counts)));
+    }
+    fields.extend([
         ("correlation", axis(&summary.correlation)),
         ("field", axis(&summary.field)),
         ("flagged", CasaValue::float(summary.overall.flagged as f64)),
-        ("name", CasaValue::string(name)),
+    ]);
+    if let Some(name) = name {
+        fields.push(("name", CasaValue::string(name)));
+    }
+    fields.extend([
         ("observation", axis(&summary.observation)),
         ("scan", axis(&summary.scan)),
         ("spw", axis(&summary.spw)),
-    ];
+    ]);
     if let Some(counts) = &summary.spw_channel {
         fields.push(("spw:channel", axis(counts)));
     }
     if let Some(counts) = &summary.spw_correlation {
         fields.push(("spw:correlation", axis(counts)));
     }
-    fields.extend([
-        ("total", CasaValue::float(summary.overall.total as f64)),
-        ("type", CasaValue::string("summary")),
-    ]);
-    CasaValue::dict(fields)
+    fields.push(("total", CasaValue::float(summary.overall.total as f64)));
+    if name.is_some() {
+        fields.push(("type", CasaValue::string("summary")));
+    }
+    fields
 }
 
 fn counts_record(counts: FlagCounts) -> CasaValue {

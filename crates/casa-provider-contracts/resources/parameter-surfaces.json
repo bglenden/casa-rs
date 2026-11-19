@@ -22694,8 +22694,7 @@
             "provider": {"field": "minrel"},
             "python": {"name": "minrel"},
             "presentation": {"label": "Min Relative", "group": "Summary", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+          }
         },
         {
           "name": "maxrel",
@@ -22709,8 +22708,7 @@
             "provider": {"field": "maxrel"},
             "python": {"name": "maxrel"},
             "presentation": {"label": "Max Relative", "group": "Summary", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+          }
         },
         {
           "name": "minabs",
@@ -22724,8 +22722,7 @@
             "provider": {"field": "minabs"},
             "python": {"name": "minabs"},
             "presentation": {"label": "Min Absolute", "group": "Summary", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+          }
         },
         {
           "name": "maxabs",
@@ -22739,8 +22736,7 @@
             "provider": {"field": "maxabs"},
             "python": {"name": "maxabs"},
             "presentation": {"label": "Max Absolute", "group": "Summary", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+          }
         },
         {
           "name": "spwchan",
@@ -22782,8 +22778,7 @@
             "provider": {"field": "basecnt"},
             "python": {"name": "basecnt"},
             "presentation": {"label": "Baseline Counts", "group": "Summary", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+          }
         },
         {
           "name": "fieldcnt",
@@ -22797,8 +22792,7 @@
             "provider": {"field": "fieldcnt"},
             "python": {"name": "fieldcnt"},
             "presentation": {"label": "Field Counts", "group": "Summary", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+          }
         },
         {
           "name": "name",
