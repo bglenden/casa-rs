@@ -28,6 +28,7 @@ struct Scan {
     number: i32,
     field: i32,
     observation: i32,
+    first_time: f64,
     last_time: f64,
 }
 
@@ -66,19 +67,33 @@ pub(super) fn rows(
         let time = first.time - first.interval / 2.0;
         // assignCTScanField uses the next scan after a gap, and clips times
         // outside the observation to the first and last scan.
-        let scan_index = scans.partition_point(|scan| time > scan.last_time + 1e-5);
-        let scan = &scans[scan_index.min(scans.len() - 1)];
+        let last = &scans[scans.len() - 1];
+        let scan = if time < scans[0].last_time + 1e-5 {
+            &scans[0]
+        } else if time > last.first_time - 1e-5 {
+            last
+        } else {
+            &scans[scans.partition_point(|scan| time > scan.last_time + 1e-5)]
+        };
         let channels = if spectral {
             usize::try_from(windows.num_chan(first.window).map_err(invalid)?).map_err(invalid)?
         } else {
             1
         };
         let mut values = HashMap::new();
+        let mut group_receptors = None;
         for entry in group {
-            values.insert(
-                entry.antenna,
-                temperatures(syscal, entry.row, column, channels, spectral)?,
-            );
+            let (parameters, receptors) =
+                temperatures(syscal, entry.row, column, channels, spectral)?;
+            if group_receptors
+                .replace(receptors)
+                .is_some_and(|previous| previous != receptors)
+            {
+                return Err(invalid(
+                    "SYSCAL group has inconsistent Tsys receptor shapes.",
+                ));
+            }
+            values.insert(entry.antenna, parameters);
         }
         let selected: Vec<_> = if uniform {
             (0..antennas).collect()
@@ -157,7 +172,7 @@ fn temperatures(
     column: &str,
     channels: usize,
     spectral: bool,
-) -> Result<ArrayD<f32>, GencalError> {
+) -> Result<(ArrayD<f32>, usize), GencalError> {
     let value = table
         .cell_accessor(row, column)
         .and_then(|cell| cell.array())
@@ -189,7 +204,7 @@ fn temperatures(
             values[[receptor, 0]] = source[[receptor]];
         }
     }
-    Ok(values)
+    Ok((values, receptors))
 }
 
 fn scan_ends(main: &Table) -> Result<Vec<Scan>, GencalError> {
@@ -217,8 +232,10 @@ fn scan_ends(main: &Table) -> Result<Vec<Scan>, GencalError> {
             number: numbers[row],
             field: fields[row],
             observation: observations[row],
+            first_time: time,
             last_time: time,
         });
+        scan.first_time = scan.first_time.min(time);
         scan.last_time = scan.last_time.max(time);
     }
     let mut scans = by_scan.into_values().collect::<Vec<_>>();
