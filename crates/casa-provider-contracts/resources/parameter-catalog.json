@@ -29,7 +29,7 @@
         "kind": "string"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "service_reference"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -111,7 +111,7 @@
         "allow_scalar": true
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "service_reference"
       },
       "base_constraints": [],
       "unit_dimension": null,

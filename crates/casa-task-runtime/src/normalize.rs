@@ -19,7 +19,10 @@ pub fn normalize_value(
     concept: &ParameterConcept,
 ) -> Result<ParameterValue, NormalizationError> {
     validate_wrapped_values(value)?;
-    if !matches!(concept.normalization, NormalizationRule::CasaField) {
+    if !matches!(
+        concept.normalization,
+        NormalizationRule::CasaField | NormalizationRule::ServiceReference
+    ) {
         reject_forbidden_strings(
             value,
             names_project(&concept.normalization),
@@ -370,7 +373,9 @@ fn apply_rule(
     rule: &NormalizationRule,
 ) -> Result<ParameterValue, NormalizationError> {
     match rule {
-        NormalizationRule::Identity | NormalizationRule::TcleanField => Ok(value),
+        NormalizationRule::Identity
+        | NormalizationRule::TcleanField
+        | NormalizationRule::ServiceReference => Ok(value),
         NormalizationRule::Trim => map_strings(value, |value| Ok(value.trim().to_string())),
         NormalizationRule::Lowercase => {
             map_strings(value, |value| Ok(value.trim().to_ascii_lowercase()))
