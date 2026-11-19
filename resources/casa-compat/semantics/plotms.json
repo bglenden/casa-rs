@@ -84,7 +84,8 @@
     "xdatacolumn": {
       "scope": "Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios.",
       "evidence": [
-        "paired"
+        "paired",
+        "callibrary"
       ],
       "behaviors": [
         "coordinates"
@@ -122,7 +123,8 @@
     "ydatacolumn": {
       "scope": "Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios.",
       "evidence": [
-        "paired"
+        "paired",
+        "callibrary"
       ],
       "behaviors": [
         "coordinates"
@@ -960,13 +962,15 @@
       ]
     },
     "callib": {
-      "scope": "Calibration library string or filename for on-the-fly calibration.",
+      "scope": "Apply ordered file or inline callibraries while reading selected MeasurementSet rows. Export text or a single figure with transient corrected data, flags and recalculated weights. Iterated figures and additional calibration plotting controls remain open.",
       "evidence": [
+        "callibrary",
         "remaining"
       ],
       "behaviors": [
         "advanced"
-      ]
+      ],
+      "status": "Partial"
     },
     "headeritems": {
       "scope": "Comma-separated list of pre-defined page header items.",
@@ -1050,7 +1054,8 @@
       "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products.",
       "evidence": [
         "paired",
-        "selectors"
+        "selectors",
+        "callibrary"
       ],
       "gap": "Pointing-coordinate axes and advanced per-axis MS data columns are open."
     },
@@ -1088,9 +1093,10 @@
       "id": "export",
       "title": "Save and publish selected plot products",
       "status": "Partial",
-      "scope": "Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false.",
+      "scope": "Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and single-panel figures.",
       "evidence": [
-        "paired"
+        "paired",
+        "callibrary"
       ],
       "gap": "More export, multi-plot state and interactive display forms remain open."
     },
@@ -1098,11 +1104,12 @@
       "id": "advanced",
       "title": "Advanced calibration plotting controls",
       "status": "Partial",
-      "scope": "Compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet callibrary, overlays, transforms and interactive flag controls.",
+      "scope": "Apply calibration libraries to MeasurementSet plots in memory and compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.",
       "evidence": [
         "atmosphere",
         "selectors",
-        "remaining"
+        "remaining",
+        "callibrary"
       ],
       "gap": "The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215."
     }
@@ -1115,10 +1122,11 @@
       "casa": "Raises Exception with message updateImmediately must be a boolean.",
       "ours": "Displays and exports all available solution points without applying the selector text.",
       "rationale": "Make the documented selection switch work when it is false.",
-      "impact": "The native request produces all 160 available points in the paired fixture.",
+      "impact": "The native request produces all 160 available points in the paired fixture. The same fallback preserves all 1,920 points in the unfiltered callibrary case.",
       "record": "PlotMS disabling selection calls the selection setter with a missing argument",
       "evidence": [
-        "paired"
+        "paired",
+        "callibrary"
       ]
     },
     {
@@ -1180,6 +1188,19 @@
       "receipt": "resources/casa-compat/evidence/plotms-calibration-selectors-20261119.json",
       "links": [
         "https://github.com/bglenden/casa-rs/blob/d3571932be189f719e83e2626ba7fab982d23d33/tools/casa-compat/plotms_calibration_oracle.py"
+      ]
+    },
+    "callibrary": {
+      "kind": "Same-input callibrary plots",
+      "state": "passed",
+      "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on identical MeasurementSets and ordered calibration libraries.",
+      "result": "30 public text exports, 714 points, one missing-library error and 12 rendered coordinates matched. Source visibilities, stored corrections, flags and weights were preserved. The disabled selector fallback matched 1,920 CASA points.",
+      "casa_version": "6.7.6.14",
+      "revision": "93b953f4136a35cc851f9868344f78d48b16d3f0",
+      "command": "casa-python tools/casa-compat/plotms_callibrary_oracle.py --work <new-dir> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-callibrary-20261119.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/blob/93b953f4136a35cc851f9868344f78d48b16d3f0/tools/casa-compat/plotms_callibrary_oracle.py"
       ]
     }
   }

@@ -917,7 +917,8 @@ def plotms(
     ``yframe``, ``yinterp``, ``phasecenter``, ``extendflag``, ``extcorr``,
     ``extchannel``, ``clearplots``.
     Accepted only at CASA's default, where CASA reads them, until #1526:
-    ``callib``, ``colorizeoverlay``.
+    ``colorizeoverlay``.
+    MeasurementSet atmospheric overlays remain open under #1526.
     """
     return _call_casa(plotms, locals())
 
