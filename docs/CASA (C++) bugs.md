@@ -5348,6 +5348,20 @@ conversion at the same angles. The normalized FK4 controls return
 finite vectors in both directions and preserve the input strength
 (#1252).
 
+## Comet numeric queries can terminate without an epoch
+
+After loading `Ganymede_55437-56293dUTC.tab` with an empty observing frame,
+CASA 6.7.6.14 terminates with SIGSEGV in both `cometdist()` and
+`cometangdiam()`. The binding dereferences the frame's epoch without
+checking whether one was set. This also applies when `done()` empties
+the frame while retaining the active table for the comet queries.
+
+Casa-rs reports the missing epoch and returns the same `-1 AU` or
+`-1 rad` sentinel that CASA uses when the table has no sample at a
+requested epoch. Setting an epoch enables the queries on the retained
+table again. The oracle runs each missing-epoch probe in its own process
+with core files disabled (#1252).
+
 ## Component spectrum changes can discard data
 
 - Date noted: 2026-11-06

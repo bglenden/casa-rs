@@ -40,7 +40,7 @@ CASA = casa_signatures("measures")
 IMPLEMENTED = {
     "asbaseline", "baseline", "earthmagnetic", "expand", "touvw", "uvw",
     "doppler", "radialvelocity", "todoppler", "tofrequency", "toradialvelocity", "torestfrequency",
-    "addxvalue", "cometangdiam", "cometdist", "cometname", "comettopo", "comettype", "direction", "dirshow", "doframe", "done", "epoch", "framenow", "frequency", "getoffset", "getref",
+    "addxvalue", "cometangdiam", "cometdist", "cometname", "comettopo", "comettype", "direction", "dirshow", "doframe", "done", "epoch", "framecomet", "framenow", "frequency", "getoffset", "getref",
     "gettype", "getvalue", "ismeasure", "linelist", "listcodes", "measure", "observatory", "obslist",
     "posangle", "position", "separation", "show", "source", "sourcelist", "spectralline", "type",
 }

@@ -819,6 +819,7 @@ dependencies = [
  "casa-components",
  "casa-coordinates",
  "casa-images",
+ "casa-measures-data",
  "casa-ms",
  "casa-provider-contracts",
  "casa-simulation",
