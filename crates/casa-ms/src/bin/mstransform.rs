@@ -126,7 +126,7 @@ fn task_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
                     if value == "none"
                         && matches!(
                             binding.name.as_str(),
-                            "field" | "scan" | "antenna" | "timerange"
+                            "field" | "spw" | "scan" | "antenna" | "timerange"
                         ) =>
                 {
                     r#""""#.into()

@@ -22,10 +22,13 @@ def compare(root, source, task, name, case, argument):
                                        **{name: argument})
         assert result is None, (task, name, case, module.__name__, result)
     compare_columns(*targets, MAIN, f"{task} {name} {case}")
-    if case == "zero-dimensional-text":
-        for output in targets:
-            with table(str(output / "HISTORY"), ack=False) as history:
-                assert f"{name:<11} = {argument.item()}" in history.getcol("MESSAGE")
+    for output in targets:
+        with table(str(output / "HISTORY"), ack=False) as history:
+            messages = history.getcol("MESSAGE")
+            if name != "spw":
+                assert 'spw         = ""' in messages
+            if case == "zero-dimensional-text":
+                assert f"{name:<11} = {argument.item()}" in messages
 
 
 def reject(root, source, task, name, case, value, kind, message):
