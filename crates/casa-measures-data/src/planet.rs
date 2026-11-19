@@ -108,7 +108,8 @@ impl PlanetaryTable {
         })
     }
 
-    /// Resolve a solar-system direction in the geocentric JNAT reference.
+    /// Resolve a solar-system direction in the geocentric JNAT reference
+    /// and return its geocentric parallax distance in metres.
     ///
     /// The frame supplies the epoch. A direction with a latitude of +90°
     /// denotes the default position of the body. Otherwise the direction's
@@ -118,11 +119,14 @@ impl PlanetaryTable {
         &self,
         model: &MDirection,
         frame: &MeasFrame,
-    ) -> Result<MDirection, MeasuresDataError> {
+    ) -> Result<(MDirection, f64), MeasuresDataError> {
         let body = body_index(model.refer().as_str())?;
         let offset = (model.cosines()[2] != 1.).then(|| model.as_angles());
-        let (direction, _) = self.geocentric(body, offset, frame)?;
-        Ok(MDirection::from_cosines(direction, DirectionRef::JNAT))
+        let (direction, distance_au) = self.geocentric(body, offset, frame)?;
+        Ok((
+            MDirection::from_cosines(direction, DirectionRef::JNAT),
+            distance_au * self.au_km * 1000.0,
+        ))
     }
 
     fn geocentric(

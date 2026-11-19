@@ -1,0 +1,2198 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "name": "horizon",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.238872903705021
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.5931553789622959
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.802827253516
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.70774072938
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.253558553675
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.15724128981
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "positive",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "5deg"
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.135932471509724
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.490214946766999
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.81921073214
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.724079472246
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.237175075046
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.140902546904
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "negative",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "-5deg"
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.3401788680383946
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.6944613432956694
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.786703908525
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.69166140983
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.269681898666
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.173320609385
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "time_as_angle",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "5s"
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.2384476302596052
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.59273010551688
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.802894937886
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.70780822893
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.253490869305
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.157173790256
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "bare_elevation",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        5
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -2.6597439605043154
+          },
+          "set": {
+            "unit": "rad",
+            "value": 3.0140264357615902
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.57668860133
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.482219557896
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.47969720586
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.38276246191
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "length_elevation",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "5km"
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -2.806139879913331
+          },
+          "set": {
+            "unit": "rad",
+            "value": 3.160422355170606
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.553388967106
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.45898354425
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.502996840085
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.40599847564
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "record_elevation",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "value": 3.0,
+          "unit": "deg"
+        }
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.1773292957368218
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.5316117709940966
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.81262222293
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.71750895323
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.24376358425
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.14747306593
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_elevation",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        ""
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.238872903705021
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.5931553789622959
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.802827253516
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.70774072938
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.253558553675
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.15724128981
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "turn_boundary",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.9198621771937623
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -3.334537483324889
+          },
+          "set": {
+            "unit": "rad",
+            "value": -0.5010423442349974
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.4692918766
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.37238554478
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.920256634214
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.822118927994
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "above",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -1.553343034274955
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "results": {
+        "rise": {
+          "rise": "above",
+          "set": "above"
+        },
+        "riseset": {
+          "rise": "above",
+          "set": "above"
+        }
+      }
+    },
+    {
+      "name": "below",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.553343034274955
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "results": {
+        "rise": {
+          "rise": "below",
+          "set": "below"
+        },
+        "riseset": {
+          "rise": "below",
+          "set": "below"
+        }
+      }
+    },
+    {
+      "name": "north",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 56456.13888888889
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.8782942581394362
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5916750987501983
+          },
+          "m2": {
+            "unit": "m",
+            "value": 6373576.280915651
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "10deg"
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.4159429128181478
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.77126330225727
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 63181.77464568629
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 56455.34905922761
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 63182.28190531007
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 56455.85493380295
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "tai",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "TAI",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "15deg"
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -0.9232502270194299
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.277532702661111
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.85306016266
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.75783647554
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.20332564459
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.107145543625
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "array_first",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "value": [
+              10.0,
+              90.0
+            ],
+            "unit": "deg"
+          },
+          "m1": {
+            "value": [
+              20.0,
+              -50.0
+            ],
+            "unit": "deg"
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.238872903705021
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.5931553789622959
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.802827253516
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.70774072938
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.253558553675
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.15724128981
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "angles_text",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        "10deg 20deg"
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.238872903705021
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.5931553789622959
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.802827253516
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.70774072938
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.253558553675
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.15724128981
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "ref_text",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        "J2000 10deg 20deg"
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.238872903705021
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.5931553789622959
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.802827253516
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.70774072938
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.253558553675
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.15724128981
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "text_list",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        [
+          "J2000",
+          "10deg",
+          "20deg"
+        ]
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.238872903705021
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.5931553789622959
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.802827253516
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.70774072938
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.253558553675
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.15724128981
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "app",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "APP",
+          "type": "direction"
+        }
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -1.2420198157456475
+          },
+          "set": {
+            "unit": "rad",
+            "value": 1.5910856661445134
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.802326406905
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.70724125035
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.25322914865
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55564.15691278424
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "hadec",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "HADEC",
+          "type": "direction"
+        }
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -2.8090213836283233
+          },
+          "set": {
+            "unit": "rad",
+            "value": 0.024083064735116455
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.55293036155
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.45852619094
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.0038329388
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.90819756055
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "azel",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 56456.13888888889
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.8782942581394362
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5916750987501983
+          },
+          "m2": {
+            "unit": "m",
+            "value": 6373576.280915651
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 2.0943951023931953
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        }
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -3.3876092791797072
+          },
+          "set": {
+            "unit": "rad",
+            "value": -0.35464943239158253
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 63182.460845237954
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 56456.03338514522
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 63182.94355578977
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 56456.51477768681
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "sun",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        "SUN",
+        "-0.833deg"
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": -3.091607046490041
+          },
+          "set": {
+            "unit": "rad",
+            "value": 0.4416996446687633
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62287.50795545645
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.413674091615
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 62288.070298681814
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 55563.974481816214
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "moon",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 56456.13888888889
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.8782942581394362
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5916750987501983
+          },
+          "m2": {
+            "unit": "m",
+            "value": 6373576.280915651
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "MOON",
+          "type": "direction"
+        },
+        "1deg"
+      ],
+      "results": {
+        "rise": {
+          "rise": {
+            "unit": "rad",
+            "value": 0.614503429787322
+          },
+          "set": {
+            "unit": "rad",
+            "value": 3.999580851103535
+          }
+        },
+        "riseset": {
+          "rise": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 63182.097801258395
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 56455.67133243804
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          },
+          "set": {
+            "last": {
+              "m0": {
+                "unit": "d",
+                "value": 63182.63655306275
+              },
+              "refer": "LAST",
+              "type": "epoch"
+            },
+            "utc": {
+              "m0": {
+                "unit": "d",
+                "value": 56456.20861321045
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            }
+          }
+        }
+      },
+      "direction_controls": {
+        "APP": {
+          "m0": {
+            "unit": "rad",
+            "value": 2.3070421404454287
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.2172956549409109
+          },
+          "refer": "APP",
+          "type": "direction"
+        },
+        "TOPO": {
+          "m0": {
+            "unit": "rad",
+            "value": 2.294353153412911
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.20958556459039304
+          },
+          "refer": "TOPO",
+          "type": "direction"
+        },
+        "HADEC": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.2659359754758435
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.20958817131163096
+          },
+          "refer": "HADEC",
+          "type": "direction"
+        },
+        "AZEL": {
+          "m0": {
+            "unit": "rad",
+            "value": -1.561217251618999
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.36797575709929575
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        }
+      }
+    },
+    {
+      "name": "no_coordinates",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [],
+      "results": {
+        "rise": {},
+        "riseset": {}
+      }
+    },
+    {
+      "name": "unknown_coordinates",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        "nonsense"
+      ],
+      "results": {
+        "rise": {},
+        "riseset": {}
+      }
+    },
+    {
+      "name": "bad_record",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {}
+      ],
+      "results": {
+        "rise": {},
+        "riseset": {}
+      }
+    },
+    {
+      "name": "epoch_as_source",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "results": {
+        "rise": {},
+        "riseset": {}
+      }
+    },
+    {
+      "name": "invalid_elevation",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "nonsense"
+      ],
+      "results": {
+        "rise": {},
+        "riseset": {}
+      }
+    }
+  ]
+}

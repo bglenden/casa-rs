@@ -18,6 +18,12 @@ impl Measures {
     pub(super) fn read(record: &RecordArg) -> Result<Self, HolderError> {
         Self::read_fields(&record.0, 0)
     }
+
+    pub(super) fn read_variant(
+        record: &crate::convert::VariantRecord,
+    ) -> Result<Self, HolderError> {
+        Self::read_fields(record, 0)
+    }
     fn read_fields(fields: &BTreeMap<String, Variant>, depth: usize) -> Result<Self, HolderError> {
         if depth > 128 {
             return Err(HolderError::Invalid(

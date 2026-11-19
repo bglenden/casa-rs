@@ -21,8 +21,8 @@
 //!   with CASA's "Cannot convert due to missing frame information", where
 //!   CASA's tool starts with a frame at MJD 0 at the geocentre and converts
 //!   with it (`measure(dir, 'AZEL')` with no `doframe`);
-//! - codes casa-types does not convert (`B1950_VLA`, `BMEAN`, `BTRUE`, the
-//!   planets, `COMET`, `Undefined`) define and show but do not convert, and
+//! - codes casa-types does not convert (`B1950_VLA`, `BMEAN`, `BTRUE`,
+//!   `COMET`, `Undefined`) define and show but do not convert, and
 //!   `R_` (razing) codes are not read;
 //! - scalar constructors for epoch/direction/position/frequency still refuse
 //!   offsets; the spectral constructors and record conversion/query paths
@@ -36,6 +36,7 @@ mod geometry;
 mod inspect;
 mod offset;
 mod record;
+mod rise_set;
 mod shift;
 mod showframe;
 mod spectral;
@@ -52,7 +53,7 @@ use pyo3::prelude::*;
 use crate::convert::holder::Measure;
 use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant};
-use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use crate::tools::{LogLine, emit};
 
 /// The Python logger CASA's `me` messages go to.
 const LOGGER: &str = "casars.tools.measures";
@@ -121,12 +122,6 @@ impl PyMeasures {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
-}
-
-/// A method casa-rs does not implement yet, refused naming #1252, which
-/// classifies them.
-fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented_in("measures", method, 1252)
 }
 
 /// The measures data failed to load: CASA's tool always has them.
@@ -349,28 +344,6 @@ impl PyMeasures {
                 names.into_iter().map(CasaValue::Text).collect(),
             ))
         })
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (crd = None, ev = None), text_signature = "($self, crd=[], ev=[])")]
-    fn rise(
-        &self,
-        crd: Option<&Bound<'_, PyAny>>,
-        ev: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("rise")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (crd = None, ev = None), text_signature = "($self, crd=[], ev=[])")]
-    fn riseset(
-        &self,
-        crd: Option<&Bound<'_, PyAny>>,
-        ev: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("riseset")
     }
 
     /// The sources of the measures data, their names joined by spaces in
