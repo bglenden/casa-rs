@@ -279,11 +279,6 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
     } else {
         None
     };
-    // CASA looks the corrections up (the VLA's position database, the
-    // ALMA tables) when no antenna is named.
-    if caltype == GencalType::Antpos && antenna.trim().is_empty() && infile.is_none() {
-        return Err(not_yet("antenna", &antenna));
-    }
     Ok(GencalTaskRequest {
         prior: GencalRequest {
             measurement_set: task.path("vis")?,
@@ -297,6 +292,9 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         polarization: task.text("pol")?.unwrap_or_default(),
         gaincurve_infile: infile.clone().filter(|_| caltype.is_gain_curve()),
         antpos_infile: infile.filter(|_| caltype == GencalType::Antpos),
+        ant_pos_time_limit: (caltype == GencalType::Antpos)
+            .then(|| task.integer("ant_pos_time_limit"))
+            .transpose()?,
         uniform: (caltype == GencalType::Tsys)
             .then(|| task.flag("uniform"))
             .transpose()?,

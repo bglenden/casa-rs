@@ -18495,8 +18495,7 @@
             "provider": {"field": "ant_pos_time_limit"},
             "python": {"name": "ant_pos_time_limit"},
             "presentation": {"label": "Antenna Position Time Limit", "group": "Gencal", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}}}
+          }
         },
         {
           "name": "spw",

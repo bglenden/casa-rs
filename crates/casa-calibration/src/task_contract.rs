@@ -179,6 +179,9 @@ pub struct GencalTaskRequest {
     /// Explicit CASA ALMA antenna-position JSON `infile`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub antpos_infile: Option<PathBuf>,
+    /// Request an automatic VLA lookup, with the optional cutoff in days.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ant_pos_time_limit: Option<i64>,
     /// Fill the full antenna grid when importing SYSCAL. CASA defaults to true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uniform: Option<bool>,
@@ -193,6 +196,7 @@ impl GencalTaskRequest {
             &self.prior,
             &self.polarization,
             self.infile(),
+            self.ant_pos_time_limit,
             self.uniform.unwrap_or(true),
             mode,
         )

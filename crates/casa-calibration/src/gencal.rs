@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native generation of externally specified CASA calibration tables.
 
+mod antpos_evla;
 mod antpos_file;
 mod power_curve;
 mod tsys;
@@ -237,6 +238,7 @@ pub fn gencal(request: &GencalRequest) -> Result<GencalReport, GencalError> {
         request,
         "",
         None,
+        None,
         true,
         crate::CalibrationOutputMode::Update,
     )
@@ -246,6 +248,7 @@ pub(crate) fn gencal_with_output_mode(
     request: &GencalRequest,
     polarization: &str,
     infile: Option<&Path>,
+    ant_pos_time_limit: Option<i64>,
     uniform: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
@@ -264,14 +267,28 @@ pub(crate) fn gencal_with_output_mode(
     if let Some(path) = linked_input {
         refuse_prior_input_overlap(request, path)?;
     }
-    let from_file = if request.caltype == GencalType::Antpos
-        && let Some(path) = infile
-    {
-        Some(antpos_file::resolve(&ms, request, polarization, path)?)
-    } else {
-        None
+    let positions = match (request.caltype, infile, ant_pos_time_limit) {
+        (GencalType::Antpos, Some(path), _) => {
+            Some(antpos_file::resolve(&ms, request, polarization, path)?)
+        }
+        (GencalType::Antpos, None, Some(limit)) if request.antenna.is_empty() => {
+            let positions = antpos_evla::resolve(&ms, request, limit)?;
+            if positions.is_none() {
+                tracing::warn!("No offsets found. No caltable created.");
+                return Ok(GencalReport {
+                    output_table: request.output_table.clone(),
+                    caltype: request.caltype,
+                    table_subtype: request.caltype.table_subtype().to_string(),
+                    row_count: 0,
+                    spectral_window_ids: Vec::new(),
+                    antenna_ids: Vec::new(),
+                });
+            }
+            positions
+        }
+        _ => None,
     };
-    let request = from_file.as_ref().unwrap_or(request);
+    let request = positions.as_ref().unwrap_or(request);
     // Reserve before reading prior parameters, so concurrent updates cannot
     // both accumulate from the same old product and silently lose a correction.
     let output = crate::output::CalibrationOutput::prepare(&request.output_table, mode)?;

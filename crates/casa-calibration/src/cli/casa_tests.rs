@@ -570,6 +570,7 @@ fn gencal_reads_casas_values() {
             polarization: String::new(),
             gaincurve_infile: None,
             antpos_infile: None,
+            ant_pos_time_limit: None,
             uniform: None,
         })
     );
@@ -606,7 +607,7 @@ fn gencal_keeps_the_gaincurve_input_key_on_the_wire() {
 }
 
 #[test]
-fn gencal_selects_opacity_antennas_and_refuses_automatic_antpos_lookup() {
+fn gencal_selects_opacity_antennas_and_reads_automatic_antpos_lookup() {
     let gencal = |values: Value| {
         let mut base = json!({"vis": "t.ms", "caltable": "c.cal"});
         base.as_object_mut()
@@ -614,15 +615,13 @@ fn gencal_selects_opacity_antennas_and_refuses_automatic_antpos_lookup() {
             .extend(values.as_object().unwrap().clone());
         casa("gencal", base)
     };
-    // CASA looks antenna position corrections up when no antenna is named,
-    // while named-antenna opacity is implemented (#945).
-    assert!(
-        refused(
-            gencal(json!({"caltype": "antpos", "parameter": [0.01, 0, 0]})),
-            "antenna"
-        )
-        .contains("#979")
-    );
+    let CalibrationTaskRequest::Gencal(request) =
+        gencal(json!({"caltype": "antpos", "ant_pos_time_limit": 42})).unwrap()
+    else {
+        panic!("expected gencal request");
+    };
+    assert!(request.prior.antenna.is_empty());
+    assert_eq!(request.ant_pos_time_limit, Some(42));
     assert!(gencal(json!({"caltype":"opac","antenna":"VA01","parameter":[0.05]})).is_ok());
     assert!(
         gencal(json!({"caltype":"opac","antenna":"VA02,VA01","pol":"R",
