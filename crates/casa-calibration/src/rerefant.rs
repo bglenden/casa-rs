@@ -115,7 +115,7 @@ fn edit_references(table: &mut Table, choices: &mut [i32]) -> Result<(), String>
     let subtype = table.info().sub_type.trim().to_ascii_uppercase();
     let (kind, column) = match subtype.as_str() {
         "G JONES" | "B JONES" | "T JONES" | "TF JONES" => (ReferenceKind::Phase, "CPARAM"),
-        "D JONES" => (ReferenceKind::Leakage, "CPARAM"),
+        "D JONES" | "DF JONES" | "DLLS JONES" | "DFLLS JONES" => (ReferenceKind::Leakage, "CPARAM"),
         "FRINGE JONES" => (ReferenceKind::Fringe, "FPARAM"),
         _ => {
             return Err(format!(
@@ -178,12 +178,12 @@ fn edit_references(table: &mut Table, choices: &mut [i32]) -> Result<(), String>
             let from = previous.unwrap_or(interval);
             let chosen = choices.iter().find_map(|&antenna| {
                 let acceptable = |rows: &[Solution]| {
-                    rows.iter().position(|row| {
-                        row.index.antenna == antenna
-                            && has_polarization(row, 0, parameters_per_pol)
-                            && (!second_polarization
-                                || has_polarization(row, parameters_per_pol, parameters_per_pol))
-                    })
+                    let index = rows.iter().position(|row| row.index.antenna == antenna)?;
+                    let row = &rows[index];
+                    (has_polarization(row, 0, parameters_per_pol)
+                        && (!second_polarization
+                            || has_polarization(row, parameters_per_pol, parameters_per_pol)))
+                    .then_some(index)
                 };
                 Some((antenna, acceptable(from)?, acceptable(interval)?))
             });

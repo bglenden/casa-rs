@@ -33333,7 +33333,7 @@
           "name": "vis",
           "concept": {
             "id": "data.input.vis",
-            "semantic_revision": 1
+            "semantic_revision": 3
           },
           "order": 0,
           "default": {
@@ -33343,6 +33343,7 @@
               "value": ""
             }
           },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "Required scalar CASA path preserving the supplied filesystem spelling."},
           "required_when": {
             "kind": "always"
           },
@@ -33367,13 +33368,6 @@
               "group": "Input"
             }
           },
-          "refinements": [
-            {
-              "kind": "length",
-              "min": 0,
-              "max": 1
-            }
-          ],
           "context_role": "input_dataset"
         },
         {
@@ -33419,7 +33413,7 @@
           "name": "caltable",
           "concept": {
             "id": "calibration.caltable",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 2,
           "default": {
@@ -33429,6 +33423,7 @@
               "value": ""
             }
           },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "An empty output aliases the input. All nonempty output spellings name a separate requested path."},
           "required_when": {
             "kind": "never"
           },
@@ -33653,7 +33648,7 @@
           "name": "vis",
           "concept": {
             "id": "data.input.vis",
-            "semantic_revision": 1
+            "semantic_revision": 3
           },
           "order": 0,
           "default": {
@@ -33687,13 +33682,6 @@
               "group": "Input"
             }
           },
-          "refinements": [
-            {
-              "kind": "length",
-              "min": 0,
-              "max": 1
-            }
-          ],
           "context_role": "input_dataset"
         },
         {
@@ -33739,7 +33727,7 @@
           "name": "caltable",
           "concept": {
             "id": "calibration.caltable",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 2,
           "default": {

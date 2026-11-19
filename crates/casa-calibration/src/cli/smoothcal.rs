@@ -14,7 +14,13 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .into_iter()
         .find(|path| !path.as_os_str().is_empty());
     let destination = destination.as_deref().unwrap_or(&input);
-    let field = task.texts("field")?.join(",");
+    let fields = task.texts("field")?;
+    if fields.len() > 1 && fields.iter().any(|field| field.trim().is_empty()) {
+        return Err(TaskFailure::execution(
+            "a field list cannot contain empty selectors",
+        ));
+    }
+    let field = fields.join(",");
     let smoother = match task.text("smoothtype")?.as_deref() {
         Some("mean") => Smoother::Mean,
         Some("median") => Smoother::Median,

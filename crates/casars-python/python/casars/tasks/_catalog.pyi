@@ -1124,7 +1124,7 @@ def getantposalma(
     ...
 
 def smoothcal(
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    vis: StrPath = ...,
     tablein: StrPath = ...,
     caltable: StrPath = ...,
     field: str | list[str] | tuple[str, ...] = ...,
@@ -1135,7 +1135,7 @@ def smoothcal(
     ...
 
 def rerefant(
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    vis: StrPath = ...,
     tablein: StrPath = ...,
     caltable: StrPath = ...,
     refantmode: Literal['flex', 'strict'] = ...,

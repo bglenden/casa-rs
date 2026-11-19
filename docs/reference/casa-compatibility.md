@@ -964,7 +964,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 
 | CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
 |---|---|---|---|---|---|
-| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | MeasurementSet supplying antenna identifiers and positions. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [paired](#rerefant-evidence-paired) |
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | MeasurementSet supplying antenna identifiers and positions. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (measurement_set) | [paired](#rerefant-evidence-paired) |
 | `tablein` | `''` | `''`; `tablein` → `tablein` | Implemented | Existing gain, bandpass, scalar gain, leakage or fringe table. Unsupported delay input raises a task error. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#rerefant-evidence-paired) |
 | `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Separate result or an in-place update when empty. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#rerefant-evidence-paired) |
 | `refantmode` | `'flex'` | `'flex'`; `refantmode` → `refantmode` | Implemented | Flexible selection maintains the prior reference when the primary loses coverage. Strict accepts only the primary. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `flex`, `strict` | [paired](#rerefant-evidence-paired) |
@@ -1564,7 +1564,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 
 | CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
 |---|---|---|---|---|---|
-| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | MeasurementSet supplying field names and IDs. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [paired](#smoothcal-evidence-paired) |
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | MeasurementSet supplying field names and IDs. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (measurement_set) | [paired](#smoothcal-evidence-paired) |
 | `tablein` | `''` | `''`; `tablein` → `tablein` | Implemented | Existing calibration table. G, T, B, K and Fringe tables have paired coverage. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#smoothcal-evidence-paired) |
 | `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Separate result or an in-place update when empty. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#smoothcal-evidence-paired) |
 | `field` | `[]` | `[]`; `field` → `field` | Implemented | Field selection expression or a list. Empty selects all fields. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [paired](#smoothcal-evidence-paired) |
