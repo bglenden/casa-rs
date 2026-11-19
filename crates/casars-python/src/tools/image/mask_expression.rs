@@ -95,6 +95,9 @@ impl PyImageTool {
             let state = self.state();
             let Some(image) = state.image.as_ref() else { return Ok(false) };
             let mut image = image.lock();
+            if !mask.is_empty() && image.fits().is_some() {
+                return Err(raised("Exception: Cannot make requested mask for this image type which is FITSImage."));
+            }
             let values = evaluate(mask, image.shape())?;
             let generated;
             let mask_name = if name.is_empty() {

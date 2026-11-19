@@ -93,6 +93,9 @@ impl PyImageTool {
                 return Ok(false);
             };
             let mut image = image.lock();
+            if record.is_empty() {
+                return Err(raised("Exception: Record is empty."));
+            }
             let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
             if coordinates.n_pixel_axes() != image.shape().len() {
                 return Err(raised(

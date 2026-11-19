@@ -23,12 +23,11 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ArrayConstant {
 }
 use crate::convert::{DoubleList, value::CasaValue};
 
-fn pixel_record<T: ImagePixel>(
-    image: &impl ImageInterface<T>,
+fn pixel_position(
+    coordinates: &casa_coordinates::CoordinateSystem,
+    shape: &[usize],
     requested: &[i64],
-    value: impl Fn(T) -> CasaValue,
-) -> PyResult<CasaValue> {
-    let coordinates = image.coordinates();
+) -> Option<Vec<usize>> {
     let reference = (0..coordinates.n_coordinates())
         .flat_map(|i| coordinates.coordinate(i).reference_pixel())
         .collect::<Vec<_>>();
@@ -37,8 +36,7 @@ fn pixel_record<T: ImagePixel>(
     } else {
         requested
     };
-    let pixel = image
-        .shape()
+    shape
         .iter()
         .enumerate()
         .map(|(axis, &size)| {
@@ -48,8 +46,15 @@ fn pixel_record<T: ImagePixel>(
                 .unwrap_or_else(|| (reference.get(axis).copied().unwrap_or(0.0) + 0.5) as i64);
             usize::try_from(pos).ok().filter(|&pos| pos < size)
         })
-        .collect::<Option<Vec<_>>>();
-    let Some(pixel) = pixel else {
+        .collect()
+}
+
+fn pixel_record<T: ImagePixel>(
+    image: &impl ImageInterface<T>,
+    requested: &[i64],
+    value: impl Fn(T) -> CasaValue,
+) -> PyResult<CasaValue> {
+    let Some(pixel) = pixel_position(image.coordinates(), image.shape(), requested) else {
         return Ok(CasaValue::empty_record());
     };
     let one = vec![1; pixel.len()];
@@ -59,7 +64,11 @@ fn pixel_record<T: ImagePixel>(
         .and_then(|mask| mask.first().copied())
         .unwrap_or(true);
     let pixel_value = image.get_at(&pixel).map_err(raised)?;
-    Ok(CasaValue::record([
+    Ok(point_reply(pixel, mask, image.units(), value(pixel_value)))
+}
+
+fn point_reply(pixel: Vec<usize>, mask: bool, units: &str, value: CasaValue) -> CasaValue {
+    CasaValue::record([
         ("mask", CasaValue::Bool(mask)),
         (
             "pixel",
@@ -70,12 +79,9 @@ fn pixel_record<T: ImagePixel>(
         ),
         (
             "value",
-            CasaValue::record([
-                ("unit", CasaValue::Text(image.units().into())),
-                ("value", value(pixel_value)),
-            ]),
+            CasaValue::record([("unit", CasaValue::Text(units.into())), ("value", value)]),
         ),
-    ]))
+    ])
 }
 
 #[pymethods]
@@ -91,6 +97,25 @@ impl PyImageTool {
             let image = image.lock();
             image.check_single_precision("pixelvalue")?;
             let pixel = pixel.into_iter().map(|p| p as i64).collect::<Vec<_>>();
+            if let ImageHandle::Float(Storage::Temp {
+                image,
+                fits: Some(fits),
+                ..
+            }) = &*image
+            {
+                let Some(pixel) = pixel_position(image.coordinates(), &fits.shape, &pixel) else {
+                    return Ok(CasaValue::empty_record());
+                };
+                let ones = vec![1; pixel.len()];
+                let values = fits.read(&pixel, &ones, &ones)?;
+                let value = *values.first().expect("one FITS pixel requested");
+                return Ok(point_reply(
+                    pixel,
+                    !value.is_nan(),
+                    image.units(),
+                    CasaValue::Float(f64::from(value)),
+                ));
+            }
             match &*image {
                 ImageHandle::Float(storage) => with_storage!(storage, image =>
                     pixel_record(image.as_ref(), &pixel, |v| CasaValue::Float(f64::from(v)))
