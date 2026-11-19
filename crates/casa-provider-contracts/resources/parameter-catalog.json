@@ -13197,6 +13197,54 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "calstat.axis",
+      "semantic_revision": 1,
+      "casa_name": "axis",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Complex projection or a literal numeric column name.",
+        "details": null,
+        "examples": [
+          "amplitude",
+          "phase",
+          "FPARAM"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calstat.datacolumn",
+      "semantic_revision": 1,
+      "casa_name": "datacolumn",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Column to summarize for amplitude, phase, real or imaginary statistics.",
+        "details": null,
+        "examples": [
+          "CPARAM",
+          "gain",
+          "corrected"
+        ]
+      },
+      "persistence_class": "profile"
     }
   ]
 }

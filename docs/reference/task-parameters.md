@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 664
-- Surfaces: 39 (39 task, 0 session)
-- Surface bindings: 978
+- Concepts: 666
+- Surfaces: 40 (40 task, 0 session)
+- Surface bindings: 981
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -55,6 +55,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Get ALMA Antenna Positions](#surface-getantposalma)<br><code>getantposalma</code> | task | 1 | <code>calibration</code> | 10 | Retrieve antenna positions from the ALMA archive. |
 | [Initialize Visibility Weights](#surface-initweights)<br><code>initweights</code> | task | 1 | <code>calibration</code> | 7 | Initialize MeasurementSet weights and their channel spectra. |
 | [Statistical Weights](#surface-statwt)<br><code>statwt</code> | task | 1 | <code>calibration</code> | 25 | Estimate MeasurementSet weights from visibility variance. |
+| [Calibration Statistics](#surface-calstat)<br><code>calstat</code> | task | 1 | <code>calibration</code> | 3 | Compute descriptive statistics for a calibration table column. |
 
 <a id="surface-msexplore"></a>
 
@@ -1540,5 +1541,21 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>flagbackup</code> | <code>parameter.flagbackup@r1</code> | <code>bool</code> | <code>true</code>; optional | Weights | Create a flagmanager backup before mutating flags. |
 | <code>preview</code> | <code>weightstats.preview@r1</code> | <code>bool</code> | <code>false</code>; optional | Weights | Preview mode. If True, no data is changed, although the amount of data that would have been flagged is reported. |
 | <code>datacolumn</code> | <code>weightstats.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Weights | Data column to use to compute weights. Supported values are "data", "corrected", "residual", and "residual_data" (case insensitive, minimum match supported). |
+
+<a id="surface-calstat"></a>
+
+## Calibration Statistics (<code>calstat</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Compute descriptive statistics for a calibration table column.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>caltable</code> | <code>parameter.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Input calibration table. |
+| <code>axis</code> | <code>calstat.axis@r1</code> | <code>string</code> | <code>"amplitude"</code>; optional | Statistics | Complex projection or a literal numeric column name. |
+| <code>datacolumn</code> | <code>calstat.datacolumn@r1</code> | <code>string</code> | <code>"gain"</code>; optional | Statistics | Column to summarize for amplitude, phase, real or imaginary statistics. |
 
 _End of generated reference._
