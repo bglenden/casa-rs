@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["j2000_baseline_uvw","local_apparent_sidereal_time"],"struct":["UvwFrame"]};
+window.SIDEBAR_ITEMS = {"fn":["baseline_rotation","j2000_baseline_uvw","local_apparent_sidereal_time"],"struct":["UvwFrame"]};

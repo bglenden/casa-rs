@@ -3256,6 +3256,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#measures-geometry-constructors-lose-values-and-mislabel-units" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measures geometry constructors lose values and mislabel units
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failed-measures-geometry-calls-can-expose-earlier-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failed measures geometry calls can expose earlier outputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#magnetic-reference-changes-can-corrupt-field-strength" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Magnetic reference changes can corrupt field strength
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#component-spectrum-changes-can-discard-data" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9001,6 +9034,57 @@ shared Python value capture. casa-rs now bounds recursive record and sequence
 capture at 128 levels and raises <code>ValueError</code> naming #1252. Capture state is
 restored on failure, so repeated failures and a subsequent valid call work.
 The isolated subprocess regressions run with core files disabled.</p>
+<h2 id="measures-geometry-constructors-lose-values-and-mislabel-units">Measures geometry constructors lose values and mislabel units<a class="headerlink" href="#measures-geometry-constructors-lose-values-and-mislabel-units" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 <code>baseline</code> and <code>uvw</code> accept three metre quantities as
+Cartesian coordinates or longitude, latitude and length as spherical
+coordinates. Passing the length first, for example
+<code>baseline('ITRF', '3m', '10deg', '20deg')</code>, causes the binding to reorder
+the quantities into an invalid sequence and return a zero baseline.
+The angle-first form produces the intended 3 m vector. casa-rs accepts
+either order and refuses incompatible dimensions such as three Hz values,
+which CASA likewise turns into a zero vector. CASA's quantity conformance
+check and angle-first records supply the independent controls.</p>
+<p>For <code>uvw('ITRF', '1m', '2m', '3m', off)</code> with a valid UVW offset, CASA's
+constructor drops the offset, although <code>measure(absolute, 'ITRF', off)</code>
+computes and returns the correct relative value and reference origin.
+casa-rs gives the constructor the same behavior as the generic
+conversion. The fixture retains both CASA results.</p>
+<p>CASA's spherical <code>earthmagnetic('ITRF','3nT','10deg','20deg')</code>
+constructor stores a vector of magnitude 3e-9 with units labelled nT.
+casa-rs returns the magnitude 3 in nT, checked against CASA's quantity
+conversions and an explicit Cartesian magnetic record. CASA also emits
+metres as the unit for magnetic <code>addxvalue</code> outputs. casa-rs returns those
+magnetic components in nT.</p>
+<h2 id="failed-measures-geometry-calls-can-expose-earlier-outputs">Failed measures geometry calls can expose earlier outputs<a class="headerlink" href="#failed-measures-geometry-calls-can-expose-earlier-outputs" title="Permanent link">&para;</a></h2>
+<p>After a successful <code>touvw</code> or <code>expand</code> call, CASA 6.7.6.14 can return
+an empty primary record alongside auxiliary coordinates and rates from
+an earlier call, even on a fresh tool. casa-rs returns empty records for
+all outputs on failure, preserving the tuple layout. For non-geometric
+records such as <code>earthmagnetic</code>, CASA's <code>expand</code> can temporarily change
+the type to UVW and return zero coordinates in metres labelled with the
+original type. casa-rs refuses the incompatible input.</p>
+<p>The inputs, raw outputs and independent controls are in
+<code>tools/simulation/measures_geometry_oracle.py</code> and
+<code>crates/casars-python/python/tests/data/casa_measures_geometry.json</code>.
+These corrections follow the standing rule on data loss, unit corruption,
+and behavior contradicting evident intent (#1252).</p>
+<h2 id="magnetic-reference-changes-can-corrupt-field-strength">Magnetic reference changes can corrupt field strength<a class="headerlink" href="#magnetic-reference-changes-can-corrupt-field-strength" title="Permanent link">&para;</a></h2>
+<p>With a frame of 2020-01-01 UTC at ALMA, CASA 6.7.6.14 converts the
+Cartesian field <code>[10000, 20000, 30000]</code> nT from B1950 to APP with a
+magnitude of 22289.454 nT, down from 37416.574 nT. Supplying that same
+Cartesian field in APP and requesting B1950 produces three NaNs.
+In <code>MCEarthMagnetic</code> the direct FK4 E-term correction can act on an
+unnormalized magnetic vector, and <code>MVEarthMagnetic::adjust()</code> leaves the
+norm unchanged during corrections. The same normalization omission is
+visible in diurnal aberration: converting this field from J2000 to ITRF
+increases its magnitude by 0.009120 nT. An IGRF output uses the ITRF
+coordinates and inherits the same error.</p>
+<p>Casa-rs applies the casacore direction corrections to a unit vector,
+then restores the input field strength. The geometry fixture retains
+the raw CASA magnetic outputs and separately captures CASA's direction
+conversion at the same angles. The normalized FK4 controls return
+finite vectors in both directions and preserve the input strength
+(#1252).</p>
 <h2 id="component-spectrum-changes-can-discard-data">Component spectrum changes can discard data<a class="headerlink" href="#component-spectrum-changes-can-discard-data" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-06</li>
