@@ -11,7 +11,7 @@ use crate::selection::MsSelection;
 use crate::selection::syntax::parse_numeric_id_selector;
 use crate::{MeasurementSet, MsError, MsResult, SubtableId};
 
-use super::{MsTransformError, MsTransformRequest, rewrite_selected_table_rows};
+use super::{MsTransformError, MsTransformRequest, rewrite_table_rows_with_variable_arrays};
 
 pub(super) struct CorrelationSelection {
     by_polarization: Vec<Vec<usize>>,
@@ -69,7 +69,7 @@ impl CorrelationSelection {
                     .collect::<Option<Vec<_>>>();
                 let Some(axes) = axes else { continue };
                 for (&(_, spw), &ddid) in descriptions.range((id, 0)..=(id, usize::MAX)) {
-                    if !windows.rows_restricted() || selected_windows.contains(&spw) {
+                    if selected_windows.contains(&spw) {
                         by_ddid.insert(ddid, id);
                         by_polarization[id].extend(axes.iter().copied());
                         found = true;
@@ -127,10 +127,11 @@ impl CorrelationSelection {
     ) -> Result<(), MsTransformError> {
         let name = SubtableId::Polarization.name();
         let rows = (0..self.by_polarization.len()).collect::<Vec<_>>();
-        rewrite_selected_table_rows(
+        rewrite_table_rows_with_variable_arrays(
             &request.input_ms.join(name),
             &request.output_ms.join(name),
             &rows,
+            &["CORR_TYPE", "CORR_PRODUCT"],
             |row, metadata| {
                 self.rewrite_polarization(row, metadata).map_err(|source| {
                     MsTransformError::MutateMeasurementSet {

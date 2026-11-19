@@ -9,7 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import casatasks
-from casacore.tables import table
+from casacore.tables import makearrcoldesc, maketabdesc, table
 import numpy as np
 
 from casars import tasks
@@ -43,31 +43,61 @@ def make_input_with_two_polarizations(source):
         ms.putcol("CORRECTED_DATA", (1000 + ms.getcol("DATA")).astype(np.complex64))
 
 
-def compare_main(want_path, got_path, *, reverse_ddids=()):
+def replace_array_descriptor(tool, name, *, fixed):
+    values = tool.getcol(name)
+    keywords = tool.getcolkeywords(name)
+    datatype = tool.getcoldesc(name)["valueType"]
+    options = {"shape": values.shape[1:]} if fixed else {}
+    tool.removecols([name])
+    tool.addcols(maketabdesc(makearrcoldesc(
+        name, 0, ndim=values.ndim - 1, valuetype=datatype, **options,
+    )))
+    tool.putcol(name, values)
+    tool.putcolkeywords(name, keywords)
+
+
+def fix_column_shapes(source):
+    with table(str(source / "DATA_DESCRIPTION"), readonly=False, ack=False) as dd:
+        dd.putcell("POLARIZATION_ID", 1, 0)
+    for subtable, columns in {
+        "": ("DATA", "FLAG", "FLAG_CATEGORY", "WEIGHT", "SIGMA"),
+        "POLARIZATION": ("CORR_TYPE", "CORR_PRODUCT"),
+        "SPECTRAL_WINDOW": ("CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"),
+    }.items():
+        with table(str(source / subtable), readonly=False, ack=False) as tool:
+            for name in columns:
+                replace_array_descriptor(tool, name, fixed=True)
+
+
+def shorten_first_window(source):
+    with table(str(source / "SPECTRAL_WINDOW"), readonly=False, ack=False) as windows:
+        for name in ("CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"):
+            windows.putcell(name, 0, windows.getcell(name, 0)[:1])
+        windows.putcell("NUM_CHAN", 0, 1)
+        windows.putcell("TOTAL_BANDWIDTH", 0, windows.getcell("CHAN_WIDTH", 0)[0])
+    with table(str(source), readonly=False, ack=False) as main:
+        columns = ("DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_CATEGORY")
+        for name in columns:
+            replace_array_descriptor(main, name, fixed=False)
+        for row in np.where(main.getcol("DATA_DESC_ID") == 0)[0]:
+            for name in columns:
+                cell = main.getcell(name, int(row))
+                main.putcell(name, int(row), cell[..., :1, :])
+
+
+def compare_rows(want_path, got_path, names, *, reverse_ddids=()):
     with (table(str(want_path), ack=False) as want,
           table(str(got_path), ack=False) as got,
           casa_table(got_path) as readback):
         assert got.nrows() == want.nrows()
         for row in range(got.nrows()):
-            for name in MAIN:
+            for name in names:
                 expected = want.getcell(name, row)
-                if name in ("DATA", "FLAG", "WEIGHT", "SIGMA"):
+                if reverse_ddids and name in ("DATA", "FLAG", "WEIGHT", "SIGMA"):
                     if want.getcell("DATA_DESC_ID", row) in reverse_ddids:
                         expected = expected[..., ::-1]
                 np.testing.assert_array_equal(got.getcell(name, row), expected,
                                               err_msg=f"{got_path.name} row {row} {name}")
-                np.testing.assert_array_equal(np.asarray(readback.getcell(name, row)).T, expected)
-
-
-def compare_polarization(want_path, got_path):
-    with (table(str(want_path / "POLARIZATION"), ack=False) as want,
-          table(str(got_path / "POLARIZATION"), ack=False) as got,
-          casa_table(got_path / "POLARIZATION") as readback):
-        assert got.nrows() == want.nrows()
-        for row in range(got.nrows()):
-            for name in ("NUM_CORR", "CORR_TYPE", "CORR_PRODUCT", "FLAG_ROW"):
-                expected = want.getcell(name, row)
-                np.testing.assert_array_equal(got.getcell(name, row), expected)
                 np.testing.assert_array_equal(np.asarray(readback.getcell(name, row)).T, expected)
 
 
@@ -76,12 +106,10 @@ def succeeds(root, source, name, case, options, *, reverse_ddids=(), missing_met
     for module, path in zip((casatasks, tasks), paths):
         arguments = dict(vis=str(source), outputvis=str(path), datacolumn="data") | options
         assert getattr(module, name)(**arguments) is None
-    compare_main(*paths, reverse_ddids=reverse_ddids)
-    for subtable, columns in {
-        "DATA_DESCRIPTION": ("SPECTRAL_WINDOW_ID", "POLARIZATION_ID"),
-        "SPECTRAL_WINDOW": ("NUM_CHAN", "CHAN_FREQ"),
-    }.items():
-        compare_columns(*(path / subtable for path in paths), columns, case)
+    compare_rows(*paths, MAIN, reverse_ddids=reverse_ddids)
+    compare_columns(*(path / "DATA_DESCRIPTION" for path in paths),
+                    ("SPECTRAL_WINDOW_ID", "POLARIZATION_ID"), case)
+    compare_rows(*(path / "SPECTRAL_WINDOW" for path in paths), ("NUM_CHAN", "CHAN_FREQ"))
     if missing_metadata:
         with table(str(paths[0] / "POLARIZATION"), ack=False) as casa:
             assert not casa.iscelldefined("CORR_TYPE", 0)
@@ -92,7 +120,8 @@ def succeeds(root, source, name, case, options, *, reverse_ddids=(), missing_met
             assert native.getcell("NUM_CORR", 0) == 3
             np.testing.assert_array_equal(readback.getcell("CORR_TYPE", 0), [9, 10, 12])
     else:
-        compare_polarization(*paths)
+        compare_rows(*(path / "POLARIZATION" for path in paths),
+                     ("NUM_CORR", "CORR_TYPE", "CORR_PRODUCT", "FLAG_ROW"))
     return paths
 
 
@@ -114,6 +143,12 @@ def main():
         root = Path(scratch)
         source = root / "input.ms"
         make_input_with_two_polarizations(source)
+        fixed = root / "fixed.ms"
+        make_input_with_two_polarizations(fixed)
+        fix_column_shapes(fixed)
+        mixed = root / "mixed.ms"
+        make_input_with_two_polarizations(mixed)
+        shorten_first_window(mixed)
         before = columns_from_casacore(source, (*MAIN, "FLAG_CATEGORY", "CORRECTED_DATA"))
         count = 0
         rejected = 0
@@ -133,6 +168,8 @@ def main():
             if name == "split":
                 cases["list"] = {"correlation": ["XX", "YY"]}
                 cases["np-list"] = {"correlation": np.array(["XX", "YY"])}
+                cases["object-list"] = {"correlation": np.array(["XX", "YY"], dtype=object)}
+                cases["upper-list-window"] = {"correlation": ["spw0:xx"]}
                 cases["empty-list"] = {"correlation": []}
             for case, options in cases.items():
                 casa, native = succeeds(
@@ -150,6 +187,21 @@ def main():
                         )
                         np.testing.assert_array_equal(readback.getcol("FLAG_CATEGORY").T, expected)
                 count += 1
+            for index, qualifier in enumerate(("(0)", "(SPW0)")):
+                succeeds(root, fixed, name, f"fixed-{index}", {"correlation": f"{qualifier}:XX"})
+                count += 1
+            succeeds(root, fixed, name, "fixed-channel", {"correlation": "XX,YY", "spw": "0:2~5"})
+            casa, native = succeeds(root, mixed, name, "mixed-category-shapes", {"correlation": "XX;RR"})
+            with (table(str(mixed), ack=False) as original,
+                  table(str(casa), ack=False) as reference,
+                  table(str(native), ack=False) as got,
+                  casa_table(native) as readback):
+                assert not reference.iscelldefined("FLAG_CATEGORY", 0)
+                for row in range(got.nrows()):
+                    expected = original.getcell("FLAG_CATEGORY", row)[..., [0]]
+                    np.testing.assert_array_equal(got.getcell("FLAG_CATEGORY", row), expected)
+                    np.testing.assert_array_equal(readback.getcell("FLAG_CATEGORY", row).T, expected)
+            count += 2
             failures = [
                 ({"correlation": "I"}, RuntimeError, "No match for polarization ID"),
                 ({"correlation": "XX,RR"}, RuntimeError, "No match for polarization ID"),
@@ -163,6 +215,13 @@ def main():
             if name == "mstransform":
                 failures.append(({"correlation": ["XX", "YY"]}, RuntimeError,
                                  "used for field correlation with type unknown"))
+                failures.append(({"correlation": np.array(["XX", "YY"], dtype=object)}, RuntimeError,
+                                 "used for field correlation with type unknown"))
+            else:
+                failures.extend([
+                    ({"correlation": ["", "YY"]}, RuntimeError, "No match for polarization ID"),
+                    ({"correlation": ["YY", ""]}, RuntimeError, "No match for polarization ID"),
+                ])
             for index, (options, kind, message) in enumerate(failures):
                 reject(root, source, name, f"rejected-{index}", options, kind, message)
                 rejected += 1

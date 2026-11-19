@@ -138,7 +138,7 @@ fn variant_selector(task: &TaskInvocation<'_>, name: &str) -> Result<Option<Stri
                         _ => Err(TaskFailure::validation("correlation expects strings").at(name)),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let text = labels.join(",");
+                let text = labels.join(", ").to_uppercase();
                 return Ok((!text.is_empty()).then_some(text));
             }
             _ => {}

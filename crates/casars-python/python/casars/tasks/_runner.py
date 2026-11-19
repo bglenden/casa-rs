@@ -186,7 +186,7 @@ def run(
         if task in ("split", "mstransform"):
             if "correlation" in values:
                 try:
-                    _validate_ms_transform_correlation(values["correlation"])
+                    values["correlation"] = _ms_transform_correlation(values["correlation"])
                 except AssertionError as error:
                     raise ValueError(str(error)) from error
             for selector in ("array", "uvrange", "feed"):
@@ -462,7 +462,7 @@ def _call_initweights(values: dict[str, Any]) -> Any:
 
 def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
     if "correlation" in values:
-        _validate_ms_transform_correlation(values["correlation"])
+        values["correlation"] = _ms_transform_correlation(values["correlation"])
     for name in ("observation", "intent", "array", "uvrange", "feed"):
         if name not in values:
             continue
@@ -508,20 +508,20 @@ def _ms_transform_selector_variant(name: str, value: Any) -> tuple[Any, str | No
     raise AssertionError(str({name: [f"must be of {kind} type" for kind in types]}))
 
 
-def _validate_ms_transform_correlation(value: Any) -> None:
+def _ms_transform_correlation(value: Any) -> Any:
     if isinstance(value, str):
-        return
+        return value
     import numpy as np
 
     if value is None:
         raise AssertionError(str({"correlation": ["null value not allowed"] * 3}))
     if isinstance(value, np.ndarray):
         if value.ndim == 0 and value.dtype.type is np.str_:
-            return
+            return value
         if value.ndim == 1 and (not value.size or value.dtype.kind in ("U", "O")):
             value = value.tolist()
     if isinstance(value, (list, tuple)) and all(isinstance(label, str) for label in value):
-        return
+        return value
     raise AssertionError(str({"correlation": ["must be of cStr type", "must be of cStrVec type"]}))
 
 
