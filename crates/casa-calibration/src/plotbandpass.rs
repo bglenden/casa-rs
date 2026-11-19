@@ -2,6 +2,7 @@
 //! Prepare selected calibration spectra for the shared plot renderer.
 
 mod document;
+mod polynomial;
 mod selection;
 mod spectrum;
 mod statistics;
@@ -17,7 +18,7 @@ use selection::{GroupKey, SelectedRow, groups};
 pub(crate) use selection::{Overlay, Selectors};
 use spectrum::{Curve, Derivative, Ordinate};
 pub(crate) use statistics::derivative_record;
-use table::{SolutionWindow, Solutions};
+use table::{SolutionWindow, Solutions, Spectrum};
 
 pub(crate) struct PlotRequest<'a> {
     pub(crate) caltable: &'a Path,
@@ -32,6 +33,7 @@ pub(crate) struct PlotRequest<'a> {
     pub(crate) show_baseband_number: bool,
     pub(crate) derivative_sigma: f64,
     pub(crate) edge: usize,
+    pub(crate) resample: u32,
 }
 
 pub(crate) struct BandpassPlots {
@@ -74,7 +76,7 @@ pub(crate) struct DerivativeStatistics {
 
 pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlots, String> {
     let source = Solutions::open(request.caltable, request.vis)?;
-    let selected = groups(
+    let (selected, time_count) = groups(
         &source,
         &request.selectors,
         request.overlay,
@@ -85,7 +87,9 @@ pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlot
     let ordinates = ordinates(&source, request.y_axis)?;
     for (key, rows) in selected {
         for &axis in &ordinates {
-            panels.push(panel(&source, &spectra, key, &rows, axis, request)?);
+            panels.push(panel(
+                &source, &spectra, key, &rows, axis, request, time_count,
+            )?);
         }
     }
     Ok(BandpassPlots {
@@ -113,32 +117,34 @@ fn panel(
     selected: &[SelectedRow],
     ordinate: Ordinate,
     request: &PlotRequest<'_>,
+    time_count: usize,
 ) -> Result<BandpassPanel, String> {
     let mut series = Vec::new();
     let mut metadata = None;
     for row in selected {
         let address = source.rows[row.row];
         let samples = &spectra[&row.row];
-        let receptors = samples.parameters.shape().first().copied().unwrap_or(0);
+        let [receptors, total_channels] = samples.shape();
         let window = spectral_window(source, address.window)?;
-        let frequencies_ghz = request.frequency_axis.then(|| {
+        let frequency_axis = request.frequency_axis || source.subtype == "BPOLY";
+        let frequencies_ghz = frequency_axis.then(|| {
             window
                 .sky_frequencies_hz
                 .iter()
                 .map(|value| value * 1e-9)
                 .collect::<Vec<_>>()
         });
-        let total_channels = samples.parameters.shape().get(1).copied().unwrap_or(0);
-        let domain = match &frequencies_ghz {
-            Some(hz) => [
+        let domain = match (samples, &frequencies_ghz) {
+            (Spectrum::Polynomial(poly), _) => poly.domain.map(|hz| hz * 1e-9),
+            (_, Some(hz)) => [
                 *hz.first().ok_or("empty spectral window")?,
                 *hz.last().ok_or("empty spectral window")?,
             ],
-            None => [0.0, total_channels.saturating_sub(1) as f64],
+            (_, None) => [0.0, total_channels.saturating_sub(1) as f64],
         };
         let derivative = request.derivative_sigma > 0.0;
         metadata
-            .get_or_insert_with(|| PanelMetadata::new(window, total_channels, request, derivative))
+            .get_or_insert_with(|| PanelMetadata::new(window, samples, frequency_axis, derivative))
             .extend_domain(domain);
         let labels = polarization_labels(&source.polarization_basis, receptors);
         for receptor in select_polarizations(&labels, request.polarizations) {
@@ -150,6 +156,9 @@ fn panel(
             )?;
             if raw.x.is_empty() {
                 continue;
+            }
+            if derivative && request.resample > 1 {
+                return Err("name 'resampleSolution' is not defined".into());
             }
             let (curve, statistics) = if derivative {
                 let Derivative {
@@ -180,7 +189,13 @@ fn panel(
         }
     }
     let metadata = metadata.ok_or("empty bandpass panel")?;
-    let (title, suffix) = captions(source, key, selected[0], request.show_baseband_number)?;
+    let (title, suffix) = captions(
+        source,
+        key,
+        selected[0],
+        request.show_baseband_number,
+        time_count,
+    )?;
     let x_limits = metadata.x_limits();
     Ok(BandpassPanel {
         ordinate,
@@ -198,15 +213,18 @@ struct PanelMetadata {
     label: String,
     domain: [f64; 2],
     frequency_channels: Vec<f64>,
+    polynomial: bool,
 }
 
 impl PanelMetadata {
     fn new(
         window: &SolutionWindow,
-        channels: usize,
-        request: &PlotRequest<'_>,
+        samples: &Spectrum,
+        frequency_axis: bool,
         derivative: bool,
     ) -> Self {
+        let [_, channels] = samples.shape();
+        let polynomial = matches!(samples, Spectrum::Polynomial(_));
         let count = if derivative {
             channels.saturating_sub(1).max(1)
         } else {
@@ -223,9 +241,9 @@ impl PanelMetadata {
         let high_frequency = window
             .reference_frequency_hz
             .filter(|reference| *reference > 60e9);
-        let label = if !request.frequency_axis {
+        let label = if !frequency_axis {
             format!("Channels ({count})")
-        } else if let Some(reference) = high_frequency {
+        } else if let Some(reference) = high_frequency.filter(|_| !polynomial) {
             let frequencies = &window.sky_frequencies_hz;
             let reversed = frequencies.is_empty() && window.sideband < 0
                 || reference > frequencies.iter().sum::<f64>() / frequencies.len() as f64;
@@ -237,11 +255,18 @@ impl PanelMetadata {
         Self {
             label,
             domain: [f64::INFINITY, f64::NEG_INFINITY],
-            frequency_channels: window
-                .sky_frequencies_hz
+            frequency_channels: if !frequency_axis {
+                Vec::new()
+            } else {
+                match samples {
+                    Spectrum::Polynomial(poly) => &poly.frequencies_hz,
+                    _ => &window.sky_frequencies_hz,
+                }
                 .iter()
                 .map(|value| value * 1e-9)
-                .collect(),
+                .collect()
+            },
+            polynomial,
         }
     }
 
@@ -253,7 +278,8 @@ impl PanelMetadata {
     fn x_limits(&self) -> [f64; 2] {
         let [lower, upper] = self.domain;
         let range = if lower == upper { 0.001 } else { upper - lower };
-        [lower - range * 0.01, upper + range * 0.01]
+        let pad = if self.polynomial { 0.0 } else { range * 0.01 };
+        [lower - pad, upper + pad]
     }
 }
 
@@ -339,6 +365,7 @@ fn captions(
     key: GroupKey,
     first: SelectedRow,
     show_baseband: bool,
+    time_count: usize,
 ) -> Result<(String, String), String> {
     let row = source.rows[first.row];
     let mut title = Vec::new();
@@ -369,7 +396,7 @@ fn captions(
         let clock = date.get(11..).unwrap_or_default();
         let last = match row.scan {
             Some(scan) => format!("scan{scan}  {clock}"),
-            None => clock.into(),
+            None => format!("t{index}/{}  {clock}", time_count.saturating_sub(1)),
         };
         title.push(last);
         suffix.push(format!("t{index:02}"));

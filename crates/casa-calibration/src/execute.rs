@@ -4800,7 +4800,12 @@ fn infer_bpoly_receptor_count(
     })
 }
 
-fn legacy_bpoly_chebyshev_value(coefficients: &[f64], x_start: f64, x_end: f64, x: f64) -> f64 {
+pub(crate) fn legacy_bpoly_chebyshev_value(
+    coefficients: &[f64],
+    x_start: f64,
+    x_end: f64,
+    x: f64,
+) -> f64 {
     if coefficients.is_empty() {
         return 0.0;
     }

@@ -58,6 +58,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         show_baseband_number: task.flag("showBasebandNumber")?,
         derivative_sigma: numeric(task, "channeldiff")?,
         edge: unsigned(task, "edge")? as usize,
+        resample: unsigned(task, "resample")?,
     };
     let figfile = task.text("figfile")?.unwrap_or_default();
     let display = DisplayOptions {

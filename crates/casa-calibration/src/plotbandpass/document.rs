@@ -284,7 +284,8 @@ fn y_limits(panel: &BandpassPanel, display: &DisplayOptions<'_>) -> Option<[f64;
         .and_then(|range| range.frequencies(&panel.frequency_channels));
     let requested = channel_limits.or_else(|| {
         let [lower, upper, ..] = display.limits;
-        (lower != 0.0 || upper != 0.0).then_some([lower, upper])
+        (!panel.frequency_channels.is_empty() && (lower != 0.0 || upper != 0.0))
+            .then_some([lower, upper])
     })?;
     let lower = requested[0].min(requested[1]);
     let upper = requested[0].max(requested[1]);

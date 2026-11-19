@@ -32,7 +32,11 @@ impl Spectrum {
         ordinate: Ordinate,
         show_flagged: bool,
     ) -> Result<Curve, String> {
-        let shape = self.parameters.shape();
+        let (parameters, flags) = match self {
+            Self::Samples { parameters, flags } => (parameters, flags),
+            Self::Polynomial(poly) => return poly.curve(receptor, ordinate),
+        };
+        let shape = parameters.shape();
         let [receptors, channels, ..] = shape else {
             return Err(format!("unsupported calibration spectrum shape {shape:?}"));
         };
@@ -47,7 +51,7 @@ impl Spectrum {
                 frequencies.len()
             ));
         }
-        let ArrayValue::Bool(flags) = &self.flags else {
+        let ArrayValue::Bool(flags) = flags else {
             return Err("calibration spectrum flags must be Boolean".into());
         };
         let mut index = vec![0; shape.len()];
@@ -62,7 +66,7 @@ impl Spectrum {
                 continue;
             }
             let x = frequencies_ghz.map_or(channel as f64, |values| values[channel]);
-            let y = amplitude_phase(&self.parameters, &index, ordinate)?;
+            let y = amplitude_phase(parameters, &index, ordinate)?;
             curve.x.push(x);
             curve.y.push(y);
         }

@@ -8,6 +8,8 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::paths::subtable_owner;
 
+use super::polynomial::Polynomial;
+
 pub(super) struct Solutions {
     table: Table,
     pub(super) path: PathBuf,
@@ -41,9 +43,24 @@ pub(super) struct SolutionWindow {
     pub(super) baseband: Option<i32>,
 }
 
-pub(super) struct Spectrum {
-    pub(super) parameters: ArrayValue,
-    pub(super) flags: ArrayValue,
+pub(super) enum Spectrum {
+    Samples {
+        parameters: ArrayValue,
+        flags: ArrayValue,
+    },
+    Polynomial(Polynomial),
+}
+
+impl Spectrum {
+    pub(super) fn shape(&self) -> [usize; 2] {
+        match self {
+            Self::Samples { parameters, .. } => [
+                parameters.shape().first().copied().unwrap_or(0),
+                parameters.shape().get(1).copied().unwrap_or(0),
+            ],
+            Self::Polynomial(poly) => [poly.receptors(), poly.frequencies_hz.len()],
+        }
+    }
 }
 
 enum Layout {
@@ -88,6 +105,9 @@ impl Solutions {
     }
 
     pub(super) fn spectrum(&self, row: usize) -> Result<Spectrum, String> {
+        if self.subtype == "BPOLY" {
+            return Polynomial::read(&self.table, row).map(Spectrum::Polynomial);
+        }
         let parameters = match self.layout {
             Layout::Current if has_column(&self.table, "CPARAM") => "CPARAM",
             _ if has_column(&self.table, "FPARAM") => "FPARAM",
@@ -100,7 +120,7 @@ impl Solutions {
                 "calibration row {row} has an incompatible FLAG shape"
             ));
         }
-        Ok(Spectrum { parameters, flags })
+        Ok(Spectrum::Samples { parameters, flags })
     }
 }
 
@@ -339,7 +359,7 @@ fn has_column(table: &Table, name: &str) -> bool {
         .is_some_and(|schema| schema.column(name).is_some())
 }
 
-fn array(table: &Table, row: usize, name: &str) -> Result<ArrayValue, String> {
+pub(super) fn array(table: &Table, row: usize, name: &str) -> Result<ArrayValue, String> {
     table
         .cell_accessor(row, name)
         .and_then(|cell| cell.array())

@@ -222,7 +222,13 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_initweights(values)
     if name == "plotbandpass":
         _validate_required_path(values, "caltable", arguments["caltable"])
-        completion = run(name, **values)
+        try:
+            completion = run(name, **values)
+        except TaskExecutionError as error:
+            message = error.completion.message
+            if message == "name 'resampleSolution' is not defined":
+                raise NameError(message) from error
+            raise
         return () if completion.value is None else _bandpass_statistics(completion.value)
     if name in ("split", "mstransform"):
         _coerce_ms_transform_selectors(values)

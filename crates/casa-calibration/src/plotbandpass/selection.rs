@@ -51,7 +51,7 @@ pub(super) fn groups(
     selectors: &Selectors,
     overlay: Overlay,
     threshold_seconds: f64,
-) -> Result<BTreeMap<GroupKey, Vec<SelectedRow>>, String> {
+) -> Result<(BTreeMap<GroupKey, Vec<SelectedRow>>, usize), String> {
     let times = TimeGroups::for_source(source, threshold_seconds);
     let select = Selection::new(source, selectors, times.len())?;
     let mut groups: BTreeMap<GroupKey, Vec<SelectedRow>> = BTreeMap::new();
@@ -87,7 +87,7 @@ pub(super) fn groups(
             (row.window, row.antenna, selected.time_index)
         });
     }
-    Ok(groups)
+    Ok((groups, times.len()))
 }
 
 impl Selection {
