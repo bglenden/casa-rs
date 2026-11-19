@@ -5530,7 +5530,9 @@ mod tests {
         );
         assert!(
             cache
-                .calibration_lookup(missing_key, None, || panic!("cached None should not reload"))
+                .calibration_lookup(missing_key, None, || panic!(
+                    "cached None should not reload"
+                ))
                 .expect("cached missing lookup")
                 .is_none()
         );
