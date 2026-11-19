@@ -267,7 +267,7 @@ impl PyImageTool {
                         &mask,
                         MaskTarget {
                             shape,
-                            section: Some(&chunk),
+                            section: Some((&chunk, image.coordinates())),
                             stretch,
                             method: "statistics",
                         },
