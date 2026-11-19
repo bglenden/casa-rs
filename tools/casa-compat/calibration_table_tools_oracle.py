@@ -238,6 +238,36 @@ def accumulate(root, driver, vis, gains, solved):
         paired_accumulation(root, driver, vis, '', control, name, **extra,
                             cadence=cadence, flagged_payloads=False)
     paired_accumulation(root, driver, vis, '', scalar, 'scalar-cadence', cadence=30.)
+    for mode in ('cubic', 'nearest,linear', 'linearperobs', 'linearPD'):
+        paired_accumulation(root, driver, vis, '', control, f'interpolation-{mode}',
+                            interp=mode, cadence=15., flagged_payloads=False)
+
+    native_unsorted = root/'native-unsorted-time.cal'
+    run_native(driver, vis, solved, solved, native_unsorted, calfield='FLUX,PHASE')
+    compare_tables(native_unsorted, root/'native-field-combination.cal')
+    casa_unsorted = root/'casa-unsorted-time.cal'
+    cb = tool(vis, old=True)
+    assert cb.accumulate(str(solved), str(solved), str(casa_unsorted), [],
+                         'FLUX,PHASE', 'linear', -1., [-1])
+    cb.close()
+    ordered, unordered = columns(native_unsorted), columns(casa_unsorted)
+    valid = ~(ordered['FLAG'] | unordered['FLAG'])
+    assert np.max(np.abs(ordered['CPARAM'][valid] - unordered['CPARAM'][valid])) > 1.0
+
+    cb = tool(vis, old=True)
+    for mode in ('aipslin', 'bogus'):
+        output = root/f'invalid-{mode}.cal'
+        try:
+            cb.accumulate(str(gains), str(gains), str(output), [], [], mode, -1., [-1])
+        except RuntimeError:
+            assert not output.exists()
+        else:
+            raise AssertionError(f'CASA accepted invalid interpolation {mode}')
+        command = [driver, 'accumulate', vis, gains, gains, output, '', '', mode, '-1', '-1']
+        assert subprocess.run(command, capture_output=True).returncode != 0
+        assert not output.exists()
+    cb.close()
+
 
     multi_vis = root/'multi.ms'
     multiwindow_data(vis, multi_vis)
@@ -251,7 +281,7 @@ def accumulate(root, driver, vis, gains, solved):
     from casars import tasks as native
     apply_round_trip(root, native, vis, 'gain')
     bandpass_oracle(root, driver, vis)
-    print('15 paired accumulation case groups and four downstream applications', flush=True)
+    print('22 paired accumulation case groups and four downstream applications', flush=True)
 
 
 def main():
