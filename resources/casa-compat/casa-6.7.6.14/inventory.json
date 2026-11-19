@@ -27,6 +27,7 @@
     "imstat",
     "imsubimage",
     "initweights",
+    "listcal",
     "mstransform",
     "plotms",
     "plotweather",

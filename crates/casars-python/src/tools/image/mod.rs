@@ -8,6 +8,7 @@ mod create;
 mod default_record;
 mod handle;
 mod lifecycle;
+mod masks;
 mod metadata;
 mod pixels;
 mod point;
