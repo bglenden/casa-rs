@@ -693,14 +693,20 @@
 <a href=#693 id=693 data-nosnippet>693</a>            reason: error.to_string(),
 <a href=#694 id=694 data-nosnippet>694</a>        }
 <a href=#695 id=695 data-nosnippet>695</a>    })<span class="question-mark">?</span>;
-<a href=#696 id=696 data-nosnippet>696</a>    <span class="prelude-val">Ok</span>(table
-<a href=#697 id=697 data-nosnippet>697</a>        .keywords()
-<a href=#698 id=698 data-nosnippet>698</a>        .get(<span class="string">"SPECTRAL_WINDOW"</span>)
-<a href=#699 id=699 data-nosnippet>699</a>        .and_then(casa_types::Value::as_table_ref)
-<a href=#700 id=700 data-nosnippet>700</a>        .map(|stored| casa_tables::add_directory(stored, path))
-<a href=#701 id=701 data-nosnippet>701</a>        .or_else(|| {
-<a href=#702 id=702 data-nosnippet>702</a>            <span class="kw">let </span>child = path.join(<span class="string">"SPECTRAL_WINDOW"</span>);
-<a href=#703 id=703 data-nosnippet>703</a>            child.is_dir().then_some(child)
-<a href=#704 id=704 data-nosnippet>704</a>        }))
-<a href=#705 id=705 data-nosnippet>705</a>}
+<a href=#696 id=696 data-nosnippet>696</a>    <span class="kw">let </span>owner = <span class="kw">crate</span>::paths::subtable_owner(<span class="kw-2">&amp;</span>table, path).map_err(|error| {
+<a href=#697 id=697 data-nosnippet>697</a>        ApplyExecutionError::UnsupportedCalibrationTable {
+<a href=#698 id=698 data-nosnippet>698</a>            path: path.display().to_string(),
+<a href=#699 id=699 data-nosnippet>699</a>            reason: error.to_string(),
+<a href=#700 id=700 data-nosnippet>700</a>        }
+<a href=#701 id=701 data-nosnippet>701</a>    })<span class="question-mark">?</span>;
+<a href=#702 id=702 data-nosnippet>702</a>    <span class="prelude-val">Ok</span>(table
+<a href=#703 id=703 data-nosnippet>703</a>        .keywords()
+<a href=#704 id=704 data-nosnippet>704</a>        .get(<span class="string">"SPECTRAL_WINDOW"</span>)
+<a href=#705 id=705 data-nosnippet>705</a>        .and_then(casa_types::Value::as_table_ref)
+<a href=#706 id=706 data-nosnippet>706</a>        .map(|stored| casa_tables::add_directory(stored, <span class="kw-2">&amp;</span>owner))
+<a href=#707 id=707 data-nosnippet>707</a>        .or_else(|| {
+<a href=#708 id=708 data-nosnippet>708</a>            <span class="kw">let </span>child = owner.join(<span class="string">"SPECTRAL_WINDOW"</span>);
+<a href=#709 id=709 data-nosnippet>709</a>            child.is_dir().then_some(child)
+<a href=#710 id=710 data-nosnippet>710</a>        }))
+<a href=#711 id=711 data-nosnippet>711</a>}
 </code></pre></div></section></main></body></html>

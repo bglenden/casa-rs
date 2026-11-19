@@ -4202,6 +4202,61 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#accumulating-a-bandpass-updates-a-fraction-of-the-jones-cells" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accumulating a bandpass updates a fraction of the Jones cells
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accumulation-depends-on-the-physical-order-of-overlapping-field-times" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accumulation depends on the physical order of overlapping field times
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#selecting-a-field-in-simultaneous-calibration-rows-modifies-other-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selecting a field in simultaneous calibration rows modifies other fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accumulation-repairs-a-legacy-input-even-when-a-separate-output-is-requested" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accumulation repairs a legacy input even when a separate output is requested
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accumulation-can-terminate-during-contextual-time-interpolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accumulation can terminate during contextual time interpolation
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -10619,6 +10674,53 @@ statistical weights to the requested rows in one call. Unselected rows
 retain the spectrum obtained by expanding their original scalar values.
 The paired fixture compares this result with CASA's documented two-call
 sequence and checks unselected rows (#1524).</p>
+<h2 id="accumulating-a-bandpass-updates-a-fraction-of-the-jones-cells">Accumulating a bandpass updates a fraction of the Jones cells<a class="headerlink" href="#accumulating-a-bandpass-updates-a-fraction-of-the-jones-cells" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14's <code>calibrater.accumulate</code> is available with
+<code>setvi(old=True)</code>. In the paired eight-channel B Jones fixture it
+changed 20 of 160 valid complex cells. At each of two solution times,
+only the first five channels of antenna 0 received the Jones product.
+The other valid factors remained as they were.</p>
+<p>casa-rs multiplies the per-receptor, per-channel factors for every
+antenna. The analytic self-accumulation check squares all 160 valid
+factors and checks flags separately (#1525).</p>
+<h2 id="accumulation-depends-on-the-physical-order-of-overlapping-field-times">Accumulation depends on the physical order of overlapping field times<a class="headerlink" href="#accumulation-depends-on-the-physical-order-of-overlapping-field-times" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, the old accumulation method passes the incremental
+table's time column to <code>CTTimeInterp1</code>. The interpolator uses binary
+search on those times. Physically grouping rows by field can leave that
+column out of chronological order when time ranges overlap.</p>
+<p>CASA changed valid gains when the paired fixture was sorted by time.
+casa-rs orders its time series before interpolation and matches the
+time-ordered CASA control. It preserves the prior numerical payload
+at flagged cells. In a selected gain-field comparison, CASA replaced
+one flagged payload with complex unity. The flags and valid values
+matched (#1525).</p>
+<h2 id="selecting-a-field-in-simultaneous-calibration-rows-modifies-other-fields">Selecting a field in simultaneous calibration rows modifies other fields<a class="headerlink" href="#selecting-a-field-in-simultaneous-calibration-rows-modifies-other-fields" title="Permanent link">&para;</a></h2>
+<p>The old CASA 6.7.6.14 accumulation method groups rows by spectral
+window and time. It uses the first row's FIELD_ID to decide whether
+to modify the entire group. In a fixture that divides antenna
+solutions at the same timestamp between two fields, selecting FLUX
+also changes PHASE rows. Selecting PHASE skips all the rows.</p>
+<p>casa-rs applies the correction within each selected field. The paired
+fixture checks the product on every eligible row and checks the
+unselected rows byte for byte (#1525).</p>
+<h2 id="accumulation-repairs-a-legacy-input-even-when-a-separate-output-is-requested">Accumulation repairs a legacy input even when a separate output is requested<a class="headerlink" href="#accumulation-repairs-a-legacy-input-even-when-a-separate-output-is-requested" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14's old accumulation path upgrades a pre-4.1 cumulative
+table when it opens the source. The paired input lost its original schema:
+CASA added OBSERVATION_ID and OBSERVATION before publishing the requested
+separate product.</p>
+<p>casa-rs applies the same legacy upgrade inside the output snapshot.
+The result matches the upgraded CASA product and a separately named original
+retains its legacy schema (#1525).</p>
+<h2 id="accumulation-can-terminate-during-contextual-time-interpolation">Accumulation can terminate during contextual time interpolation<a class="headerlink" href="#accumulation-can-terminate-during-contextual-time-interpolation" title="Permanent link">&para;</a></h2>
+<p>With the old CASA 6.7.6.14 visibility iterator, accumulation terminated
+the process on the test fixtures for <code>spline</code> and <code>linearperscan</code>.
+<code>linearperobs</code> completed when there was one observation and terminated
+on the two-observation probe.</p>
+<p>casa-rs uses the calibration application's time interpolator with the
+cumulative rows' scan and observation metadata. In local comparisons,
+the per-scan output matched two independent single-field CASA controls.
+An independent SciPy natural spline matched 52 valid complex factors
+in the spline comparison (#1525).</p>
 
 
 
