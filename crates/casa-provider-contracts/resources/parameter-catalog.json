@@ -12756,6 +12756,137 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.wtmode",
+      "semantic_revision": 1,
+      "casa_name": "wtmode",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "delwtsp",
+          "nyq",
+          "ones",
+          "tsys",
+          "weight",
+          "tinttsys",
+          "sigma",
+          "delsigsp"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Method used to initialize the visibility weights.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.tsystable",
+      "semantic_revision": 1,
+      "casa_name": "tsystable",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "calibration_table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "Tsys calibration table used by the Tsys weight modes.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.gainfield",
+      "semantic_revision": 1,
+      "casa_name": "gainfield",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Select solutions from this field in the Tsys table.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.interp",
+      "semantic_revision": 1,
+      "casa_name": "interp",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Interpolate the Tsys solutions in time and frequency.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.spwmap",
+      "semantic_revision": 1,
+      "casa_name": "spwmap",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Map data spectral windows to Tsys solution windows.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.dowtsp",
+      "semantic_revision": 1,
+      "casa_name": "dowtsp",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Create WEIGHT_SPECTRUM when it is absent.",
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

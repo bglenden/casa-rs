@@ -25,6 +25,7 @@
     "imregrid",
     "imstat",
     "imsubimage",
+    "initweights",
     "mstransform",
     "plotms",
     "simalma",

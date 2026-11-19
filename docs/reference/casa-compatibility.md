@@ -40,6 +40,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imregrid | imregrid | yes | 10 | 10 | 0 | 5 | 0 | 0 |
 | imstat | imstat | yes | 20 | 20 | 0 | 0 | 0 | 0 |
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 7 | 0 | 0 |
+| initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 43 | 0 | 0 |
 | plotms | plotms | pending | 102 | pending | | | | |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
@@ -824,6 +825,99 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 12, in CASA's order: yes
 - Defaults that differ: none
+
+### initweights
+
+- CASA source: `casatasks/initweights.py`, 7 parameters
+- Implementation: `casatasks/private/task_initweights.py`, `initweights` (line 10): 1 return statements, 2 raise statements
+  - returns at line 32: `None`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 7, in CASA's order: yes
+- Defaults that differ: none
+
+#### initweights parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b`. Status counts: Default only: 0, Implemented: 7, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing MeasurementSet paths, including Multi-MS and FLOAT_DATA inputs. [ordinary](#initweights-behavior-ordinary) [tsys](#initweights-behavior-tsys)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [ordinary](#initweights-evidence-ordinary), [tsys](#initweights-evidence-tsys) |
+| `wtmode` | `'nyq'` | `'nyq'`; `wtmode` → `wtmode` | Implemented | All eight CASA choices, including bandwidth-only Tsys, exposure-scaled Tsys, and the independent spectrum deletions. [ordinary](#initweights-behavior-ordinary) [tsys](#initweights-behavior-tsys)<br>Catalog domain: `delwtsp`, `nyq`, `ones`, `tsys`, `weight`, `tinttsys`, `sigma`, `delsigsp` | [ordinary](#initweights-evidence-ordinary), [tsys](#initweights-evidence-tsys) |
+| `tsystable` | `''` | `''`; `tsystable` → `tsystable` | Implemented | B TSYS table for the Tsys modes. The task reports a missing table before editing the MS. [tsys](#initweights-behavior-tsys)<br>Catalog domain: `path` (calibration_table) | [tsys](#initweights-evidence-tsys) |
+| `gainfield` | `''` | `''`; `gainfield` → `gainfield` | Implemented | Tsys table field names, IDs and nearest-field selection. Empty combines the available field solutions in time. [tsys](#initweights-behavior-tsys)<br>Catalog domain: `string` | [tsys](#initweights-evidence-tsys) |
+| `interp` | `''` | `''`; `interp` → `interp` | Implemented | Tsys time and frequency interpolation, including relative frequency, flags and context modifiers. [tsys](#initweights-behavior-tsys)<br>Catalog domain: `string` | [tsys](#initweights-evidence-tsys) |
+| `spwmap` | `[]` | `[]`; `spwmap` → `spwmap` | Implemented | Identity and explicit Tsys spectral-window mappings, with CASA scalar and vector forms. [tsys](#initweights-behavior-tsys)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [tsys](#initweights-evidence-tsys) |
+| `dowtsp` | `False` | `False`; `dowtsp` → `dowtsp` | Implemented | Optional channel spectra, including creation, replacement of existing values and the weight-mode requirement. [ordinary](#initweights-behavior-ordinary) [tsys](#initweights-behavior-tsys)<br>Catalog domain: `bool` | [ordinary](#initweights-evidence-ordinary), [tsys](#initweights-evidence-tsys) |
+
+#### initweights interacting modes and task behavior
+
+<a id="initweights-behavior-ordinary"></a>
+##### Ordinary weights and channel spectra
+
+**Implemented** — Six numerical and spectrum-management modes across absent, complete and partly defined spectra. Includes Multi-MS, flagged visibilities and a 122,880-row casacore readback across the native write-batch boundary. Includes refusal of a zero-row MS.
+
+The compared MS products matched CASA.
+
+Evidence: [ordinary](#initweights-evidence-ordinary).
+
+<a id="initweights-behavior-tsys"></a>
+##### Tsys weight initialization
+
+**Implemented** — Both temperature modes with gain-field selection, channel and time interpolation, explicit and relative spectral-window mappings, flagged and invalid temperatures, FLOAT_DATA, and scalar and spectrum outputs. Includes relative paths, single-correlation Stokes I and missing calibration windows.
+
+The compared MS products matched CASA. Invalid selections are handled as described below.
+
+Evidence: [tsys](#initweights-evidence-tsys).
+
+#### initweights deviations and unfinished work
+
+##### validate-before-spectrum-creation: Proposed
+
+- Inputs: Tsys with dowtsp enabled and an invalid gain-field or interpolation setting.
+- CASA: Throws RuntimeError and can leave newly added spectrum columns undefined.
+- casa-rs: Throws RuntimeError before creating either spectrum column.
+- Rationale: Validate the table, field selection and interpolation before changing the MS.
+- User impact: A rejected call leaves the original spectrum schema available for retry.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [tsys](#initweights-evidence-tsys).
+
+#### initweights evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="initweights-evidence-ordinary"></a>
+##### ordinary
+
+**Same-input Python task and casacore interchange — passed.** 41 named case groups passed. Six numerical and spectrum-management modes across absent, complete and partly defined spectra. Includes Multi-MS, flagged visibilities and a 122,880-row casacore readback across the native write-batch boundary. Includes refusal of a zero-row MS.
+
+- [tools/casa-compat/calibration_initweights_oracle.py](https://github.com/bglenden/casa-rs/blob/5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b/tools/casa-compat/calibration_initweights_oracle.py)
+- Revision: `5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_initweights_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/weight-initialization-20261119.json`.
+
+<a id="initweights-evidence-tsys"></a>
+##### tsys
+
+**Same-input Python task and casacore interchange — passed.** 29 named case groups passed. Both temperature modes with gain-field selection, channel and time interpolation, explicit and relative spectral-window mappings, flagged and invalid temperatures, FLOAT_DATA, and scalar and spectrum outputs. Includes relative paths, single-correlation Stokes I and missing calibration windows.
+
+- [tools/casa-compat/calibration_initweights_tsys_oracle.py](https://github.com/bglenden/casa-rs/blob/5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b/tools/casa-compat/calibration_initweights_tsys_oracle.py)
+- Revision: `5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_initweights_tsys_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/weight-initialization-20261119.json`.
+
+<a id="initweights-evidence-performance"></a>
+##### performance
+
+**Matched release performance — planned.** Scheduled during the programme performance qualification in #979. End-to-end throughput, I/O and compute phases, workers and memory.
+
+- [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
 ### mstransform
 

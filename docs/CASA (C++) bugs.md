@@ -6870,6 +6870,18 @@ requested epoch. The `calibration_ephemeris_geometry_oracle.py` fixture obtains
 the per-epoch phase centres from CASA and evaluates CASA geometry on fixed
 snapshots of those directions (#989).
 
+## Rejected Tsys weight initialization can leave empty spectra
+
+CASA 6.7.6.14 can add `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` to a
+MeasurementSet before rejecting `initweights(wtmode='tsys', dowtsp=True)`
+with an invalid `gainfield` or interpolation setting. On that failure the
+new columns have undefined cells and the original weights are unchanged.
+
+casa-rs validates the setup before it creates either column, so a rejected
+call leaves the original spectrum schema available for retry. The paired
+`calibration_initweights_tsys_oracle.py` cases cover both setup errors
+and the unchanged weight, sigma and flag values (#1524).
+
 ## `immath(mode="pola")` crashes with `UnboundLocalError` on unitless `polithresh`
 
 - Date noted: 2026-11-18

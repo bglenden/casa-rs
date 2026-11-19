@@ -1260,6 +1260,7 @@ impl Table {
         column: &str,
         changed_rows: &[usize],
         tile_shape: Option<&[usize]>,
+        streamed: Option<crate::StreamedTiledShapeColumn>,
     ) -> Result<(), TableError> {
         if self.kind != TableKind::Plain {
             return Err(TableError::Storage(
@@ -1321,6 +1322,24 @@ impl Table {
                 desc.keywords = keywords.clone();
             }
 
+            if streamed
+                .as_ref()
+                .is_some_and(|stream| !stream.matches_descriptor(&desc))
+            {
+                return Err(TableError::Storage(format!(
+                    "streamed column {column:?} does not match the declared array type or rank"
+                )));
+            }
+            if let Some(stream) = &streamed
+                && stream.row_count() != self.row_count()
+            {
+                return Err(TableError::Storage(format!(
+                    "streamed column {column:?} has {} rows but the table has {}",
+                    stream.row_count(),
+                    self.row_count(),
+                )));
+            }
+
             let seq_nr = table_dat
                 .column_set
                 .data_managers
@@ -1330,7 +1349,11 @@ impl Table {
                 .map_or(0, |seq| seq + 1);
             self.note_persisted_write(&source_path);
             let pending_values = self.inner.pending_array_cells(column);
-            if changed_rows.is_empty() && pending_values.is_none_or(|values| values.is_empty()) {
+            if let Some(streamed) = streamed {
+                crate::install_streamed_tiled_shape_column(&source_path, seq_nr, column, streamed)?;
+            } else if changed_rows.is_empty()
+                && pending_values.is_none_or(|values| values.is_empty())
+            {
                 crate::storage::tiled_stman::save_empty_tiled_shape_column(
                     &source_path,
                     seq_nr,
@@ -2048,7 +2071,22 @@ impl TableWritePlan<'_> {
             ));
         }
         self.table
-            .persist_added_tiled_shape_column_in_place(column, changed_rows, tile_shape)
+            .persist_added_tiled_shape_column_in_place(column, changed_rows, tile_shape, None)
+    }
+
+    /// Install a newly added variable-shape column from its completed stream.
+    ///
+    /// The stream must use the schema's element type and provide one cell for
+    /// each table row. The column is published after its payload is installed.
+    #[doc(hidden)]
+    pub fn add_streamed_tiled_shape_column(
+        &mut self,
+        column: &str,
+        streamed: crate::StreamedTiledShapeColumn,
+    ) -> Result<(), TableError> {
+        self.validate_selection(&[column], &[])?;
+        self.table
+            .persist_added_tiled_shape_column_in_place(column, &[], None, Some(streamed))
     }
 
     fn validate_bindings(

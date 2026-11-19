@@ -13,13 +13,6 @@ fn resample(
     relative: bool,
     system_temperature: bool,
 ) -> Result<GainGrid, ApplyExecutionError> {
-    fn relative_axis(axis: &[f64]) -> Vec<f64> {
-        let center = axis.iter().sum::<f64>() / axis.len() as f64;
-        let sideband = if axis.first() > axis.last() { -1. } else { 1. };
-        axis.iter()
-            .map(|frequency| (frequency - center) * sideband)
-            .collect()
-    }
     let (relative_input, relative_output);
     let (input, output) = if relative {
         relative_input = relative_axis(input);
@@ -49,6 +42,14 @@ fn resample(
         };
     }
     Ok(sampled)
+}
+
+pub(super) fn relative_axis(axis: &[f64]) -> Vec<f64> {
+    let center = axis.iter().sum::<f64>() / axis.len() as f64;
+    let sideband = if axis.first() > axis.last() { -1. } else { 1. };
+    axis.iter()
+        .map(|frequency| (frequency - center) * sideband)
+        .collect()
 }
 
 pub(super) fn prepare(
