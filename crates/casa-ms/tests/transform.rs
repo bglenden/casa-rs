@@ -22,7 +22,7 @@ fn mstransform_selects_channels_updates_metadata_and_weight_spectrum() {
     let report = mstransform(&MsTransformRequest {
         input_ms: input_ms.clone(),
         output_ms: output_ms.clone(),
-        spw: "0:2~5".to_string(),
+        spw: "SPW0:2~5".to_string(),
         width: 1,
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new(),
@@ -183,7 +183,10 @@ fn mstransform_compacts_selected_field_table_and_remaps_main_field_ids() {
         spw: "0".to_string(),
         width: 1,
         data_column: TransformDataColumn::Data,
-        selection: MsSelection::new().field(&[1]),
+        selection: MsSelection {
+            field: Some("FIELD1".into()),
+            ..MsSelection::new()
+        },
         keep_flags: true,
     })
     .expect("mstransform field 1");
@@ -336,7 +339,16 @@ fn mstransform_reports_contract_errors_before_mutating_outputs() {
         keep_flags: true,
     })
     .unwrap_err();
-    assert!(invalid_spw.to_string().contains("outside SPECTRAL_WINDOW"));
+    // The CASA grammar resolves against SPECTRAL_WINDOW and reports an
+    // unmatched ID, including when the expression is syntactically valid.
+    assert!(matches!(
+        invalid_spw,
+        casa_ms::MsTransformError::InvalidSpw { .. }
+    ));
+    assert!(
+        invalid_spw.to_string().contains("No match found"),
+        "{invalid_spw}"
+    );
     assert!(!output_ms.exists());
 
     let missing_column = mstransform(&MsTransformRequest {
