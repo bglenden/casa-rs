@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "task": "initweights",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b",
+  "parameters": {
+    "vis": {
+      "scope": "Existing MeasurementSet paths, including Multi-MS and FLOAT_DATA inputs.",
+      "evidence": [
+        "ordinary",
+        "tsys"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "ordinary",
+        "tsys"
+      ]
+    },
+    "wtmode": {
+      "scope": "All eight CASA choices, including bandwidth-only Tsys, exposure-scaled Tsys, and the independent spectrum deletions.",
+      "evidence": [
+        "ordinary",
+        "tsys"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "ordinary",
+        "tsys"
+      ]
+    },
+    "tsystable": {
+      "scope": "B TSYS table for the Tsys modes. The task reports a missing table before editing the MS.",
+      "evidence": [
+        "tsys"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "tsys"
+      ]
+    },
+    "gainfield": {
+      "scope": "Tsys table field names, IDs and nearest-field selection. Empty combines the available field solutions in time.",
+      "evidence": [
+        "tsys"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "tsys"
+      ]
+    },
+    "interp": {
+      "scope": "Tsys time and frequency interpolation, including relative frequency, flags and context modifiers.",
+      "evidence": [
+        "tsys"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "tsys"
+      ]
+    },
+    "spwmap": {
+      "scope": "Identity and explicit Tsys spectral-window mappings, with CASA scalar and vector forms.",
+      "evidence": [
+        "tsys"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "tsys"
+      ]
+    },
+    "dowtsp": {
+      "scope": "Optional channel spectra, including creation, replacement of existing values and the weight-mode requirement.",
+      "evidence": [
+        "ordinary",
+        "tsys"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "ordinary",
+        "tsys"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "ordinary",
+      "title": "Ordinary weights and channel spectra",
+      "status": "Implemented",
+      "scope": "Six numerical and spectrum-management modes across absent, complete and partly defined spectra. Includes Multi-MS, flagged visibilities and a 122,880-row casacore readback across the native write-batch boundary. Includes refusal of a zero-row MS.",
+      "gap": "The compared MS products matched CASA.",
+      "evidence": [
+        "ordinary"
+      ]
+    },
+    {
+      "id": "tsys",
+      "title": "Tsys weight initialization",
+      "status": "Implemented",
+      "scope": "Both temperature modes with gain-field selection, channel and time interpolation, explicit and relative spectral-window mappings, flagged and invalid temperatures, FLOAT_DATA, and scalar and spectrum outputs. Includes relative paths, single-correlation Stokes I and missing calibration windows.",
+      "gap": "The compared MS products matched CASA. Invalid selections are handled as described below.",
+      "evidence": [
+        "tsys"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "validate-before-spectrum-creation",
+      "state": "Proposed",
+      "inputs": "Tsys with dowtsp enabled and an invalid gain-field or interpolation setting.",
+      "casa": "Throws RuntimeError and can leave newly added spectrum columns undefined.",
+      "ours": "Throws RuntimeError before creating either spectrum column.",
+      "rationale": "Validate the table, field selection and interpolation before changing the MS.",
+      "impact": "A rejected call leaves the original spectrum schema available for retry.",
+      "evidence": [
+        "tsys"
+      ]
+    }
+  ],
+  "evidence": {
+    "ordinary": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Six numerical and spectrum-management modes across absent, complete and partly defined spectra. Includes Multi-MS, flagged visibilities and a 122,880-row casacore readback across the native write-batch boundary. Includes refusal of a zero-row MS.",
+      "result": "41 named case groups passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_initweights_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/weight-initialization-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_initweights_oracle.py"
+      ]
+    },
+    "tsys": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Both temperature modes with gain-field selection, channel and time interpolation, explicit and relative spectral-window mappings, flagged and invalid temperatures, FLOAT_DATA, and scalar and spectrum outputs. Includes relative paths, single-correlation Stokes I and missing calibration windows.",
+      "result": "29 named case groups passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_initweights_tsys_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/weight-initialization-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_initweights_tsys_oracle.py"
+      ]
+    },
+    "performance": {
+      "kind": "Matched release performance",
+      "state": "planned",
+      "scope": "End-to-end throughput, I/O and compute phases, workers and memory.",
+      "result": "Scheduled during the programme performance qualification in #979.",
+      "links": [
+        "https://github.com/bglenden/casa-rs/issues/979"
+      ]
+    }
+  }
+}

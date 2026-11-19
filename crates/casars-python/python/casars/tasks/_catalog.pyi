@@ -404,7 +404,7 @@ def mstransform(
     intent: str = ...,
     array: str = ...,
     uvrange: str = ...,
-    observation: str = ...,
+    observation: str | int = ...,
     feed: str = ...,
     datacolumn: str = ...,
     realmodelcol: bool = ...,
@@ -460,7 +460,7 @@ def split(
     intent: str = ...,
     array: str = ...,
     uvrange: str = ...,
-    observation: str = ...,
+    observation: str | int = ...,
     feed: str = ...,
     datacolumn: str = ...,
     keepflags: bool = ...,
@@ -1123,6 +1123,66 @@ def getantposalma(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma')
+def smoothcal(
+    vis: StrPath = ...,
+    tablein: StrPath = ...,
+    caltable: StrPath = ...,
+    field: str | list[str] | tuple[str, ...] = ...,
+    smoothtype: str = ...,
+    smoothtime: float = ...,
+    ratesmooth: bool = ...,
+) -> Any:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma']
+def rerefant(
+    vis: StrPath = ...,
+    tablein: StrPath = ...,
+    caltable: StrPath = ...,
+    refantmode: Literal['flex', 'strict'] = ...,
+    refant: str = ...,
+) -> Any:
+    ...
+
+def initweights(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    wtmode: Literal['delwtsp', 'nyq', 'ones', 'tsys', 'weight', 'tinttsys', 'sigma', 'delsigsp'] = ...,
+    tsystable: StrPath = ...,
+    gainfield: str = ...,
+    interp: str = ...,
+    spwmap: int | list[int] | tuple[int, ...] = ...,
+    dowtsp: bool = ...,
+) -> Any:
+    ...
+
+def statwt(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    selectdata: bool = ...,
+    field: str = ...,
+    spw: str = ...,
+    intent: str = ...,
+    array: str = ...,
+    observation: str = ...,
+    scan: str = ...,
+    combine: str = ...,
+    timebin: str | int = ...,
+    slidetimebin: bool = ...,
+    chanbin: str | int = ...,
+    minsamp: int = ...,
+    statalg: str = ...,
+    fence: float = ...,
+    center: str = ...,
+    lside: bool = ...,
+    zscore: float = ...,
+    maxiter: int = ...,
+    fitspw: str = ...,
+    excludechans: bool = ...,
+    wtrange: float | list[float] | tuple[float, ...] = ...,
+    flagbackup: bool = ...,
+    preview: bool = ...,
+    datacolumn: str = ...,
+) -> Any:
+    ...
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'initweights', 'statwt')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'initweights', 'statwt']

@@ -1388,6 +1388,28 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
+    /// Replaces the coordinate system using its original casacore record.
+    ///
+    /// The record retains coordinate numbering and metadata that the
+    /// computational coordinate model does not store.
+    ///
+    /// # Errors
+    /// Returns an error before changing the image if the record is invalid
+    /// or the number of pixel axes differs from the image's dimensionality.
+    pub fn set_coordinate_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
+        let coords = CoordinateSystem::from_record(&record)?;
+        if coords.n_pixel_axes() != self.ndim() {
+            return Err(ImageError::InvalidMetadata(
+                "Supplied CoordinateSystem and image shape are inconsistent".into(),
+            ));
+        }
+        self.table
+            .keywords_mut()
+            .upsert("coords", Value::Record(record));
+        self.coords = coords;
+        Ok(())
+    }
+
     /// Returns the brightness unit string.
     pub fn units(&self) -> &str {
         &self.units
@@ -1925,6 +1947,27 @@ impl<T: ImagePixel> PagedImage<T> {
                 self.temp_history.push(msg);
                 Ok(())
             }
+        }
+    }
+
+    /// Appends a group of history messages with a casacore `LOCATION` value.
+    ///
+    /// # Errors
+    /// Returns an error if the log table cannot be created, written or locked.
+    pub fn append_history_at(
+        &mut self,
+        location: &str,
+        messages: &[String],
+    ) -> Result<(), ImageError> {
+        if messages.is_empty() {
+            return Ok(());
+        }
+        if let Some(path) = self.path.clone() {
+            self.ensure_logtable()?;
+            Self::append_logtable_rows(&Self::logtable_path(&path), location, messages)
+        } else {
+            self.temp_history.extend_from_slice(messages);
+            Ok(())
         }
     }
 

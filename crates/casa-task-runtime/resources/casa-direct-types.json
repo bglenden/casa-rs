@@ -345,6 +345,14 @@
     "stretch": "cBool",
     "keepaxes": "cIntVec"
   },
+  "initweights": {
+    "wtmode": "cStr",
+    "tsystable": "cPath",
+    "gainfield": "cStr",
+    "interp": "cStr",
+    "spwmap": "cIntVec",
+    "dowtsp": "cBool"
+  },
   "mstransform": {
     "outputvis": "cStr",
     "createmms": "cBool",
@@ -471,6 +479,11 @@
     "showimage": "cBool",
     "colorizeoverlay": "cBool"
   },
+  "rerefant": {
+    "caltable": "cStr",
+    "refantmode": "cStr",
+    "refant": "cStr"
+  },
   "simalma": {
     "project": "cStr",
     "dryrun": "cBool",
@@ -576,12 +589,42 @@
     "verbose": "cBool",
     "overwrite": "cBool"
   },
+  "smoothcal": {
+    "caltable": "cStr",
+    "field": "cStrVec",
+    "smoothtype": "cStr",
+    "ratesmooth": "cBool"
+  },
   "split": {
     "outputvis": "cPath",
     "keepmms": "cBool",
     "datacolumn": "cStr",
     "keepflags": "cBool",
     "timebin": "cStr"
+  },
+  "statwt": {
+    "selectdata": "cBool",
+    "field": "cStr",
+    "spw": "cStr",
+    "intent": "cStr",
+    "array": "cStr",
+    "observation": "cStr",
+    "scan": "cStr",
+    "combine": "cStr",
+    "slidetimebin": "cBool",
+    "minsamp": "cInt",
+    "statalg": "cStr",
+    "fence": "cFloat",
+    "center": "cStr",
+    "lside": "cBool",
+    "zscore": "cFloat",
+    "maxiter": "cInt",
+    "fitspw": "cStr",
+    "excludechans": "cBool",
+    "wtrange": "cFloatVec",
+    "flagbackup": "cBool",
+    "preview": "cBool",
+    "datacolumn": "cStr"
   },
   "tclean": {
     "selectdata": "cBool",

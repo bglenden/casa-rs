@@ -32,6 +32,7 @@ mod execute;
 mod fluxscale;
 mod ft;
 mod gencal;
+mod initweights;
 mod interpolation;
 mod lookup;
 mod lookup_frequency;
@@ -43,21 +44,32 @@ mod output_merge;
 mod paths;
 mod plan;
 mod plots;
+mod rerefant;
 mod selected_data;
 mod session;
 mod simulated;
+mod smooth;
+mod solution_edit;
 mod solve;
 mod solve_stats;
 mod stats;
+mod statwt;
 mod summary;
 mod task_contract;
 mod timing;
 mod uvmodelfit;
 mod uvsub;
+mod weight_spectra;
 mod writer;
 
+pub use statwt::{
+    StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,
+    StatWtSummary, StatWtTimeBin, estimate_statwt, statwt_weight_range,
+};
+
 pub use uvsub::{
-    subtract_visibility_model, subtract_visibility_model_holding, visibility_model_source_paths,
+    subtract_visibility_model, subtract_visibility_model_holding,
+    subtract_visibility_model_selected, visibility_model_source_paths,
 };
 
 pub use output::CalibrationOutputMode;

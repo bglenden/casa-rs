@@ -12756,6 +12756,591 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.tablein",
+      "semantic_revision": 1,
+      "casa_name": "tablein",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "calibration_table"
+      },
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "Existing input calibration table.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.field",
+      "semantic_revision": 5,
+      "casa_name": "field",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Field selection expressions. Empty selects every field.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.smoothtype",
+      "semantic_revision": 1,
+      "casa_name": "smoothtype",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use the median or mean smoothing filter.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.smoothtime",
+      "semantic_revision": 1,
+      "casa_name": "smoothtime",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Full width of the smoothing window in seconds.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.ratesmooth",
+      "semantic_revision": 1,
+      "casa_name": "ratesmooth",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use the fringe rate to predict phase wraps when smoothing fringe solutions.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.wtmode",
+      "semantic_revision": 1,
+      "casa_name": "wtmode",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "delwtsp",
+          "nyq",
+          "ones",
+          "tsys",
+          "weight",
+          "tinttsys",
+          "sigma",
+          "delsigsp"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Method used to initialize the visibility weights.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.tsystable",
+      "semantic_revision": 1,
+      "casa_name": "tsystable",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "calibration_table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "Tsys calibration table used by the Tsys weight modes.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.gainfield",
+      "semantic_revision": 1,
+      "casa_name": "gainfield",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Select solutions from this field in the Tsys table.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.interp",
+      "semantic_revision": 1,
+      "casa_name": "interp",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Interpolate the Tsys solutions in time and frequency.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.spwmap",
+      "semantic_revision": 1,
+      "casa_name": "spwmap",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "integer"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Map data spectral windows to Tsys solution windows.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightinit.dowtsp",
+      "semantic_revision": 1,
+      "casa_name": "dowtsp",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Create WEIGHT_SPECTRUM when it is absent.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.caltable",
+      "semantic_revision": 2,
+      "casa_name": "caltable",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "calibration_table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Calibration table the task writes.",
+        "details": null,
+        "examples": [
+          "'gain.cal'"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "data.input.vis",
+      "semantic_revision": 3,
+      "casa_name": "vis",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "measurement_set"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "One input MeasurementSet path.",
+        "details": "CASA fluxscale opens one MeasurementSet; a sequence is not a scalar path.",
+        "examples": [
+          "'observation.ms'"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.combine",
+      "semantic_revision": 1,
+      "casa_name": "combine",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Ignore changes in these columns (scan, field, and/or state) when aggregating samples to compute weights. The value \"corr\" is also supported to aggregate samples across correlations.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.timebin",
+      "semantic_revision": 1,
+      "casa_name": "timebin",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Length for binning in time to determine statistics. Can either be integer to be multiplied by the representative integration time, a quantity (string) in time units",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.slidetimebin",
+      "semantic_revision": 1,
+      "casa_name": "slidetimebin",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use a sliding window for time binning, as opposed to time block processing?",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.chanbin",
+      "semantic_revision": 1,
+      "casa_name": "chanbin",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Channel bin width for computing weights. Can either be integer, in which case it is interpreted as number of channels to include in each bin, or a string \"spw\" or quantity with frequency units.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.minsamp",
+      "semantic_revision": 1,
+      "casa_name": "minsamp",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Minimum number of unflagged visibilities required for computing weights in a sample. Must be >= 2.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.statalg",
+      "semantic_revision": 1,
+      "casa_name": "statalg",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Statistics algorithm to use for computing variances. Supported values are \"chauvenet\", \"classic\", \"fit-half\", and \"hinges-fences\". Minimum match is supported, although the full string must be specified for the subparameters to appear in the inputs list.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.fence",
+      "semantic_revision": 1,
+      "casa_name": "fence",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Fence value for statalg=\"hinges-fences\". A negative value means use the entire data set (ie default to the \"classic\" algorithm). Ignored if statalg is not \"hinges-fences\".",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.center",
+      "semantic_revision": 1,
+      "casa_name": "center",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Center to use for statalg=\"fit-half\". Valid choices are \"mean\", \"median\", and \"zero\". Ignored if statalg is not \"fit-half\".",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.lside",
+      "semantic_revision": 1,
+      "casa_name": "lside",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "For statalg=\"fit-half\", real data are <=; center? If false, real data are >= center. Ignored if statalg is not \"fit-half\".",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.zscore",
+      "semantic_revision": 1,
+      "casa_name": "zscore",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "For statalg=\"chauvenet\", this is the target maximum number of standard deviations data may have to be included. If negative, use Chauvenet's criterion. Ignored if statalg is not \"chauvenet\".",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.maxiter",
+      "semantic_revision": 1,
+      "casa_name": "maxiter",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "For statalg=\"chauvenet\", this is the maximum number of iterations to attempt. Iterating will stop when either this limit is reached, or the zscore criterion is met. If negative, iterate until the zscore criterion is met. Ignored if statalg is not \"chauvenet\".",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.fitspw",
+      "semantic_revision": 1,
+      "casa_name": "fitspw",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Channels to include in the computation of weights. Specified as an MS select channel selection string.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.excludechans",
+      "semantic_revision": 1,
+      "casa_name": "excludechans",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "If True: invert the channel selection in fitspw and exclude the fitspw selection from the computation of the weights.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.wtrange",
+      "semantic_revision": 1,
+      "casa_name": "wtrange",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Range of acceptable weights. Data with weights outside this range will be flagged. Empty array (default) means all weights are good.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.preview",
+      "semantic_revision": 1,
+      "casa_name": "preview",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Preview mode. If True, no data is changed, although the amount of data that would have been flagged is reported.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "weightstats.datacolumn",
+      "semantic_revision": 1,
+      "casa_name": "datacolumn",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Data column to use to compute weights. Supported values are \"data\", \"corrected\", \"residual\", and \"residual_data\" (case insensitive, minimum match supported).",
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

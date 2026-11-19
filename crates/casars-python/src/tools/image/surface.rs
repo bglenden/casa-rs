@@ -90,7 +90,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("brightnessunit", &[], R::Any, No),
+    method("brightnessunit", &[], R::Any, Yes),
     method(
         "calc",
         &[
@@ -110,7 +110,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("close", &[], R::Any, No),
+    method("close", &[], R::Any, Yes),
     method(
         "collapse",
         &[
@@ -205,7 +205,7 @@ const METHODS: &[Method] = &[
         "coordsys",
         &[param("axes", K::Ints, Ints(&[-1]))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "crop",
@@ -300,7 +300,7 @@ const METHODS: &[Method] = &[
         "dohistory",
         &[param("enable", K::Bool, Bool(true))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "done",
@@ -309,7 +309,7 @@ const METHODS: &[Method] = &[
             param("verbose", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fft",
@@ -448,7 +448,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("f")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fromcomplist",
@@ -511,7 +511,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("f")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getchunk",
@@ -525,7 +525,7 @@ const METHODS: &[Method] = &[
             param("getmask", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getprofile",
@@ -602,7 +602,12 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("history", &[param("list", K::Bool, Bool(true))], R::Any, No),
+    method(
+        "history",
+        &[param("list", K::Bool, Bool(true))],
+        R::Any,
+        Yes,
+    ),
     method(
         "imagecalc",
         &[
@@ -642,8 +647,8 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("isconform", &[param("other", K::Any, Required)], R::Any, No),
-    method("isopen", &[], R::Any, No),
-    method("ispersistent", &[], R::Any, No),
+    method("isopen", &[], R::Any, Yes),
+    method("ispersistent", &[], R::Any, Yes),
     method(
         "lock",
         &[
@@ -703,7 +708,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("miscinfo", &[], R::Any, No),
+    method("miscinfo", &[], R::Any, Yes),
     method(
         "modify",
         &[
@@ -746,7 +751,7 @@ const METHODS: &[Method] = &[
         "name",
         &[param("strippath", K::Bool, Bool(false))],
         R::Any,
-        No,
+        Yes,
     ),
     method("newimage", &[param("infile", K::Any, Required)], R::Any, No),
     method(
@@ -816,7 +821,7 @@ const METHODS: &[Method] = &[
             param("cache", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "pad",
@@ -855,7 +860,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("pixeltype", &[], R::Any, No),
+    method("pixeltype", &[], R::Any, Yes),
     method(
         "pixelvalue",
         &[param("pixel", K::Ints, Ints(&[-1]))],
@@ -873,7 +878,7 @@ const METHODS: &[Method] = &[
             param("replicate", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putregion",
@@ -1040,13 +1045,13 @@ const METHODS: &[Method] = &[
         "setbrightnessunit",
         &[param("unit", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setcoordsys",
         &[param("csys", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "sethistory",
@@ -1055,13 +1060,13 @@ const METHODS: &[Method] = &[
             param("history", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setmiscinfo",
         &[param("info", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setrestoringbeam",
@@ -1079,7 +1084,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("shape", &[], R::Any, No),
+    method("shape", &[], R::Any, Yes),
     method(
         "statistics",
         &[
@@ -1194,7 +1199,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("type", &[], R::Any, No),
+    method("type", &[], R::Any, Yes),
     method("unlock", &[], R::Any, No),
 ];
 

@@ -67,49 +67,74 @@ pub fn subtract_visibility_model_holding(
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
     let mut ms = MeasurementSet::open(path)?;
-    let create = !has_column(&ms, CORRECTED);
+    subtract_visibility_model_selected(&mut ms, reverse, None, lock)
+}
+
+/// Subtract in one physical MS using an optional sorted list of selected MAIN rows.
+#[doc(hidden)]
+pub fn subtract_visibility_model_selected(
+    ms: &mut MeasurementSet,
+    reverse: bool,
+    selection: Option<&[usize]>,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    if selection.is_some_and(<[usize]>::is_empty) {
+        return Ok(());
+    }
+    let selected = |row| selection.is_none_or(|rows| rows.binary_search(&row).is_ok());
+    let create = !has_column(ms, CORRECTED);
     let input = if create {
-        observed_column(&ms)
+        observed_column(ms)
     } else {
         CORRECTED.name()
     };
-    let selected =
-        resolve_casa_calibration_selection(&ms, &MsSelection::default()).map_err(invalid)?;
-    let models = VisibilityModels::new(&ms, &selected.selected_rows).map_err(invalid)?;
+    let mut resolved =
+        resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
+    if !create {
+        resolved.selected_rows.retain(|row| selected(row.row_index));
+    }
+    let model_rows;
+    let rows_with_models = if create && selection.is_some() {
+        model_rows = resolved
+            .selected_rows
+            .iter()
+            .filter(|row| selected(row.row_index))
+            .cloned()
+            .collect::<Vec<_>>();
+        &model_rows
+    } else {
+        &resolved.selected_rows
+    };
+    let models = VisibilityModels::new(ms, rows_with_models).map_err(invalid)?;
     let polarizations = ms.polarization()?;
     let correlations = (0..polarizations.row_count())
         .map(|id| Ok((id as i32, polarizations.corr_type(id)?)))
         .collect::<MsResult<_>>()?;
     let (plan, destinations) = scratch_write_plan(
-        &mut ms,
-        selected.row_indices().collect(),
+        ms,
+        resolved.row_indices().collect(),
         &[CORRECTED],
         create,
         false,
         lock,
     )?;
     let batch_rows = plan.batch_rows().max(1);
-    MeasurementSetWriteSession::mutate_selected_rows_with_lock(
-        &mut ms,
-        plan,
-        lock,
-        |session, ms| {
-            for rows in selected.selected_rows.chunks(batch_rows) {
-                let batch = subtract_batch(
-                    ms,
-                    rows,
-                    input,
-                    &models,
-                    &correlations,
-                    &destinations[0],
-                    reverse,
-                )
-                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                session.write_mutation_batch(ms, batch)?;
-            }
-            Ok(())
-        },
-    )
+    MeasurementSetWriteSession::mutate_selected_rows_with_lock(ms, plan, lock, |session, ms| {
+        for rows in resolved.selected_rows.chunks(batch_rows) {
+            let batch = subtract_batch(
+                ms,
+                rows,
+                input,
+                &models,
+                &correlations,
+                &destinations[0],
+                |row| selected(row).then_some(reverse),
+            )
+            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+            session.write_mutation_batch(ms, batch)?;
+        }
+        Ok(())
+    })
     .map_err(invalid)?;
     Ok(())
 }
@@ -121,7 +146,7 @@ fn subtract_batch(
     models: &VisibilityModels,
     correlations: &BTreeMap<i32, Vec<i32>>,
     destination: &ScratchDestination,
-    reverse: bool,
+    operation: impl Fn(usize) -> Option<bool>,
 ) -> MsResult<MeasurementSetMutationBatch> {
     let row_indices: Vec<_> = rows.iter().map(|row| row.row_index).collect();
     let main = ms.main_table();
@@ -132,18 +157,22 @@ fn subtract_batch(
     let input_cells = read(input)?;
     let mut scratch = rows
         .iter()
-        .any(|row| models.reads_column(row.field_id))
+        .any(|row| operation(row.row_index).is_some() && models.reads_column(row.field_id))
         .then(|| read(MODEL.name()))
         .transpose()?;
     let flags = rows
         .iter()
-        .any(|row| models.uses_fourier(row.field_id))
+        .any(|row| operation(row.row_index).is_some() && models.uses_fourier(row.field_id))
         .then(|| read("FLAG"))
         .transpose()?;
     let no_flags = ArrayD::<bool>::default(IxDyn(&[0, 0]));
     let mut values = Vec::with_capacity(rows.len());
     for (offset, (row, data)) in rows.iter().zip(input_cells).enumerate() {
         let mut data = complex_cell(data, input)?;
+        let Some(reverse) = operation(row.row_index) else {
+            values.push(ArrayValue::Complex32(data));
+            continue;
+        };
         let codes = correlations
             .get(&row.polarization_id)
             .ok_or_else(|| invalid("invalid POLARIZATION_ID"))?;

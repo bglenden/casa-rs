@@ -6870,6 +6870,18 @@ requested epoch. The `calibration_ephemeris_geometry_oracle.py` fixture obtains
 the per-epoch phase centres from CASA and evaluates CASA geometry on fixed
 snapshots of those directions (#989).
 
+## Rejected Tsys weight initialization can leave empty spectra
+
+CASA 6.7.6.14 can add `WEIGHT_SPECTRUM` and `SIGMA_SPECTRUM` to a
+MeasurementSet before rejecting `initweights(wtmode='tsys', dowtsp=True)`
+with an invalid `gainfield` or interpolation setting. On that failure the
+new columns have undefined cells and the original weights are unchanged.
+
+casa-rs validates the setup before it creates either column, so a rejected
+call leaves the original spectrum schema available for retry. The paired
+`calibration_initweights_tsys_oracle.py` cases cover both setup errors
+and the unchanged weight, sigma and flag values (#1524).
+
 ## `immath(mode="pola")` crashes with `UnboundLocalError` on unitless `polithresh`
 
 - Date noted: 2026-11-18
@@ -6903,6 +6915,46 @@ silently over-thresholds and masks the entire output plane.
 casa-rs validates unit conformance via `get_conformant_value` when `sigma > 0`
 (`crates/casa-images/src/analysis/immath/pol.rs`) and refuses non-conforming or
 unitless `sigma` against non-empty image `bunit` with a clear error (#977).
+
+## Median fringe smoothing wraps delay values as phase
+
+In CASA 6.7.6.14, `smoothcal(smoothtype='median')` on a `Fringe Jones`
+calibration table applies phase wrapping to every FPARAM component. The
+condition `ipar == 0 || 4` in `FringeJones::smooth` is always true. A
+valid 8 ns delay therefore became about 1.717 ns in a window with only
+that sample. The same branch also skips the median filter for delays and
+dispersive delays.
+
+casa-rs wraps only the two phase parameters and applies the numerical
+median to the delay, rate, and dispersive delay parameters. The use of
+fringe rates for predicting phase wraps and the phase outputs follow
+CASA (#1525).
+
+## Re-referencing a delay table crashes CASA
+
+In CASA 6.7.6.14, `rerefant(refantmode='strict', refant='A0')`
+terminates the process when the input is a `K Jones` delay table.
+`SolvableVisJones::applyRefAnt` reads CPARAM before dispatching on the
+table type. Delay tables use FPARAM, and only Fringe overrides the
+reference calculation for real-valued parameters.
+
+casa-rs raises a task error for unsupported table types before publishing
+a result. The paired oracle runs this CASA check in a child process (#1525).
+
+## `statwt` creates spectra then fails on an explicitly selected subset
+
+CASA 6.7.6.14 initializes a required `WEIGHT_SPECTRUM` or `SIGMA_SPECTRUM`
+column for the original MS when `chanbin` requests channel bins. When the
+selected table predates the new column, CASA then raises a `RuntimeError`
+and asks the caller to rerun the selection. The first call writes the
+initial spectrum across the MS and leaves the original flags and scalar
+columns intact.
+
+casa-rs initializes the physical MAIN tables and subsequently applies
+statistical weights to the requested rows in one call. Unselected rows
+retain the spectrum obtained by expanding their original scalar values.
+The paired fixture compares this result with CASA's documented two-call
+sequence and checks unselected rows (#1524).
 
 ## `exportfits` drops characters when wrapping long `HISTORY` cards
 

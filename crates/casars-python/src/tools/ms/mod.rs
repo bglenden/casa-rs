@@ -3,6 +3,7 @@
 //! with its signature (ADR-0017, #1025). A method casa-rs does not implement
 //! yet raises `NotImplementedError` naming #1030 (`stubs.rs`).
 
+mod statwt;
 mod stubs;
 pub(crate) mod surface;
 
@@ -37,6 +38,7 @@ struct AttachedMs {
     path: PathBuf,
     writable: bool,
     sources: Vec<PathBuf>,
+    selected_rows: Option<Vec<usize>>,
     write_locks: BTreeMap<PathBuf, TableWriteLock>,
     read_locks: BTreeMap<PathBuf, Table>,
 }
@@ -49,6 +51,7 @@ impl AttachedMs {
             path,
             writable,
             sources,
+            selected_rows: None,
             write_locks: BTreeMap::new(),
             read_locks: BTreeMap::new(),
         };
@@ -169,7 +172,42 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut().filter(|ms| ms.writable) else {
                 return Ok(false);
             };
-            if ms.write_locks.is_empty() {
+            if let Some(selected) = &ms.selected_rows {
+                let mut offset = 0;
+                for path in &ms.sources {
+                    let mut part = MeasurementSet::open(path).map_err(runtime_error)?;
+                    let end = offset + part.row_count();
+                    let first = selected.partition_point(|&row| row < offset);
+                    let last = selected.partition_point(|&row| row < end);
+                    let rows = selected[first..last]
+                        .iter()
+                        .map(|row| row - offset)
+                        .collect::<Vec<_>>();
+                    offset = end;
+                    if rows.is_empty() {
+                        continue;
+                    }
+                    let mut temporary = None;
+                    let lock = if let Some(lock) = ms.write_locks.get_mut(path) {
+                        lock
+                    } else {
+                        temporary.insert(
+                            TableWriteLock::acquire_to_reread(path, 0).map_err(runtime_error)?,
+                        )
+                    };
+                    casa_calibration::subtract_visibility_model_selected(
+                        &mut part,
+                        reverse,
+                        Some(&rows),
+                        lock,
+                    )
+                    .map_err(runtime_error)?;
+                    drop(part);
+                    if let Some(lock) = temporary {
+                        lock.release().map_err(runtime_error)?;
+                    }
+                }
+            } else if ms.write_locks.is_empty() {
                 casa_calibration::subtract_visibility_model(&ms.path, reverse)
                     .map_err(runtime_error)?;
             } else {

@@ -210,7 +210,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         if not _is_default(value, defaults.get(name, _MISSING))
     }
     name = wrapper.__name__
-    if name in ("applycal", "clearcal", "delmod", "ft", "uvmodelfit", "uvsub"):
+    if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
         _validate_required_vis(values, arguments["vis"])
     if name == "applycal":
         return _call_applycal(values)
@@ -218,6 +218,17 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_gencal(values)
     if name == "getantposalma":
         return _call_getantposalma(values)
+    if name == "initweights":
+        return _call_initweights(values)
+    if name in ("split", "mstransform"):
+        _coerce_ms_transform_selectors(values)
+        try:
+            return run(name, **values).value
+        except TaskParameterError as error:
+            message = error.completion.message or ""
+            if error.completion.parameter == "spw" and message.startswith("invalid spectral-window selection "):
+                raise RuntimeError(message) from error
+            raise
     if name == "ft":
         for selector in ("uvrange", "observation"):
             if not isinstance(arguments[selector], str):
@@ -229,6 +240,15 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             return run(name, **values).value
         except TaskParameterError:
             raise
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
+    if name in ("smoothcal", "rerefant"):
+        for path in ("vis", "tablein"):
+            _validate_required_path(values, path, arguments[path])
+        if name == "smoothcal" and isinstance(arguments["smoothtime"], bool):
+            values["smoothtime"] = float(arguments["smoothtime"])
+        try:
+            return run(name, **values).value
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     if name == "uvmodelfit":
@@ -246,6 +266,84 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
+
+
+def _call_initweights(values: dict[str, Any]) -> Any:
+    import numpy as np
+
+    if isinstance(values.get("tsystable"), str):
+        values["tsystable"] = os.path.expanduser(values["tsystable"])
+    if "spwmap" in values:
+        mapping = values["spwmap"]
+        try:
+            items = list(mapping)
+        except TypeError:
+            items = [mapping] if isinstance(mapping, (int, np.int32)) else None
+        if mapping is None:
+            raise AssertionError("{'spwmap': ['null value not allowed']}")
+        if items is None or not all(isinstance(item, (int, np.int32, np.int64)) for item in items):
+            raise AssertionError("{'spwmap': ['must be of cIntVec type']}")
+        values["spwmap"] = [int(item) for item in items]
+    if isinstance(values.get("dowtsp"), np.bool_):
+        raise TypeError("in method 'calibrater_initweights', argument 3 of type 'bool'")
+    mode = values.get("wtmode", "nyq")
+    allowed = ("delwtsp", "nyq", "ones", "tsys", "weight", "tinttsys", "sigma", "delsigsp")
+    if isinstance(mode, str) and mode not in allowed:
+        raise AssertionError(str({"wtmode": [f"unallowed value {mode}"]}))
+    if mode is None:
+        raise AssertionError("{'wtmode': ['unallowed value None', 'null value not allowed']}")
+    try:
+        return run("initweights", **values).value
+    except TaskExecutionError as error:
+        if error.completion.parameter == "tsystable.missing":
+            raise Exception(error.completion.message) from error
+        raise
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
+
+
+def _coerce_ms_transform_selectors(values: dict[str, Any]) -> None:
+    for name in ("observation", "intent"):
+        value = values.get(name, "")
+        if isinstance(value, str):
+            continue
+        converted, record_type = _ms_transform_selector_variant(name, value)
+        if name == "observation":
+            values[name] = converted
+        elif record_type is None:
+            # CASA's tool record conversion omits this scalar variant.
+            del values[name]
+        else:
+            raise RuntimeError(
+                "RecordRep::get_pointer - incorrect data type String   "
+                f"used for field intent with type {record_type:<8}"
+            )
+
+
+def _ms_transform_selector_variant(name: str, value: Any) -> tuple[Any, str | None]:
+    import numpy as np
+
+    if value is None:
+        raise AssertionError(str({name: ["null value not allowed"] * 5}))
+    if type(value) is bool:
+        return value, "Bool"
+    if isinstance(value, int):
+        return int(value), "Int"
+    if isinstance(value, (np.int32, np.int64)):
+        return int(value), None
+    if isinstance(value, np.ndarray):
+        scalar_dtype = value.dtype.type in (np.int32, np.int64, np.str_)
+        if value.ndim == 0 and scalar_dtype:
+            return value.item(), "unknown"
+        if value.ndim == 1 and (not value.size or scalar_dtype or value.dtype.kind == "O"):
+            value = value.tolist()
+    if isinstance(value, (list, tuple)) and (
+        all(isinstance(item, str) for item in value)
+        or all(isinstance(item, (int, np.int32, np.int64)) for item in value)
+    ):
+        return list(value), "unknown"
+    types = ("cStr", "cStrVec", "cInt", "cIntVec")
+    raise AssertionError(str({name: [f"must be of {kind} type" for kind in types]}))
 
 
 def _call_gencal(values: dict[str, Any]) -> Any:
@@ -336,16 +434,20 @@ def _call_getantposalma(values: dict[str, Any]) -> Any:
 
 
 def _validate_required_vis(values: dict[str, Any], vis: Any) -> None:
+    _validate_required_path(values, "vis", vis)
+
+
+def _validate_required_path(values: dict[str, Any], name: str, value: Any) -> None:
     # CASA's required-path validation runs before calibrater opens the MS.
     # Keep PathLike as the native API's additional path form.
-    if isinstance(vis, (str, PathLike)):
-        path = os.path.expanduser(os.fspath(vis))
+    if isinstance(value, (str, PathLike)):
+        path = os.path.expanduser(os.fspath(value))
         if not path or not os.path.exists(path):
-            raise AssertionError(f"the vis parameter must be a path that exists ('{path}' does not exist)")
-        if path != os.fspath(vis):
-            values["vis"] = path
+            raise AssertionError(f"the {name} parameter must be a path that exists ('{path}' does not exist)")
+        if path != os.fspath(value):
+            values[name] = path
     else:
-        raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
+        raise AssertionError(f"the {name} parameter must be a path that exists ('{value}' does not exist)")
 
 
 def _call_applycal(values: dict[str, Any]) -> Any:

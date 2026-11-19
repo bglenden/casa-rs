@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's frequency resampling interpolates amplitude and unwrapped phase.
-use crate::interpolation::{Curve, sample, spline_derivatives, unwrap_phase};
+use crate::interpolation::{
+    Curve, sample, spline_derivatives, tsys_weight_spline_derivatives, unwrap_phase,
+};
 use crate::{ApplyExecutionError, CalibrationTableLookup, ComplexSolution};
 use casa_types::Complex32;
 
@@ -51,6 +53,13 @@ impl FrequencyInterpolation {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Coefficients {
+    Complex,
+    Real,
+    TsysWeight,
+}
+
 impl ComplexSolution {
     /// Resample each receptor to the requested data frequencies.
     ///
@@ -72,7 +81,7 @@ impl ComplexSolution {
         output_hz: &[f64],
         mode: FrequencyInterpolation,
     ) -> Result<Self, ApplyExecutionError> {
-        self.resample_parameters(input_hz, output_hz, mode, false)
+        self.resample_parameters(input_hz, output_hz, mode, Coefficients::Complex)
     }
 
     /// Resample signed FPARAM values directly, before evaluating physical
@@ -86,7 +95,16 @@ impl ComplexSolution {
         output_hz: &[f64],
         mode: FrequencyInterpolation,
     ) -> Result<Self, ApplyExecutionError> {
-        self.resample_parameters(input_hz, output_hz, mode, true)
+        self.resample_parameters(input_hz, output_hz, mode, Coefficients::Real)
+    }
+
+    pub(crate) fn resample_tsys_weight_frequency(
+        &self,
+        input_hz: &[f64],
+        output_hz: &[f64],
+        mode: FrequencyInterpolation,
+    ) -> Result<Self, ApplyExecutionError> {
+        self.resample_parameters(input_hz, output_hz, mode, Coefficients::TsysWeight)
     }
 
     fn resample_parameters(
@@ -94,7 +112,7 @@ impl ComplexSolution {
         input_hz: &[f64],
         output_hz: &[f64],
         mode: FrequencyInterpolation,
-        real: bool,
+        coefficients: Coefficients,
     ) -> Result<Self, ApplyExecutionError> {
         let error = |reason: &str| ApplyExecutionError::UnsupportedCalibrationTable {
             path: String::new(),
@@ -119,6 +137,7 @@ impl ComplexSolution {
             .ok_or_else(|| error("resampled parameter count overflows usize"))?;
         let mut values = Vec::with_capacity(size);
         let mut flags = Vec::with_capacity(size);
+        let real = coefficients != Coefficients::Complex;
         for receptor in 0..self.receptors {
             if self.channels == 1 {
                 values.extend(std::iter::repeat_n(
@@ -188,10 +207,12 @@ impl ComplexSolution {
                     "cubic frequency interpolation requires four valid samples for an interior output",
                 ));
             }
-            let derivatives = if interpolation == FrequencyInterpolation::Spline {
-                spline_derivatives(&points)
-            } else {
-                Vec::new()
+            let derivatives = match (interpolation, coefficients) {
+                (FrequencyInterpolation::Spline, Coefficients::TsysWeight) => {
+                    tsys_weight_spline_derivatives(&points)
+                }
+                (FrequencyInterpolation::Spline, _) => spline_derivatives(&points),
+                _ => Vec::new(),
             };
             for &frequency in output_hz {
                 let value = sample(

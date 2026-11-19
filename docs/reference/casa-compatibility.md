@@ -40,12 +40,16 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imregrid | imregrid | yes | 10 | 10 | 0 | 5 | 0 | 0 |
 | imstat | imstat | yes | 20 | 20 | 0 | 0 | 0 | 0 |
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 7 | 0 | 0 |
-| mstransform | mstransform | yes | 55 | 55 | 0 | 43 | 0 | 0 |
+| initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
+| mstransform | mstransform | yes | 55 | 55 | 0 | 41 | 0 | 0 |
 | plotms | plotms | pending | 102 | pending | | | | |
+| rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
-| split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
+| smoothcal | smoothcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
+| split | split | yes | 19 | 19 | 0 | 7 | 1 | 0 |
+| statwt | statwt | yes | 25 | 25 | 0 | 0 | 0 | 0 |
 | tclean | tclean | yes | 92 | 92 | 0 | 3 | 22 | 0 |
 | tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
 | uvmodelfit | uvmodelfit | yes | 14 | 14 | 0 | 0 | 0 | 0 |
@@ -824,6 +828,99 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 12, in CASA's order: yes
 - Defaults that differ: none
 
+### initweights
+
+- CASA source: `casatasks/initweights.py`, 7 parameters
+- Implementation: `casatasks/private/task_initweights.py`, `initweights` (line 10): 1 return statements, 2 raise statements
+  - returns at line 32: `None`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 7, in CASA's order: yes
+- Defaults that differ: none
+
+#### initweights parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b`. Status counts: Default only: 0, Implemented: 7, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing MeasurementSet paths, including Multi-MS and FLOAT_DATA inputs. [ordinary](#initweights-behavior-ordinary) [tsys](#initweights-behavior-tsys)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [ordinary](#initweights-evidence-ordinary), [tsys](#initweights-evidence-tsys) |
+| `wtmode` | `'nyq'` | `'nyq'`; `wtmode` → `wtmode` | Implemented | All eight CASA choices, including bandwidth-only Tsys, exposure-scaled Tsys, and the independent spectrum deletions. [ordinary](#initweights-behavior-ordinary) [tsys](#initweights-behavior-tsys)<br>Catalog domain: `delwtsp`, `nyq`, `ones`, `tsys`, `weight`, `tinttsys`, `sigma`, `delsigsp` | [ordinary](#initweights-evidence-ordinary), [tsys](#initweights-evidence-tsys) |
+| `tsystable` | `''` | `''`; `tsystable` → `tsystable` | Implemented | B TSYS table for the Tsys modes. The task reports a missing table before editing the MS. [tsys](#initweights-behavior-tsys)<br>Catalog domain: `path` (calibration_table) | [tsys](#initweights-evidence-tsys) |
+| `gainfield` | `''` | `''`; `gainfield` → `gainfield` | Implemented | Tsys table field names, IDs and nearest-field selection. Empty combines the available field solutions in time. [tsys](#initweights-behavior-tsys)<br>Catalog domain: `string` | [tsys](#initweights-evidence-tsys) |
+| `interp` | `''` | `''`; `interp` → `interp` | Implemented | Tsys time and frequency interpolation, including relative frequency, flags and context modifiers. [tsys](#initweights-behavior-tsys)<br>Catalog domain: `string` | [tsys](#initweights-evidence-tsys) |
+| `spwmap` | `[]` | `[]`; `spwmap` → `spwmap` | Implemented | Identity and explicit Tsys spectral-window mappings, with CASA scalar and vector forms. [tsys](#initweights-behavior-tsys)<br>Catalog domain: list[`integer`], length 0..many; scalar allowed | [tsys](#initweights-evidence-tsys) |
+| `dowtsp` | `False` | `False`; `dowtsp` → `dowtsp` | Implemented | Optional channel spectra, including creation, replacement of existing values and the weight-mode requirement. [ordinary](#initweights-behavior-ordinary) [tsys](#initweights-behavior-tsys)<br>Catalog domain: `bool` | [ordinary](#initweights-evidence-ordinary), [tsys](#initweights-evidence-tsys) |
+
+#### initweights interacting modes and task behavior
+
+<a id="initweights-behavior-ordinary"></a>
+##### Ordinary weights and channel spectra
+
+**Implemented** — Six numerical and spectrum-management modes across absent, complete and partly defined spectra. Includes Multi-MS, flagged visibilities and a 122,880-row casacore readback across the native write-batch boundary. Includes refusal of a zero-row MS.
+
+The compared MS products matched CASA.
+
+Evidence: [ordinary](#initweights-evidence-ordinary).
+
+<a id="initweights-behavior-tsys"></a>
+##### Tsys weight initialization
+
+**Implemented** — Both temperature modes with gain-field selection, channel and time interpolation, explicit and relative spectral-window mappings, flagged and invalid temperatures, FLOAT_DATA, and scalar and spectrum outputs. Includes relative paths, single-correlation Stokes I and missing calibration windows.
+
+The compared MS products matched CASA. Invalid selections are handled as described below.
+
+Evidence: [tsys](#initweights-evidence-tsys).
+
+#### initweights deviations and unfinished work
+
+##### validate-before-spectrum-creation: Proposed
+
+- Inputs: Tsys with dowtsp enabled and an invalid gain-field or interpolation setting.
+- CASA: Throws RuntimeError and can leave newly added spectrum columns undefined.
+- casa-rs: Throws RuntimeError before creating either spectrum column.
+- Rationale: Validate the table, field selection and interpolation before changing the MS.
+- User impact: A rejected call leaves the original spectrum schema available for retry.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [tsys](#initweights-evidence-tsys).
+
+#### initweights evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="initweights-evidence-ordinary"></a>
+##### ordinary
+
+**Same-input Python task and casacore interchange — passed.** 41 named case groups passed. Six numerical and spectrum-management modes across absent, complete and partly defined spectra. Includes Multi-MS, flagged visibilities and a 122,880-row casacore readback across the native write-batch boundary. Includes refusal of a zero-row MS.
+
+- [tools/casa-compat/calibration_initweights_oracle.py](https://github.com/bglenden/casa-rs/blob/5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b/tools/casa-compat/calibration_initweights_oracle.py)
+- Revision: `5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_initweights_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/weight-initialization-20261119.json`.
+
+<a id="initweights-evidence-tsys"></a>
+##### tsys
+
+**Same-input Python task and casacore interchange — passed.** 29 named case groups passed. Both temperature modes with gain-field selection, channel and time interpolation, explicit and relative spectral-window mappings, flagged and invalid temperatures, FLOAT_DATA, and scalar and spectrum outputs. Includes relative paths, single-correlation Stokes I and missing calibration windows.
+
+- [tools/casa-compat/calibration_initweights_tsys_oracle.py](https://github.com/bglenden/casa-rs/blob/5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b/tools/casa-compat/calibration_initweights_tsys_oracle.py)
+- Revision: `5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_initweights_tsys_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/weight-initialization-20261119.json`.
+
+<a id="initweights-evidence-performance"></a>
+##### performance
+
+**Matched release performance — planned.** Scheduled during the programme performance qualification in #979. End-to-end throughput, I/O and compute phases, workers and memory.
+
+- [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
+
 ### mstransform
 
 - CASA source: `casatasks/mstransform.py`, 55 parameters
@@ -834,7 +931,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `correlation`, `intent`, `array`, `uvrange`, `observation`, `feed`, `realmodelcol`, `usewtspectrum`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `timeaverage`, `timebin`, `timespan`, `maxuvwdistance`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
+- Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `correlation`, `array`, `uvrange`, `feed`, `realmodelcol`, `usewtspectrum`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `timeaverage`, `timebin`, `timespan`, `maxuvwdistance`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 55, in CASA's order: yes
 - Defaults that differ: none
@@ -845,6 +942,70 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Implementation: `casaplotms/private/task_plotms.py`, `plotms` (line 36): 0 return statements, 27 raise statements
 - Called with its defaults in an empty directory, CASA raises `RuntimeError`: ERROR: DISPLAY environment variable is not set! Cannot run plotms.
 - casa-rs: plotms waits for its own decision (#931): CASA's is the casaplotms GUI
+
+### rerefant
+
+- CASA source: `casatasks/rerefant.py`, 5 parameters
+- Implementation: `casatasks/private/task_rerefant.py`, `rerefant` (line 7): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 5, in CASA's order: yes
+- Defaults that differ: none
+
+#### rerefant parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `16e213dafe7d3b43d85e6c1392052289bfe487ca`. Status counts: Default only: 0, Implemented: 5, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | MeasurementSet supplying antenna identifiers and positions. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (measurement_set) | [paired](#rerefant-evidence-paired) |
+| `tablein` | `''` | `''`; `tablein` → `tablein` | Implemented | Existing gain, bandpass, scalar gain, leakage or fringe table. Unsupported delay input raises a task error. Saved CASA table selections are materialized before editing. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#rerefant-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Separate result or an in-place update when empty. An actively locked product is preserved. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#rerefant-evidence-paired) |
+| `refantmode` | `'flex'` | `'flex'`; `refantmode` → `refantmode` | Implemented | Flexible selection maintains the prior reference when the primary loses coverage. Strict accepts only the primary. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `flex`, `strict` | [paired](#rerefant-evidence-paired) |
+| `refant` | `''` | `''`; `refant` → `refant` | Implemented | An ordered antenna selection. Numeric IDs and names are paired. A missing or empty selection fails. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `string` | [paired](#rerefant-evidence-paired) |
+
+#### rerefant interacting modes and task behavior
+
+<a id="rerefant-behavior-table-operation"></a>
+##### Calibration table operation
+
+**Implemented** — Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot.
+
+The documented CASA behavior differences are recorded below.
+
+Evidence: [paired](#rerefant-evidence-paired).
+
+#### rerefant deviations and unfinished work
+
+##### return-error-on-unsupported-delay: Proposed
+
+- Inputs: K Jones delay table with a valid strict reference.
+- CASA: Terminates the process while reading a complex parameter column.
+- casa-rs: Raises a task error and leaves the output path untouched.
+- Rationale: The generic CASA reference method expects CPARAM and K Jones delay tables carry FPARAM.
+- User impact: Callers can handle an unsupported table type without losing the Python process.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#rerefant-evidence-paired).
+
+#### rerefant evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="rerefant-evidence-paired"></a>
+##### paired
+
+**Same-input Python task and casacore interchange — passed.** 24 paired case groups and four downstream applications passed. Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot.
+
+- [tools/casa-compat/calibration_rerefant_oracle.py](https://github.com/bglenden/casa-rs/blob/16e213dafe7d3b43d85e6c1392052289bfe487ca/tools/casa-compat/calibration_rerefant_oracle.py)
+- Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
 
 ### simalma
 
@@ -1382,6 +1543,72 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Command: `CASA_RS_SIMUTIL_GRAPHICS_RECEIPT=OUT/helper-artists.jsonl pytest -q crates/casars-python/python/tests/test_simutil_graphics.py crates/casars-python/python/tests/test_plot_document.py crates/casars-python/python/tests/test_simobserve_graphics.py crates/casars-python/python/tests/test_simutil.py crates/casars-python/python/tests/test_simutil_diagnostics.py ; CASA_RS_GRAPHICS_DEBUG_DIR=OUT/native cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture ; python tools/simulation/check_simobserve_rendering.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/rendered ; CASAPY tools/simulation/check_quick_psf_casa.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/psf-cpp.json`.
 - Receipt: `resources/casa-compat/evidence/simulation-figures-20261114.json`.
 
+### smoothcal
+
+- CASA source: `casatasks/smoothcal.py`, 7 parameters
+- Implementation: `casatasks/private/task_smoothcal.py`, `smoothcal` (line 8): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 7, in CASA's order: yes
+- Defaults that differ: none
+
+#### smoothcal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `16e213dafe7d3b43d85e6c1392052289bfe487ca`. Status counts: Default only: 0, Implemented: 7, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | MeasurementSet supplying field names and IDs. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (measurement_set) | [paired](#smoothcal-evidence-paired) |
+| `tablein` | `''` | `''`; `tablein` → `tablein` | Implemented | Existing calibration table. G, T, B, K and Fringe tables have paired coverage. Saved CASA table selections are materialized before editing. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#smoothcal-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Separate result or an in-place update when empty. An actively locked product is preserved. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#smoothcal-evidence-paired) |
+| `field` | `[]` | `[]`; `field` → `field` | Implemented | Field selection expression or a list. Empty selects all fields. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [paired](#smoothcal-evidence-paired) |
+| `smoothtype` | `'median'` | `'median'`; `smoothtype` → `smoothtype` | Implemented | Mean or median over valid solutions. Complex smoothing operates on amplitude and tracked phase. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `string` | [paired](#smoothcal-evidence-paired) |
+| `smoothtime` | `60.0` | `60.0`; `smoothtime` → `smoothtime` | Implemented | Strictly positive full duration in seconds. Paired cases include integer inputs and samples on window boundaries. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `float` | [paired](#smoothcal-evidence-paired) |
+| `ratesmooth` | `False` | `False`; `ratesmooth` → `ratesmooth` | Implemented | Include fringe rate predictions when tracking phase. Ordinary gain solutions are unaffected. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `bool` | [paired](#smoothcal-evidence-paired) |
+
+#### smoothcal interacting modes and task behavior
+
+<a id="smoothcal-behavior-table-operation"></a>
+##### Calibration table operation
+
+**Implemented** — Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection. Linked control files are copied into an independent output snapshot.
+
+The documented CASA behavior differences are recorded below.
+
+Evidence: [paired](#smoothcal-evidence-paired).
+
+#### smoothcal deviations and unfinished work
+
+##### preserve-fringe-delay-units: Proposed
+
+- Inputs: Fringe Jones smoothing with smoothtype set to median.
+- CASA: Wraps delay and other non-phase values as radians and bypasses their median.
+- casa-rs: Preserves their units and applies the numerical median to each non-phase series.
+- Rationale: The source condition applies phase handling to every parameter. An 8 ns delay became about 1.717 ns.
+- User impact: The fringe phase comparisons pass and the non-phase outputs follow independently calculated medians.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#smoothcal-evidence-paired).
+
+#### smoothcal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="smoothcal-evidence-paired"></a>
+##### paired
+
+**Same-input Python task and casacore interchange — passed.** 29 paired case groups and four downstream applications passed. Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection. Linked control files are copied into an independent output snapshot.
+
+- [tools/casa-compat/calibration_smoothcal_oracle.py](https://github.com/bglenden/casa-rs/blob/16e213dafe7d3b43d85e6c1392052289bfe487ca/tools/casa-compat/calibration_smoothcal_oracle.py)
+- Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_smoothcal_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
+
 ### split
 
 - CASA source: `casatasks/split.py`, 19 parameters
@@ -1390,10 +1617,159 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `keepmms`, `correlation`, `intent`, `array`, `uvrange`, `observation`, `feed`, `timebin`, `combine`
+- Accepted only at CASA's default until #978: `keepmms`, `correlation`, `array`, `uvrange`, `feed`, `timebin`, `combine`
 - casa-rs parameters CASA lacks: `msselect`
 - Shared parameters: 19, in CASA's order: yes
 - Defaults that differ: none
+
+### statwt
+
+- CASA source: `casatasks/statwt.py`, 25 parameters
+- Implementation: `casatasks/private/task_statwt.py`, `statwt` (line 8): 1 return statements, 0 raise statements
+  - returns at line 77: `rval`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 25, in CASA's order: yes
+- Defaults that differ: none
+
+#### statwt parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70`. Status counts: Default only: 0, Implemented: 25, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing MeasurementSet and Multi-MS paths. [selection](#statwt-behavior-selection)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [selection](#statwt-evidence-selection) |
+| `selectdata` | `True` | `True`; `selectdata` → `selectdata` | Implemented | Use the task row selectors, or use all rows when disabled. [selection](#statwt-behavior-selection)<br>Catalog domain: `bool` | [selection](#statwt-evidence-selection) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Selected field names, IDs and expressions. [selection](#statwt-behavior-selection)<br>Catalog domain: `string` | [selection](#statwt-evidence-selection) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral window selection. The fit mask is controlled by fitspw. [selection](#statwt-behavior-selection)<br>Catalog domain: `string` | [selection](#statwt-evidence-selection) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Observation intent and wildcard matching. [selection](#statwt-behavior-selection)<br>Catalog domain: `string` | [selection](#statwt-evidence-selection) |
+| `array` | `''` | `''`; `array` → `array` | Implemented | Array ID selection. [selection](#statwt-behavior-selection)<br>Catalog domain: `string` | [selection](#statwt-evidence-selection) |
+| `observation` | `''` | `''`; `observation` → `observation` | Implemented | Observation ID selection. [selection](#statwt-behavior-selection)<br>Catalog domain: `string` | [selection](#statwt-evidence-selection) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Scan number selection. [selection](#statwt-behavior-selection)<br>Catalog domain: `string` | [selection](#statwt-evidence-selection) |
+| `combine` | `''` | `''`; `combine` → `combine` | Implemented | Correlation, scan, field and state combination switches. [bins](#statwt-behavior-bins)<br>Catalog domain: `string` | [bins](#statwt-evidence-bins) |
+| `timebin` | `1` | `1`; `timebin` → `timebin` | Implemented | Timestamp counts and quantities with duration units. [bins](#statwt-behavior-bins)<br>Catalog domain: `variant` | [bins](#statwt-evidence-bins) |
+| `slidetimebin` | `False` | `False`; `slidetimebin` → `slidetimebin` | Implemented | Sliding windows and block processing, including incomplete edge bins. [bins](#statwt-behavior-bins)<br>Catalog domain: `bool` | [bins](#statwt-evidence-bins) |
+| `chanbin` | `'spw'` | `'spw'`; `chanbin` → `chanbin` | Implemented | Whole spectral windows, channel counts, and frequency quantities. [bins](#statwt-behavior-bins)<br>Catalog domain: `variant` | [bins](#statwt-evidence-bins) |
+| `minsamp` | `2` | `2`; `minsamp` → `minsamp` | Implemented | Minimum number of unflagged samples in each fitted bin. [estimators](#statwt-behavior-estimators)<br>Catalog domain: `integer` | [estimators](#statwt-evidence-estimators) |
+| `statalg` | `'classic'` | `'classic'`; `statalg` → `statalg` | Implemented | Classical, Chauvenet, fit-to-half, and hinges-and-fences selection. [estimators](#statwt-behavior-estimators)<br>Catalog domain: `string` | [estimators](#statwt-evidence-estimators) |
+| `fence` | `-1.0` | `-1.0`; `fence` → `fence` | Implemented | The hinges-and-fences IQR multiplier, including the negative disabled setting. [estimators](#statwt-behavior-estimators)<br>Catalog domain: `float` | [estimators](#statwt-evidence-estimators) |
+| `center` | `'mean'` | `'mean'`; `center` → `center` | Implemented | Mean, median, or zero fit-to-half center. [estimators](#statwt-behavior-estimators)<br>Catalog domain: `string` | [estimators](#statwt-evidence-estimators) |
+| `lside` | `True` | `True`; `lside` → `lside` | Implemented | Fit the lower or upper half. [estimators](#statwt-behavior-estimators)<br>Catalog domain: `bool` | [estimators](#statwt-evidence-estimators) |
+| `zscore` | `-1.0` | `-1.0`; `zscore` → `zscore` | Implemented | Fixed limit or sample-size-based Chauvenet criterion. [estimators](#statwt-behavior-estimators)<br>Catalog domain: `float` | [estimators](#statwt-evidence-estimators) |
+| `maxiter` | `-1` | `-1`; `maxiter` → `maxiter` | Implemented | Maximum Chauvenet iteration count and negative convergence setting. [estimators](#statwt-behavior-estimators)<br>Catalog domain: `integer` | [estimators](#statwt-evidence-estimators) |
+| `fitspw` | `''` | `''`; `fitspw` → `fitspw` | Implemented | Spectral window and channel mask for estimating variances. [bins](#statwt-behavior-bins)<br>Catalog domain: `string` | [bins](#statwt-evidence-bins) |
+| `excludechans` | `False` | `False`; `excludechans` → `excludechans` | Implemented | Invert the fit mask in spectral windows named by fitspw. [bins](#statwt-behavior-bins)<br>Catalog domain: `bool` | [bins](#statwt-evidence-bins) |
+| `wtrange` | `[]` | `[]`; `wtrange` → `wtrange` | Implemented | Inclusive range of allowable weights. Accept the two endpoints in either order. [estimators](#statwt-behavior-estimators)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [estimators](#statwt-evidence-estimators) |
+| `flagbackup` | `True` | `True`; `flagbackup` → `flagbackup` | Implemented | Capture pre-existing flags before a write. Preview leaves flags and backups intact. [selection](#statwt-behavior-selection)<br>Catalog domain: `bool` | [selection](#statwt-evidence-selection) |
+| `preview` | `False` | `False`; `preview` → `preview` | Implemented | Return the mean and variance of estimated weights without changing the MS. [selection](#statwt-behavior-selection)<br>Catalog domain: `bool` | [selection](#statwt-evidence-selection) |
+| `datacolumn` | `'corrected'` | `'corrected'`; `datacolumn` → `datacolumn` | Implemented | Raw, corrected and both residual visibility forms, with the corresponding weight or sigma outputs. [estimators](#statwt-behavior-estimators)<br>Catalog domain: `string` | [estimators](#statwt-evidence-estimators) |
+
+#### statwt interacting modes and task behavior
+
+<a id="statwt-behavior-selection"></a>
+##### Task and MS tool selection and preview
+
+**Implemented** — Task and attached MS tool selection, preview, original flag versions, and selected row persistence across ordinary and partitioned MeasurementSets.
+
+CASA and native task and tool use matched row sets and read back the same columns and original flag backups.
+
+Evidence: [selection](#statwt-evidence-selection).
+
+<a id="statwt-behavior-bins"></a>
+##### Time and channel binning
+
+**Implemented** — Elapsed duration and timestamp counts, block tails and sliding edge windows, independent channel bins and fit selections, scalar and spectral outputs, and absent or partially defined spectra.
+
+Paired summaries and persisted columns meet a 2e-7 relative tolerance. The selected-spectrum creation case follows the recorded decision.
+
+Evidence: [bins](#statwt-evidence-bins).
+
+<a id="statwt-behavior-estimators"></a>
+##### Variance estimators
+
+**Implemented** — Classical, Chauvenet, hinges and fences, and fit to half moments with exposure weighting, rejected samples, raw and corrected inputs, and scratch or virtual models.
+
+Matched robust and classical estimates, including non-finite output for otherwise eligible zero-exposure samples.
+
+Evidence: [estimators](#statwt-evidence-estimators).
+
+<a id="statwt-behavior-downstream"></a>
+##### Persisted weights and downstream calibration
+
+**Implemented** — Weighted gain solutions and application with scalar or spectral initialization and either calwt value. Casacore readback also covers a 122,880-row spectral write.
+
+All four weighted solve and apply chains passed. CPARAM normalized RMS was below 4e-7, corrected visibilities below 5e-7, and weighted application below 8e-7. The 122,880-row spectral write agreed across the native batch boundary.
+
+Evidence: [downstream](#statwt-evidence-downstream).
+
+#### statwt deviations and unfinished work
+
+##### create-selected-spectra-in-one-call: Proposed
+
+- Inputs: Channel binning on a selected subset without the requested spectrum column.
+- CASA: Initializes the spectrum and raises; repeating the same selection applies the estimates.
+- casa-rs: Initializes the spectrum and applies the requested estimates in one call.
+- Rationale: The native writer maps the selected rows to the original table after preparing the column.
+- User impact: One call matches the columns after the CASA retry, with unselected rows retaining the initialized values.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bins](#statwt-evidence-bins).
+
+#### statwt evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="statwt-evidence-selection"></a>
+##### selection
+
+**Same-input Python and casacore interchange — passed.** CASA and native task and tool use matched row sets and read back the same columns and original flag backups. Task and attached MS tool selection, preview, original flag versions, and selected row persistence across ordinary and partitioned MeasurementSets.
+
+- [tools/casa-compat/calibration_statwt_oracle.py](https://github.com/bglenden/casa-rs/blob/fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70/tools/casa-compat/calibration_statwt_oracle.py)
+- Revision: `fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_statwt_oracle.py --large --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/statistical-weighting-20261119.json`.
+
+<a id="statwt-evidence-bins"></a>
+##### bins
+
+**Same-input Python and casacore interchange — passed.** Paired summaries and persisted columns meet a 2e-7 relative tolerance. The selected-spectrum creation case follows the recorded decision. Elapsed duration and timestamp counts, block tails and sliding edge windows, independent channel bins and fit selections, scalar and spectral outputs, and absent or partially defined spectra.
+
+- [tools/casa-compat/calibration_statwt_oracle.py](https://github.com/bglenden/casa-rs/blob/fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70/tools/casa-compat/calibration_statwt_oracle.py)
+- Revision: `fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_statwt_oracle.py --large --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/statistical-weighting-20261119.json`.
+
+<a id="statwt-evidence-estimators"></a>
+##### estimators
+
+**Same-input Python and casacore interchange — passed.** Matched robust and classical estimates, including non-finite output for otherwise eligible zero-exposure samples. Classical, Chauvenet, hinges and fences, and fit to half moments with exposure weighting, rejected samples, raw and corrected inputs, and scratch or virtual models.
+
+- [tools/casa-compat/calibration_statwt_oracle.py](https://github.com/bglenden/casa-rs/blob/fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70/tools/casa-compat/calibration_statwt_oracle.py)
+- Revision: `fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_statwt_oracle.py --large --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/statistical-weighting-20261119.json`.
+
+<a id="statwt-evidence-downstream"></a>
+##### downstream
+
+**Same-input Python and casacore interchange — passed.** All four weighted solve and apply chains passed. CPARAM normalized RMS was below 4e-7, corrected visibilities below 5e-7, and weighted application below 8e-7. The 122,880-row spectral write agreed across the native batch boundary. Weighted gain solutions and application with scalar or spectral initialization and either calwt value. Casacore readback also covers a 122,880-row spectral write.
+
+- [tools/casa-compat/calibration_statwt_oracle.py](https://github.com/bglenden/casa-rs/blob/fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70/tools/casa-compat/calibration_statwt_oracle.py)
+- Revision: `fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_statwt_oracle.py --large --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/statistical-weighting-20261119.json`.
+
+<a id="statwt-evidence-performance"></a>
+##### performance
+
+**Matched release performance — planned.** The programme will qualify matched release workflows under #979. The local storage profile located and corrected repeated UVW reads during FLAG_ROW persistence. End-to-end throughput, I/O and compute phases, workers and memory.
+
+- [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
 ### tclean
 

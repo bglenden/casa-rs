@@ -12921,7 +12921,7 @@
     {
       "kind": "task",
       "id": "mstransform",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "MSTransform",
       "category": "MeasurementSet",
       "summary": "Materialize a selected MeasurementSet into a new output MS.",
@@ -13131,7 +13131,7 @@
         },
         {
           "name": "intent",
-          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 3},
           "order": 12,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13141,8 +13141,7 @@
             "provider": {"field": "intent"},
             "python": {"name": "intent"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "array",
@@ -13176,7 +13175,7 @@
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 4},
           "order": 15,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13184,10 +13183,9 @@
           "projections": {
             "cli": {"flags": ["--observation"], "metavar": "SELECTOR"},
             "provider": {"field": "observation"},
-            "python": {"name": "observation"},
+            "python": {"name": "observation", "type_hint": "str | int"},
             "presentation": {"label": "Observation", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "feed",
@@ -13785,7 +13783,7 @@
     {
       "kind": "task",
       "id": "split",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "Split",
       "category": "MeasurementSet",
       "summary": "Create a selected MeasurementSet subset, equivalent to CASA split.",
@@ -13950,7 +13948,7 @@
         },
         {
           "name": "intent",
-          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 3},
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13960,8 +13958,7 @@
             "provider": {"field": "intent"},
             "python": {"name": "intent"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "array",
@@ -13995,7 +13992,7 @@
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 4},
           "order": 12,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -14003,10 +14000,9 @@
           "projections": {
             "cli": {"flags": ["--observation"], "metavar": "SELECTOR"},
             "provider": {"field": "observation"},
-            "python": {"name": "observation"},
+            "python": {"name": "observation", "type_hint": "str | int"},
             "presentation": {"label": "Observation", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "feed",
@@ -33278,6 +33274,1883 @@
               "label": "Retry Delay",
               "group": "ALMA Service"
             }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "smoothcal",
+      "contract_version": 1,
+      "display_name": "Smooth Calibration Solutions",
+      "category": "Calibration",
+      "summary": "Smooth selected calibration solutions in time.",
+      "provider_family": "calibration",
+      "casa_task": "smoothcal",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "smoothcal"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "caltable",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "caltable"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "Required scalar CASA path preserving the supplied filesystem spelling."},
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "tablein",
+          "concept": {
+            "id": "calibration.tablein",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--tablein"
+              ]
+            },
+            "provider": {
+              "field": "tablein",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "tablein"
+            },
+            "presentation": {
+              "label": "tablein",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "calibration.caltable",
+            "semantic_revision": 2
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "An empty output aliases the input. All nonempty output spellings name a separate requested path."},
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable"
+              ]
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "caltable",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 5
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "field",
+              "group": "Data selection"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "The list is a union of selectors within one calibration table."
+          }
+        },
+        {
+          "name": "smoothtype",
+          "concept": {
+            "id": "smoothing.smoothtype",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "median"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--smoothtype"
+              ]
+            },
+            "provider": {
+              "field": "smoothtype",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "smoothtype"
+            },
+            "presentation": {
+              "label": "smoothtype",
+              "group": "Smoothing"
+            }
+          }
+        },
+        {
+          "name": "smoothtime",
+          "concept": {
+            "id": "smoothing.smoothtime",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 60.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--smoothtime"
+              ]
+            },
+            "provider": {
+              "field": "smoothtime",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "smoothtime"
+            },
+            "presentation": {
+              "label": "smoothtime",
+              "group": "Smoothing"
+            }
+          }
+        },
+        {
+          "name": "ratesmooth",
+          "concept": {
+            "id": "smoothing.ratesmooth",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--ratesmooth"
+              ]
+            },
+            "provider": {
+              "field": "ratesmooth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "ratesmooth"
+            },
+            "presentation": {
+              "label": "ratesmooth",
+              "group": "Smoothing"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "rerefant",
+      "contract_version": 1,
+      "display_name": "Re-reference Calibration Solutions",
+      "category": "Calibration",
+      "summary": "Change the reference antenna in a calibration table.",
+      "provider_family": "calibration",
+      "casa_task": "rerefant",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "rerefant"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "caltable",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "caltable"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "tablein",
+          "concept": {
+            "id": "calibration.tablein",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--tablein"
+              ]
+            },
+            "provider": {
+              "field": "tablein",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "tablein"
+            },
+            "presentation": {
+              "label": "tablein",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "calibration.caltable",
+            "semantic_revision": 2
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable"
+              ]
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "caltable",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "refantmode",
+          "concept": {
+            "id": "setsolve.refantmode",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "flex"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refantmode"
+              ]
+            },
+            "provider": {
+              "field": "refantmode",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "refantmode"
+            },
+            "presentation": {
+              "label": "refantmode",
+              "group": "Reference antenna"
+            }
+          }
+        },
+        {
+          "name": "refant",
+          "concept": {
+            "id": "parameter.refant",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refant"
+              ]
+            },
+            "provider": {
+              "field": "refant",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "refant"
+            },
+            "presentation": {
+              "label": "refant",
+              "group": "Reference antenna"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "initweights",
+      "contract_version": 1,
+      "display_name": "Initialize Visibility Weights",
+      "category": "Calibration",
+      "summary": "Initialize MeasurementSet weights and their channel spectra.",
+      "provider_family": "calibration",
+      "casa_task": "initweights",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "initweights"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "wtmode",
+          "concept": {
+            "id": "weightinit.wtmode",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "nyq"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--wtmode"
+              ]
+            },
+            "provider": {
+              "field": "wtmode"
+            },
+            "python": {
+              "name": "wtmode"
+            },
+            "presentation": {
+              "label": "Initialization Mode",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "tsystable",
+          "concept": {
+            "id": "weightinit.tsystable",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--tsystable"
+              ]
+            },
+            "provider": {
+              "field": "tsystable"
+            },
+            "python": {
+              "name": "tsystable"
+            },
+            "presentation": {
+              "label": "Tsys Table",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "gainfield",
+          "concept": {
+            "id": "weightinit.gainfield",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gainfield"
+              ]
+            },
+            "provider": {
+              "field": "gainfield"
+            },
+            "python": {
+              "name": "gainfield"
+            },
+            "presentation": {
+              "label": "Gain Field",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Weight initialization accepts the settings for one Tsys table."
+          }
+        },
+        {
+          "name": "interp",
+          "concept": {
+            "id": "weightinit.interp",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interp"
+              ]
+            },
+            "provider": {
+              "field": "interp"
+            },
+            "python": {
+              "name": "interp"
+            },
+            "presentation": {
+              "label": "Interpolation",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Weight initialization accepts the settings for one Tsys table."
+          }
+        },
+        {
+          "name": "spwmap",
+          "concept": {
+            "id": "weightinit.spwmap",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spwmap"
+              ]
+            },
+            "provider": {
+              "field": "spwmap"
+            },
+            "python": {
+              "name": "spwmap"
+            },
+            "presentation": {
+              "label": "SPW Map",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Weight initialization accepts the settings for one Tsys table."
+          }
+        },
+        {
+          "name": "dowtsp",
+          "concept": {
+            "id": "weightinit.dowtsp",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dowtsp"
+              ]
+            },
+            "provider": {
+              "field": "dowtsp"
+            },
+            "python": {
+              "name": "dowtsp"
+            },
+            "presentation": {
+              "label": "Weight Spectrum",
+              "group": "Weights"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "statwt",
+      "contract_version": 1,
+      "display_name": "Statistical Weights",
+      "category": "Calibration",
+      "summary": "Estimate MeasurementSet weights from visibility variance.",
+      "provider_family": "calibration",
+      "casa_task": "statwt",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "statwt"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "selectdata",
+          "concept": {
+            "id": "parameter.selectdata",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--selectdata"
+              ]
+            },
+            "provider": {
+              "field": "selectdata"
+            },
+            "python": {
+              "name": "selectdata"
+            },
+            "presentation": {
+              "label": "selectdata",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "field",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "spw",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ]
+            },
+            "provider": {
+              "field": "intent"
+            },
+            "python": {
+              "name": "intent"
+            },
+            "presentation": {
+              "label": "intent",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "array",
+          "concept": {
+            "id": "ms.selection.array",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--array"
+              ]
+            },
+            "provider": {
+              "field": "array",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "array"
+            },
+            "presentation": {
+              "label": "array",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "observation",
+          "concept": {
+            "id": "ms.selection.observation",
+            "semantic_revision": 3
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--observation"
+              ]
+            },
+            "provider": {
+              "field": "observation"
+            },
+            "python": {
+              "name": "observation"
+            },
+            "presentation": {
+              "label": "observation",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "scan",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "combine",
+          "concept": {
+            "id": "weightstats.combine",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--combine"
+              ]
+            },
+            "provider": {
+              "field": "combine"
+            },
+            "python": {
+              "name": "combine"
+            },
+            "presentation": {
+              "label": "combine",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Statistical weight estimation has its own binning and parameter domains."
+          }
+        },
+        {
+          "name": "timebin",
+          "concept": {
+            "id": "weightstats.timebin",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timebin"
+              ]
+            },
+            "provider": {
+              "field": "timebin"
+            },
+            "python": {
+              "name": "timebin",
+              "type_hint": "str | int"
+            },
+            "presentation": {
+              "label": "timebin",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Statistical weight estimation has its own binning and parameter domains."
+          }
+        },
+        {
+          "name": "slidetimebin",
+          "concept": {
+            "id": "weightstats.slidetimebin",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--slidetimebin"
+              ]
+            },
+            "provider": {
+              "field": "slidetimebin"
+            },
+            "python": {
+              "name": "slidetimebin"
+            },
+            "presentation": {
+              "label": "slidetimebin",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "chanbin",
+          "concept": {
+            "id": "weightstats.chanbin",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "spw"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--chanbin"
+              ]
+            },
+            "provider": {
+              "field": "chanbin"
+            },
+            "python": {
+              "name": "chanbin",
+              "type_hint": "str | int"
+            },
+            "presentation": {
+              "label": "chanbin",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Statistical weight estimation has its own binning and parameter domains."
+          }
+        },
+        {
+          "name": "minsamp",
+          "concept": {
+            "id": "weightstats.minsamp",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 2
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minsamp"
+              ]
+            },
+            "provider": {
+              "field": "minsamp"
+            },
+            "python": {
+              "name": "minsamp"
+            },
+            "presentation": {
+              "label": "minsamp",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "statalg",
+          "concept": {
+            "id": "weightstats.statalg",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "classic"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--statalg"
+              ]
+            },
+            "provider": {
+              "field": "statalg"
+            },
+            "python": {
+              "name": "statalg"
+            },
+            "presentation": {
+              "label": "statalg",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "fence",
+          "concept": {
+            "id": "weightstats.fence",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": -1.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fence"
+              ]
+            },
+            "provider": {
+              "field": "fence"
+            },
+            "python": {
+              "name": "fence"
+            },
+            "presentation": {
+              "label": "fence",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Statistical weight estimation has its own binning and parameter domains."
+          }
+        },
+        {
+          "name": "center",
+          "concept": {
+            "id": "weightstats.center",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "mean"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--center"
+              ]
+            },
+            "provider": {
+              "field": "center"
+            },
+            "python": {
+              "name": "center"
+            },
+            "presentation": {
+              "label": "center",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Statistical weight estimation has its own binning and parameter domains."
+          }
+        },
+        {
+          "name": "lside",
+          "concept": {
+            "id": "weightstats.lside",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--lside"
+              ]
+            },
+            "provider": {
+              "field": "lside"
+            },
+            "python": {
+              "name": "lside"
+            },
+            "presentation": {
+              "label": "lside",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Statistical weight estimation has its own binning and parameter domains."
+          }
+        },
+        {
+          "name": "zscore",
+          "concept": {
+            "id": "weightstats.zscore",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": -1.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--zscore"
+              ]
+            },
+            "provider": {
+              "field": "zscore"
+            },
+            "python": {
+              "name": "zscore"
+            },
+            "presentation": {
+              "label": "zscore",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Statistical weight estimation has its own binning and parameter domains."
+          }
+        },
+        {
+          "name": "maxiter",
+          "concept": {
+            "id": "weightstats.maxiter",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--maxiter"
+              ]
+            },
+            "provider": {
+              "field": "maxiter"
+            },
+            "python": {
+              "name": "maxiter"
+            },
+            "presentation": {
+              "label": "maxiter",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Statistical weight estimation has its own binning and parameter domains."
+          }
+        },
+        {
+          "name": "fitspw",
+          "concept": {
+            "id": "weightstats.fitspw",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--fitspw"
+              ]
+            },
+            "provider": {
+              "field": "fitspw"
+            },
+            "python": {
+              "name": "fitspw"
+            },
+            "presentation": {
+              "label": "fitspw",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Statistical weight estimation has its own binning and parameter domains."
+          }
+        },
+        {
+          "name": "excludechans",
+          "concept": {
+            "id": "weightstats.excludechans",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--excludechans"
+              ]
+            },
+            "provider": {
+              "field": "excludechans"
+            },
+            "python": {
+              "name": "excludechans"
+            },
+            "presentation": {
+              "label": "excludechans",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "wtrange",
+          "concept": {
+            "id": "weightstats.wtrange",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--wtrange"
+              ]
+            },
+            "provider": {
+              "field": "wtrange"
+            },
+            "python": {
+              "name": "wtrange"
+            },
+            "presentation": {
+              "label": "wtrange",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "flagbackup",
+          "concept": {
+            "id": "parameter.flagbackup",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--flagbackup"
+              ]
+            },
+            "provider": {
+              "field": "flagbackup"
+            },
+            "python": {
+              "name": "flagbackup"
+            },
+            "presentation": {
+              "label": "flagbackup",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "preview",
+          "concept": {
+            "id": "weightstats.preview",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--preview"
+              ]
+            },
+            "provider": {
+              "field": "preview"
+            },
+            "python": {
+              "name": "preview"
+            },
+            "presentation": {
+              "label": "preview",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "datacolumn",
+          "concept": {
+            "id": "weightstats.datacolumn",
+            "semantic_revision": 1
+          },
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "corrected"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--datacolumn"
+              ]
+            },
+            "provider": {
+              "field": "datacolumn"
+            },
+            "python": {
+              "name": "datacolumn"
+            },
+            "presentation": {
+              "label": "datacolumn",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Statistical weight estimation has its own binning and parameter domains."
           }
         }
       ]

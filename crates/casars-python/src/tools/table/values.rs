@@ -75,7 +75,7 @@ pub(crate) fn value(value: &Value, owner: &Path) -> CasaValue {
 }
 
 /// A record as a `dict` whose keys are sorted, as casatools sorts them.
-pub(super) fn record(fields: &RecordValue, owner: &Path) -> CasaValue {
+pub(crate) fn record(fields: &RecordValue, owner: &Path) -> CasaValue {
     CasaValue::record(
         fields
             .fields()

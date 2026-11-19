@@ -28,13 +28,17 @@ use crate::ms::MeasurementSet;
 use crate::ms::{measurement_set_main_table_bindings, measurement_set_table_options};
 use crate::schema::SubtableId;
 use crate::schema::main_table::VisibilityDataColumn;
-use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
-use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
+use crate::selection::{
+    MsSelection, MsSelectionError, MsSelectionIoBudget, ResolvedMsSelectionRow, SpwSelection,
+};
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
     MeasurementSetCreateTarget, MeasurementSetScalarColumnPlan, MeasurementSetWritePlan,
     MeasurementSetWriteResources, MeasurementSetWriteSession, MeasurementSetWriteTelemetry,
 };
+
+mod selection_metadata;
+mod spectral_metadata;
 
 /// Input visibility column to materialize as output `DATA`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -153,7 +157,7 @@ pub enum MsTransformError {
     },
 
     /// The row selection was empty.
-    #[error("mstransform selection produced no rows for {path}")]
+    #[error("MSSelectionNullSelection : The selected table has zero rows.")]
     EmptySelection {
         /// Input MS path.
         path: String,
@@ -273,6 +277,31 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
+    let stage_started_at = Instant::now();
+    let selection_error = |error| MsTransformError::SelectRows {
+        path: request.input_ms.display().to_string(),
+        source: match error {
+            MsSelectionError::Domain(source) => source,
+            other => MsError::InvalidInput(other.to_string()),
+        },
+    };
+    let budget = MsSelectionIoBudget::from_system_memory(
+        2,
+        std::mem::size_of::<ResolvedMsSelectionRow>(),
+        None,
+    )
+    .map_err(selection_error)?;
+    let spw = match request.spw.trim() {
+        "" => "*",
+        spw => spw,
+    };
+    let spw_selection =
+        input
+            .resolve_spw_selector(spw)
+            .map_err(|source| MsTransformError::InvalidSpw {
+                selector: request.spw.clone(),
+                reason: source.to_string(),
+            })?;
     let source_column = request.data_column.source_name();
     if !input
         .main_table()
@@ -284,52 +313,36 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
             column: source_column.to_string(),
         });
     }
-    let stage_started_at = Instant::now();
-    let mut selected_rows = resolve_row_indices_with_system_budget(&input, &request.selection)
-        .map_err(|source| MsTransformError::SelectRows {
-            path: request.input_ms.display().to_string(),
-            source,
-        })?;
+    let mut selection = request.selection.clone();
+    if selection.spw.is_none() {
+        selection.spw = Some(spw.to_string());
+    }
+    let (resolved_rows, time_selection) = input
+        .resolve_casa_selection_with_time(&selection, budget)
+        .map_err(selection_error)?;
     maybe_log_transform_progress(
         "select_rows",
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
-    if selected_rows.is_empty() {
-        tracing::warn!(
-            input_ms = %request.input_ms.display(),
-            "mstransform selected no rows"
-        );
-        return Err(MsTransformError::EmptySelection {
-            path: request.input_ms.display().to_string(),
-        });
-    }
     let stage_started_at = Instant::now();
-    let channel_selection = resolve_transform_channels(&input, &request.spw)?;
+    let channel_selection = resolve_transform_channels(&input, &spw_selection, &request.spw)?;
     let channel_bins = channel_bins_by_spw(&channel_selection, request.width)?;
     let ddid_to_spw = data_description_spw_map(&input)?;
-    let raw_ddids = input
-        .main_table()
-        .column_accessor("DATA_DESC_ID")
-        .and_then(|column| column.scalar_cells_owned_for_rows(&selected_rows))
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
-            path: request.input_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let mut filtered_rows = Vec::with_capacity(selected_rows.len());
-    let mut filtered_ddids = Vec::with_capacity(selected_rows.len());
-    for (row_index, ddid) in selected_rows.into_iter().zip(raw_ddids) {
-        let ddid = scalar_i32(ddid.as_ref(), "DATA_DESC_ID", row_index)?;
-        let Some(spw) = ddid_to_spw.get(&ddid) else {
-            continue;
-        };
-        if channel_bins.contains_key(spw) {
-            filtered_rows.push(row_index);
-            filtered_ddids.push(ddid);
-        }
-    }
-    selected_rows = filtered_rows;
-    let mut selected_ddids = filtered_ddids;
+    let antenna_ids = selection_metadata::selected_antenna_ids(
+        &input,
+        selection.antenna.as_deref(),
+        &resolved_rows.selected_rows,
+    )?;
+    let (mut selected_rows, mut selected_ddids): (Vec<_>, Vec<_>) = resolved_rows
+        .selected_rows
+        .into_iter()
+        .filter(|row| {
+            spw_selection.selects_row(row.data_desc_id)
+                && channel_bins.contains_key(&row.spectral_window_id)
+        })
+        .map(|row| (row.row_index, row.data_desc_id))
+        .unzip();
     maybe_log_transform_progress(
         "filter_rows_by_spw",
         stage_started_at.elapsed(),
@@ -391,40 +404,16 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         }
     }
     let stage_started_at = Instant::now();
-    let selected_times = input
-        .main_table()
-        .column_accessor("TIME")
-        .and_then(|column| column.scalar_cells_owned_for_rows(&selected_rows))
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
-            path: request.input_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let mut row_order = selected_rows
-        .into_iter()
-        .zip(selected_ddids)
-        .zip(selected_times)
-        .enumerate()
-        .map(|(original_index, ((row_index, ddid), time))| {
-            scalar_f64(time.as_ref(), "TIME", row_index)
-                .map(|time| (time, original_index, row_index, ddid))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    row_order.sort_by(|left, right| {
-        left.0
-            .total_cmp(&right.0)
-            .then_with(|| left.1.cmp(&right.1))
-    });
-    let mut selected_rows = Vec::with_capacity(row_order.len());
-    let mut selected_ddids = Vec::with_capacity(row_order.len());
-    for (_time, _original_index, row_index, ddid) in row_order {
-        selected_rows.push(row_index);
-        selected_ddids.push(ddid);
-    }
-    let selected_ddids_for_metadata = selected_ddids.clone();
+    let (selected_rows, selected_ddids) = selection_metadata::sort_selected_rows(
+        input.main_table(),
+        request,
+        selected_rows,
+        selected_ddids,
+    )?;
     let selected_field_ids_for_metadata =
         selected_field_ids_for_rows(input.main_table(), &selected_rows, &request.output_ms)?;
     maybe_log_transform_progress(
-        "sort_rows_by_time",
+        "sort_selected_rows",
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
@@ -449,14 +438,24 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         &request.input_ms,
         &request.output_ms,
         &channel_bins,
-        &selected_ddids_for_metadata,
         &ddid_to_spw,
+        &spw_selection,
     )?;
-    let field_id_map = compact_field_subtable(
-        &request.input_ms,
-        &request.output_ms,
-        &selected_field_ids_for_metadata,
+    let field_id_map = selection_metadata::reindex_fields_and_sources(
+        &input,
+        request,
+        selection.field.as_deref(),
+        &compact_metadata.spw_map,
     )?;
+    let antenna_id_map = selection_metadata::reindex_antenna_subtables(
+        &input,
+        request,
+        antenna_ids.as_deref(),
+        &compact_metadata.spw_map,
+        time_selection.as_ref(),
+    )?;
+    let row_id_maps =
+        selection_metadata::reindex_observation_and_state(&input, request, antenna_id_map)?;
     maybe_log_transform_progress(
         "compact_spectral_subtables",
         stage_started_at.elapsed(),
@@ -491,6 +490,7 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         &request.output_ms,
         batch_rows,
         &mut write_session,
+        &row_id_maps,
     )?;
     maybe_log_transform_progress(
         "load_main_column_overrides",
@@ -727,7 +727,7 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
     for name in spectrum_columns {
         output_column_overrides.insert_deferred(name);
     }
-    for ddid in &selected_ddids_for_metadata {
+    for ddid in &selected_ddids {
         let compact = compact_metadata
             .ddid_map
             .get(ddid)
@@ -746,14 +746,17 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
             })?;
     }
     for field_id in &selected_field_ids_for_metadata {
-        let compact = field_id_map.get(field_id).copied().ok_or_else(|| {
-            MsTransformError::SpectralMetadata {
-                path: request.output_ms.display().to_string(),
-                reason: format!(
-                    "selected FIELD_ID {field_id} was not present in compacted FIELD metadata"
-                ),
-            }
-        })?;
+        let compact = match &field_id_map {
+            Some(ids) => ids.get(field_id).copied().ok_or_else(|| {
+                MsTransformError::SpectralMetadata {
+                    path: request.output_ms.display().to_string(),
+                    reason: format!(
+                        "selected FIELD_ID {field_id} was not present in compacted FIELD metadata"
+                    ),
+                }
+            })?,
+            None => *field_id,
+        };
         write_session
             .push_scalar_row("FIELD_ID", Some(ScalarValue::Int32(compact)))
             .map_err(|error| MsTransformError::WriteMeasurementSet {
@@ -779,7 +782,15 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    update_spectral_window_metadata(&compact_metadata.channel_bins, &request.output_ms)?;
+    if normalized_width(request.width) == 1 {
+        spectral_metadata::write_channel_selection(
+            &request.output_ms,
+            &compact_metadata.spw_map,
+            &channel_selection,
+        )?;
+    } else {
+        update_spectral_window_metadata(&compact_metadata.channel_bins, &request.output_ms)?;
+    }
     maybe_log_transform_progress(
         "update_spectral_window",
         stage_started_at.elapsed(),
@@ -1228,6 +1239,7 @@ fn gather_selected_main_column_overrides(
     output_path: &Path,
     batch_rows: usize,
     write_session: &mut MeasurementSetWriteSession,
+    row_id_maps: &selection_metadata::RowIdMaps,
 ) -> Result<ColumnOverrides, MsTransformError> {
     let schema = table
         .schema()
@@ -1250,6 +1262,7 @@ fn gather_selected_main_column_overrides(
                     continue;
                 }
                 if column.data_type().and_then(streamed_scalar_type).is_some() {
+                    let id_map = row_id_maps.for_column(name);
                     for rows in selected_rows.chunks(batch_rows.max(1)) {
                         let values = table
                             .column_accessor(name)
@@ -1258,7 +1271,20 @@ fn gather_selected_main_column_overrides(
                                 path: output_path.display().to_string(),
                                 source: Box::new(source),
                             })?;
-                        for value in values {
+                        for (row, value) in rows.iter().zip(values) {
+                            let value = match id_map {
+                                Some(ids) => {
+                                    let old_id = scalar_i32(value.as_ref(), name, *row)?;
+                                    let new_id = ids.get(&old_id).ok_or_else(|| {
+                                        MsTransformError::SpectralMetadata {
+                                            path: output_path.display().to_string(),
+                                            reason: format!("{name} {old_id} is absent from the selected metadata"),
+                                        }
+                                    })?;
+                                    Some(ScalarValue::Int32(*new_id))
+                                }
+                                _ => value,
+                            };
                             write_session
                                 .push_scalar_row(name, value)
                                 .map_err(|source| MsTransformError::WriteMeasurementSet {
@@ -1435,6 +1461,7 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> 
 
 struct CompactSpectralMetadata {
     ddid_map: BTreeMap<i32, i32>,
+    spw_map: BTreeMap<i32, i32>,
     channel_bins: BTreeMap<i32, Vec<Vec<usize>>>,
 }
 
@@ -1442,8 +1469,8 @@ fn compact_spectral_subtables(
     input_ms: &Path,
     output_ms: &Path,
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
-    selected_ddids: &[i32],
     ddid_to_spw: &BTreeMap<i32, i32>,
+    selection: &SpwSelection,
 ) -> Result<CompactSpectralMetadata, MsTransformError> {
     let selected_spws = channel_bins.keys().copied().collect::<Vec<_>>();
     let spw_map = selected_spws
@@ -1469,12 +1496,16 @@ fn compact_spectral_subtables(
             .iter()
             .map(|spw| *spw as usize)
             .collect::<Vec<_>>(),
-        |_, row| Ok(row),
+        |_, row| Ok(spectral_metadata::remap_associations(row, &spw_map)),
     )?;
 
-    let mut unique_ddids = selected_ddids.iter().copied().collect::<BTreeSet<_>>();
-    let mut ordered_ddids = unique_ddids.iter().copied().collect::<Vec<_>>();
-    ordered_ddids.sort_by_key(|ddid| ddid_to_spw.get(ddid).copied().unwrap_or(i32::MAX));
+    // CASA uses getSPWDDIDList in expression order, including repeated
+    // entries. MAIN refers to the last such entry. An omitted spw is '*'.
+    let ordered_ddids = selection
+        .data_description_ids()
+        .iter()
+        .map(|&id| id as i32)
+        .collect::<Vec<_>>();
     let ddid_map = ordered_ddids
         .iter()
         .enumerate()
@@ -1517,9 +1548,9 @@ fn compact_spectral_subtables(
         },
     )?;
 
-    unique_ddids.clear();
     Ok(CompactSpectralMetadata {
         ddid_map,
+        spw_map,
         channel_bins: compact_channel_bins,
     })
 }
@@ -1540,34 +1571,6 @@ fn selected_field_ids_for_rows(
         .zip(selected_rows.iter().copied())
         .map(|(value, row_index)| scalar_i32(value.as_ref(), "FIELD_ID", row_index))
         .collect()
-}
-
-fn compact_field_subtable(
-    input_ms: &Path,
-    output_ms: &Path,
-    selected_field_ids: &[i32],
-) -> Result<BTreeMap<i32, i32>, MsTransformError> {
-    let ordered_field_ids = selected_field_ids
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let field_id_map = ordered_field_ids
-        .iter()
-        .enumerate()
-        .map(|(new_id, old_id)| (*old_id, new_id as i32))
-        .collect::<BTreeMap<_, _>>();
-    rewrite_selected_table_rows(
-        &input_ms.join(SubtableId::Field.name()),
-        &output_ms.join(SubtableId::Field.name()),
-        &ordered_field_ids
-            .iter()
-            .map(|field_id| *field_id as usize)
-            .collect::<Vec<_>>(),
-        |_, row| Ok(row),
-    )?;
-    Ok(field_id_map)
 }
 
 fn rewrite_selected_table_rows<F>(
@@ -1609,28 +1612,22 @@ where
             source: Box::new(source),
         }
     })?;
-    for &row_index in selected_rows {
-        let row = source
-            .rows()
-            .map_err(|source| MsTransformError::MutateMeasurementSet {
-                path: source_path.display().to_string(),
-                source: Box::new(source),
-            })?
-            .get(row_index)
-            .cloned()
-            .ok_or_else(|| MsTransformError::SpectralMetadata {
-                path: source_path.display().to_string(),
-                reason: format!(
-                    "requested subtable row {row_index} outside {} rows",
-                    source.row_count()
-                ),
+    for indices in selected_rows.chunks(256) {
+        let records =
+            selection_metadata::read_subtable_rows(&source, indices).map_err(|source| {
+                MsTransformError::MutateMeasurementSet {
+                    path: source_path.display().to_string(),
+                    source: Box::new(source),
+                }
             })?;
-        appender
-            .append(rewrite(row_index, row)?)
-            .map_err(|source| MsTransformError::MutateMeasurementSet {
-                path: destination_path.display().to_string(),
-                source: Box::new(source),
-            })?;
+        for (&row_index, row) in indices.iter().zip(records) {
+            appender
+                .append(rewrite(row_index, row)?)
+                .map_err(|source| MsTransformError::MutateMeasurementSet {
+                    path: destination_path.display().to_string(),
+                    source: Box::new(source),
+                })?;
+        }
     }
     drop(appender);
     destination
@@ -1643,47 +1640,26 @@ where
     Ok(())
 }
 
+struct TransformChannelSelection {
+    channels: Vec<usize>,
+    metadata_ends: Vec<usize>,
+}
+
 fn resolve_transform_channels(
     ms: &MeasurementSet,
+    selection: &SpwSelection,
     spw: &str,
-) -> Result<BTreeMap<i32, Vec<usize>>, MsTransformError> {
+) -> Result<BTreeMap<i32, TransformChannelSelection>, MsTransformError> {
     let spectral_window =
         ms.spectral_window()
             .map_err(|source| MsTransformError::SpectralMetadata {
                 path: "<measurement-set/SPECTRAL_WINDOW>".to_string(),
                 reason: source.to_string(),
             })?;
-    let selectors = if spw.trim().is_empty() {
-        (0..spectral_window.row_count())
-            .map(|row| crate::selection::syntax::SpwSelector {
-                spw_id: row as i32,
-                channels: None,
-            })
-            .collect()
-    } else {
-        parse_spw_selector(spw).map_err(|source| MsTransformError::InvalidSpw {
-            selector: spw.to_string(),
-            reason: source.to_string(),
-        })?
-    };
     let mut by_spw = BTreeMap::new();
-    for selector in selectors {
-        if selector.spw_id < 0 {
-            return Err(MsTransformError::InvalidSpw {
-                selector: spw.to_string(),
-                reason: format!("negative spectral-window id {}", selector.spw_id),
-            });
-        }
-        let row = selector.spw_id as usize;
-        if row >= spectral_window.row_count() {
-            return Err(MsTransformError::InvalidSpw {
-                selector: spw.to_string(),
-                reason: format!(
-                    "spectral-window id {} is outside SPECTRAL_WINDOW with {} rows",
-                    selector.spw_id,
-                    spectral_window.row_count()
-                ),
-            });
+    for row in 0..spectral_window.row_count() {
+        if selection.rows_restricted() && !selection.spw_ids().contains(&row) {
+            continue;
         }
         let num_chan =
             spectral_window
@@ -1695,32 +1671,49 @@ fn resolve_transform_channels(
         if num_chan < 0 {
             return Err(MsTransformError::SpectralMetadata {
                 path: "<measurement-set/SPECTRAL_WINDOW>".to_string(),
-                reason: format!(
-                    "spectral-window {} has negative NUM_CHAN {num_chan}",
-                    selector.spw_id
-                ),
+                reason: format!("spectral-window {row} has negative NUM_CHAN {num_chan}",),
             });
         }
         let num_chan = num_chan as usize;
-        let indices = match selector.channels {
-            Some(ChannelSelection { segments }) => ChannelSelection { segments }
-                .indices(num_chan)
-                .map_err(|source| MsTransformError::InvalidSpw {
-                    selector: spw.to_string(),
-                    reason: source.to_string(),
-                })?,
-            None => (0..num_chan).collect(),
+        let mut ranges = selection
+            .channel_list()
+            .iter()
+            .filter(|range| range.spw_id == row)
+            .peekable();
+        let (channels, metadata_ends) = if ranges.peek().is_some() {
+            let mut indices = Vec::new();
+            let mut ends = Vec::new();
+            for range in ranges {
+                let channels = range
+                    .channels()
+                    .ok_or_else(|| MsTransformError::InvalidSpw {
+                        selector: spw.to_string(),
+                        reason: format!(
+                            "spectral-window {row} range starts before its first channel"
+                        ),
+                    })?;
+                for channel in channels {
+                    indices.push(channel);
+                    ends.push((channel + range.step.max(1) as usize - 1).min(range.stop as usize));
+                }
+            }
+            (indices, ends)
+        } else {
+            ((0..num_chan).collect(), (0..num_chan).collect())
         };
-        if indices.is_empty() {
+        if channels.is_empty() {
             return Err(MsTransformError::InvalidSpw {
                 selector: spw.to_string(),
-                reason: format!(
-                    "spectral-window {} selection produced no channels",
-                    selector.spw_id
-                ),
+                reason: format!("spectral-window {row} selection produced no channels",),
             });
         }
-        by_spw.insert(selector.spw_id, indices);
+        by_spw.insert(
+            row as i32,
+            TransformChannelSelection {
+                channels,
+                metadata_ends,
+            },
+        );
     }
     Ok(by_spw)
 }
@@ -1730,13 +1723,14 @@ fn normalized_width(width: usize) -> usize {
 }
 
 fn channel_bins_by_spw(
-    channel_selection: &BTreeMap<i32, Vec<usize>>,
+    channel_selection: &BTreeMap<i32, TransformChannelSelection>,
     width: usize,
 ) -> Result<BTreeMap<i32, Vec<Vec<usize>>>, MsTransformError> {
     let width = normalized_width(width);
     let mut by_spw = BTreeMap::new();
-    for (&spw_id, channels) in channel_selection {
-        let bins = channels
+    for (&spw_id, selection) in channel_selection {
+        let bins = selection
+            .channels
             .chunks(width)
             .map(|chunk| chunk.to_vec())
             .collect::<Vec<_>>();

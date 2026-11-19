@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 642
-- Surfaces: 37 (37 task, 0 session)
-- Surface bindings: 946
+- Concepts: 671
+- Surfaces: 41 (41 task, 0 session)
+- Surface bindings: 990
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -25,8 +25,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
 | [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 5 | <code>image_analysis</code> | 13 | Create CASA-style image moment maps |
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 5 | <code>image_analysis</code> | 12 | Export CASA images to FITS |
-| [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 5 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
-| [Split](#surface-split)<br><code>split</code> | task | 5 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
+| [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 6 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
+| [Split](#surface-split)<br><code>split</code> | task | 6 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
 | [Applycal](#surface-applycal)<br><code>applycal</code> | task | 7 | <code>calibration</code> | 25 | Apply one or more calibration tables to a MeasurementSet. |
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 6 | <code>calibration</code> | 42 | Solve antenna gain calibration for a MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
@@ -53,6 +53,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Concat](#surface-concat)<br><code>concat</code> | task | 1 | <code>concat</code> | 9 | Concatenate simulated interferometric MeasurementSets with per-input weights. |
 | [SimALMA](#surface-simalma)<br><code>simalma</code> | task | 1 | <code>simalma</code> | 31 | Simulate ALMA and ACA observations and combine their images |
 | [Get ALMA Antenna Positions](#surface-getantposalma)<br><code>getantposalma</code> | task | 1 | <code>calibration</code> | 10 | Retrieve antenna positions from the ALMA archive. |
+| [Smooth Calibration Solutions](#surface-smoothcal)<br><code>smoothcal</code> | task | 1 | <code>calibration</code> | 7 | Smooth selected calibration solutions in time. |
+| [Re-reference Calibration Solutions](#surface-rerefant)<br><code>rerefant</code> | task | 1 | <code>calibration</code> | 5 | Change the reference antenna in a calibration table. |
+| [Initialize Visibility Weights](#surface-initweights)<br><code>initweights</code> | task | 1 | <code>calibration</code> | 7 | Initialize MeasurementSet weights and their channel spectra. |
+| [Statistical Weights](#surface-statwt)<br><code>statwt</code> | task | 1 | <code>calibration</code> | 25 | Estimate MeasurementSet weights from visibility variance. |
 
 <a id="surface-msexplore"></a>
 
@@ -509,7 +513,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## MSTransform (<code>mstransform</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: MeasurementSet
 - Provider family: `mstransform`
 - Summary: Materialize a selected MeasurementSet into a new output MS.
@@ -528,10 +532,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
 | <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Correlation selector. |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
-| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
+| <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
 | <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Data | Visibility data column used by the surface. |
 | <code>realmodelcol</code> | <code>mstransform.realmodelcol@r1</code> | <code>bool</code> | <code>false</code>; optional | Data | Write a virtual MODEL column as a real one. |
@@ -577,7 +581,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Split (<code>split</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: MeasurementSet
 - Provider family: `mstransform`
 - Summary: Create a selected MeasurementSet subset, equivalent to CASA split.
@@ -593,10 +597,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
 | <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Correlation selector. |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
-| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
+| <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
 | <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Data | Visibility data column used by the surface. |
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
@@ -1480,5 +1484,101 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>firstintegration</code> | <code>getantposalma.firstintegration@r1</code> | <code>bool</code> | <code>true</code>; optional | ALMA Service | Exclude measurements flagged as first integrations. |
 | <code>nretry</code> | <code>getantposalma.nretry@r1</code> | <code>integer</code> | <code>0</code>; optional | ALMA Service | Number of retries after the initial round of service requests. |
 | <code>rdelay</code> | <code>getantposalma.rdelay@r1</code> | <code>float</code> | <code>3.0</code>; optional | ALMA Service | Seconds between retries. |
+
+<a id="surface-smoothcal"></a>
+
+## Smooth Calibration Solutions (<code>smoothcal</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Smooth selected calibration solutions in time.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>tablein</code> | <code>calibration.tablein@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Existing input calibration table. |
+| <code>caltable</code> | <code>calibration.caltable@r2</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Output | Calibration table the task writes. |
+| <code>field</code> | <code>ms.selection.field@r5</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Data selection | Field selection expressions. Empty selects every field. |
+| <code>smoothtype</code> | <code>smoothing.smoothtype@r1</code> | <code>string</code> | <code>"median"</code>; optional | Smoothing | Use the median or mean smoothing filter. |
+| <code>smoothtime</code> | <code>smoothing.smoothtime@r1</code> | <code>float</code> | <code>60.0</code>; optional | Smoothing | Full width of the smoothing window in seconds. |
+| <code>ratesmooth</code> | <code>smoothing.ratesmooth@r1</code> | <code>bool</code> | <code>false</code>; optional | Smoothing | Use the fringe rate to predict phase wraps when smoothing fringe solutions. |
+
+<a id="surface-rerefant"></a>
+
+## Re-reference Calibration Solutions (<code>rerefant</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Change the reference antenna in a calibration table.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>tablein</code> | <code>calibration.tablein@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Existing input calibration table. |
+| <code>caltable</code> | <code>calibration.caltable@r2</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Output | Calibration table the task writes. |
+| <code>refantmode</code> | <code>setsolve.refantmode@r1</code> | <code>choice (2 values)</code> | <code>"flex"</code>; optional | Reference antenna | Whether another reference antenna is used where refant has no solution. |
+| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; optional | Reference antenna | Reference antenna name or id for solve workflows |
+
+<a id="surface-initweights"></a>
+
+## Initialize Visibility Weights (<code>initweights</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Initialize MeasurementSet weights and their channel spectra.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>wtmode</code> | <code>weightinit.wtmode@r1</code> | <code>choice (8 values)</code> | <code>"nyq"</code>; optional | Weights | Method used to initialize the visibility weights. |
+| <code>tsystable</code> | <code>weightinit.tsystable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Weights | Tsys calibration table used by the Tsys weight modes. |
+| <code>gainfield</code> | <code>weightinit.gainfield@r1</code> | <code>string</code> | <code>""</code>; optional | Weights | Select solutions from this field in the Tsys table. |
+| <code>interp</code> | <code>weightinit.interp@r1</code> | <code>string</code> | <code>""</code>; optional | Weights | Interpolate the Tsys solutions in time and frequency. |
+| <code>spwmap</code> | <code>weightinit.spwmap@r1</code> | <code>array&lt;integer&gt;</code> | <code>[]</code>; optional | Weights | Map data spectral windows to Tsys solution windows. |
+| <code>dowtsp</code> | <code>weightinit.dowtsp@r1</code> | <code>bool</code> | <code>false</code>; optional | Weights | Create WEIGHT_SPECTRUM when it is absent. |
+
+<a id="surface-statwt"></a>
+
+## Statistical Weights (<code>statwt</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Estimate MeasurementSet weights from visibility variance.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Weights | Whether detailed data-selection controls are enabled. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Weights | Applycal field selector text. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Weights | Applycal spw selector text. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Weights | Intent selector. |
+| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Weights | Comma-separated ARRAY_ID integers |
+| <code>observation</code> | <code>ms.selection.observation@r3</code> | <code>string</code> | <code>""</code>; optional | Weights | Observation selection applied to every MeasurementSet |
+| <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Weights | Applycal scan selector text. |
+| <code>combine</code> | <code>weightstats.combine@r1</code> | <code>string</code> | <code>""</code>; optional | Weights | Ignore changes in these columns (scan, field, and/or state) when aggregating samples to compute weights. The value "corr" is also supported to aggregate samples across correlations. |
+| <code>timebin</code> | <code>weightstats.timebin@r1</code> | <code>variant</code> | <code>1</code>; optional | Weights | Length for binning in time to determine statistics. Can either be integer to be multiplied by the representative integration time, a quantity (string) in time units |
+| <code>slidetimebin</code> | <code>weightstats.slidetimebin@r1</code> | <code>bool</code> | <code>false</code>; optional | Weights | Use a sliding window for time binning, as opposed to time block processing? |
+| <code>chanbin</code> | <code>weightstats.chanbin@r1</code> | <code>variant</code> | <code>"spw"</code>; optional | Weights | Channel bin width for computing weights. Can either be integer, in which case it is interpreted as number of channels to include in each bin, or a string "spw" or quantity with frequency units. |
+| <code>minsamp</code> | <code>weightstats.minsamp@r1</code> | <code>integer</code> | <code>2</code>; optional | Weights | Minimum number of unflagged visibilities required for computing weights in a sample. Must be &gt;= 2. |
+| <code>statalg</code> | <code>weightstats.statalg@r1</code> | <code>string</code> | <code>"classic"</code>; optional | Weights | Statistics algorithm to use for computing variances. Supported values are "chauvenet", "classic", "fit-half", and "hinges-fences". Minimum match is supported, although the full string must be specified for the subparameters to appear in the inputs list. |
+| <code>fence</code> | <code>weightstats.fence@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Weights | Fence value for statalg="hinges-fences". A negative value means use the entire data set (ie default to the "classic" algorithm). Ignored if statalg is not "hinges-fences". |
+| <code>center</code> | <code>weightstats.center@r1</code> | <code>string</code> | <code>"mean"</code>; optional | Weights | Center to use for statalg="fit-half". Valid choices are "mean", "median", and "zero". Ignored if statalg is not "fit-half". |
+| <code>lside</code> | <code>weightstats.lside@r1</code> | <code>bool</code> | <code>true</code>; optional | Weights | For statalg="fit-half", real data are &lt;=; center? If false, real data are &gt;= center. Ignored if statalg is not "fit-half". |
+| <code>zscore</code> | <code>weightstats.zscore@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Weights | For statalg="chauvenet", this is the target maximum number of standard deviations data may have to be included. If negative, use Chauvenet's criterion. Ignored if statalg is not "chauvenet". |
+| <code>maxiter</code> | <code>weightstats.maxiter@r1</code> | <code>integer</code> | <code>-1</code>; optional | Weights | For statalg="chauvenet", this is the maximum number of iterations to attempt. Iterating will stop when either this limit is reached, or the zscore criterion is met. If negative, iterate until the zscore criterion is met. Ignored if statalg is not "chauvenet". |
+| <code>fitspw</code> | <code>weightstats.fitspw@r1</code> | <code>string</code> | <code>""</code>; optional | Weights | Channels to include in the computation of weights. Specified as an MS select channel selection string. |
+| <code>excludechans</code> | <code>weightstats.excludechans@r1</code> | <code>bool</code> | <code>false</code>; optional | Weights | If True: invert the channel selection in fitspw and exclude the fitspw selection from the computation of the weights. |
+| <code>wtrange</code> | <code>weightstats.wtrange@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Weights | Range of acceptable weights. Data with weights outside this range will be flagged. Empty array (default) means all weights are good. |
+| <code>flagbackup</code> | <code>parameter.flagbackup@r1</code> | <code>bool</code> | <code>true</code>; optional | Weights | Create a flagmanager backup before mutating flags. |
+| <code>preview</code> | <code>weightstats.preview@r1</code> | <code>bool</code> | <code>false</code>; optional | Weights | Preview mode. If True, no data is changed, although the amount of data that would have been flagged is reported. |
+| <code>datacolumn</code> | <code>weightstats.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Weights | Data column to use to compute weights. Supported values are "data", "corrected", "residual", and "residual_data" (case insensitive, minimum match supported). |
 
 _End of generated reference._

@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "task": "rerefant",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "16e213dafe7d3b43d85e6c1392052289bfe487ca",
+  "parameters": {
+    "vis": {
+      "scope": "MeasurementSet supplying antenna identifiers and positions.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    },
+    "tablein": {
+      "scope": "Existing gain, bandpass, scalar gain, leakage or fringe table. Unsupported delay input raises a task error. Saved CASA table selections are materialized before editing.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    },
+    "caltable": {
+      "scope": "Separate result or an in-place update when empty. An actively locked product is preserved.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    },
+    "refantmode": {
+      "scope": "Flexible selection maintains the prior reference when the primary loses coverage. Strict accepts only the primary.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    },
+    "refant": {
+      "scope": "An ordered antenna selection. Numeric IDs and names are paired. A missing or empty selection fails.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "table-operation",
+      "title": "Calibration table operation",
+      "status": "Implemented",
+      "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot.",
+      "gap": "The documented CASA behavior differences are recorded below.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "return-error-on-unsupported-delay",
+      "state": "Proposed",
+      "inputs": "K Jones delay table with a valid strict reference.",
+      "casa": "Terminates the process while reading a complex parameter column.",
+      "ours": "Raises a task error and leaves the output path untouched.",
+      "rationale": "The generic CASA reference method expects CPARAM and K Jones delay tables carry FPARAM.",
+      "impact": "Callers can handle an unsupported table type without losing the Python process.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot.",
+      "result": "24 paired case groups and four downstream applications passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "16e213dafe7d3b43d85e6c1392052289bfe487ca",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/calibration-table-maintenance-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_rerefant_oracle.py"
+      ]
+    }
+  }
+}

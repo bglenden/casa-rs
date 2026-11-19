@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "oracle": "CASA and its casacore table reader",
+  "casa_version": "6.7.6.14",
+  "revision": "5bb51ed0e4e7c6063e7de9e7a95d6bc445ed302b",
+  "execution_date": "2026-11-19",
+  "ordinary": {
+    "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_initweights_oracle.py --work <empty-directory> --native-bin <calibrate>",
+    "case_groups": 41,
+    "relative_tolerance": 2e-07,
+    "large_case_rows": 122880,
+    "result": "passed",
+    "scope": "Six numerical and spectrum-management modes across absent, complete and partly defined spectra. Includes Multi-MS, flagged visibilities and a 122,880-row casacore readback across the native write-batch boundary. Includes refusal of a zero-row MS."
+  },
+  "tsys": {
+    "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_initweights_tsys_oracle.py --work <empty-directory> --native-bin <calibrate>",
+    "case_groups": 29,
+    "relative_tolerance": 5e-07,
+    "result": "passed",
+    "scope": "Both temperature modes with gain-field selection, channel and time interpolation, explicit and relative spectral-window mappings, flagged and invalid temperatures, FLOAT_DATA, and scalar and spectrum outputs. Includes relative paths, single-correlation Stokes I and missing calibration windows."
+  }
+}
