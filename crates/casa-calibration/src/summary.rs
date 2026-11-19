@@ -363,12 +363,12 @@ fn validate_shape(
         CalibrationParameterFamily::Float
             if matches!(
                 keywords.vis_cal.as_deref(),
-                Some("K Jones" | "Kcross Jones" | "KAntPos Jones" | "EGainCurve" | "EPowerCurve" | "TOpac")
+                Some("K Jones" | "Kcross Jones" | "KAntPos Jones" | "EGainCurve" | "EPowerCurve" | "TOpac" | "B TSYS")
             ) => {}
         CalibrationParameterFamily::Float => issues.push(issue(
             "unsupported-float-family",
             CalibrationIssueSeverity::Error,
-            "float-parameter calibration tables require K Jones, Kcross Jones, or a supported VLA prior table"
+            "float-parameter calibration tables require a supported delay, prior, or system-temperature table"
                 .to_string(),
         )),
         CalibrationParameterFamily::Unknown => issues.push(issue(

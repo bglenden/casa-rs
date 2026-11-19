@@ -1083,11 +1083,10 @@ fn write_spectral_axis(
             .cell_accessor_mut(row, "FLAG_ROW")
             .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Bool(absent))))
             .map_err(|e| GencalError::InvalidRequest(e.to_string()))?;
-        if !collapse {
-            continue;
-        }
-
         for column in ["CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"] {
+            if !collapse && column != "CHAN_WIDTH" {
+                continue;
+            }
             let ArrayValue::Float64(values) = table
                 .cell_accessor(row, column)
                 .and_then(|cell| cell.array())
@@ -1114,6 +1113,9 @@ fn write_spectral_axis(
                     .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Float64(value.abs()))))
                     .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
             }
+            if !collapse {
+                continue;
+            }
             table
                 .cell_accessor_mut(row, column)
                 .and_then(|mut cell| {
@@ -1124,10 +1126,12 @@ fn write_spectral_axis(
                 })
                 .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
         }
-        table
-            .cell_accessor_mut(row, "NUM_CHAN")
-            .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Int32(1))))
-            .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
+        if collapse {
+            table
+                .cell_accessor_mut(row, "NUM_CHAN")
+                .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Int32(1))))
+                .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
+        }
     }
     table
         .save(TableOptions::new(path))

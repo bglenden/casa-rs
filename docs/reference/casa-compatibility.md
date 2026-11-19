@@ -28,7 +28,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
 | ft | ft | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | gaincal | gaincal | yes | 38 | 38 | 0 | 3 | 4 | 0 |
-| gencal | gencal | yes | 14 | 14 | 0 | 8 | 4 | 0 |
+| gencal | gencal | yes | 14 | 14 | 0 | 7 | 4 | 0 |
 | imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 12 | 1 | 0 |
 | immoments | immoments | yes | 12 | 12 | 0 | 6 | 1 | 0 |
@@ -475,7 +475,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #979: `infile`, `endpoint`, `timeout`, `retry`, `retry_wait_time`, `ant_pos_time_limit`, `pol`, `uniform`
+- Accepted only at CASA's default until #979: `infile`, `endpoint`, `timeout`, `retry`, `retry_wait_time`, `ant_pos_time_limit`, `pol`
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `gaincurve_table`
 - Shared parameters: 14, in CASA's order: yes
 - Defaults that differ: none

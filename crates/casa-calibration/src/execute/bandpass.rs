@@ -11,6 +11,7 @@ fn resample(
     output: &[f64],
     mode: crate::FrequencyInterpolation,
     relative: bool,
+    system_temperature: bool,
 ) -> Result<GainGrid, ApplyExecutionError> {
     fn relative_axis(axis: &[f64]) -> Vec<f64> {
         let center = axis.iter().sum::<f64>() / axis.len() as f64;
@@ -27,9 +28,27 @@ fn resample(
     } else {
         (input, output)
     };
-    crate::ComplexSolution::of(grid)
-        .resample_frequency(input, output, mode)
-        .map(crate::ComplexSolution::into_gain_grid)
+    let solution = crate::ComplexSolution::of(grid);
+    if !system_temperature {
+        return solution
+            .resample_frequency(input, output, mode)
+            .map(crate::ComplexSolution::into_gain_grid);
+    }
+
+    let mut sampled = solution
+        .resample_real_frequency(input, output, mode)?
+        .into_gain_grid();
+    // StandardTsys evaluates sqrt(Tsys) and reverses the Jones inversion.
+    for (gain, flagged) in sampled.values.iter_mut().zip(&mut sampled.flags) {
+        let tsys = gain.re;
+        *flagged |= tsys <= 0.0 || tsys.is_nan();
+        *gain = if *flagged {
+            Complex32::new(1.0, 0.0)
+        } else {
+            Complex32::new(1.0 / tsys.sqrt(), 0.0)
+        };
+    }
+    Ok(sampled)
 }
 
 pub(super) fn prepare(
@@ -74,6 +93,7 @@ pub(super) fn prepare(
                 ..
             }
         ),
+        matches!(table.time_parameter_family, Some(TimeParameterFamily::Tsys)),
     )?));
     if let Some(cache) = cache {
         cache.insert_materialized_grid(key, prepared.clone());
@@ -104,17 +124,41 @@ pub(super) fn weight_factors(
     first: &CalibrationGrid,
     second: &CalibrationGrid,
     correlations: &[i32],
+    system_temperature: bool,
 ) -> Option<Vec<f32>> {
     let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) = (first, second)
     else {
         return None;
     };
+    let scale = if system_temperature {
+        inverse_mean_tsys
+    } else {
+        mean_power
+    };
     (0..correlations.len())
         .map(|index| {
             let (left, right) = receptors(correlations, index)?;
-            Some(mean_power(first, left) * mean_power(second, right))
+            Some(scale(first, left) * scale(second, right))
         })
         .collect()
+}
+
+fn inverse_mean_tsys(grid: &GainGrid, receptor: usize) -> f32 {
+    let receptor = receptor.min(grid.receptor_count.saturating_sub(1));
+    let mut total = 0.0_f64;
+    let mut count = 0;
+    for channel in 0..grid.channel_count {
+        let value = grid.value_at(receptor, channel).re;
+        if !grid.flag_at(receptor, channel) && value > 0.0 {
+            total += f64::from(value);
+            count += 1;
+        }
+    }
+    if count == 0 {
+        1.0
+    } else {
+        (f64::from(count) / total) as f32
+    }
 }
 
 pub(super) fn receptors(correlations: &[i32], index: usize) -> Option<(usize, usize)> {
@@ -232,6 +276,7 @@ mod tests {
                 &[0., 1., 2., 3., 4.],
                 crate::FrequencyInterpolation::Linear,
                 false,
+                false,
             )
             .unwrap();
             let expected = [
@@ -252,7 +297,8 @@ mod tests {
                 weight_factors(
                     &CalibrationGrid::Complex(gain.clone()),
                     &CalibrationGrid::Complex(other),
-                    &[9]
+                    &[9],
+                    false,
                 ),
                 Some(vec![100.])
             );
@@ -262,6 +308,7 @@ mod tests {
                 &frequencies,
                 &[2.],
                 crate::FrequencyInterpolation::Linear,
+                false,
                 false,
             )
             .unwrap();
@@ -293,6 +340,7 @@ mod tests {
             &[1., 2., 3.],
             &[2.],
             crate::FrequencyInterpolation::Linear,
+            false,
             false,
         )
         .unwrap();

@@ -208,6 +208,11 @@ fn physical_grid(
     let Some(family) = family else {
         return Ok(raw);
     };
+    if matches!(family, TimeParameterFamily::Tsys) {
+        // StandardTsys needs signed temperature interpolation in frequency
+        // as well as time, before evaluating the inverse-square-root gain.
+        return Ok(raw);
+    }
     let CalibrationGrid::Complex(grid) = raw.as_ref() else {
         unreachable!("real parameter carrier");
     };
@@ -225,6 +230,9 @@ fn physical_grid(
         }
         TimeParameterFamily::Opacity => {
             CalibrationGrid::Opacity(OpacityGrid::from_arrays(path, &values, &flags)?)
+        }
+        TimeParameterFamily::Tsys => {
+            unreachable!("temperature stays real until frequency interpolation")
         }
     }))
 }

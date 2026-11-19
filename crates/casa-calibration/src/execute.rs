@@ -2114,14 +2114,17 @@ fn apply_row_all_channels(
 
         // CASA samples BPOLY on its CAL_DESC window and then interpolates
         // the resulting B grid onto the data window.
-        let is_bandpass = matches!(
-            table_plan.summary.table_subtype.as_str(),
-            "B Jones" | "BPOLY"
-        );
+        let is_tsys = table_plan.summary.table_subtype == "B TSYS";
+        let is_bandpass = is_tsys
+            || matches!(
+                table_plan.summary.table_subtype.as_str(),
+                "B Jones" | "BPOLY"
+            );
         let scalar_bandpass = is_bandpass && correlation_types.len() == 1;
-        let bandpass_weights = (is_bandpass && calibrate_weights)
-            .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types))
-            .flatten();
+        let bandpass_weights =
+            (is_bandpass && calibrate_weights && !(is_tsys && has_weight_spectrum))
+                .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types, is_tsys))
+                .flatten();
         let (ant1, ant2) = if is_bandpass {
             let ant1 = bandpass::prepare(
                 ant1,
@@ -2317,10 +2320,14 @@ fn apply_row_all_channels(
                     corrected[[corr_index, chan_index]] /= factor;
                 }
                 if calibrate_weights {
-                    let factor = bandpass_weights.as_ref().map_or_else(
-                        || value1.norm_sqr() * value2.norm_sqr(),
-                        |factors| factors[corr_index],
-                    );
+                    let factor = if is_tsys && has_weight_spectrum && (flag1 || flag2) {
+                        0.0
+                    } else {
+                        bandpass_weights.as_ref().map_or_else(
+                            || value1.norm_sqr() * value2.norm_sqr(),
+                            |factors| factors[corr_index],
+                        )
+                    };
                     if let Some(weight_spectrum) = weight_spectrum.as_mut() {
                         weight_spectrum[[corr_index, chan_index]] *= factor;
                     }
@@ -3421,6 +3428,7 @@ enum TimeParameterFamily {
     Antpos,
     GainCurve { power: bool },
     Opacity,
+    Tsys,
 }
 
 impl TimeParameterFamily {
@@ -3431,6 +3439,7 @@ impl TimeParameterFamily {
             "EGainCurve" => Some(Self::GainCurve { power: false }),
             "EPowerCurve" => Some(Self::GainCurve { power: true }),
             "TOpac" => Some(Self::Opacity),
+            "B TSYS" => Some(Self::Tsys),
             _ => None,
         }
     }
@@ -4194,7 +4203,7 @@ fn load_parameters(
     let supports_calwt = table_plan.summary.parameter_family == CalibrationParameterFamily::Complex
         || matches!(
             table_plan.summary.table_subtype.as_str(),
-            "TOpac" | "EGainCurve" | "EPowerCurve"
+            "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS"
         );
 
     let mut solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>> = HashMap::new();
