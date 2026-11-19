@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_tables::{LockMode, LockOptions, LockType, Table, TableOptions};
 
@@ -13,42 +13,43 @@ impl AnyPagedImage {
     /// Uses casacore-compatible locking and keeps the tiled payload lazy.
     /// The read lock is acquired before reading metadata. Applications can
     /// acquire a write lock before a mutation with [`PagedImage::lock`].
-    pub fn open_with_lock(path: impl AsRef<Path>) -> Result<Self, ImageError> {
+    pub fn open_with_lock(path: impl AsRef<Path>, attempts: u32) -> Result<Self, ImageError> {
         let path = path.as_ref().to_path_buf();
-        let table = Table::open_with_lock(
+        let table = Table::open_with_lock_attempts(
             TableOptions::new(&path),
             LockOptions::new(LockMode::AutoLocking),
+            attempts,
         )?;
-        let tiled_io = PagedImage::<f32>::open_tiled_io(&path, 0)
-            .ok()
-            .map(RefCell::new);
         let kind = ImagePixelType::from_primitive_type(
-            PagedImage::<f32>::map_column_primitive_type(&table, tiled_io.as_ref())?,
+            PagedImage::<f32>::map_column_primitive_type(&table, None)?,
         )?;
         match kind {
-            ImagePixelType::Float32 => {
-                PagedImage::from_disk(path, table, tiled_io, 0).map(Self::Float32)
-            }
-            ImagePixelType::Float64 => {
-                PagedImage::from_disk(path, table, tiled_io, 0).map(Self::Float64)
-            }
+            ImagePixelType::Float32 => PagedImage::from_locked_disk(path, table).map(Self::Float32),
+            ImagePixelType::Float64 => PagedImage::from_locked_disk(path, table).map(Self::Float64),
             ImagePixelType::Complex32 => {
-                PagedImage::from_disk(path, table, tiled_io, 0).map(Self::Complex32)
+                PagedImage::from_locked_disk(path, table).map(Self::Complex32)
             }
             ImagePixelType::Complex64 => {
-                PagedImage::from_disk(path, table, tiled_io, 0).map(Self::Complex64)
+                PagedImage::from_locked_disk(path, table).map(Self::Complex64)
             }
         }
     }
 }
 
 impl<T: ImagePixel> PagedImage<T> {
+    fn from_locked_disk(path: PathBuf, table: Table) -> Result<Self, ImageError> {
+        let tiled_io = Self::open_tiled_io(&path, 0).ok().map(RefCell::new);
+        Self::from_disk(path, table, tiled_io, 0)
+    }
+
     /// Acquires a casacore-compatible table lock on a locking-enabled image.
     ///
     /// See [`Table::lock`] for the meaning of `nattempts`. A new table
     /// generation refreshes the coordinates and invalidates image caches.
     pub fn lock(&mut self, kind: LockType, nattempts: u32) -> Result<bool, ImageError> {
-        if !self.has_lock(kind) && !self.table.lock(kind, nattempts)? {
+        if self.has_lock(kind) {
+            self.table.resync_locked()?;
+        } else if !self.table.lock(kind, nattempts)? {
             return Ok(false);
         }
         let counter = self.table.locked_modify_counter()?;
@@ -67,7 +68,9 @@ impl<T: ImagePixel> PagedImage<T> {
     /// Flushes a held write lock and releases this handle's table lock.
     pub fn unlock(&mut self) -> Result<(), ImageError> {
         if self.has_lock(LockType::Write) {
-            self.save()?;
+            if self.pending_tile_writes || self.table.holds_unflushed_changes() {
+                self.save()?;
+            }
             self.table.publish_writes()?;
             self.cached_modify_counter = Some(self.table.locked_modify_counter()?);
         }

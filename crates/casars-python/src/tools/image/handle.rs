@@ -92,13 +92,13 @@ impl ImageHandle {
         AnyPagedImage::open(path).map(Self::from_paged)
     }
 
-    pub(super) fn open_native(path: &Path, locking: bool) -> Result<Self, ImageError> {
+    pub(super) fn open_native(path: &Path, lock_attempts: Option<u32>) -> Result<Self, ImageError> {
         #[cfg(unix)]
-        if locking {
-            return AnyPagedImage::open_with_lock(path).map(Self::from_paged);
+        if let Some(attempts) = lock_attempts {
+            return AnyPagedImage::open_with_lock(path, attempts).map(Self::from_paged);
         }
         #[cfg(not(unix))]
-        let _ = locking;
+        let _ = lock_attempts;
         Self::open(path)
     }
 

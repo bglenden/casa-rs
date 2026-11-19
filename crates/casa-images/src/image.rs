@@ -674,6 +674,8 @@ pub struct PagedImage<T: ImagePixel> {
     max_cache_bytes: Cell<usize>,
     #[cfg(unix)]
     cached_modify_counter: Option<u32>,
+    #[cfg(unix)]
+    pending_tile_writes: bool,
     _pixel: PhantomData<T>,
 }
 
@@ -936,6 +938,8 @@ impl<T: ImagePixel> PagedImage<T> {
             max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
             #[cfg(unix)]
             cached_modify_counter: None,
+            #[cfg(unix)]
+            pending_tile_writes: false,
             _pixel: PhantomData,
         })
     }
@@ -1015,6 +1019,8 @@ impl<T: ImagePixel> PagedImage<T> {
             max_cache_bytes: Cell::new(cache_bytes),
             #[cfg(unix)]
             cached_modify_counter: None,
+            #[cfg(unix)]
+            pending_tile_writes: false,
             _pixel: PhantomData,
         })
     }
@@ -1064,6 +1070,8 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(Self {
             #[cfg(unix)]
             cached_modify_counter: table.locked_modify_counter().ok(),
+            #[cfg(unix)]
+            pending_tile_writes: false,
             table,
             shape,
             tile_shape,
@@ -2366,6 +2374,10 @@ impl<T: ImagePixel> PagedImage<T> {
             // table.info. This preserves the existing tiled storage-manager
             // layout instead of rewriting the placeholder map cell.
             self.save_metadata_only(&path)?;
+            #[cfg(unix)]
+            {
+                self.pending_tile_writes = false;
+            }
         } else {
             if !self.temp_masks.is_empty() {
                 // Flush first so the image directory exists for mask sub-tables.
@@ -2932,6 +2944,10 @@ fn paged_image_put_slice_view<T: ImagePixel>(
         }
     }
     if let Some(ref tio) = image.tiled_io {
+        #[cfg(unix)]
+        {
+            image.pending_tile_writes = true;
+        }
         if view_is_fortran_contiguous(&data)
             && let Some(slice) = data.as_slice_memory_order()
             && tio
