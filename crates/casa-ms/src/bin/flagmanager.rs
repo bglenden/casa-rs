@@ -6,9 +6,10 @@ use std::process::ExitCode;
 
 use casa_ms::{
     FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, FlaggingError,
-    MeasurementSet, delete_flag_version, flagmanager_list_record, flagmanager_task_schema_bundle,
-    initialize_flag_versions, list_flag_versions, ms_task_success, rename_flag_version,
-    rename_flag_version_for_task, restore_flag_version, save_flag_version, task_flag_merge,
+    MeasurementSet, delete_flag_version, flag_version_ms_path, flagmanager_list_record,
+    flagmanager_task_schema_bundle, initialize_flag_versions, list_flag_versions, ms_task_success,
+    rename_flag_version, rename_flag_version_for_task, restore_flag_version, save_flag_version,
+    task_flag_merge,
 };
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{
@@ -59,8 +60,13 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
             .clone()
             .ok_or_else(|| TaskFailure::validation(message).at("versionname"))
     };
-    let mut ms = MeasurementSet::open(&request.vis)
-        .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let vis = if request.mode == "rename" {
+        request.vis.clone()
+    } else {
+        flag_version_ms_path(&request.vis)
+    };
+    let mut ms =
+        MeasurementSet::open(vis).map_err(|error| TaskFailure::execution(error.to_string()))?;
     let mutation = |mode: &str, versionname, oldname| {
         Ok(FlagManagerTaskResult::Mutation(FlagManagerMutationResult {
             mode: mode.to_string(),

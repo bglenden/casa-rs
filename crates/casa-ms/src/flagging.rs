@@ -2586,6 +2586,19 @@ fn data_description_spw_map(ms: &MeasurementSet) -> Result<BTreeMap<i32, i32>, F
     Ok(result)
 }
 
+/// Resolve a flag store through a MeasurementSet alias.
+///
+/// An existing companion at the supplied path remains accessible for versions
+/// saved by older casa-rs releases. New companions follow the physical MS.
+pub fn flag_version_ms_path(vis: &Path) -> PathBuf {
+    let path: PathBuf = vis.components().collect();
+    if flagversions_dir(&path).exists() {
+        path
+    } else {
+        path.canonicalize().unwrap_or(path)
+    }
+}
+
 /// Initialize the companion catalog that flagmanager opens with the MeasurementSet.
 pub fn initialize_flag_versions(ms: &MeasurementSet) -> Result<(), FlaggingError> {
     ensure_flagversions_dir(ms_path(ms)?).map(|_| ())
