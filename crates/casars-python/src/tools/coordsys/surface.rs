@@ -51,7 +51,7 @@ const METHODS: &[Method] = &[
         "conversiontype",
         &[param("type", K::Text, Text("direction"))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "convert",
@@ -159,7 +159,7 @@ const METHODS: &[Method] = &[
             param("showconversion", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "increment",
@@ -174,7 +174,7 @@ const METHODS: &[Method] = &[
         "lineartransform",
         &[param("type", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method("names", &[param("type", K::Text, Text(""))], R::Any, Yes),
     method("naxes", &[param("world", K::Bool, Bool(true))], R::Any, Yes),
@@ -197,7 +197,7 @@ const METHODS: &[Method] = &[
         "projection",
         &[param("type", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "referencecode",
@@ -206,7 +206,7 @@ const METHODS: &[Method] = &[
             param("list", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "referencepixel",
@@ -234,7 +234,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("restfrequency", &[], R::Any, No),
+    method("restfrequency", &[], R::Any, Yes),
     method(
         "setconversiontype",
         &[
@@ -285,7 +285,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setobserver",
@@ -372,7 +372,7 @@ const METHODS: &[Method] = &[
         "setstokes",
         &[param("stokes", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "settabular",

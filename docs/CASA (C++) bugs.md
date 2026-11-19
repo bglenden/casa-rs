@@ -6355,6 +6355,32 @@ and the uncaught `ArrayShapeError` terminates the process.
 The native transform checks the range before reading MAIN. It returns a
 feed selector error and leaves the input and output paths untouched (#1614).
 
+## Transform correlation arrays can disagree with their polarization metadata
+
+On a MeasurementSet with correlations XX, XY, YX and YY, CASA 6.7.6.14
+`split(correlation="YY,XX")` and `mstransform(correlation="YY,XX")` write
+visibility and flag arrays in YY, XX order while POLARIZATION labels them
+XX, YY. `getCorrMaps` sorts the metadata indices, and the visibility
+iterator gets its slices from the parser's original order.
+
+Selecting XX, XY and YY can leave CORR_TYPE and CORR_PRODUCT undefined in
+an otherwise readable output. `fillPolTable` returns early for a partial
+selection of more than two products, and the caller continues writing.
+
+The native transform uses the original stored axis order for both metadata
+and arrays and writes complete metadata for every selected subset (#1614).
+
+## Transforming an MS can omit defined FLAG_CATEGORY arrays
+
+CASA 6.7.6.14 `split` and `mstransform` leave FLAG_CATEGORY undefined for
+an input with defined cells of shape (four correlations, eight channels,
+two categories). The rank check in
+`MSTransformManager::checkFillFlagCategory` compares the entire shape with
+the scalar 3.
+
+The native transform preserves defined category flags and slices their
+correlation and channel axes with the other MAIN arrays (#1614).
+
 ## A bare FIELD escape can silently change the selection
 
 Outside a quoted pattern or slash regex, the casacore FIELD scanner prints
@@ -7135,3 +7161,11 @@ the beam, even when history is disabled.
 casa-rs validates the supplied record before it saves any changes, so a
 rejected call preserves the restoring beam and history. See
 [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## Naming a removed coordinate axis can terminate CASA
+
+CASA 6.7.6.14 can terminate when `coordsys.setnames` is called with
+`type="linear"` and two names for a linear coordinate whose world and
+pixel maps are `[0, -2]`. casa-rs raises `RuntimeError` before applying
+either name. Passing the one visible axis name without a coordinate type
+renames that axis and preserves the stored removed-axis name (#1626).

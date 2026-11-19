@@ -29,7 +29,7 @@ fn coordinate_index(placement: &RecordCoordinate) -> usize {
         .expect("record coordinate fields end in their numeric index")
 }
 
-fn numbered_coordinates(
+pub(super) fn numbered_coordinates(
     state: &CoordinateState,
 ) -> PyResult<Vec<(usize, &CoordinateModel, RecordCoordinate)>> {
     let placements = CoordinateSystem::record_coordinates(&state.record)

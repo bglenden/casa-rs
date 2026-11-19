@@ -81,8 +81,8 @@ def calendar(seconds):
     return epoch.strftime("%Y/%m/%d/%H:%M:%S.%f")[:-3]
 
 
-def make_input(path):
-    make_cal_ms(str(path))
+def make_input(path, **kwargs):
+    make_cal_ms(str(path), **kwargs)
     with casa_table(path, writable=True) as tool:
         shape = tool.getcol("DATA").shape
         # Distinguish every row, channel and correlation in the copy.

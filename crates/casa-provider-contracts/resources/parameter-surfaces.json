@@ -12921,7 +12921,7 @@
     {
       "kind": "task",
       "id": "mstransform",
-      "contract_version": 7,
+      "contract_version": 8,
       "display_name": "MSTransform",
       "category": "MeasurementSet",
       "summary": "Materialize a selected MeasurementSet into a new output MS.",
@@ -13102,7 +13102,7 @@
         },
         {
           "name": "correlation",
-          "concept": {"id": "ms.selection.correlation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.correlation", "semantic_revision": 2},
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13110,10 +13110,10 @@
           "projections": {
             "cli": {"flags": ["--correlation"], "metavar": "SELECTOR"},
             "provider": {"field": "correlation"},
-            "python": {"name": "correlation"},
+            "python": {"name": "correlation", "type_hint": "str"},
             "presentation": {"label": "Correlation", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "reviewed_homonym": {"review_id": "#1614", "reason": "The transform tasks keep the spectral-window and correlation grammar and accept the CASA string vector domain."}
         },
         {
           "name": "timerange",
@@ -13782,7 +13782,7 @@
     {
       "kind": "task",
       "id": "split",
-      "contract_version": 7,
+      "contract_version": 8,
       "display_name": "Split",
       "category": "MeasurementSet",
       "summary": "Create a selected MeasurementSet subset, equivalent to CASA split.",
@@ -13918,7 +13918,7 @@
         },
         {
           "name": "correlation",
-          "concept": {"id": "ms.selection.correlation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.correlation", "semantic_revision": 2},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13926,10 +13926,9 @@
           "projections": {
             "cli": {"flags": ["--correlation"], "metavar": "SELECTOR"},
             "provider": {"field": "correlation"},
-            "python": {"name": "correlation"},
+            "python": {"name": "correlation", "type_hint": "str | list[str]"},
             "presentation": {"label": "Correlation", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "timerange",

@@ -417,6 +417,24 @@ impl TableSchema {
         self.column_lookup.contains_key(name)
     }
 
+    pub(crate) fn widen_fixed_arrays(&mut self, names: &[&str]) -> Vec<String> {
+        let mut changed = Vec::new();
+        for &name in names {
+            let Some(&index) = self.column_lookup.get(name) else {
+                continue;
+            };
+            let column = &mut self.columns[index];
+            if let ColumnType::Array(ArrayShapeContract::Fixed { shape }) = &column.column_type {
+                column.column_type = ColumnType::Array(ArrayShapeContract::Variable {
+                    ndim: Some(shape.len()),
+                });
+                column.options.direct = false;
+                changed.push(name.to_string());
+            }
+        }
+        changed
+    }
+
     pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
         let mut bytes = self
             .columns

@@ -246,6 +246,37 @@ impl Table {
         Ok(())
     }
 
+    /// Allow selected output arrays to change extents while retaining rank and keywords.
+    ///
+    /// A construction table has no persisted source rows to revalidate.
+    #[doc(hidden)]
+    pub fn widen_array_metadata_for_construction(
+        &mut self,
+        names: &[&str],
+    ) -> Result<(), TableError> {
+        if names.is_empty() {
+            return Ok(());
+        }
+        if self.row_count() != 0 && (self.source_path.is_some() || self.inner.rows_are_loaded()) {
+            return Err(TableError::Storage(
+                "construction-only shape changes require a new table without populated rows".into(),
+            ));
+        }
+        let mut schema =
+            self.inner.schema().cloned().ok_or_else(|| {
+                TableError::Schema("schema required for column operations".into())
+            })?;
+        let changed = schema.widen_fixed_arrays(names);
+        if !changed.is_empty() {
+            self.inner.set_schema(Some(schema));
+            for group in &mut self.dm_info {
+                group.columns.retain(|column| !changed.contains(column));
+            }
+            self.dm_info.retain(|group| !group.columns.is_empty());
+        }
+        Ok(())
+    }
+
     /// Renames a column in the table schema, all rows, and column keywords.
     ///
     /// Returns an error if no schema is attached, `old` does not exist, or

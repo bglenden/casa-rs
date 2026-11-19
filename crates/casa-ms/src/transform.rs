@@ -29,8 +29,8 @@ use crate::ms::{measurement_set_main_table_bindings, measurement_set_table_optio
 use crate::schema::SubtableId;
 use crate::schema::main_table::VisibilityDataColumn;
 use crate::selection::{
-    MsSelection, MsSelectionError, MsSelectionIoBudget, ResolvedMsSelectionRow, RowGrammar,
-    SpwSelection,
+    MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget, ResolvedMsSelectionRow,
+    RowGrammar, SpwSelection,
 };
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
@@ -38,8 +38,11 @@ use crate::write_session::{
     MeasurementSetWriteResources, MeasurementSetWriteSession, MeasurementSetWriteTelemetry,
 };
 
+mod correlation_metadata;
 mod selection_metadata;
 mod spectral_metadata;
+
+use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 
 /// Input visibility column to materialize as output `DATA`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -335,6 +338,26 @@ fn mstransform_staged(
     if selection.spw.is_none() {
         selection.spw = Some(spw.to_string());
     }
+    let correlations = if grammar == RowGrammar::Transform {
+        selection
+            .correlation
+            .take()
+            .filter(|text| !text.is_empty())
+            .map(|text| CorrelationSelection::resolve(&input, &text))
+            .transpose()
+            .map_err(|source| selection_error(MsSelectionError::Domain(source)))?
+    } else {
+        None
+    };
+    if let Some(correlations) = correlations.as_ref()
+        && !correlations
+            .constrain(&mut selection)
+            .map_err(|source| selection_error(MsSelectionError::Domain(source)))?
+    {
+        return Err(MsTransformError::EmptySelection {
+            path: request.input_ms.display().to_string(),
+        });
+    }
     let (resolved_rows, time_selection) = input
         .resolve_selection_with_time(&selection, budget, grammar)
         .map_err(selection_error)?;
@@ -458,7 +481,11 @@ fn mstransform_staged(
         &channel_bins,
         &ddid_to_spw,
         &spw_selection,
+        correlations.as_ref(),
     )?;
+    if let Some(correlations) = correlations.as_ref() {
+        correlations.write_polarizations(request)?;
+    }
     let field_id_map = selection_metadata::reindex_fields_and_sources(
         &input,
         request,
@@ -491,15 +518,16 @@ fn mstransform_staged(
             reason: error.to_string(),
         }
     })?;
-    let write_plan = transform_array_write_plan(
+    let (write_plan, input_batch_rows) = transform_array_write_plan(
         &input,
         &selected_rows,
         &selected_ddids,
         &ddid_to_spw,
         &channel_bins,
+        correlations.as_ref(),
         write_resources,
     )?;
-    let batch_rows = write_plan.batch_rows();
+    let batch_rows = write_plan.batch_rows().min(input_batch_rows);
     let mut write_session = MeasurementSetWriteSession::start(&request.output_ms, write_plan)
         .map_err(|error| MsTransformError::WriteMeasurementSet {
             path: request.output_ms.display().to_string(),
@@ -528,7 +556,7 @@ fn mstransform_staged(
         let source_values = input
             .main_table()
             .column_accessor(source_column)
-            .and_then(|column| column.array_cells_owned(input_rows))
+            .and_then(|column| column.array_cells_owned_uncached(input_rows))
             .map_err(|source| MsTransformError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
@@ -536,7 +564,7 @@ fn mstransform_staged(
         let flag_values = input
             .main_table()
             .column_accessor("FLAG")
-            .and_then(|column| column.array_cells_owned(input_rows))
+            .and_then(|column| column.array_cells_owned_uncached(input_rows))
             .map_err(|source| MsTransformError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
@@ -544,7 +572,7 @@ fn mstransform_staged(
         let flag_category_values = input
             .main_table()
             .column_accessor("FLAG_CATEGORY")
-            .and_then(|column| column.array_cells_owned(input_rows))
+            .and_then(|column| column.array_cells_owned_uncached(input_rows))
             .map_err(|source| MsTransformError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
@@ -552,7 +580,7 @@ fn mstransform_staged(
         let uvw_values = input
             .main_table()
             .column_accessor("UVW")
-            .and_then(|column| column.array_cells_owned(input_rows))
+            .and_then(|column| column.array_cells_owned_uncached(input_rows))
             .map_err(|source| MsTransformError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
@@ -560,7 +588,7 @@ fn mstransform_staged(
         let weight_values = input
             .main_table()
             .column_accessor("WEIGHT")
-            .and_then(|column| column.array_cells_owned(input_rows))
+            .and_then(|column| column.array_cells_owned_uncached(input_rows))
             .map_err(|source| MsTransformError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
@@ -568,7 +596,7 @@ fn mstransform_staged(
         let sigma_values = input
             .main_table()
             .column_accessor("SIGMA")
-            .and_then(|column| column.array_cells_owned(input_rows))
+            .and_then(|column| column.array_cells_owned_uncached(input_rows))
             .map_err(|source| MsTransformError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
@@ -579,7 +607,7 @@ fn mstransform_staged(
                 input
                     .main_table()
                     .column_accessor(name)
-                    .and_then(|column| column.array_cells_owned(input_rows))
+                    .and_then(|column| column.array_cells_owned_uncached(input_rows))
                     .map(|values| (name, values.into_iter()))
                     .map_err(|source| MsTransformError::MutateMeasurementSet {
                         path: request.output_ms.display().to_string(),
@@ -598,11 +626,24 @@ fn mstransform_staged(
             .enumerate()
         {
             let row_index = batch_start + batch_offset;
+            let axes = correlations
+                .as_ref()
+                .and_then(|selection| selection.axes(ddid));
+            let select_correlations = |value, name| {
+                select_visibility_axes(value, axes, name).map_err(|source| {
+                    MsTransformError::MutateMeasurementSet {
+                        path: request.output_ms.display().to_string(),
+                        source: Box::new(source),
+                    }
+                })
+            };
             let data = data.ok_or_else(|| {
                 missing_column_error(&request.output_ms, row_index, source_column)
             })?;
             let flags =
                 flags.ok_or_else(|| missing_column_error(&request.output_ms, row_index, "FLAG"))?;
+            let data = select_correlations(data, source_column)?;
+            let flags = select_correlations(flags, "FLAG")?;
             let spw_id = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
                 MsTransformError::SpectralMetadata {
                     path: request.output_ms.display().to_string(),
@@ -646,6 +687,7 @@ fn mstransform_staged(
                 .flatten()
                 .filter(|value| !value.is_empty())
             {
+                let flag_category = select_correlations(flag_category, "FLAG_CATEGORY")?;
                 let transformed =
                     transform_flag_category_channels(flag_category, bins).map_err(|source| {
                         MsTransformError::MutateMeasurementSet {
@@ -687,6 +729,8 @@ fn mstransform_staged(
                 .next()
                 .flatten()
                 .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "SIGMA"))?;
+            let weight = select_correlations(weight, "WEIGHT")?;
+            let sigma = select_correlations(sigma, "SIGMA")?;
             push_f32_array_row(
                 &mut write_session,
                 "WEIGHT",
@@ -703,6 +747,7 @@ fn mstransform_staged(
             )?;
             for (name, values) in &mut spectrum_values {
                 if let Some(value) = values.next().flatten().filter(|value| !value.is_empty()) {
+                    let value = select_correlations(value, name)?;
                     let transformed = if *name == "SIGMA_SPECTRUM" {
                         transform_sigma_channels(value, &flags, bins)
                     } else {
@@ -858,87 +903,108 @@ fn maybe_log_transform_progress(stage: &str, stage_elapsed: Duration, total_elap
     );
 }
 
+struct TransformArrayDimensions {
+    input_correlations: usize,
+    input_channels: usize,
+    output_correlations: usize,
+    output_channels: usize,
+}
+
+fn transform_array_dimensions(
+    input: &MeasurementSet,
+    selected_ddids: &[i32],
+    ddid_to_spw: &BTreeMap<i32, i32>,
+    channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
+    correlations: Option<&CorrelationSelection>,
+) -> Result<BTreeMap<i32, TransformArrayDimensions>, MsTransformError> {
+    let input_path = input.path().unwrap_or_else(|| Path::new("<memory>"));
+    let invalid = |reason| MsTransformError::SpectralMetadata {
+        path: input_path.display().to_string(),
+        reason,
+    };
+    let data_description = input
+        .data_description()
+        .map_err(|error| invalid(error.to_string()))?;
+    let polarization = input
+        .polarization()
+        .map_err(|error| invalid(error.to_string()))?;
+    let spectral_window = input
+        .spectral_window()
+        .map_err(|error| invalid(error.to_string()))?;
+    let mut dimensions = BTreeMap::new();
+    for &ddid in selected_ddids {
+        let std::collections::btree_map::Entry::Vacant(entry) = dimensions.entry(ddid) else {
+            continue;
+        };
+        let row =
+            usize::try_from(ddid).map_err(|_| invalid(format!("negative DATA_DESC_ID {ddid}")))?;
+        let pol_id = data_description
+            .polarization_id(row)
+            .map_err(|error| invalid(format!("read DATA_DESCRIPTION row {ddid}: {error}")))?;
+        let pol_row = usize::try_from(pol_id).map_err(|_| {
+            invalid(format!(
+                "DATA_DESCRIPTION row {ddid} has negative POLARIZATION_ID {pol_id}"
+            ))
+        })?;
+        let input_correlations = usize::try_from(
+            polarization
+                .num_corr(pol_row)
+                .map_err(|error| invalid(format!("read POLARIZATION row {pol_id}: {error}")))?,
+        )
+        .map_err(|_| invalid(format!("POLARIZATION row {pol_id} has negative NUM_CORR")))?;
+        let spw = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
+            invalid(format!(
+                "DATA_DESC_ID {ddid} has no spectral-window mapping"
+            ))
+        })?;
+        let output_channels = channel_bins
+            .get(&spw)
+            .map(Vec::len)
+            .ok_or_else(|| invalid(format!("spectral window {spw} has no output channel bins")))?;
+        let input_channels = usize::try_from(
+            spectral_window
+                .num_chan(spw as usize)
+                .map_err(|error| invalid(format!("read SPECTRAL_WINDOW row {spw}: {error}")))?,
+        )
+        .map_err(|_| invalid(format!("SPECTRAL_WINDOW row {spw} has negative NUM_CHAN")))?;
+        entry.insert(TransformArrayDimensions {
+            input_correlations,
+            input_channels,
+            output_correlations: correlations
+                .and_then(|plan| plan.axes(ddid))
+                .map_or(input_correlations, <[usize]>::len),
+            output_channels,
+        });
+    }
+    Ok(dimensions)
+}
+
 fn transform_array_write_plan(
     input: &MeasurementSet,
     selected_rows: &[usize],
     selected_ddids: &[i32],
     ddid_to_spw: &BTreeMap<i32, i32>,
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
+    correlations: Option<&CorrelationSelection>,
     resources: MeasurementSetWriteResources,
-) -> Result<MeasurementSetWritePlan, MsTransformError> {
+) -> Result<(MeasurementSetWritePlan, usize), MsTransformError> {
     let input_path = input.path().unwrap_or_else(|| Path::new("<memory>"));
-    let data_description =
-        input
-            .data_description()
-            .map_err(|error| MsTransformError::SpectralMetadata {
-                path: input_path.display().to_string(),
-                reason: format!("open DATA_DESCRIPTION: {error}"),
-            })?;
-    let polarization =
-        input
-            .polarization()
-            .map_err(|error| MsTransformError::SpectralMetadata {
-                path: input_path.display().to_string(),
-                reason: format!("open POLARIZATION: {error}"),
-            })?;
-    let mut correlation_count_by_ddid = BTreeMap::new();
+    let dimensions = transform_array_dimensions(
+        input,
+        selected_ddids,
+        ddid_to_spw,
+        channel_bins,
+        correlations,
+    )?;
     let mut shape_counts = BTreeMap::<Vec<usize>, usize>::new();
     let mut weight_shape_counts = BTreeMap::<Vec<usize>, usize>::new();
     for &ddid in selected_ddids {
-        let ddid_row = usize::try_from(ddid).map_err(|_| MsTransformError::SpectralMetadata {
-            path: input_path.display().to_string(),
-            reason: format!("negative DATA_DESC_ID {ddid}"),
-        })?;
-        let correlation_count = if let Some(&count) = correlation_count_by_ddid.get(&ddid) {
-            count
-        } else {
-            let polarization_id = data_description
-                .polarization_id(ddid_row)
-                .map_err(|error| MsTransformError::SpectralMetadata {
-                    path: input_path.display().to_string(),
-                    reason: format!("read DATA_DESCRIPTION row {ddid}: {error}"),
-                })?;
-            let polarization_row = usize::try_from(polarization_id).map_err(|_| {
-                MsTransformError::SpectralMetadata {
-                    path: input_path.display().to_string(),
-                    reason: format!(
-                        "DATA_DESCRIPTION row {ddid} has negative POLARIZATION_ID {polarization_id}"
-                    ),
-                }
-            })?;
-            let count =
-                usize::try_from(polarization.num_corr(polarization_row).map_err(|error| {
-                    MsTransformError::SpectralMetadata {
-                        path: input_path.display().to_string(),
-                        reason: format!("read POLARIZATION row {polarization_id}: {error}"),
-                    }
-                })?)
-                .map_err(|_| MsTransformError::SpectralMetadata {
-                    path: input_path.display().to_string(),
-                    reason: format!("POLARIZATION row {polarization_id} has negative NUM_CORR"),
-                })?;
-            correlation_count_by_ddid.insert(ddid, count);
-            count
-        };
-        let spw =
-            ddid_to_spw
-                .get(&ddid)
-                .copied()
-                .ok_or_else(|| MsTransformError::SpectralMetadata {
-                    path: input_path.display().to_string(),
-                    reason: format!("DATA_DESC_ID {ddid} has no spectral-window mapping"),
-                })?;
-        let output_channels = channel_bins.get(&spw).map(Vec::len).ok_or_else(|| {
-            MsTransformError::SpectralMetadata {
-                path: input_path.display().to_string(),
-                reason: format!("spectral window {spw} has no output channel bins"),
-            }
-        })?;
+        let shape = &dimensions[&ddid];
         *shape_counts
-            .entry(vec![correlation_count, output_channels])
+            .entry(vec![shape.output_correlations, shape.output_channels])
             .or_default() += 1;
         *weight_shape_counts
-            .entry(vec![correlation_count])
+            .entry(vec![shape.output_correlations])
             .or_default() += 1;
     }
     let shapes = shape_counts
@@ -960,42 +1026,26 @@ fn transform_array_write_plan(
             }
         })
         .collect::<Vec<_>>();
-    let (flag_category_correlation_count, flag_category_channel_count, category_count) =
-        transform_flag_category_shape(input, selected_rows)?;
-    let flag_category_shapes = if flag_category_channel_count == 1 {
-        vec![MeasurementSetArrayShapePlan {
-            cell_shape: vec![
-                flag_category_correlation_count,
-                flag_category_channel_count,
-                category_count,
-            ],
-            row_count: selected_ddids.len(),
-            tile_shape: vec![
-                flag_category_correlation_count,
-                flag_category_channel_count,
-                1,
-                shapes
-                    .first()
-                    .and_then(|shape| shape.tile_shape.last())
-                    .copied()
-                    .unwrap_or(1),
-            ],
-        }]
-    } else {
-        shapes
-            .iter()
-            .map(|shape| MeasurementSetArrayShapePlan {
-                tile_shape: vec![
-                    shape.tile_shape[0],
-                    shape.tile_shape[1],
-                    1,
-                    shape.tile_shape[2],
-                ],
-                cell_shape: vec![shape.cell_shape[0], shape.cell_shape[1], category_count],
-                row_count: shape.row_count,
-            })
-            .collect::<Vec<_>>()
+    let (flag_category_shapes, largest_input_category) = plan_flag_category_shapes(
+        input,
+        selected_rows,
+        selected_ddids,
+        &dimensions,
+        correlations.is_some(),
+    )?;
+    let spectrum_columns = spectrum_column_names(input.main_table());
+    let io_error = |error: MsSelectionError| MsTransformError::WriteMeasurementSet {
+        path: input_path.display().to_string(),
+        reason: error.to_string(),
     };
+    let input_batch_rows = transform_input_batch_rows(
+        selected_rows.len(),
+        resources,
+        dimensions.values(),
+        spectrum_columns.len(),
+        largest_input_category,
+    )
+    .map_err(io_error)?;
     let visibility_tile = shapes
         .first()
         .map(|shape| shape.tile_shape.clone())
@@ -1042,7 +1092,7 @@ fn transform_array_write_plan(
             storage_manager: MeasurementSetColumnStorage::TiledShape,
         },
     ];
-    for name in spectrum_column_names(input.main_table()) {
+    for name in spectrum_columns {
         columns.push(MeasurementSetArrayColumnPlan {
             name: name.to_string(),
             value_type: StreamedTiledShapeValueType::Float32,
@@ -1050,7 +1100,7 @@ fn transform_array_write_plan(
             storage_manager: MeasurementSetColumnStorage::TiledShape,
         });
     }
-    MeasurementSetWritePlan::variable_array_creation(
+    let writer = MeasurementSetWritePlan::variable_array_creation(
         selected_ddids.len(),
         columns,
         transform_scalar_column_plans(input.main_table()),
@@ -1059,7 +1109,8 @@ fn transform_array_write_plan(
     .map_err(|error| MsTransformError::WriteMeasurementSet {
         path: input_path.display().to_string(),
         reason: error.to_string(),
-    })
+    })?;
+    Ok((writer, input_batch_rows))
 }
 
 fn spectrum_column_names(table: &Table) -> Vec<&'static str> {
@@ -1076,43 +1127,106 @@ fn spectrum_column_names(table: &Table) -> Vec<&'static str> {
     .collect()
 }
 
-fn transform_flag_category_shape(
+fn transform_input_batch_rows<'a>(
+    rows: usize,
+    resources: MeasurementSetWriteResources,
+    dimensions: impl Iterator<Item = &'a TransformArrayDimensions>,
+    spectrum_columns: usize,
+    largest_category: usize,
+) -> Result<usize, MsSelectionError> {
+    // The input arrays are loaded before slicing, so a small output cell
+    // does not imply a small source block. Allow space for array headers too.
+    let elements = dimensions
+        .map(|shape| {
+            shape.input_correlations.saturating_mul(
+                shape
+                    .input_channels
+                    .saturating_mul(9 + 4 * spectrum_columns)
+                    .saturating_add(8),
+            )
+        })
+        .max()
+        .unwrap_or(0);
+    let overhead = (6 + spectrum_columns) * (std::mem::size_of::<Option<ArrayValue>>() + 32);
+    let bytes_per_row = elements
+        .saturating_add(24 + overhead)
+        .saturating_add(largest_category);
+    let plan = MsReadPlan::new(
+        rows,
+        MsSelectionIoBudget {
+            available_bytes: resources.available_bytes,
+            maximum_live_blocks: resources.maximum_live_batches,
+            requested_bytes_per_row: bytes_per_row,
+            storage_alignment_rows: None,
+        },
+    )?;
+    Ok(plan.rows_per_block)
+}
+
+fn plan_flag_category_shapes(
     input: &MeasurementSet,
     selected_rows: &[usize],
-) -> Result<(usize, usize, usize), MsTransformError> {
-    let keyword_category_count = if let Some(Value::Array(categories)) = input
-        .main_table()
+    selected_ddids: &[i32],
+    dimensions: &BTreeMap<i32, TransformArrayDimensions>,
+    correlation_subset: bool,
+) -> Result<(Vec<MeasurementSetArrayShapePlan>, usize), MsTransformError> {
+    let main = input.main_table();
+    let default_categories = match main
         .column_keywords("FLAG_CATEGORY")
         .and_then(|keywords| keywords.get("CATEGORY"))
     {
-        categories.len()
-    } else {
-        0
+        Some(Value::Array(categories)) => categories.len().max(1),
+        _ => 1,
     };
-    for &row in selected_rows {
-        let value = input
-            .main_table()
-            .column_accessor("FLAG_CATEGORY")
-            .and_then(|column| column.array_cells_owned(&[row]))
-            .map_err(|source| MsTransformError::MutateMeasurementSet {
+    let mut counts = BTreeMap::new();
+    let mut largest_input = 0;
+    for (&row, ddid) in selected_rows.iter().zip(selected_ddids) {
+        let original = main.array_shape(row, "FLAG_CATEGORY").map_err(|source| {
+            MsTransformError::MutateMeasurementSet {
                 path: input
                     .path()
                     .unwrap_or_else(|| Path::new("<memory>"))
                     .display()
                     .to_string(),
                 source: Box::new(source),
-            })?
-            .into_iter()
-            .next()
-            .flatten();
-        if let Some(value) = value
-            && value.ndim() == 3
-            && value.shape()[2] > 0
-        {
-            return Ok((value.shape()[0], value.shape()[1], value.shape()[2]));
-        }
+            }
+        })?;
+        let shape = &dimensions[ddid];
+        let cell = match original.as_deref() {
+            Some(&[corr, chan, categories]) if corr > 0 && chan > 0 && categories > 0 => {
+                largest_input =
+                    largest_input.max(corr.saturating_mul(chan).saturating_mul(categories));
+                [
+                    if correlation_subset {
+                        shape.output_correlations
+                    } else {
+                        corr
+                    },
+                    if chan == 1 { 1 } else { shape.output_channels },
+                    categories,
+                ]
+            }
+            _ => [shape.output_correlations, 1, default_categories],
+        };
+        *counts.entry(cell).or_default() += 1;
     }
-    Ok((1, 1, keyword_category_count.max(1)))
+    let plans = counts
+        .into_iter()
+        .map(|([corr, chan, categories], row_count)| {
+            let visibility_tile = crate::ms::casa_visibility_tile_shape(corr, chan, "");
+            MeasurementSetArrayShapePlan {
+                cell_shape: vec![corr, chan, categories],
+                row_count,
+                tile_shape: vec![
+                    visibility_tile[0],
+                    visibility_tile[1],
+                    1,
+                    visibility_tile[2],
+                ],
+            }
+        })
+        .collect();
+    Ok((plans, largest_input))
 }
 
 fn push_complex32_array_row(
@@ -1252,6 +1366,21 @@ fn materialize_empty_main_table(
                 source: Box::new(source),
             })?;
     }
+    table
+        .widen_array_metadata_for_construction(&[
+            "DATA",
+            "FLAG",
+            "FLAG_CATEGORY",
+            "WEIGHT",
+            "SIGMA",
+            "WEIGHT_SPECTRUM",
+            "SIGMA_SPECTRUM",
+            "CORRECTED_WEIGHT_SPECTRUM",
+        ])
+        .map_err(|source| MsTransformError::MutateMeasurementSet {
+            path: output_path.display().to_string(),
+            source: Box::new(source),
+        })?;
     Ok(table)
 }
 
@@ -1504,6 +1633,7 @@ fn compact_spectral_subtables(
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
     ddid_to_spw: &BTreeMap<i32, i32>,
     selection: &SpwSelection,
+    correlations: Option<&CorrelationSelection>,
 ) -> Result<CompactSpectralMetadata, MsTransformError> {
     let selected_spws = channel_bins.keys().copied().collect::<Vec<_>>();
     let spw_map = selected_spws
@@ -1522,13 +1652,14 @@ fn compact_spectral_subtables(
         })
         .collect::<BTreeMap<_, _>>();
 
-    rewrite_selected_table_rows(
+    rewrite_table_rows_with_variable_arrays(
         &input_ms.join(SubtableId::SpectralWindow.name()),
         &output_ms.join(SubtableId::SpectralWindow.name()),
         &selected_spws
             .iter()
             .map(|spw| *spw as usize)
             .collect::<Vec<_>>(),
+        &["CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"],
         |_, row| Ok(spectral_metadata::remap_associations(row, &spw_map)),
     )?;
 
@@ -1538,6 +1669,7 @@ fn compact_spectral_subtables(
         .data_description_ids()
         .iter()
         .map(|&id| id as i32)
+        .filter(|&id| correlations.is_none_or(|selection| selection.axes(id).is_some()))
         .collect::<Vec<_>>();
     let ddid_map = ordered_ddids
         .iter()
@@ -1610,6 +1742,25 @@ fn rewrite_selected_table_rows<F>(
     source_path: &Path,
     destination_path: &Path,
     selected_rows: &[usize],
+    rewrite: F,
+) -> Result<(), MsTransformError>
+where
+    F: FnMut(usize, RecordValue) -> Result<RecordValue, MsTransformError>,
+{
+    rewrite_table_rows_with_variable_arrays(
+        source_path,
+        destination_path,
+        selected_rows,
+        &[],
+        rewrite,
+    )
+}
+
+fn rewrite_table_rows_with_variable_arrays<F>(
+    source_path: &Path,
+    destination_path: &Path,
+    selected_rows: &[usize],
+    variable_arrays: &[&str],
     mut rewrite: F,
 ) -> Result<(), MsTransformError>
 where
@@ -1639,6 +1790,12 @@ where
             source: Box::new(source),
         }
     })?;
+    destination
+        .widen_array_metadata_for_construction(variable_arrays)
+        .map_err(|source| MsTransformError::MutateMeasurementSet {
+            path: destination_path.display().to_string(),
+            source: Box::new(source),
+        })?;
     let mut appender = destination.prepare_row_appender().map_err(|source| {
         MsTransformError::MutateMeasurementSet {
             path: destination_path.display().to_string(),
@@ -2122,10 +2279,15 @@ fn select_fortran_contiguous_axis1<T: Clone>(
             "channel range {start}..{end} is outside array shape {shape:?}"
         )));
     }
+    let corr_count = shape[0];
+    if (corr_count > 1 && values.strides()[0] != 1)
+        || (shape[1] > 1 && values.strides()[1] != corr_count as isize)
+    {
+        return Ok(None);
+    }
     let Some(input) = values.as_slice_memory_order() else {
         return Ok(None);
     };
-    let corr_count = shape[0];
     let output_shape = [corr_count, end - start];
     let start_offset = start * corr_count;
     let end_offset = end * corr_count;
@@ -2552,5 +2714,28 @@ mod tests {
         assert_eq!(contiguous_channel_range(&[2, 4]), None);
         assert!(all_channels_selected(&[0, 1, 2], 3));
         assert!(!all_channels_selected(&[0, 2], 3));
+    }
+}
+
+#[cfg(test)]
+mod array_budget_tests {
+    use super::*;
+
+    #[test]
+    fn transform_batch_budget_counts_unsliced_input_arrays() {
+        let dimensions = [TransformArrayDimensions {
+            input_correlations: 4,
+            input_channels: 4096,
+            output_correlations: 1,
+            output_channels: 4096,
+        }];
+        let resources = MeasurementSetWriteResources {
+            available_bytes: 1_200_000,
+            maximum_live_batches: 2,
+            tiled_column_buffer_bytes: 0,
+        };
+        let rows = transform_input_batch_rows(100, resources, dimensions.iter(), 2, 32_768)
+            .expect("a full input row fits in the read budget");
+        assert_eq!(rows, 1);
     }
 }
