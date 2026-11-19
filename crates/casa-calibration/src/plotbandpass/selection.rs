@@ -233,6 +233,15 @@ fn select_windows(
         {
             return Err(inline(word, false));
         }
+        if source.windows.iter().enumerate().any(|(index, window)| {
+            let index = index as i32;
+            index >= start
+                && index <= end
+                && !solved.contains(&index)
+                && window.name.contains("WVR")
+        }) {
+            return Err(inline(word, false));
+        }
         selected.extend(solved.iter().filter(|&&id| id >= start && id <= end));
     }
     if selected.is_empty() {

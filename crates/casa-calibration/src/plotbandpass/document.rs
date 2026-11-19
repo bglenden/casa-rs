@@ -93,6 +93,7 @@ struct LegendIdentity {
 #[derive(Serialize)]
 struct LegendMarker {
     marker: &'static str,
+    x: f64,
     y: f64,
 }
 
@@ -272,7 +273,21 @@ fn document_panel(
                 };
                 let y = 1.0 - (0.04 + 0.03 * (data.receptor + 2 * table_id) as f64) * rows;
                 if identity_overlay && points && !lines {
-                    paint.legend.markers.push(LegendMarker { marker, y });
+                    let offset = if phase {
+                        0.015
+                            * if bandpass.overlay.antenna && data.receptor == 0 {
+                                1.0
+                            } else {
+                                rows
+                            }
+                    } else {
+                        0.0
+                    };
+                    paint.legend.markers.push(LegendMarker {
+                        marker,
+                        x: if phase { 0.05 } else { 0.04 },
+                        y: y + offset,
+                    });
                 }
                 annotations.push(PlotDocumentAnnotation {
                     id: format!("polarization-{table_id}-{}", data.receptor),

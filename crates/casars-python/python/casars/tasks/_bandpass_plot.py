@@ -96,7 +96,7 @@ def draw_page(plt, page, workspace, figure, reply, sequence):
                     axis.text(item["x"], item["y"], item["text"], color=item["color"],
                               transform=figure.transFigure)
             for marker in legend["markers"]:
-                axis.plot([0.04], [marker["y"]], color="k", marker=marker["marker"], linestyle="None",
+                axis.plot([marker["x"]], [marker["y"]], color="k", marker=marker["marker"], linestyle="None",
                           transform=axis.transAxes, scalex=False, scaley=False,
                           markersize=panel["layers"][0]["symbol_size"])
             if atmosphere:
