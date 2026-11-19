@@ -31,7 +31,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | gencal | gencal | yes | 14 | 14 | 0 | 6 | 4 | 0 |
 | getantposalma | getantposalma | yes | 10 | 10 | 0 | 0 | 0 | 0 |
 | imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
-| immath | immath | yes | 15 | 15 | 0 | 12 | 1 | 0 |
+| immath | immath | yes | 15 | 15 | 0 | 0 | 1 | 0 |
 | immoments | immoments | yes | 12 | 12 | 0 | 6 | 1 | 0 |
 | impbcor | impbcor | yes | 12 | 12 | 0 | 6 | 0 | 0 |
 | importfits | importfits | yes | 9 | 9 | 0 | 6 | 0 | 0 |
@@ -723,7 +723,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `Exception`: Image data set not found - please verify
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `mode`, `varnames`, `sigma`, `polithresh`, `mask`, `region`, `box`, `chans`, `stokes`, `stretch`, `imagemd`, `prec`
 - casa-rs parameters CASA lacks: `overwrite`
 - Shared parameters: 15, in CASA's order: yes
 - Defaults that differ: none

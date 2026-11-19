@@ -1084,12 +1084,9 @@ def immath(
     *,
     overwrite: bool = False,
 ) -> Any:
-    """Evaluate tutorial image arithmetic expressions
+    """Evaluate mathematical expressions and spectral or polarization operations on images
 
     CASA's ``immath``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``mode``, ``varnames``, ``sigma``, ``polithresh``, ``mask``, ``region``,
-    ``box``, ``chans``, ``stokes``, ``stretch``, ``imagemd``, ``prec``.
     """
     return _call_casa(immath, locals())
 

@@ -6833,3 +6833,37 @@ The calibration engine and diagnostics read the attached direction at the
 requested epoch. The `calibration_ephemeris_geometry_oracle.py` fixture obtains
 the per-epoch phase centres from CASA and evaluates CASA geometry on fixed
 snapshots of those directions (#989).
+
+## `immath(mode="pola")` crashes with `UnboundLocalError` on unitless `polithresh`
+
+- Date noted: 2026-11-18
+- Status: CASA crashes with an uncaught Python `UnboundLocalError`; casa-rs accepts unitless thresholds in image brightness units (#977).
+- Affected code: `casatasks/private/task_immath.py`, `_immath_new_pola`.
+
+In CASA 6.7.6.14, when `mode="pola"` and `polithresh` is given without a unit
+(e.g. `polithresh="0.1"`), `_immath_new_pola` skips creating the temporary
+linear-polarization image `lpol` because `if (myqa.getunit(polithresh) != ""):`
+wraps both unit conversion and `mypo.linpolint(..., outfile=lpol)`, yet the
+later `if (polithresh):` block unconditionally evaluates `lpol` and raises
+`UnboundLocalError: cannot access local variable 'lpol'`.
+
+casa-rs parses `polithresh` as an optional-unit quantity (`crates/casa-images/src/analysis/immath/pol.rs`),
+treats a unitless `polithresh` as already expressed in the input image's
+brightness unit, and thresholds linear polarized intensity normally (#977).
+
+## `immath` polarization debiasing ignores non-conforming `sigma` units
+
+- Date noted: 2026-11-18
+- Status: CASA silently corrupts/masks output; casa-rs rejects non-conforming or missing units when the image carries a brightness unit (#977).
+- Affected code: `casatools/casacore` quantity conversion in `task_immath.py`, `_immath_new_poli`.
+
+In CASA 6.7.6.14, `_immath_new_poli` converts a positive `sigma` via
+`myqa.convert(qsigma, iunit)` and reads `.getvalue()` without verifying that
+`sigma`'s unit conforms to the input image's `bunit` (for example passing
+`sigma="1K"` or unitless `sigma="10"` on a `"Jy/beam"` image). On mismatch
+`qa.convert` leaves the value/unit invalid so downstream `imagepol` debiasing
+silently over-thresholds and masks the entire output plane.
+
+casa-rs validates unit conformance via `get_conformant_value` when `sigma > 0`
+(`crates/casa-images/src/analysis/immath/pol.rs`) and refuses non-conforming or
+unitless `sigma` against non-empty image `bunit` with a clear error (#977).

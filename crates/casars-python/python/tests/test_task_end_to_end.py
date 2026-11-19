@@ -187,10 +187,9 @@ def test_casas_spellings_of_a_default_run_as_casa_runs_them(
     common = {"imagename": [image.name], "expr": "IM0*2"}
     assert tasks.immath(outfile="names.im", varnames=[], **common) is True
     assert tasks.immath(outfile="sigma.im", sigma="0Jy/beam", **common) is True
-    # Any other value is refused before the task starts, as a ValueError.
-    with pytest.raises(ValueError, match="varnames.*#977"):
-        tasks.immath(imagename=[image.name], outfile="a.im", expr="A*2", varnames=["A"])
-    assert not (image.parent / "a.im").exists()
+    # Named varnames map to imagename entries and write the output image.
+    assert tasks.immath(imagename=[image.name], outfile="a.im", expr="A*2", varnames=["A"]) is True
+    assert (image.parent / "a.im").exists()
     # hdvalue='' is CASA's default and a value: it clears the unit.
     assert Image.open(image).units == "Jy/beam"
     assert tasks.imhead(image.name, mode="put", hdkey="bunit", hdvalue="") is None
