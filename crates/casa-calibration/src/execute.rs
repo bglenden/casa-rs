@@ -62,6 +62,7 @@ use crate::plan::{
 mod availability;
 use availability::execute as execute_apply_plan;
 mod fields;
+pub(crate) use fields::load as load_interpolated_calibration_table;
 mod gain_validity;
 mod initialization;
 use gain_validity::correcting_gain;
@@ -4103,6 +4104,24 @@ impl OpacityGrid {
 }
 
 impl LoadedCalibrationTable {
+    pub(crate) fn interpolation_windows(&self) -> Vec<i32> {
+        let mut windows = self.missing_grids.keys().copied().collect::<Vec<_>>();
+        windows.sort_unstable();
+        windows
+    }
+
+    pub(crate) fn complex_solution_for_field(
+        &self,
+        field: i32,
+        query: crate::lookup::TimeQuery,
+    ) -> Result<Option<crate::ComplexSolution>, ApplyExecutionError> {
+        self.time_plans
+            .get(&field)
+            .map(|plan| plan.solution(&self.path, query))
+            .transpose()
+            .map(Option::flatten)
+    }
+
     pub(crate) fn lookup(
         &self,
         field_id: i32,

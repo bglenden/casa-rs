@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) fn resolve_gainfield(
+pub(crate) fn resolve_gainfield(
     ms: &MeasurementSet,
     spec: &ApplyCalibrationTableSpec,
     summary: &CalibrationTableSummary,
@@ -42,7 +42,7 @@ pub(super) fn resolve_gainfield(
     }
 }
 
-pub(crate) fn resolve_gainfield_expression(
+fn resolve_gainfield_expression(
     spec: &ApplyCalibrationTableSpec,
     summary: &CalibrationTableSummary,
     expression: &str,

@@ -231,11 +231,14 @@ def accumulate(root, driver, vis, gains, solved):
         ('field-selection', dict(field='FLUX', calfield='FLUX', interp='nearest', spwmap=(0,))),
         ('field-transfer', dict(calfield='FLUX')),
         ('field-combination', dict(calfield='FLUX,PHASE')),
+        ('nearest-field', dict(calfield='nearest')),
     ]:
         paired_accumulation(root, driver, vis, solved, control, name, **extra, flagged_payloads=False)
     for name, cadence, extra in [
         ('zero-cadence', 0., {}),
         ('cadence-15', 15., {}),
+        ('cadence-10ms-boundary', 10.005, {}),
+        ('cadence-20ms-boundary', 20.005, {}),
         ('cadence-30-nearest', 30., dict(interp='nearest')),
         ('cadence-50-select', 50., dict(field='PHASE', calfield='FLUX')),
     ]:
@@ -245,6 +248,13 @@ def accumulate(root, driver, vis, gains, solved):
     for mode in ('cubic', 'nearest,linear', 'linearperobs', 'linearPD'):
         paired_accumulation(root, driver, vis, '', control, f'interpolation-{mode}',
                             interp=mode, cadence=15., flagged_payloads=False)
+
+    shifted = root/'shifted-frequency-label.cal'
+    copy_ms(gains, shifted)
+    with opened(shifted/'SPECTRAL_WINDOW', True) as t:
+        t.putcell('CHAN_FREQ', 0, 1.8*t.getcell('CHAN_FREQ', 0))
+    paired_accumulation(root, driver, vis, shifted, gains, 'phase-delay-native-center',
+                        interp='linearPD')
 
     native_unsorted = root/'native-unsorted-time.cal'
     run_native(driver, vis, solved, solved, native_unsorted, calfield='FLUX,PHASE')
@@ -273,6 +283,35 @@ def accumulate(root, driver, vis, gains, solved):
     cb.close()
 
 
+    too_many = root/'overlong-map.cal'
+    cb = tool(vis, old=True)
+    try:
+        cb.accumulate(str(gains), str(gains), str(too_many), [], [], 'linear', -1., [0, 0])
+    except RuntimeError:
+        assert not too_many.exists()
+    else:
+        raise AssertionError('CASA accepted an overlong spectral-window map')
+    cb.close()
+    command = [driver, 'accumulate', vis, gains, gains, too_many, '', '', 'linear', '-1', '0,0']
+    assert subprocess.run(command, capture_output=True).returncode != 0
+    assert not too_many.exists()
+
+    interleaved = root/'interleaved.ms'
+    copy_ms(vis, interleaved)
+    with opened(interleaved, True) as t:
+        times = t.getcol('TIME')
+        slot = np.searchsorted(np.unique(times), times)
+        offsets = np.array([0, 3, 7, 11, 17, 19, 25, 31, 37, 41, 47, 51])
+        timestamps = times.min() + offsets[slot]
+        t.putcol('TIME', timestamps)
+        t.putcol('TIME_CENTROID', timestamps)
+        t.putcol('FIELD_ID', (slot % 2).astype(np.int32))
+    _, interleaved_table = paired_accumulation(root, driver, interleaved, '', control,
+                                              'interleaved-fields', cadence=15.,
+                                              flagged_payloads=False)
+    np.testing.assert_array_equal(np.unique(columns(interleaved_table)['TIME']),
+                                  np.unique(timestamps))
+
     multi_vis = root/'multi.ms'
     multiwindow_data(vis, multi_vis)
     multi = root/'multi.cal'
@@ -285,7 +324,7 @@ def accumulate(root, driver, vis, gains, solved):
     from casars import tasks as native
     apply_round_trip(root, native, vis, 'gain')
     bandpass_oracle(root, driver, vis)
-    print('22 paired accumulation case groups and four downstream applications', flush=True)
+    print('28 paired accumulation case groups and four downstream applications', flush=True)
 
 
 def main():

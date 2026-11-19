@@ -13,13 +13,17 @@ use crate::constants::{
     COL_ANTENNA1, COL_ANTENNA2, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_INTERVAL,
     COL_OBSERVATION_ID, COL_PARAMERR, COL_SCAN_NUMBER, COL_SNR, COL_SPECTRAL_WINDOW_ID, COL_TIME,
 };
-use crate::lookup::{CalibrationTableLookup, ComplexSolution, spectral_window_path};
-use crate::lookup_frequency::relative_axis;
+use crate::execute::{LoadedCalibrationTable, load_interpolated_calibration_table};
+use crate::lookup::{ComplexSolution, TimeQuery, spectral_window_path};
+use crate::lookup_frequency::{relative_axis, relative_axis_at_center};
 use crate::solution_edit::{edit_calibration_table, error_text, update_spectral_window_flags};
 use crate::solve::grouping::collect_selected_rows;
 use crate::table_maintenance::prepare_empty_calibration_table;
 use crate::writer::SingleChannelFrequency;
-use crate::{ApplyCalibrationTableSpec, ApplyInterpolationMode, plan, summarize_table};
+use crate::{
+    ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyInterpolationMode,
+    GainFieldSelector, plan, summarize_table,
+};
 
 /// Tables, selectors, and sampling for CASA's `calibrater.accumulate`.
 pub struct CalibrationAccumulationRequest {
@@ -66,18 +70,35 @@ pub fn accumulate_calibration(
         .resolve_field_selector(&request.field)
         .map_err(error_text)?;
     let summary = summarize_table(&request.incremental).map_err(error_text)?;
+    let interpolation = ApplyInterpolationMode::parse_casa(&request.interpolation)?;
     let mut spec = ApplyCalibrationTableSpec::new(&request.incremental);
+    let spectrum = ms.spectral_window().map_err(error_text)?;
+    let window_count = spectrum.row_count();
+    if request.spectral_window_map.len() > window_count {
+        return Err("spwmap has more entries than the MeasurementSet has spectral windows".into());
+    }
     spec.spwmap.clone_from(&request.spectral_window_map);
-    let calfields = if request.calibration_field.trim().is_empty() {
-        Vec::new()
-    } else {
-        plan::resolve_gainfield_expression(&spec, &summary, &request.calibration_field)
-            .map_err(error_text)?
-            .into_iter()
-            .map(|selection| selection.field_id)
-            .collect()
+    spec.interp = interpolation;
+    spec.gainfield = match request.calibration_field.as_str() {
+        "" => None,
+        "nearest" => Some(GainFieldSelector::Nearest),
+        selection => Some(GainFieldSelector::Expression(selection.to_string())),
     };
-    let subtype = summary.table_subtype;
+    let ms_fields = (0..ms.field().map_err(error_text)?.row_count())
+        .map(|id| i32::try_from(id).map_err(error_text))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (resolved_gainfields, resolved_nearest_gainfields) =
+        plan::resolve_gainfield(ms, &spec, &summary, &ms_fields).map_err(error_text)?;
+    let nearest = resolved_nearest_gainfields
+        .iter()
+        .map(|mapping| {
+            (
+                mapping.measurement_set_field_id,
+                mapping.calibration_field_id,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let subtype = summary.table_subtype.clone();
     let (receptors, channelized) = match subtype.as_str() {
         "G Jones" => (2, false),
         "T Jones" => (1, false),
@@ -89,14 +110,37 @@ pub fn accumulate_calibration(
             ));
         }
     };
-    let interpolation = ApplyInterpolationMode::parse_casa(&request.interpolation)?;
-    let (lookup, frequencies) =
-        incremental_lookup(ms, &request.incremental, interpolation, &calfields)?;
-    let increment = Increment {
-        lookup,
-        frequencies,
-        fields: &fields,
+    let plan = ApplyCalibrationTablePlan {
+        applicable_row_indices: None,
+        unavailable_row_indices: Vec::new(),
         spec,
+        applicable_selected_row_count: 0,
+        summary,
+        resolved_gainfields,
+        resolved_nearest_gainfields,
+        spw_mapping: Vec::new(),
+        calibration_spectral_windows: Vec::new(),
+        interp: interpolation,
+        calwt: false,
+    };
+    let lookup = load_interpolated_calibration_table(&plan, None, ms).map_err(error_text)?;
+    let spectral = spectral_window_path(&request.incremental)
+        .map_err(error_text)?
+        .ok_or("incremental calibration table has no spectral windows")?;
+    let data_centers = (0..window_count)
+        .map(|row| {
+            let channels = spectrum.chan_freq(row).map_err(error_text)?;
+            Ok(channels.iter().sum::<f64>() / channels.len() as f64)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let increment = Increment {
+        available_windows: lookup.interpolation_windows(),
+        data_centers,
+        lookup,
+        frequencies: table_frequencies(&spectral)?,
+        fields: &fields,
+        nearest,
+        spec: plan.spec,
         interpolation,
     };
     if request.interval_seconds < 0.0 {
@@ -135,7 +179,10 @@ pub fn accumulate_calibration(
 }
 
 struct Increment<'a> {
-    lookup: CalibrationTableLookup,
+    lookup: LoadedCalibrationTable,
+    available_windows: Vec<i32>,
+    data_centers: Vec<f64>,
+    nearest: BTreeMap<i32, i32>,
     frequencies: Vec<Vec<f64>>,
     fields: &'a [i32],
     spec: ApplyCalibrationTableSpec,
@@ -160,19 +207,16 @@ impl Increment<'_> {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let available = (0..self.frequencies.len())
-            .map(|id| i32::try_from(id).map_err(error_text))
-            .filter(|id| {
-                id.as_ref()
-                    .map_or(true, |&id| self.lookup.has_spectral_window(id))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let mapping =
-            plan::resolve_spw_mapping(&self.spec, &available, self.frequencies.len(), &selected)
-                .map_err(error_text)?
-                .into_iter()
-                .map(|mapping| (mapping.data_spw_id, mapping.calibration_spw_id))
-                .collect::<BTreeMap<_, _>>();
+        let mapping = plan::resolve_spw_mapping(
+            &self.spec,
+            &self.available_windows,
+            self.frequencies.len(),
+            &selected,
+        )
+        .map_err(error_text)?
+        .into_iter()
+        .map(|mapping| (mapping.data_spw_id, mapping.calibration_spw_id))
+        .collect::<BTreeMap<_, _>>();
         for ((window, time), rows) in groups {
             let field = read_i32(table, rows[0], COL_FIELD_ID)?;
             if !self.fields.is_empty() && self.fields.binary_search(&field).is_err() {
@@ -180,34 +224,38 @@ impl Increment<'_> {
             }
             let target = usize::try_from(window).map_err(error_text)?;
             let mapped = mapping[&window];
-            if !self.lookup.has_spectral_window(mapped) {
+            if self.available_windows.binary_search(&mapped).is_err() {
                 continue;
             }
             let source = usize::try_from(mapped).map_err(error_text)?;
             let axis = output_frequencies
                 .get(target)
                 .ok_or("cumulative spectral window is missing")?;
-            let phase_frequency = match axis.as_slice() {
-                [frequency] => Some(*frequency),
-                _ => None,
-            };
+            let data_center = *self
+                .data_centers
+                .get(target)
+                .ok_or("cumulative calibration window is absent from the MeasurementSet")?;
             for row in rows {
                 let antenna = read_i32(table, row, COL_ANTENNA1)?;
                 let observation = read_i32(table, row, COL_OBSERVATION_ID)?;
                 let scan = read_i32(table, row, COL_SCAN_NUMBER)?;
+                let calfield = self.nearest.get(&field).copied().unwrap_or(-1);
                 let correction = self
                     .lookup
-                    .simulation_solution(
-                        observation,
-                        scan,
-                        mapped,
-                        antenna,
-                        f64::from_bits(time),
-                        phase_frequency,
+                    .complex_solution_for_field(
+                        calfield,
+                        TimeQuery {
+                            observation,
+                            scan,
+                            window: mapped,
+                            antenna,
+                            time: f64::from_bits(time),
+                            frequency_hz: Some(data_center),
+                        },
                     )
                     .map_err(error_text)?;
                 let correction = correction
-                    .map(|corr| self.resample(corr, source, axis))
+                    .map(|corr| self.resample(corr, source, axis, data_center))
                     .transpose()?;
                 multiply_row(table, row, correction)?;
             }
@@ -220,6 +268,7 @@ impl Increment<'_> {
         solution: ComplexSolution,
         source: usize,
         output: &[f64],
+        data_center: f64,
     ) -> Result<ComplexSolution, String> {
         if solution.channels == 1 {
             return Ok(solution);
@@ -228,9 +277,7 @@ impl Increment<'_> {
             .frequencies
             .get(source)
             .ok_or("incremental spectral window is missing")?;
-        if input == output {
-            return Ok(solution);
-        }
+
         let (relative_input, relative_output);
         let (input, output) = if matches!(
             self.interpolation,
@@ -240,35 +287,18 @@ impl Increment<'_> {
             }
         ) {
             relative_input = relative_axis(input);
-            relative_output = relative_axis(output);
+            relative_output = relative_axis_at_center(output, data_center);
             (relative_input.as_slice(), relative_output.as_slice())
         } else {
             (input.as_slice(), output)
         };
+        if input == output {
+            return Ok(solution);
+        }
         solution
             .resample_frequency(input, output, self.interpolation.frequency_mode())
             .map_err(error_text)
     }
-}
-
-fn incremental_lookup(
-    ms: &MeasurementSet,
-    path: &Path,
-    interpolation: ApplyInterpolationMode,
-    fields: &[i32],
-) -> Result<(CalibrationTableLookup, Vec<Vec<f64>>), String> {
-    let observation_count = ms.observation().map_err(error_text)?.row_count();
-    let spectral = spectral_window_path(path)
-        .map_err(error_text)?
-        .ok_or("incremental calibration table has no spectral windows")?;
-    let frequencies = table_frequencies(&spectral)?;
-    let lookup = CalibrationTableLookup::open_filtered_complex(
-        path,
-        interpolation.time_options(observation_count),
-        fields,
-    )
-    .map_err(error_text)?;
-    Ok((lookup, frequencies))
 }
 
 fn populate_time_grid(
@@ -287,9 +317,13 @@ fn populate_time_grid(
         return Err("accumulation requires finite MeasurementSet times".into());
     }
     selected.sort_by(|a, b| {
-        (a.array_id, a.field_id, a.data_desc_id)
-            .cmp(&(b.array_id, b.field_id, b.data_desc_id))
-            .then_with(|| a.time_seconds.total_cmp(&b.time_seconds))
+        let group = (a.field_id, a.data_desc_id).cmp(&(b.field_id, b.data_desc_id));
+        let time = a.time_seconds.total_cmp(&b.time_seconds);
+        a.array_id.cmp(&b.array_id).then(if interval > 0.0 {
+            time.then(group)
+        } else {
+            group.then(time)
+        })
     });
     let spectrum = ms.spectral_window().map_err(error_text)?;
     let antennas = ms.antenna().map_err(error_text)?.row_count();
@@ -312,8 +346,16 @@ fn populate_time_grid(
             let count = if interval == 0.0 {
                 group.len() - start
             } else {
-                group[start..]
-                    .partition_point(|row| row.time_seconds - first.time_seconds < interval)
+                // MSIter places the first sample ten milliseconds into
+                // each interval so floating-point boundary comparisons agree.
+                let origin = first.time_seconds - 0.01;
+                let bin = |time: f64| ((time - origin) / interval).floor();
+                let first_bin = bin(first.time_seconds);
+                group[start..].partition_point(|row| {
+                    row.time_seconds == first.time_seconds
+                        || (interval >= 2.0 * f64::MIN_POSITIVE
+                            && bin(row.time_seconds) == first_bin)
+                })
             };
             let mut samples = group[start..start + count]
                 .iter()

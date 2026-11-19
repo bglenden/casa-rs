@@ -96,41 +96,6 @@ pub(crate) struct TimeQuery {
 }
 
 impl CalibrationTableLookup {
-    pub(crate) fn open_filtered_complex(
-        path: &Path,
-        options: TimeInterpolationOptions,
-        fields: &[i32],
-    ) -> Result<Self, ApplyExecutionError> {
-        let basic = if options.mode == TimeInterpolation::Nearest {
-            ApplyInterpolationMode::Nearest
-        } else {
-            ApplyInterpolationMode::Linear
-        };
-        let mut lookup = Self::open_parameters(path, basic, FieldSelection::AnyField, false)?;
-        if !fields.is_empty() {
-            lookup
-                .table
-                .solutions
-                .retain(|&(field, _, _), _| fields.binary_search(&field).is_ok());
-            lookup.across_fields = Some(across_fields(&lookup.table));
-        }
-        if options.contextual()
-            || matches!(
-                options.mode,
-                TimeInterpolation::Cubic | TimeInterpolation::Spline
-            )
-        {
-            let context = TimePlan::apply_context(&lookup.table, options)?;
-            lookup.advanced_time = Some(TimePlan::for_apply(
-                &lookup.table,
-                options,
-                false,
-                &context,
-            )?);
-        }
-        Ok(lookup)
-    }
-
     pub(in crate::lookup) fn fringe_phases(
         &self,
         observation: i32,

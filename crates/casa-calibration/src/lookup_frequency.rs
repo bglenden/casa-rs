@@ -8,6 +8,10 @@ use casa_types::Complex32;
 
 pub(crate) fn relative_axis(axis: &[f64]) -> Vec<f64> {
     let center = axis.iter().sum::<f64>() / axis.len() as f64;
+    relative_axis_at_center(axis, center)
+}
+
+pub(crate) fn relative_axis_at_center(axis: &[f64], center: f64) -> Vec<f64> {
     let sideband = if axis.first() > axis.last() { -1. } else { 1. };
     axis.iter()
         .map(|frequency| (frequency - center) * sideband)

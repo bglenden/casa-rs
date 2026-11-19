@@ -32,8 +32,7 @@ use crate::summary::{CalibrationTableError, summarize_table};
 
 #[path = "plan_fields.rs"]
 mod fields;
-use fields::resolve_gainfield;
-pub(crate) use fields::resolve_gainfield_expression;
+pub(crate) use fields::resolve_gainfield;
 
 #[path = "plan_callibrary.rs"]
 mod library;
