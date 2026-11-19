@@ -181,7 +181,7 @@ impl RowUpdate {
         Self {
             row,
             values: ArrayValue::Float32(Array1::from_vec(values).into_dyn()),
-            row_flagged: sample.row_flagged || sample.flags.iter().all(|&flag| flag),
+            row_flagged: (sigma && sample.row_flagged) || sample.flags.iter().all(|&flag| flag),
             flags: ArrayValue::Bool(sample.flags),
         }
     }
