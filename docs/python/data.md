@@ -43,6 +43,10 @@ Use `addcoordinate` to append axes and `fromrecord` to restore a coordinate
 record. Pass `cs.torecord()` as the `csys` argument to `ia.fromshape` or
 `ia.fromarray`. The coordinate record must describe each image axis.
 
+Use `cs.setobserver(name)` and `cs.settelescope(name)` to update observation
+metadata. An unknown telescope name is stored and the setter returns
+`False`. The record retains the last known telescope position.
+
 Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored

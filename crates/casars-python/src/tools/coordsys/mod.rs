@@ -5,6 +5,7 @@
 
 mod construction;
 mod inspect;
+mod observation;
 mod reference;
 mod stubs;
 pub(crate) mod surface;

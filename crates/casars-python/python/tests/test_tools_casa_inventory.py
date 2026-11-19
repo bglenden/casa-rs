@@ -35,7 +35,8 @@ IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
 IMPLEMENTED["coordsys"] = {
     "addcoordinate", "axesmap", "axiscoordinatetypes", "coordinatetype", "copy", "done", "epoch",
     "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "names", "naxes", "ncoordinates", "newcoordsys",
-    "observer", "parentname", "referencepixel", "setparentname", "setreferencepixel",
+    "observer", "parentname", "referencepixel", "setobserver", "setparentname",
+    "setreferencepixel", "settelescope",
     "stokes", "telescope", "torecord", "type", "units",
 }
 IMPLEMENTED["image"] = {
