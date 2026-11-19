@@ -27,6 +27,7 @@ pub(crate) struct AtmosphericOptions<'a> {
     pub(crate) lo_ghz: Option<f64>,
     pub(crate) parent_ms: Option<&'a Path>,
     pub(crate) show_points: bool,
+    pub(crate) time_overlay: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -56,6 +57,7 @@ struct LineOfSight {
     profile: ProfileParameters,
     water_mm: f64,
     airmass: f64,
+    field: i32,
 }
 
 impl<'a> AtmosphereContext<'a> {
@@ -154,6 +156,7 @@ impl<'a> AtmosphereContext<'a> {
             profile: parameters,
             water_mm,
             airmass,
+            field,
         };
         let mut curves =
             vec![self.evaluate(window, frequency, &conditions, frequency_axis, None)?];
@@ -203,7 +206,10 @@ impl<'a> AtmosphereContext<'a> {
             AtmosphereProfile::new(&conditions.profile).map_err(|error| error.to_string())?;
         let absorption = AbsorptionProfile::new(profile, grid);
         let LineOfSight {
-            water_mm, airmass, ..
+            water_mm,
+            airmass,
+            field,
+            ..
         } = *conditions;
         let water_m = water_mm * 1e-3;
         let zenith = Sky::zenith(water_m);
@@ -251,7 +257,11 @@ impl<'a> AtmosphereContext<'a> {
             image,
             sky_temperature: self.options.sky_temperature,
             show_points: self.options.show_points,
-            label: format!("PWV {water_mm:.2}mm, airmass {airmass:.3}, maxAlt 60km"),
+            label: if self.options.time_overlay {
+                format!("PWV {water_mm:.2}mm, airmass {airmass:.2}, maxAlt 60km (field {field})")
+            } else {
+                format!("PWV {water_mm:.2}mm, airmass {airmass:.3}, maxAlt 60km")
+            },
         })
     }
 

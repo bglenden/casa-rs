@@ -213,6 +213,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             lo_ghz: lo,
             parent_ms: parent_ms.as_deref().map(Path::new),
             show_points: task.flag("showatmpoints")?,
+            time_overlay: overlay.time,
         },
         show_fdm,
         zoom_intersect: task.text("zoom")?.as_deref() == Some("intersect"),

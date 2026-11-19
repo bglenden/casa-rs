@@ -61,6 +61,14 @@ def fixtures(root):
     return ms, current, scaled, polynomial
 
 
+def shifted_companion(root, scaled):
+    shifted = root / "shifted.bcal"
+    copytree(scaled, shifted)
+    with opened(shifted / "SPECTRAL_WINDOW", write=True) as tool:
+        tool.putcol("CHAN_FREQ", tool.getcol("CHAN_FREQ") + 2e6)
+    return shifted
+
+
 def multiband_fixture(root, source):
     ms = root / "multi.ms"
     multiwindow_data(source, ms)
@@ -93,6 +101,56 @@ def masked_fixture(root, current):
         tool.putcol("FLAG", flags)
         tool.putkeyword("MSName", "unavailable.ms")
     return masked
+
+
+def tsys_fixture(root, current):
+    tsys = root / "tsys.cal"
+    copytree(current, tsys)
+    with opened(tsys, write=True) as tool:
+        values = 70.0 + 10.0 * np.abs(tool.getcol("CPARAM")).astype(np.float32)
+        tool.removecols(["CPARAM"])
+        tool.addcols({"FPARAM": {"valueType": "float", "ndim": 2}})
+        tool.putcol("FPARAM", values)
+        tool.putkeyword("ParType", "Float")
+        tool.putkeyword("VisCal", "B TSYS")
+    return tsys
+
+
+def atmospheric_metadata(root, ms, calibration):
+    parent = root / "parent.ms"
+    multiwindow_data(ms, parent)
+    with opened(calibration) as tool:
+        epoch = float(tool.getcell("TIME", 0))
+    path = root / "wvr.txt"
+    path.write_text("startValidTime antennaName water\nD A D\n"
+                    f"{epoch - 1:.3f} A0 0.001\n{epoch:.3f} A1 0.0014\n"
+                    f"{epoch + 1:.3f} A2 0.0018\n")
+    tool = table()
+    tool.fromascii(str(ms / "ASDM_CALWVR"), str(path), sep=" ")
+    tool.close()
+    with opened(parent / "SPECTRAL_WINDOW", write=True) as tool:
+        tool.putcell("NAME", 0, "UNUSED")
+        tool.addcols({"BBC_NO": {"valueType": "int"}})
+        tool.putcol("BBC_NO", [1, 1])
+    shapes = {"numLO": "int", "name": "string", "frequencyBand": "string",
+              "receiverId": "int", "spectralWindowId": "string"}
+    descriptor = {name: {"valueType": dtype} for name, dtype in shapes.items()}
+    descriptor["freqLO"] = {"valueType": "double", "ndim": 1}
+    descriptor["sidebandLO"] = {"valueType": "string", "ndim": 1}
+    tool = table()
+    tool.create(str(ms / "ASDM_RECEIVER"), descriptor, nrow=2)
+    try:
+        for row, local_frequency in enumerate((98.4e9, 99.8e9)):
+            for name, value in {
+                "numLO": 3, "name": f"Receiver_{row}", "frequencyBand": "ALMA_RB_03",
+                "receiverId": row, "spectralWindowId": f"SpectralWindow_{row}",
+                "freqLO": np.array([local_frequency, 2e9, 1e8]),
+                "sidebandLO": ["USB", "USB", "USB"],
+            }.items():
+                tool.putcell(name, row, value)
+    finally:
+        tool.close()
+    return parent
 
 
 def check_platforming(root):
@@ -208,6 +266,8 @@ def comparisons(root):
     multi_ms, multi = multiband_fixture(root, ms)
     multiband = dict(caltable=str(multi), vis=str(multi_ms), xaxis="freq", timeranges="0")
     masked = masked_fixture(root, current)
+    tsys = tsys_fixture(root, current)
+    shifted = shifted_companion(root, scaled)
     plots = {
         "channels": {},
         "frequency": dict(xaxis="freq"),
@@ -222,6 +282,7 @@ def comparisons(root):
         "central-percent": dict(xaxis="freq", chanrange="50%"),
         "plotrange": dict(xaxis="freq", plotrange=[100.001, 100.004, 0.5, 2.4]),
         "scaled": dict(xaxis="freq", caltable2=str(scaled), zoom="intersect"),
+        "intersect": dict(xaxis="freq", caltable2=str(shifted), zoom="intersect"),
         "polynomial": dict(caltable=str(polynomial), xaxis="freq", field="FLUX"),
         "polynomial-overlay": dict(xaxis="freq", caltable2=str(polynomial), field="FLUX",
                                    timeranges="0"),
@@ -229,6 +290,7 @@ def comparisons(root):
                              field="FLUX", timeranges="0"),
         "mask": dict(caltable=str(masked)),
         "show-flagged": dict(caltable=str(masked), showflagged=True),
+        "tsys": dict(caltable=str(tsys), xaxis="freq", yaxis="tsys"),
         "atmosphere": dict(xaxis="freq", showatm=True, pwv=1.1, timeranges="0"),
         "sky": dict(xaxis="freq", showtsky=True, pwv="auto", timeranges="0"),
         "image": dict(xaxis="freq", showatm=True, showimage=True, lo1="99.8", pwv=1.1,
@@ -252,6 +314,11 @@ def comparisons(root):
             return 0
 
     panels = sum(check(label, options) for label, options in plots.items())
+    parent = atmospheric_metadata(root, ms, current)
+    atmosphere = dict(xaxis="freq", showatm=True, timeranges="0", pwv="auto")
+    panels += check("measured-water", atmosphere)
+    panels += check("reference-field", atmosphere | dict(overlay="time", showatmfield="FLUX"))
+    panels += check("parent-receiver", atmosphere | dict(showimage=True, parentms=str(parent)))
 
     prompts = {
         "forward": (["", ""], {}),
@@ -300,7 +367,7 @@ def comparisons(root):
         pages = next(line for line in summary.splitlines() if line.startswith("Pages:"))
         assert pages.split()[-1] == "2", summary
     check_platforming(root)
-    print(f"{len(plots)} plot cases, {len(prompts)} terminal cases, {len(domains)} domain cases, "
+    print(f"{len(plots) + 3} plot cases, {len(prompts)} terminal cases, {len(domains)} domain cases, "
           f"{panels} rendered panels and paired two-page PDFs", flush=True)
     assert not failures, failures
 
