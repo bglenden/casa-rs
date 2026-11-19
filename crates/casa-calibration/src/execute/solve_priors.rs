@@ -3,7 +3,7 @@
 
 use super::{
     ApplyExecutionError, ApplyPlan, ArrayValue, EvaluatedApplyRow, HashMap, MeasurementSet,
-    evaluate_apply_rows, for_each_apply_row,
+    PreviewWeightSource, evaluate_apply_rows, for_each_apply_row,
 };
 
 pub(crate) enum PriorSolveBoundary {
@@ -38,19 +38,26 @@ pub(crate) fn evaluate_solve_priors(
     }
     plan.calibration_tables = model_tables;
     plan.parang = false;
-    for_each_apply_row(ms, &plan, true, share_input_flags, |index, row| {
-        let data = rows.get_mut(&index).expect("same selection for both sides");
-        let ArrayValue::Bool(data_flags) = &mut data.flags else {
-            unreachable!("apply flags are boolean")
-        };
-        let ArrayValue::Bool(model_flags) = row.flags else {
-            unreachable!("model calibration flags are boolean")
-        };
-        data_flags.zip_mut_with(&model_flags, |data, &model| *data |= model);
-        let ArrayValue::Complex32(gains) = row.corrected_data else {
-            unreachable!("unit visibilities are complex")
-        };
-        data.model_gains = Some(gains);
-    })?;
+    for_each_apply_row(
+        ms,
+        &plan,
+        true,
+        share_input_flags,
+        PreviewWeightSource::UnitFactors,
+        |index, row| {
+            let data = rows.get_mut(&index).expect("same selection for both sides");
+            let ArrayValue::Bool(data_flags) = &mut data.flags else {
+                unreachable!("apply flags are boolean")
+            };
+            let ArrayValue::Bool(model_flags) = row.flags else {
+                unreachable!("model calibration flags are boolean")
+            };
+            data_flags.zip_mut_with(&model_flags, |data, &model| *data |= model);
+            let ArrayValue::Complex32(gains) = row.corrected_data else {
+                unreachable!("unit visibilities are complex")
+            };
+            data.model_gains = Some(gains);
+        },
+    )?;
     Ok(rows)
 }

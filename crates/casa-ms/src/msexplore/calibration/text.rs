@@ -114,3 +114,39 @@ fn trim_trailing_zeroes(value: &str) -> &str {
         value
     }
 }
+
+pub(in crate::msexplore) fn write_averaging_header(
+    output: &mut dyn Write,
+    average: &crate::MsAverageSpec,
+    requested_channels: Option<f64>,
+) -> io::Result<()> {
+    if requested_channels.is_some() || super::averaging::active(average) {
+        match requested_channels {
+            Some(channels) => writeln!(output, "# channel average: {channels}")?,
+            None => writeln!(output, "# channel average: None")?,
+        }
+        if let Some(time) = average.avgtime {
+            write!(output, "# time average: {time}s")?;
+            if average.avgscan {
+                write!(output, " scan: True")?;
+            }
+            if average.avgfield {
+                write!(output, " field: True")?;
+            }
+            writeln!(output)?;
+        } else {
+            writeln!(output, "# time average: None")?;
+        }
+        for (name, enabled) in [
+            ("baseline", average.avgbaseline),
+            ("antenna", average.avgantenna),
+            ("spw", average.avgspw),
+            ("scalar", average.scalar),
+        ] {
+            if enabled {
+                writeln!(output, "# {name} average: True")?;
+            }
+        }
+    }
+    Ok(())
+}

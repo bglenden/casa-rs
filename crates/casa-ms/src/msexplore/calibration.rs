@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Calibration table input for the shared PlotMS provider.
 
-mod averaging;
+pub(super) mod averaging;
 mod axis;
-mod figure;
+pub(super) mod figure;
 mod iteration;
 mod samples;
 mod selection;
@@ -346,35 +346,7 @@ fn write_export(
             writeln!(output, "# {name}: {value}")?;
         }
     }
-    if header.requested_channels.is_some() || averaging::active(header.averaging) {
-        let average = header.averaging;
-        match header.requested_channels {
-            Some(channels) => writeln!(output, "# channel average: {channels}")?,
-            None => writeln!(output, "# channel average: None")?,
-        }
-        if let Some(time) = average.avgtime {
-            write!(output, "# time average: {time}s")?;
-            if average.avgscan {
-                write!(output, " scan: True")?;
-            }
-            if average.avgfield {
-                write!(output, " field: True")?;
-            }
-            writeln!(output)?;
-        } else {
-            writeln!(output, "# time average: None")?;
-        }
-        for (name, enabled) in [
-            ("baseline", average.avgbaseline),
-            ("antenna", average.avgantenna),
-            ("spw", average.avgspw),
-            ("scalar", average.scalar),
-        ] {
-            if enabled {
-                writeln!(output, "# {name} average: True")?;
-            }
-        }
-    }
+    text::write_averaging_header(&mut output, header.averaging, header.requested_channels)?;
     if let Some(axis) = panels.axis_name() {
         writeln!(output, "# iteraxis: {axis}")?;
     }

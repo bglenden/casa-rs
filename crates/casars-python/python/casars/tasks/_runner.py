@@ -326,6 +326,12 @@ def _call_plotms(values, arguments):
     validate(arguments)
     if not paths and all(isinstance(arguments[name], str) for name in ("vis", "caltable")):
         return None
+    callib = arguments["callib"]
+    entries = [callib] if isinstance(callib, str) else callib
+    if isinstance(entries, (list, tuple)) and len(entries) == 1:
+        filename = entries[0]
+        if isinstance(filename, str) and "=" not in filename and not os.path.exists(filename):
+            raise RuntimeError("callib file does not exist")
     for name in ("field", "spw"):
         if name in values and isinstance(values[name], (int, float)):
             values[name] = str(values[name])

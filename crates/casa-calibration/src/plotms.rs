@@ -8,7 +8,7 @@ use casa_ms::{MeasurementSet, MsSelection};
 use casa_task_runtime::TaskFailure;
 
 use crate::callib::{load_apply_specs_from_callib, parse_apply_specs};
-use crate::execute::evaluate_apply_rows;
+use crate::execute::evaluate_plot_rows;
 use crate::{ApplyMode, ApplyPlanRequest, plan_apply};
 
 /// Correct the selected plot rows through the applycal engine without saving them.
@@ -36,7 +36,7 @@ pub fn load_calibration(
     };
     let plan = plan_apply(ms, &request)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("callib"))?;
-    let rows = evaluate_apply_rows(ms, &plan, false)
+    let rows = evaluate_plot_rows(ms, &plan)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("callib"))?;
     let row_order = plan
         .selected_rows
@@ -51,11 +51,14 @@ pub fn load_calibration(
     let rows = rows
         .into_iter()
         .map(|(index, row)| {
+            let weights = row.plot_weights.expect("PlotMS rows have weights");
             (
                 index,
                 PlotMsCalibratedRow {
                     corrected_data: row.corrected_data,
                     flags: row.flags,
+                    weight: weights.scalar,
+                    weight_spectrum: weights.spectrum,
                 },
             )
         })
@@ -64,5 +67,6 @@ pub fn load_calibration(
         row_order,
         rows,
         channels,
+        x_data_column: None,
     })
 }
