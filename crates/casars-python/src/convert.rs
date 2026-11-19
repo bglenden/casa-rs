@@ -37,7 +37,7 @@ use std::fmt;
 use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
 use num_complex::Complex64;
 use numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
-use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
@@ -53,18 +53,35 @@ pub(crate) enum ConvertError {
     Runtime(String),
     /// The Python value has a type the parameter cannot take (`TypeError`).
     Type(String),
+    /// A native Python integer outside the signed 64-bit input range.
+    IntegerOverflow,
 }
 
 impl ConvertError {
     pub(crate) fn runtime(message: impl Into<String>) -> Self {
         Self::Runtime(message.into())
     }
+
+    fn in_converting_quantity(self) -> Self {
+        match self {
+            Self::Runtime(message)
+                if !message.starts_with("Wrong")
+                    && !message.starts_with("Unit::check Illegal unit string ") =>
+            {
+                Self::Runtime(format!("Error {message} in converting quantity"))
+            }
+            error => error,
+        }
+    }
 }
+
+const INTEGER_OVERFLOW: &str = "Python int outside the signed 64-bit range in a quantity record";
 
 impl fmt::Display for ConvertError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Runtime(message) | Self::Type(message) => f.write_str(message),
+            Self::IntegerOverflow => f.write_str(INTEGER_OVERFLOW),
         }
     }
 }
@@ -74,6 +91,7 @@ impl From<ConvertError> for PyErr {
         match error {
             ConvertError::Runtime(message) => PyRuntimeError::new_err(message),
             ConvertError::Type(message) => PyTypeError::new_err(message),
+            ConvertError::IntegerOverflow => PyOverflowError::new_err(INTEGER_OVERFLOW),
         }
     }
 }
@@ -86,9 +104,13 @@ pub(crate) type ConvertResult<T> = Result<T, ConvertError>;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RecordScalarKind {
     NativeInteger(i64),
-    IntegerVector(Option<i32>),
+    IntegerOverflow,
+    SingletonIntegerVector(i32),
+    NonScalarNumeric,
     EmptyFloatVector,
     NumpyUnsupported,
+    MalformedSequence,
+    MixedBoolFloat { shape: Vec<usize>, values: Vec<f64> },
 }
 
 /// A record and optional information erased by the numeric variant conversion.
@@ -111,7 +133,14 @@ impl VariantRecord {
     /// Whether a captured quantity vector has CASA's floating numeric type.
     /// MeasureHolder accepts floating vectors, but not integer QuantumHolders.
     pub(crate) fn is_double_vector(&self) -> bool {
-        self.scalar_kind.is_none()
+        matches!(
+            self.scalar_kind,
+            None | Some(
+                RecordScalarKind::IntegerOverflow
+                    | RecordScalarKind::MalformedSequence
+                    | RecordScalarKind::MixedBoolFloat { .. }
+            )
+        )
     }
 }
 
@@ -272,7 +301,15 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
             let converted = if key == "value" && has_unit {
                 match zero_dim_record_float(&value)? {
                     Some(array) => array,
-                    None => variant_from_python(&value)?,
+                    None => variant_from_python(&value).map_err(|error| {
+                        if value.is_instance_of::<PyInt>()
+                            && error.is_instance_of::<PyOverflowError>(value.py())
+                        {
+                            ConvertError::IntegerOverflow.into()
+                        } else {
+                            error
+                        }
+                    })?,
                 }
             } else {
                 variant_from_python(&value)?
@@ -286,10 +323,10 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
                 Some(value)
                     if value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyBool>() =>
                 {
-                    value
-                        .extract::<i64>()
-                        .ok()
-                        .map(RecordScalarKind::NativeInteger)
+                    value.extract::<i64>().map_or_else(
+                        |_| has_unit.then_some(RecordScalarKind::IntegerOverflow),
+                        |number| Some(RecordScalarKind::NativeInteger(number)),
+                    )
                 }
                 Some(value)
                     if !value.is_instance_of::<PyFloat>()
@@ -307,10 +344,10 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
                     if value.is_instance(&scalar)? {
                         Some(RecordScalarKind::NumpyUnsupported)
                     } else {
-                        record_vector_kind(&value)?
+                        record_vector_kind(&value, has_unit)?
                     }
                 }
-                Some(value) => record_vector_kind(&value)?,
+                Some(value) => record_vector_kind(&value, has_unit)?,
                 None => None,
             }
         };
@@ -377,7 +414,10 @@ fn is_numpy_complex64_scalar(value: &Bound<'_, PyAny>) -> PyResult<bool> {
 }
 
 /// Keep the integer kind and low 32 bits of record arrays and sequences.
-fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarKind>> {
+fn record_vector_kind(
+    value: &Bound<'_, PyAny>,
+    has_unit: bool,
+) -> PyResult<Option<RecordScalarKind>> {
     if value.is_instance_of::<PyFloat>()
         || value.is_instance_of::<PyInt>()
         || value.is_instance_of::<PyString>()
@@ -432,15 +472,16 @@ fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarK
                 && value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)?;
             (is_array, array_kind)
         };
-    let values = if is_array {
+    let (shape, values) = if is_array {
         if matches!(array_kind.as_deref(), Ok("b")) {
             return Ok(Some(RecordScalarKind::NumpyUnsupported));
         }
-        value
+        let values = value
             .call_method0("ravel")?
             .call_method0("tolist")?
             .try_iter()?
-            .collect::<PyResult<Vec<_>>>()?
+            .collect::<PyResult<Vec<_>>>()?;
+        (None, values)
     } else if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
         let items = value.try_iter()?.collect::<PyResult<Vec<_>>>()?;
         if items
@@ -448,17 +489,17 @@ fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarK
             .is_some_and(|item| item.is_instance_of::<PyList>() || item.is_instance_of::<PyTuple>())
         {
             match nested_sequence_items(value)? {
-                Some((_, flat)) => flat,
+                Some((shape, flat)) => (Some(shape), flat),
                 None => return Ok(None),
             }
         } else {
-            items
+            (None, items)
         }
     } else {
         return Ok(None);
     };
     if values.is_empty() {
-        return Ok(is_array.then_some(RecordScalarKind::IntegerVector(None)));
+        return Ok(is_array.then_some(RecordScalarKind::NonScalarNumeric));
     }
     if values.iter().all(|v| v.is_instance_of::<PyBool>()) {
         return Ok(Some(RecordScalarKind::NumpyUnsupported));
@@ -466,7 +507,14 @@ fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarK
     let native_integer =
         |v: &Bound<'_, PyAny>| v.is_instance_of::<PyInt>() && !v.is_instance_of::<PyBool>();
     if !values.iter().all(native_integer) {
-        let signed_integer = value.py().import("numpy")?.getattr("signedinteger")?;
+        let numpy = value.py().import("numpy")?;
+        let signed_integer = numpy.getattr("signedinteger")?;
+        if has_unit
+            && !is_array
+            && let Some(kind) = mixed_sequence_kind(shape, &values, &numpy, &signed_integer)?
+        {
+            return Ok(Some(kind));
+        }
         for item in &values {
             if !native_integer(item) && !item.is_instance(&signed_integer)? {
                 return Ok(None);
@@ -474,7 +522,7 @@ fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarK
         }
     }
     if values.len() > 1 {
-        return Ok(Some(RecordScalarKind::IntegerVector(None)));
+        return Ok(Some(RecordScalarKind::NonScalarNumeric));
     }
     let first = &values[0];
     let narrowed = first.extract::<i64>().map(|n| n as i32).ok().or_else(|| {
@@ -482,7 +530,78 @@ fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarK
             .then(|| first.extract::<u64>().ok().map(|n| n as i32))
             .flatten()
     });
-    Ok(narrowed.map(|value| RecordScalarKind::IntegerVector(Some(value))))
+    Ok(narrowed
+        .map(RecordScalarKind::SingletonIntegerVector)
+        .or_else(|| {
+            (has_unit && native_integer(first)).then_some(RecordScalarKind::IntegerOverflow)
+        }))
+}
+
+fn mixed_sequence_kind(
+    shape: Option<Vec<usize>>,
+    items: &[Bound<'_, PyAny>],
+    numpy: &Bound<'_, PyModule>,
+    signed_integer: &Bound<'_, PyAny>,
+) -> PyResult<Option<RecordScalarKind>> {
+    let needs_numpy_type_check = |item: &&Bound<'_, PyAny>| {
+        !item.is_instance_of::<PyInt>()
+            && !item.is_instance_of::<PyFloat>()
+            && !item.is_instance_of::<PyComplex>()
+    };
+    let mut foreign = items.iter().filter(needs_numpy_type_check).peekable();
+    if foreign.peek().is_some() {
+        let unsigned_integer = numpy.getattr("unsignedinteger")?;
+        let boolean = numpy.getattr("bool_")?;
+        for item in foreign {
+            // CASA's binding silently drops these scalars from mixed sequences.
+            if item.is_instance(&unsigned_integer)? || item.is_instance(&boolean)? {
+                return Ok(Some(RecordScalarKind::MalformedSequence));
+            }
+        }
+    }
+    if items.iter().any(|item| item.is_instance_of::<PyBool>()) {
+        return mixed_bool_numeric_kind(shape, items, numpy, signed_integer).map(Some);
+    }
+    Ok(None)
+}
+
+fn mixed_bool_numeric_kind(
+    shape: Option<Vec<usize>>,
+    items: &[Bound<'_, PyAny>],
+    numpy: &Bound<'_, PyModule>,
+    signed_integer: &Bound<'_, PyAny>,
+) -> PyResult<RecordScalarKind> {
+    let floating = numpy.getattr("floating")?;
+    let mut has_float = false;
+    let mut has_complex = false;
+    for item in items {
+        if item.is_instance_of::<PyInt>() || item.is_instance(signed_integer)? {
+            continue;
+        }
+        if item.is_instance_of::<PyFloat>() || item.is_instance(&floating)? {
+            has_float = true;
+        } else if item.is_instance_of::<PyComplex>() {
+            has_complex = true;
+        } else {
+            return Ok(RecordScalarKind::NumpyUnsupported);
+        }
+    }
+    if has_float && !has_complex {
+        if items
+            .iter()
+            .any(|item| item.is_instance_of::<PyInt>() && item.extract::<i64>().is_err())
+        {
+            return Ok(RecordScalarKind::IntegerOverflow);
+        }
+        let values = items
+            .iter()
+            .map(|item| item.extract::<f64>())
+            .collect::<PyResult<Vec<_>>>()?;
+        let shape = shape.unwrap_or_else(|| vec![values.len()]);
+        Ok(RecordScalarKind::MixedBoolFloat { shape, values })
+    } else {
+        Ok(RecordScalarKind::NonScalarNumeric)
+    }
 }
 
 /// Preserve a zero-dimensional floating array inside a quantity-like record.
@@ -899,13 +1018,9 @@ pub(crate) fn quantity(value: &Variant) -> ConvertResult<Quantity> {
             " in converting quantity",
         )),
         // A record of several values reads, then fails to be one quantity.
-        Variant::Record(record) => quantity_variant_record(record).map_err(|error| {
-            if error.starts_with("Wrong") || error.starts_with("Unit::check Illegal unit string ") {
-                ConvertError::runtime(error)
-            } else {
-                ConvertError::runtime(format!("Error {error} in converting quantity"))
-            }
-        }),
+        Variant::Record(record) => {
+            quantity_variant_record(record).map_err(ConvertError::in_converting_quantity)
+        }
         Variant::Number(number) => Ok(Quantity::dimensionless(*number)),
         Variant::Bool(flag) => Ok(Quantity::dimensionless(f64::from(u8::from(*flag)))),
         Variant::Complex(_) | Variant::ComplexArray { .. } => Err(ConvertError::runtime(
@@ -990,26 +1105,35 @@ fn quantity_read_error(text: &str, context: &str) -> ConvertError {
 }
 
 /// A Python quantity record, preserving CASA's scalar integer distinctions.
-pub(crate) fn quantity_variant_record(record: &VariantRecord) -> Result<Quantity, String> {
+pub(crate) fn quantity_variant_record(record: &VariantRecord) -> ConvertResult<Quantity> {
+    let malformed =
+        || ConvertError::runtime("Illegal Quantum record in QuantumHolder::fromRecord\n");
     let Some(Variant::Text(unit)) = record.get("unit") else {
-        return Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string());
+        return Err(malformed());
     };
-    match record.scalar_kind {
-        Some(RecordScalarKind::NativeInteger(value)) => Ok(Quantity::with_unit(
-            f64::from(value as i32),
-            casacore_unit(unit)?,
-        )),
-        Some(RecordScalarKind::IntegerVector(Some(value))) => {
-            Ok(Quantity::with_unit(f64::from(value), casacore_unit(unit)?))
+    let unit = || casacore_unit(unit).map_err(ConvertError::runtime);
+    match &record.scalar_kind {
+        Some(RecordScalarKind::NativeInteger(value)) => {
+            Ok(Quantity::with_unit(f64::from(*value as i32), unit()?))
         }
-        Some(RecordScalarKind::IntegerVector(None) | RecordScalarKind::EmptyFloatVector) => {
-            casacore_unit(unit)?;
-            Err("Wrong QuantumHolder to convert asQuantumDouble".to_string())
+        Some(RecordScalarKind::SingletonIntegerVector(value)) => {
+            Ok(Quantity::with_unit(f64::from(*value), unit()?))
         }
-        Some(RecordScalarKind::NumpyUnsupported) => {
-            Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string())
+        Some(
+            RecordScalarKind::NonScalarNumeric
+            | RecordScalarKind::EmptyFloatVector
+            | RecordScalarKind::MixedBoolFloat { .. },
+        ) => {
+            unit()?;
+            Err(ConvertError::runtime(
+                "Wrong QuantumHolder to convert asQuantumDouble",
+            ))
         }
-        None => quantity_record(&record.fields),
+        Some(RecordScalarKind::NumpyUnsupported | RecordScalarKind::MalformedSequence) => {
+            Err(malformed())
+        }
+        Some(RecordScalarKind::IntegerOverflow) => Err(ConvertError::IntegerOverflow),
+        None => quantity_record(&record.fields).map_err(ConvertError::runtime),
     }
 }
 
