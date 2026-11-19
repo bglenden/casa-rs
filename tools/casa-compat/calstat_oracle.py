@@ -67,7 +67,7 @@ def run(root, native, native_table):
     gain, delay, legacy = (root/f'{name}.cal' for name in ('gain', 'delay', 'legacy'))
     make_cal_ms(str(source))
     casa.gaincal(str(source), str(gain), refant='A0', solint='int', minsnr=0.)
-    casa.gencal(str(source), str(delay), 'sbd', parameter=[2.5, -4.5])
+    casa.gencal(str(source), str(delay), 'sbd', parameter=[2.5])
     tool = table()
     tool.open(str(gain), nomodify=False)
     flags = tool.getcol('FLAG')
@@ -106,6 +106,8 @@ def run(root, native, native_table):
         compare(native.calstat(caltable=str(path), axis=axis, datacolumn=datacolumn), expected)
     compare(native.calstat(str(legacy)), casa.calstat(str(legacy)))
     compare(native.calstat(str(spaced)), casa.calstat(str(spaced)))
+    home_relative = f'~/{os.path.relpath(legacy, Path.home())}'
+    compare(native.calstat(home_relative), casa.calstat(home_relative))
     compare(native.calstat(str(gain), 'phase', 'cparam'), casa.calstat(str(gain), 'phase', 'cparam'))
 
     expected_nan = casa.calstat(str(legacy), 'NAN')['NAN']
@@ -128,6 +130,14 @@ def run(root, native, native_table):
     for parameters, prefix in errors:
         for task in (casa.calstat, native.calstat):
             refuse(lambda: task(*parameters), prefix)
+
+    for task in (casa.calstat, native.calstat):
+        try:
+            task()
+        except AssertionError as error:
+            assert 'the caltable parameter must be a path that exists' in str(error)
+        else:
+            raise AssertionError('Accepted a missing caltable')
 
     invalid_types = [
         ([str(gain)], 'amplitude', 'CPARAM'),
@@ -162,7 +172,7 @@ def run(root, native, native_table):
     np.testing.assert_allclose(expected['var'], cast.var(ddof=1), rtol=2e-7)
     samples = cast.astype(np.float32)
     assert expected['sumsq'] == np.square(samples).sum(dtype=np.float64)
-    print(f'{len(successes) + 3} public statistics comparisons, {len(errors) + len(invalid_types)} errors, '
+    print(f'{len(successes) + 4} public statistics comparisons, {len(errors) + len(invalid_types) + 1} errors, '
           'four table-tool comparisons, NaN behavior and independent moment checks passed')
 
 

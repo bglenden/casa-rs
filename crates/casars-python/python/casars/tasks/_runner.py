@@ -211,7 +211,13 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     }
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
-        _validate_required_vis(values, arguments["vis"])
+        _validate_required_path(values, "vis", arguments["vis"])
+    if name == "calstat":
+        _validate_required_path(values, "caltable", arguments["caltable"])
+        try:
+            return run(name, **values).value
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
     if name == "applycal":
         return _call_applycal(values)
     if name == "gencal":
@@ -379,17 +385,18 @@ def _call_getantposalma(values: dict[str, Any]) -> Any:
         raise AssertionError(str(error)) from error
 
 
-def _validate_required_vis(values: dict[str, Any], vis: Any) -> None:
-    # CASA's required-path validation runs before calibrater opens the MS.
-    # Keep PathLike as the native API's additional path form.
-    if isinstance(vis, (str, PathLike)):
-        path = os.path.expanduser(os.fspath(vis))
-        if not path or not os.path.exists(path):
-            raise AssertionError(f"the vis parameter must be a path that exists ('{path}' does not exist)")
-        if path != os.fspath(vis):
-            values["vis"] = path
+def _validate_required_path(values: dict[str, Any], name: str, argument: Any) -> None:
+    # CASA validates and expands a required path before opening the table.
+    if isinstance(argument, (str, PathLike)):
+        original = os.fspath(argument)
+        path = os.path.expanduser(original)
+        if path and os.path.exists(path):
+            if path != original:
+                values[name] = path
+            return
     else:
-        raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
+        path = argument
+    raise AssertionError(f"the {name} parameter must be a path that exists ('{path}' does not exist)")
 
 
 def _call_applycal(values: dict[str, Any]) -> Any:
