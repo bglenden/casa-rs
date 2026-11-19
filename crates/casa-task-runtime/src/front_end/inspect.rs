@@ -222,9 +222,11 @@ mod tests {
     #[test]
     fn describe_uses_the_shared_concept_catalog() {
         let text = describe("width").unwrap();
-        assert!(text.contains("ms.transform.width@r1"));
-        assert!(text.contains("mstransform"));
-        assert!(text.contains("split"));
+        assert!(text.contains("ms.transform.width@r2"));
+        assert!(text.contains("regridms.width@r1"));
+        assert!(text.contains("per-SPW integer list"));
+        assert!(text.contains("used by: split"));
+        assert!(text.contains("used by: mstransform"));
         assert!(describe("not-a-parameter").is_err());
     }
 
