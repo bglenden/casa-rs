@@ -274,10 +274,10 @@ def _call_initweights(values: dict[str, Any]) -> Any:
         raise AssertionError("{'wtmode': ['unallowed value None', 'null value not allowed']}")
     try:
         return run("initweights", **values).value
-    except TaskParameterError as error:
-        if error.completion.parameter == "wtmode" and mode in ("tsys", "tinttsys"):
-            raise
-        raise AssertionError(str(error)) from error
+    except TaskExecutionError as error:
+        if error.completion.parameter == "tsystable.missing":
+            raise Exception(error.completion.message) from error
+        raise
     except (TypeError, ValueError) as error:
         raise AssertionError(str(error)) from error
 

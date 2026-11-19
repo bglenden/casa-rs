@@ -33426,30 +33426,6 @@
               "label": "Initialization Mode",
               "group": "Weights"
             }
-          },
-          "unimplemented": {
-            "issue": 1524,
-            "applies_when": {
-              "kind": "any",
-              "predicates": [
-                {
-                  "kind": "equals",
-                  "parameter": "wtmode",
-                  "value": {
-                    "kind": "string",
-                    "value": "tsys"
-                  }
-                },
-                {
-                  "kind": "equals",
-                  "parameter": "wtmode",
-                  "value": {
-                    "kind": "string",
-                    "value": "tinttsys"
-                  }
-                }
-              ]
-            }
           }
         },
         {

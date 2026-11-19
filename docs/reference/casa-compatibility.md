@@ -40,7 +40,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imregrid | imregrid | yes | 10 | 10 | 0 | 5 | 0 | 0 |
 | imstat | imstat | yes | 20 | 20 | 0 | 0 | 0 | 0 |
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 7 | 0 | 0 |
-| initweights | initweights | yes | 7 | 7 | 0 | 1 | 0 | 0 |
+| initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 43 | 0 | 0 |
 | plotms | plotms | pending | 102 | pending | | | | |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
@@ -835,7 +835,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #1524: `wtmode`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 7, in CASA's order: yes
 - Defaults that differ: none

@@ -1343,8 +1343,6 @@ def initweights(
     """Initialize MeasurementSet weights and their channel spectra.
 
     CASA's ``initweights``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #1524:
-    ``wtmode``.
     """
     return _call_casa(initweights, locals())
 
