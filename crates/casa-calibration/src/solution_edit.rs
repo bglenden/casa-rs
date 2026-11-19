@@ -97,7 +97,10 @@ fn stage_subtables(
             }
             copy_dir_recursive(&origin, &target).map_err(error_text)?;
         }
-        staged.keywords_mut().upsert(name, Value::table_ref(name));
+        staged.keywords_mut().upsert(
+            name,
+            Value::table_ref(casa_tables::strip_directory(&target, staging)),
+        );
     }
     Ok(())
 }
