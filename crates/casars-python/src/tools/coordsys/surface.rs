@@ -33,7 +33,7 @@ const METHODS: &[Method] = &[
             param("tabular", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "axesmap",
@@ -97,7 +97,7 @@ const METHODS: &[Method] = &[
     ),
     method("copy", &[], R::Any, Yes),
     method("done", &[], R::Any, Yes),
-    method("epoch", &[], R::Any, No),
+    method("epoch", &[], R::Any, Yes),
     method(
         "findaxis",
         &[
@@ -150,7 +150,7 @@ const METHODS: &[Method] = &[
         "fromrecord",
         &[param("record", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getconversiontype",
@@ -189,7 +189,7 @@ const METHODS: &[Method] = &[
             param("tabular", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("observer", &[], R::Any, Yes),
     method("parentname", &[], R::Any, Yes),

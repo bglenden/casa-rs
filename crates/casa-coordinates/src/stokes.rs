@@ -15,10 +15,12 @@ use crate::record_utils::{get_optional_vec_string, get_required_vec_i32};
 
 /// Stokes parameter types, matching C++ `Stokes::StokesTypes`.
 ///
-/// The integer codes follow the FITS convention (AIPS Memo 114):
-/// I=1, Q=2, U=3, V=4, RR=5, RL=6, LR=7, LL=8, XX=9, XY=10, YX=11, YY=12.
+/// The integer codes are the casacore Stokes enumeration used in native
+/// records. FITS uses different numeric codes for correlation products.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StokesType {
+    /// An unspecified polarization.
+    Undefined = 0,
     /// Stokes I (total intensity).
     I = 1,
     /// Stokes Q (linear polarization).
@@ -43,6 +45,36 @@ pub enum StokesType {
     YX = 11,
     /// Y-Y linear correlation.
     YY = 12,
+    /// Mixed RX correlation.
+    RX = 13,
+    /// Mixed RY correlation.
+    RY = 14,
+    /// Mixed LX correlation.
+    LX = 15,
+    /// Mixed LY correlation.
+    LY = 16,
+    /// Mixed XR correlation.
+    XR = 17,
+    /// Mixed XL correlation.
+    XL = 18,
+    /// Mixed YR correlation.
+    YR = 19,
+    /// Mixed YL correlation.
+    YL = 20,
+    /// Quasi-orthogonal PP correlation.
+    PP = 21,
+    /// Quasi-orthogonal PQ correlation.
+    PQ = 22,
+    /// Quasi-orthogonal QP correlation.
+    QP = 23,
+    /// Quasi-orthogonal QQ correlation.
+    QQ = 24,
+    /// Single-dish right-circular polarization.
+    RCircular = 25,
+    /// Single-dish left-circular polarization.
+    LCircular = 26,
+    /// Single-dish linear polarization.
+    Linear = 27,
     /// Total polarized intensity: `sqrt(Q^2 + U^2 + V^2)`.
     Ptotal = 28,
     /// Linearly polarized intensity: `sqrt(Q^2 + U^2)`.
@@ -56,7 +88,7 @@ pub enum StokesType {
 }
 
 impl StokesType {
-    /// Returns the integer code for this Stokes type (FITS convention).
+    /// Returns the integer code for this Stokes type in native records.
     pub fn code(self) -> i32 {
         self as i32
     }
@@ -64,6 +96,7 @@ impl StokesType {
     /// Converts an integer code to a [`StokesType`], if valid.
     pub fn from_code(code: i32) -> Option<Self> {
         match code {
+            0 => Some(Self::Undefined),
             1 => Some(Self::I),
             2 => Some(Self::Q),
             3 => Some(Self::U),
@@ -76,6 +109,21 @@ impl StokesType {
             10 => Some(Self::XY),
             11 => Some(Self::YX),
             12 => Some(Self::YY),
+            13 => Some(Self::RX),
+            14 => Some(Self::RY),
+            15 => Some(Self::LX),
+            16 => Some(Self::LY),
+            17 => Some(Self::XR),
+            18 => Some(Self::XL),
+            19 => Some(Self::YR),
+            20 => Some(Self::YL),
+            21 => Some(Self::PP),
+            22 => Some(Self::PQ),
+            23 => Some(Self::QP),
+            24 => Some(Self::QQ),
+            25 => Some(Self::RCircular),
+            26 => Some(Self::LCircular),
+            27 => Some(Self::Linear),
             28 => Some(Self::Ptotal),
             29 => Some(Self::Plinear),
             30 => Some(Self::PFtotal),
@@ -87,49 +135,19 @@ impl StokesType {
 
     /// Converts a standard Stokes string name to the corresponding type.
     pub fn from_name(name: &str) -> Option<Self> {
-        match name.to_ascii_uppercase().as_str() {
-            "I" => Some(Self::I),
-            "Q" => Some(Self::Q),
-            "U" => Some(Self::U),
-            "V" => Some(Self::V),
-            "RR" => Some(Self::RR),
-            "RL" => Some(Self::RL),
-            "LR" => Some(Self::LR),
-            "LL" => Some(Self::LL),
-            "XX" => Some(Self::XX),
-            "XY" => Some(Self::XY),
-            "YX" => Some(Self::YX),
-            "YY" => Some(Self::YY),
-            "PTOTAL" => Some(Self::Ptotal),
-            "PLINEAR" => Some(Self::Plinear),
-            "PFTOTAL" => Some(Self::PFtotal),
-            "PFLINEAR" => Some(Self::PFlinear),
-            "PANGLE" => Some(Self::Pangle),
-            _ => None,
+        if name == "??" {
+            return Some(Self::Undefined);
         }
+        casa_types::Correlation::ALL
+            .into_iter()
+            .find(|value| value.label().eq_ignore_ascii_case(name))
+            .and_then(|value| Self::from_code(value.casacore_code()))
     }
 
     /// Returns the standard string name (e.g. "I", "RR", "XX", "Pangle").
     pub fn name(self) -> &'static str {
-        match self {
-            Self::I => "I",
-            Self::Q => "Q",
-            Self::U => "U",
-            Self::V => "V",
-            Self::RR => "RR",
-            Self::RL => "RL",
-            Self::LR => "LR",
-            Self::LL => "LL",
-            Self::XX => "XX",
-            Self::XY => "XY",
-            Self::YX => "YX",
-            Self::YY => "YY",
-            Self::Ptotal => "Ptotal",
-            Self::Plinear => "Plinear",
-            Self::PFtotal => "PFtotal",
-            Self::PFlinear => "PFlinear",
-            Self::Pangle => "Pangle",
-        }
+        casa_types::Correlation::from_casacore_code(self.code())
+            .map_or("??", casa_types::Correlation::label)
     }
 }
 
