@@ -674,7 +674,7 @@
       "status": "Partial"
     },
     "plotrange": {
-      "scope": "Plot axes ranges: [xmin,xmax,ymin,ymax]",
+      "scope": "Plot limits in `xmin`, `xmax`, `ymin`, `ymax` order.",
       "evidence": [
         "paired"
       ],
