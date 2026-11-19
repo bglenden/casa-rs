@@ -142,6 +142,8 @@ def run(root, native, native_table):
     invalid_types = [
         ([str(gain)], 'amplitude', 'CPARAM'),
         (str(gain), 1, 'CPARAM'),
+        (str(gain), np.array('amp'), 'CPARAM'),
+        (str(gain), 'amp', np.array('CPARAM')),
         (str(gain), 'amplitude', 1),
     ]
     for parameters in invalid_types:
@@ -167,12 +169,22 @@ def run(root, native, native_table):
         for instance in (a, b, expected_tool, result_tool):
             instance.close()
 
+    view = root/'saved-view.cal'
+    writer = table()
+    assert writer.open(str(legacy))
+    saved = writer.selectrows([5, 1, 5, 0], name=str(view))
+    saved.close()
+    writer.close()
+    compare(native.calstat(str(view), 'VECTOR'), casa.calstat(str(view), 'VECTOR'))
+    for task in (casa.calstat, native.calstat):
+        refuse(lambda: task(str(view), 'RAGGED'), 'shapes not conforming')
+
     expected = casa.calstat(str(legacy), 'VECTOR')['VECTOR_0']
     cast = (5_084_546_400.0 + np.arange(7)*80.0).astype(np.float32).astype(np.float64)
     np.testing.assert_allclose(expected['var'], cast.var(ddof=1), rtol=2e-7)
     samples = cast.astype(np.float32)
     assert expected['sumsq'] == np.square(samples).sum(dtype=np.float64)
-    print(f'{len(successes) + 4} public statistics comparisons, {len(errors) + len(invalid_types) + 1} errors, '
+    print(f'{len(successes) + 5} public statistics comparisons, {len(errors) + len(invalid_types) + 2} errors, '
           'four table-tool comparisons, NaN behavior and independent moment checks passed')
 
 

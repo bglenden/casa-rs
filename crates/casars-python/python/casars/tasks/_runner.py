@@ -214,6 +214,11 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         _validate_required_path(values, "vis", arguments["vis"])
     if name == "calstat":
         _validate_required_path(values, "caltable", arguments["caltable"])
+        for parameter in ("axis", "datacolumn"):
+            value = arguments[parameter]
+            if not isinstance(value, str):
+                message = "null value not allowed" if value is None else "must be of cStr type"
+                raise AssertionError(str({parameter: [message]}))
         try:
             return run(name, **values).value
         except (TypeError, ValueError) as error:

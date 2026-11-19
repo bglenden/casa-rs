@@ -298,9 +298,16 @@ pub fn column_statistics(
     let access = table.column_accessor(column)?;
     let indexed = is_array && rank == Some(1);
     let groups = if is_array {
-        let standard = table.data_manager_info().iter().any(|manager| {
-            manager.dm_type == "StandardStMan" && manager.columns.iter().any(|name| name == column)
-        });
+        let manager = table
+            .data_manager_info()
+            .iter()
+            .find(|manager| manager.columns.iter().any(|name| name == column));
+        let standard = match manager {
+            Some(manager) => manager.dm_type == "StandardStMan",
+            None => {
+                table.reference_column_manager_type(column)?.as_deref() == Some("StandardStMan")
+            }
+        };
         array_samples(&access, column, rows, nrows, mode, indexed, standard)?
     } else {
         let cells = match rows {
