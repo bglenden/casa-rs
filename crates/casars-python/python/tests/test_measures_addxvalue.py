@@ -37,7 +37,10 @@ def test_unrepresented_measures_are_refused():
     assert result['unit'] == case['result']['unit']
     np.testing.assert_allclose(result['value'], case['result']['value'], rtol=1e-14, atol=1e-16)
     with pytest.raises(NotImplementedError, match="#1252"):
-        me.addxvalue(dict(direction, m0={"value": [0.1, 0.2], "unit": "rad"}))
+        # Both components must be vectors: CASA rejects mixed component
+        # lengths as malformed, before the still-unimplemented Cartesian path.
+        me.addxvalue(dict(direction, m0={"value": [0.1, 0.2], "unit": "rad"},
+                        m1={"value": [0.3, 0.4], "unit": "rad"}))
     with pytest.raises(NotImplementedError, match="#1252"):
         me.addxvalue({"type": "baseline", "refer": "ITRF"})
 
