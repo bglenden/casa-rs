@@ -245,6 +245,31 @@ def compare_write_batches(root, base, native):
     compare_case(root, expanded, native, 'spectral-write-batches', {'chanbin': 3})
 
 
+def compare_selected_uvsub(root, base):
+    from casars.tools import ms as native_ms
+
+    for lock in (False, True):
+        products = []
+        for engine, factory in [('casa', casatools.ms), ('native', native_ms)]:
+            path = root / f'{engine}-selected-uvsub-{lock}.ms'
+            copy_ms(base, path)
+            with opened(path) as table:
+                excluded = table.getcol('FIELD_ID') != 0
+                before = table.getcol('CORRECTED_DATA')
+            tool = factory()
+            assert tool.open(str(path), nomodify=False, lock=lock)
+            try:
+                assert tool.msselect({'field': 'FLUX'})
+                assert tool.uvsub()
+            finally:
+                tool.close()
+            actual = read(path)['CORRECTED_DATA']
+            np.testing.assert_array_equal(actual[..., excluded], before[..., excluded])
+            assert np.any(actual[..., ~excluded] != before[..., ~excluded])
+            products.append(actual)
+        np.testing.assert_allclose(products[1], products[0], rtol=2e-7, atol=0)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", required=True, type=Path)
@@ -293,6 +318,13 @@ def main():
         antenna2[::10] = antenna1[::10]
         table.putcol('ANTENNA2', antenna2)
     compare_case(root, auto, native, 'autocorrelations', {'timebin': 2, 'chanbin': 3})
+    zero_exposure = root / 'zero-exposure.ms'
+    copy_ms(base, zero_exposure)
+    with opened(zero_exposure, True) as table:
+        table.putcell('EXPOSURE', 0, 0.0)
+    compare_case(root, zero_exposure, native, 'zero-exposure-count', {})
+    compare_case(root, zero_exposure, native, 'zero-exposure-duration', {'timebin': '1s'})
+    compare_selected_uvsub(root, base)
     gapped = root / "gapped.ms"
     copy_ms(base, gapped)
     with opened(gapped, True) as table:
@@ -394,7 +426,7 @@ def main():
     if args.large:
         compare_write_batches(root, base, native)
     total = len(cases) + len(selectors) + len(timed) + len(channels) + len(robust) + len(tools)
-    print(f"{total + len(partitions) + 11 + args.large} matched CASA statwt workflows")
+    print(f"{total + len(partitions) + 15 + args.large} matched CASA statwt and tool selection workflows")
 
 
 if __name__ == "__main__":

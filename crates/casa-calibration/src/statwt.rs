@@ -328,6 +328,9 @@ pub fn estimate_statwt(
                     options.combine.correlations,
                 );
                 if let Some(locks) = &mut locks {
+                    let use_duration_scalar = !output.spectral
+                        && matches!(options.time_bin, StatWtTimeBin::Seconds(_))
+                        && !options.sliding;
                     let update = RowUpdate::new(
                         row.row_index,
                         sample,
@@ -335,7 +338,7 @@ pub fn estimate_statwt(
                         channel_plan,
                         &output,
                         options,
-                        exposure,
+                        use_duration_scalar.then_some((variances.as_slice(), exposure)),
                     );
                     pending_bytes += update.flags.len()
                         + update
@@ -413,7 +416,7 @@ impl RowUpdate {
         channels: &Channels,
         output: &Output,
         options: &StatWtOptions,
-        exposure: f64,
+        duration_scalar: Option<(&[f64], f64)>,
     ) -> Self {
         let mut flags = sample.flags.clone();
         let correlations = flags.len_of(Axis(0));
@@ -437,14 +440,11 @@ impl RowUpdate {
         }
         let scalar_weights = if let Some(spectrum) = &spectrum {
             spectral_medians(spectrum, &flags, options.combine.correlations)
-        } else if matches!(options.time_bin, StatWtTimeBin::Seconds(_))
-            && !options.sliding
-            && exposure != 0.0
-        {
+        } else if let Some((variances, exposure)) = duration_scalar {
             // The duration-block scalar path divides exposure by the bin variance directly.
-            weights
+            variances
                 .iter()
-                .map(|&weight| if weight == 0.0 { f32::INFINITY } else { weight })
+                .map(|value| (exposure / value) as f32)
                 .collect()
         } else {
             weights.to_vec()

@@ -56,9 +56,6 @@ impl VisibilityMoments {
     }
 
     pub(super) fn variance(self) -> f64 {
-        if self.real.count == 0 {
-            return 0.0;
-        }
         // CASA's statwt uses the population variance of each component
         // to construct weights. The reported variance *of* the weights
         // below uses the sample variance instead.

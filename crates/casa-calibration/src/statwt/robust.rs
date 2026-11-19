@@ -93,7 +93,7 @@ impl StatWtAlgorithm {
 
     fn component_variance(self, points: &[(f64, f64)]) -> f64 {
         if points.is_empty() {
-            return 0.0;
+            return f64::NAN;
         }
         let moments = |low: f64, high: f64| {
             let mut result = Moments::default();
