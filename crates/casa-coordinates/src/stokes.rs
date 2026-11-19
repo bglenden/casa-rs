@@ -43,6 +43,16 @@ pub enum StokesType {
     YX = 11,
     /// Y-Y linear correlation.
     YY = 12,
+    /// Total polarized intensity: `sqrt(Q^2 + U^2 + V^2)`.
+    Ptotal = 28,
+    /// Linearly polarized intensity: `sqrt(Q^2 + U^2)`.
+    Plinear = 29,
+    /// Total fractional polarization: `Ptotal / I`.
+    PFtotal = 30,
+    /// Linear fractional polarization: `Plinear / I`.
+    PFlinear = 31,
+    /// Linear polarization angle: `0.5 * atan2(U, Q)`.
+    Pangle = 32,
 }
 
 impl StokesType {
@@ -66,6 +76,11 @@ impl StokesType {
             10 => Some(Self::XY),
             11 => Some(Self::YX),
             12 => Some(Self::YY),
+            28 => Some(Self::Ptotal),
+            29 => Some(Self::Plinear),
+            30 => Some(Self::PFtotal),
+            31 => Some(Self::PFlinear),
+            32 => Some(Self::Pangle),
             _ => None,
         }
     }
@@ -85,11 +100,16 @@ impl StokesType {
             "XY" => Some(Self::XY),
             "YX" => Some(Self::YX),
             "YY" => Some(Self::YY),
+            "PTOTAL" => Some(Self::Ptotal),
+            "PLINEAR" => Some(Self::Plinear),
+            "PFTOTAL" => Some(Self::PFtotal),
+            "PFLINEAR" => Some(Self::PFlinear),
+            "PANGLE" => Some(Self::Pangle),
             _ => None,
         }
     }
 
-    /// Returns the standard string name (e.g. "I", "RR", "XX").
+    /// Returns the standard string name (e.g. "I", "RR", "XX", "Pangle").
     pub fn name(self) -> &'static str {
         match self {
             Self::I => "I",
@@ -104,6 +124,11 @@ impl StokesType {
             Self::XY => "XY",
             Self::YX => "YX",
             Self::YY => "YY",
+            Self::Ptotal => "Ptotal",
+            Self::Plinear => "Plinear",
+            Self::PFtotal => "PFtotal",
+            Self::PFlinear => "PFlinear",
+            Self::Pangle => "Pangle",
         }
     }
 }
@@ -324,12 +349,14 @@ mod tests {
 
     #[test]
     fn stokes_code_roundtrip() {
-        for code in 1..=12 {
+        for code in (1..=12).chain(28..=32) {
             let st = StokesType::from_code(code).unwrap();
             assert_eq!(st.code(), code);
+            assert_eq!(StokesType::from_name(st.name()), Some(st));
         }
         assert!(StokesType::from_code(0).is_none());
         assert!(StokesType::from_code(13).is_none());
+        assert!(StokesType::from_code(33).is_none());
     }
 
     #[test]

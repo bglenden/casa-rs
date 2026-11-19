@@ -896,9 +896,9 @@ impl<T: ImagePixel> PagedImage<T> {
             sub_type: "PAGEDIMAGE".into(),
             readme: Vec::new(),
         });
-        // Add a row with a tiny placeholder array.
-        // The actual pixel data lives in the tile file.
-        let placeholder = ArrayD::from_elem(IxDyn(&tile_shape), T::default_value());
+        // Add a row with a tiny 1-element placeholder array; the actual pixel
+        // data lives in the TSM tile file.
+        let placeholder = ArrayD::from_elem(IxDyn(&vec![1; shape.len()]), T::default_value());
         table.add_row(RecordValue::new(vec![RecordField::new(
             MAP_COLUMN,
             Value::Array(to_array_value(&placeholder)),
@@ -2013,6 +2013,12 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
+    pub(crate) fn set_coords_record_keyword(&mut self, record: RecordValue) {
+        self.table
+            .keywords_mut()
+            .upsert("coords", Value::Record(record));
+    }
+
     /// Unsets the default mask.
     pub fn unset_default_mask(&mut self) -> Result<(), ImageError> {
         self.table.keywords_mut().remove(DEFAULT_MASK_KEYWORD);
@@ -2157,6 +2163,19 @@ impl<T: ImagePixel> PagedImage<T> {
         }
         self.persistent_masks.borrow_mut().remove(name);
         Ok(())
+    }
+
+    pub(crate) fn register_paged_mask(&mut self, name: &str) {
+        let record = make_paged_mask_record(&subtable_reference(name), &self.shape);
+        let mut masks = match self.table.keywords().get(MASKS_KEYWORD) {
+            Some(Value::Record(rec)) => rec.clone(),
+            _ => RecordValue::default(),
+        };
+        masks.upsert(name, Value::Record(record));
+        self.table
+            .keywords_mut()
+            .upsert(MASKS_KEYWORD, Value::Record(masks));
+        self.persistent_masks.borrow_mut().remove(name);
     }
 
     /// Writes a rectangular slice into a named mask.

@@ -711,8 +711,11 @@ fn grid_polarization(
     let coordinates = stokes
         .iter()
         .copied()
-        .map(crate::ft::image::polarization_coordinate)
-        .collect::<Vec<_>>();
+        .map(|stokes_type| {
+            crate::ft::image::polarization_coordinate(stokes_type)
+                .ok_or_else(|| model_error("unsupported polarization plane in virtual grid"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let correlations = correlations
         .iter()
         .map(|&code| {

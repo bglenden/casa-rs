@@ -1,0 +1,52 @@
+{
+  "work_item": "https://github.com/bglenden/casa-rs/issues/1170",
+  "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+  "source_revision": "ea0ad2a5158f77c82e5ab3681ef63ab264fb9332",
+  "sources": [
+    "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/raw/casatools/binding/source/conversions_python.cc?at=6.7.6.14",
+    "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/raw/casatools/src/tools/quanta/quanta_cmpt.cc?at=6.7.6.14",
+    "https://github.com/casacore/casacore/blob/v3.7.1/casa/Quanta/QuantumHolder.cc"
+  ],
+  "capture": "CASAPY tools/casa-compat/quantity_record_sequence_edges_oracle.py --out crates/casars-python/python/tests/data/casa_quanta_record_sequence_edges.json",
+  "fixture": "crates/casars-python/python/tests/data/casa_quanta_record_sequence_edges.json",
+  "command": "python -m pytest -q crates/casars-python/python/tests/test_quanta_record_sequence_edges.py",
+  "result": "All 120 recorded quantity, getunit and add cases pass, including 51 cases with recorded CASA deviations. A separate shared MeasureHolder regression confirms its existing numeric values.",
+  "validation": "93 tests fail on the preceding implementation and 28 controls pass. On the final optimized build 2,264 affected Python tests pass, including the 120 CASA cases and one existing MeasureHolder control. 60 Rust unit tests, formatting, scoped Clippy, architecture, SPDX and generated docs checks pass.",
+  "review": "One local Astra xhigh review. Both findings were repaired and all 15 added red-to-green cases pass. They cover bigint overflow beyond the Python repr limit and unsafe NumPy timedelta64/longlong coercion in mixed Boolean sequences.",
+  "exploratory_release_timings": {
+    "units": "ns per qa.quantity call",
+    "conditions": "Same Python 3.12.4 and NumPy 2.5.1, alternating optimized native builds; prior quanta sources equal to the branch base. Mean of two seven-sample medians.",
+    "cases": {
+      "floating_scalar": {
+        "before": 822.9,
+        "after": 793.6,
+        "after_over_before": 0.964
+      },
+      "python_integer": {
+        "before": 832.1,
+        "after": 780.3,
+        "after_over_before": 0.938
+      },
+      "short_float_list": {
+        "before": 1829.6,
+        "after": 1784.1,
+        "after_over_before": 0.975
+      },
+      "long_float_list": {
+        "before": 10411.7,
+        "after": 11149.7,
+        "after_over_before": 1.071
+      },
+      "long_float_ndarray": {
+        "before": 1658.0,
+        "after": 1573.8,
+        "after_over_before": 0.949
+      },
+      "signed_numpy_singleton": {
+        "before": 1789.5,
+        "after": 1878.2,
+        "after_over_before": 1.05
+      }
+    }
+  }
+}

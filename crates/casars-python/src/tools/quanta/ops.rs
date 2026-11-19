@@ -122,7 +122,7 @@ fn array_record(value: &Variant) -> ConvertResult<Option<Quantum>> {
     if matches!(record.get("value"), Some(Variant::Array { shape, .. }) if shape.len() != 1) {
         return Ok(None);
     }
-    Ok(quantum_holder(value)?.filter(Quantum::is_array))
+    Ok(quantum_holder(value)?.filter(|quantum| matches!(quantum.shape.as_deref(), Some([_]))))
 }
 
 /// `qa.getvalue(v)`: the value or values, always as an array.

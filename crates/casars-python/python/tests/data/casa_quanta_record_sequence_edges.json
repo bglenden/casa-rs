@@ -1,0 +1,2015 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "name": "uint8_only",
+      "method": "quantity",
+      "value": [
+        {
+          "dtype": "uint8",
+          "scalar": 255
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "uint8_only",
+      "method": "getunit",
+      "value": [
+        {
+          "dtype": "uint8",
+          "scalar": 255
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "uint8_only",
+      "method": "add",
+      "value": [
+        {
+          "dtype": "uint8",
+          "scalar": 255
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "uint64_only",
+      "method": "quantity",
+      "value": [
+        {
+          "dtype": "uint64",
+          "scalar": 9223372036854775808
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "uint64_only",
+      "method": "getunit",
+      "value": [
+        {
+          "dtype": "uint64",
+          "scalar": 9223372036854775808
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "uint64_only",
+      "method": "add",
+      "value": [
+        {
+          "dtype": "uint64",
+          "scalar": 9223372036854775808
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_only_vector",
+      "method": "quantity",
+      "value": [
+        {
+          "dtype": "uint32",
+          "scalar": 2
+        },
+        {
+          "dtype": "uint16",
+          "scalar": 3
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_only_vector",
+      "method": "getunit",
+      "value": [
+        {
+          "dtype": "uint32",
+          "scalar": 2
+        },
+        {
+          "dtype": "uint16",
+          "scalar": 3
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_only_vector",
+      "method": "add",
+      "value": [
+        {
+          "dtype": "uint32",
+          "scalar": 2
+        },
+        {
+          "dtype": "uint16",
+          "scalar": 3
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "integer_then_unsigned",
+      "method": "quantity",
+      "value": [
+        1,
+        {
+          "dtype": "uint64",
+          "scalar": 2
+        }
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "integer_then_unsigned",
+      "method": "getunit",
+      "value": [
+        1,
+        {
+          "dtype": "uint64",
+          "scalar": 2
+        }
+      ],
+      "unit": "m",
+      "result": "m",
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "integer_then_unsigned",
+      "method": "add",
+      "value": [
+        1,
+        {
+          "dtype": "uint64",
+          "scalar": 2
+        }
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_then_integer",
+      "method": "quantity",
+      "value": [
+        {
+          "dtype": "uint64",
+          "scalar": 2
+        },
+        1
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_then_integer",
+      "method": "getunit",
+      "value": [
+        {
+          "dtype": "uint64",
+          "scalar": 2
+        },
+        1
+      ],
+      "unit": "m",
+      "result": "m",
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_then_integer",
+      "method": "add",
+      "value": [
+        {
+          "dtype": "uint64",
+          "scalar": 2
+        },
+        1
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "float_unsigned_tuple",
+      "method": "quantity",
+      "value": {
+        "tuple": [
+          1.5,
+          {
+            "dtype": "uint16",
+            "scalar": 2
+          }
+        ]
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.5
+        ]
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "float_unsigned_tuple",
+      "method": "getunit",
+      "value": {
+        "tuple": [
+          1.5,
+          {
+            "dtype": "uint16",
+            "scalar": 2
+          }
+        ]
+      },
+      "unit": "m",
+      "result": "m",
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "float_unsigned_tuple",
+      "method": "add",
+      "value": {
+        "tuple": [
+          1.5,
+          {
+            "dtype": "uint16",
+            "scalar": 2
+          }
+        ]
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 2.5
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "float_unsigned_float",
+      "method": "quantity",
+      "value": [
+        1.5,
+        {
+          "dtype": "uint32",
+          "scalar": 2
+        },
+        3.5
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.5,
+          3.5
+        ]
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "float_unsigned_float",
+      "method": "getunit",
+      "value": [
+        1.5,
+        {
+          "dtype": "uint32",
+          "scalar": 2
+        },
+        3.5
+      ],
+      "unit": "m",
+      "result": "m",
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "float_unsigned_float",
+      "method": "add",
+      "value": [
+        1.5,
+        {
+          "dtype": "uint32",
+          "scalar": 2
+        },
+        3.5
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_nested",
+      "method": "quantity",
+      "value": [
+        [
+          {
+            "dtype": "uint64",
+            "scalar": 1
+          }
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_nested",
+      "method": "getunit",
+      "value": [
+        [
+          {
+            "dtype": "uint64",
+            "scalar": 1
+          }
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_nested",
+      "method": "add",
+      "value": [
+        [
+          {
+            "dtype": "uint64",
+            "scalar": 1
+          }
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "numpy_boolean_float",
+      "method": "quantity",
+      "value": [
+        {
+          "dtype": "bool",
+          "scalar": true
+        },
+        2.5
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          2.5
+        ]
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "numpy_boolean_float",
+      "method": "getunit",
+      "value": [
+        {
+          "dtype": "bool",
+          "scalar": true
+        },
+        2.5
+      ],
+      "unit": "m",
+      "result": "m",
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "numpy_boolean_float",
+      "method": "add",
+      "value": [
+        {
+          "dtype": "bool",
+          "scalar": true
+        },
+        2.5
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 3.5
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_integer",
+      "method": "quantity",
+      "value": [
+        true,
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_integer",
+      "method": "getunit",
+      "value": [
+        true,
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_integer",
+      "method": "add",
+      "value": [
+        true,
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "integer_boolean",
+      "method": "quantity",
+      "value": [
+        1,
+        false
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "integer_boolean",
+      "method": "getunit",
+      "value": [
+        1,
+        false
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "integer_boolean",
+      "method": "add",
+      "value": [
+        1,
+        false
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "signed_numpy_boolean",
+      "method": "quantity",
+      "value": [
+        {
+          "dtype": "int32",
+          "scalar": 2
+        },
+        false
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "signed_numpy_boolean",
+      "method": "getunit",
+      "value": [
+        {
+          "dtype": "int32",
+          "scalar": 2
+        },
+        false
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "signed_numpy_boolean",
+      "method": "add",
+      "value": [
+        {
+          "dtype": "int32",
+          "scalar": 2
+        },
+        false
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_float",
+      "method": "quantity",
+      "value": [
+        true,
+        2.5
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.5
+        ]
+      }
+    },
+    {
+      "name": "boolean_float",
+      "method": "getunit",
+      "value": [
+        true,
+        2.5
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "name": "boolean_float",
+      "method": "add",
+      "value": [
+        true,
+        2.5
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "float_boolean_tuple",
+      "method": "quantity",
+      "value": {
+        "tuple": [
+          2.5,
+          false
+        ]
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          2.5,
+          0.0
+        ]
+      }
+    },
+    {
+      "name": "float_boolean_tuple",
+      "method": "getunit",
+      "value": {
+        "tuple": [
+          2.5,
+          false
+        ]
+      },
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "name": "float_boolean_tuple",
+      "method": "add",
+      "value": {
+        "tuple": [
+          2.5,
+          false
+        ]
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_numpy_float",
+      "method": "quantity",
+      "value": [
+        true,
+        {
+          "dtype": "float32",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.5
+        ]
+      }
+    },
+    {
+      "name": "boolean_numpy_float",
+      "method": "getunit",
+      "value": [
+        true,
+        {
+          "dtype": "float32",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "name": "boolean_numpy_float",
+      "method": "add",
+      "value": [
+        true,
+        {
+          "dtype": "float32",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_numpy_half",
+      "method": "quantity",
+      "value": [
+        true,
+        {
+          "dtype": "float16",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.5
+        ]
+      }
+    },
+    {
+      "name": "boolean_numpy_half",
+      "method": "getunit",
+      "value": [
+        true,
+        {
+          "dtype": "float16",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "name": "boolean_numpy_half",
+      "method": "add",
+      "value": [
+        true,
+        {
+          "dtype": "float16",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_numpy_longdouble",
+      "method": "quantity",
+      "value": [
+        true,
+        {
+          "dtype": "longdouble",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_numpy_longdouble",
+      "method": "getunit",
+      "value": [
+        true,
+        {
+          "dtype": "longdouble",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_numpy_longdouble",
+      "method": "add",
+      "value": [
+        true,
+        {
+          "dtype": "longdouble",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_timedelta_ns",
+      "method": "quantity",
+      "value": [
+        true,
+        {
+          "timedelta": [
+            6,
+            "ns"
+          ]
+        },
+        2.5
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.5
+        ]
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_timedelta_ns",
+      "method": "getunit",
+      "value": [
+        true,
+        {
+          "timedelta": [
+            6,
+            "ns"
+          ]
+        },
+        2.5
+      ],
+      "unit": "m",
+      "result": "m",
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_timedelta_ns",
+      "method": "add",
+      "value": [
+        true,
+        {
+          "timedelta": [
+            6,
+            "ns"
+          ]
+        },
+        2.5
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_timedelta_s",
+      "method": "quantity",
+      "value": [
+        true,
+        {
+          "timedelta": [
+            6,
+            "s"
+          ]
+        },
+        2.5
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.5
+        ]
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_timedelta_s",
+      "method": "getunit",
+      "value": [
+        true,
+        {
+          "timedelta": [
+            6,
+            "s"
+          ]
+        },
+        2.5
+      ],
+      "unit": "m",
+      "result": "m",
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_timedelta_s",
+      "method": "add",
+      "value": [
+        true,
+        {
+          "timedelta": [
+            6,
+            "s"
+          ]
+        },
+        2.5
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_numpy_longlong",
+      "method": "quantity",
+      "value": [
+        true,
+        {
+          "dtype": "longlong",
+          "scalar": 8
+        },
+        2.5
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.5
+        ]
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_numpy_longlong",
+      "method": "getunit",
+      "value": [
+        true,
+        {
+          "dtype": "longlong",
+          "scalar": 8
+        },
+        2.5
+      ],
+      "unit": "m",
+      "result": "m",
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_numpy_longlong",
+      "method": "add",
+      "value": [
+        true,
+        {
+          "dtype": "longlong",
+          "scalar": 8
+        },
+        2.5
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      },
+      "native_error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_float_matrix",
+      "method": "quantity",
+      "value": [
+        [
+          true,
+          2.5
+        ],
+        [
+          1.5,
+          false
+        ]
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          [
+            1.0,
+            2.5
+          ],
+          [
+            1.5,
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "name": "boolean_float_matrix",
+      "method": "getunit",
+      "value": [
+        [
+          true,
+          2.5
+        ],
+        [
+          1.5,
+          false
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_float_matrix",
+      "method": "add",
+      "value": [
+        [
+          true,
+          2.5
+        ],
+        [
+          1.5,
+          false
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_integer_matrix",
+      "method": "quantity",
+      "value": [
+        [
+          true,
+          1
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_integer_matrix",
+      "method": "getunit",
+      "value": [
+        [
+          true,
+          1
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_integer_matrix",
+      "method": "add",
+      "value": [
+        [
+          true,
+          1
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_complex",
+      "method": "quantity",
+      "value": [
+        true,
+        {
+          "complex": [
+            2,
+            3
+          ]
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_complex",
+      "method": "getunit",
+      "value": [
+        true,
+        {
+          "complex": [
+            2,
+            3
+          ]
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_complex",
+      "method": "add",
+      "value": [
+        true,
+        {
+          "complex": [
+            2,
+            3
+          ]
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_only",
+      "method": "quantity",
+      "value": [
+        true,
+        false
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_only",
+      "method": "getunit",
+      "value": [
+        true,
+        false
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_only",
+      "method": "add",
+      "value": [
+        true,
+        false
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "booleans_and_invalid_unit",
+      "method": "quantity",
+      "value": [
+        true,
+        2.5
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "name": "booleans_and_invalid_unit",
+      "method": "getunit",
+      "value": [
+        true,
+        2.5
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "name": "booleans_and_invalid_unit",
+      "method": "add",
+      "value": [
+        true,
+        2.5
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "name": "integer_boolean_invalid_unit",
+      "method": "quantity",
+      "value": [
+        1,
+        true
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "name": "integer_boolean_invalid_unit",
+      "method": "getunit",
+      "value": [
+        1,
+        true
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "name": "integer_boolean_invalid_unit",
+      "method": "add",
+      "value": [
+        1,
+        true
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "name": "unsigned_only_invalid_unit",
+      "method": "quantity",
+      "value": [
+        {
+          "dtype": "uint64",
+          "scalar": 1
+        }
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_only_invalid_unit",
+      "method": "getunit",
+      "value": [
+        {
+          "dtype": "uint64",
+          "scalar": 1
+        }
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "unsigned_only_invalid_unit",
+      "method": "add",
+      "value": [
+        {
+          "dtype": "uint64",
+          "scalar": 1
+        }
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "scalar_overflow",
+      "method": "quantity",
+      "value": 9223372036854775808,
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_quantity> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "scalar_overflow",
+      "method": "getunit",
+      "value": 9223372036854775808,
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_getunit> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "scalar_overflow",
+      "method": "add",
+      "value": 9223372036854775808,
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_add> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "scalar_underflow",
+      "method": "quantity",
+      "value": -9223372036854775809,
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_quantity> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "scalar_underflow",
+      "method": "getunit",
+      "value": -9223372036854775809,
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_getunit> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "scalar_underflow",
+      "method": "add",
+      "value": -9223372036854775809,
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_add> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "list_overflow",
+      "method": "quantity",
+      "value": [
+        9223372036854775808
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_quantity> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "list_overflow",
+      "method": "getunit",
+      "value": [
+        9223372036854775808
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_getunit> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "list_overflow",
+      "method": "add",
+      "value": [
+        9223372036854775808
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_add> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "tuple_underflow",
+      "method": "quantity",
+      "value": {
+        "tuple": [
+          -9223372036854775809
+        ]
+      },
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_quantity> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "tuple_underflow",
+      "method": "getunit",
+      "value": {
+        "tuple": [
+          -9223372036854775809
+        ]
+      },
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_getunit> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "tuple_underflow",
+      "method": "add",
+      "value": {
+        "tuple": [
+          -9223372036854775809
+        ]
+      },
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_add> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "nested_overflow",
+      "method": "quantity",
+      "value": [
+        [
+          9223372036854775808
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_quantity> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "nested_overflow",
+      "method": "getunit",
+      "value": [
+        [
+          9223372036854775808
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_getunit> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "nested_overflow",
+      "method": "add",
+      "value": [
+        [
+          9223372036854775808
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_add> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "arbitrary_precision_overflow",
+      "method": "quantity",
+      "value": 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_quantity> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "arbitrary_precision_overflow",
+      "method": "getunit",
+      "value": 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_getunit> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "arbitrary_precision_overflow",
+      "method": "add",
+      "value": 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_add> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "singleton_beyond_repr_limit",
+      "method": "quantity",
+      "value": [
+        {
+          "int_power": [
+            10,
+            4500
+          ]
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_quantity> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "singleton_beyond_repr_limit",
+      "method": "getunit",
+      "value": [
+        {
+          "int_power": [
+            10,
+            4500
+          ]
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_getunit> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "singleton_beyond_repr_limit",
+      "method": "add",
+      "value": [
+        {
+          "int_power": [
+            10,
+            4500
+          ]
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_add> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "nested_beyond_repr_limit",
+      "method": "quantity",
+      "value": [
+        [
+          {
+            "int_power": [
+              10,
+              4500
+            ]
+          }
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_quantity> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "nested_beyond_repr_limit",
+      "method": "getunit",
+      "value": [
+        [
+          {
+            "int_power": [
+              10,
+              4500
+            ]
+          }
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_getunit> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "nested_beyond_repr_limit",
+      "method": "add",
+      "value": [
+        [
+          {
+            "int_power": [
+              10,
+              4500
+            ]
+          }
+        ]
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_add> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "mixed_float_overflow",
+      "method": "quantity",
+      "value": [
+        true,
+        2.5,
+        9223372036854775808
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_quantity> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "mixed_float_overflow",
+      "method": "getunit",
+      "value": [
+        true,
+        2.5,
+        9223372036854775808
+      ],
+      "unit": "m",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_getunit> returned a result with an exception set",
+        "cause": "OverflowError"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "mixed_float_overflow",
+      "method": "add",
+      "value": [
+        true,
+        2.5,
+        9223372036854775808
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      },
+      "native_error": {
+        "type": "OverflowError",
+        "message": "Python int outside the signed 64-bit range in a quantity record"
+      }
+    },
+    {
+      "name": "scalar_max_control",
+      "method": "quantity",
+      "value": 9223372036854775807,
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -1.0
+      }
+    },
+    {
+      "name": "scalar_max_control",
+      "method": "getunit",
+      "value": 9223372036854775807,
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "name": "scalar_max_control",
+      "method": "add",
+      "value": 9223372036854775807,
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "name": "list_min_control",
+      "method": "quantity",
+      "value": [
+        -9223372036854775808
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "name": "list_min_control",
+      "method": "getunit",
+      "value": [
+        -9223372036854775808
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "name": "list_min_control",
+      "method": "add",
+      "value": [
+        -9223372036854775808
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "name": "singleton_narrowing_control",
+      "method": "quantity",
+      "value": [
+        9007199254740993
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "name": "singleton_narrowing_control",
+      "method": "getunit",
+      "value": [
+        9007199254740993
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "name": "singleton_narrowing_control",
+      "method": "add",
+      "value": [
+        9007199254740993
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      }
+    },
+    {
+      "name": "unsigned_array_control",
+      "method": "quantity",
+      "value": {
+        "array": [
+          9223372036854775808
+        ],
+        "dtype": "uint64"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "name": "unsigned_array_control",
+      "method": "getunit",
+      "value": {
+        "array": [
+          9223372036854775808
+        ],
+        "dtype": "uint64"
+      },
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "name": "unsigned_array_control",
+      "method": "add",
+      "value": {
+        "array": [
+          9223372036854775808
+        ],
+        "dtype": "uint64"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    }
+  ]
+}

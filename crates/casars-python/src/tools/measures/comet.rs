@@ -161,7 +161,7 @@ fn read_distance_or_diameter(
     let Some(comet) = state.comet.as_ref() else {
         return CasaValue::quantity(-1.0, unit);
     };
-    let mjd = match state.frame.epoch.map(|epoch| epoch.value) {
+    let mjd = match state.frame.epoch.as_ref().map(|epoch| epoch.measure.value) {
         Some(MeasureValue::Epoch(epoch)) => epoch.as_mjd(),
         _ => {
             lines.push(LogLine::error(

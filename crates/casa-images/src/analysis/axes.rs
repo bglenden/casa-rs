@@ -7,7 +7,7 @@
 //! axes (#1001), so its coordinates can differ from the record's: a
 //! record's coordinates are found where the record places them.
 
-use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_coordinates::{CoordinateSystem, CoordinateType, StokesCoordinate, StokesType};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{ImageError, ImageInterface, ImagePixel, PagedImage};
@@ -53,6 +53,28 @@ pub(super) fn subimage_coordinates(
     })
 }
 
+/// `coordinates` for a subimage starting at pixel `start`, optionally replacing
+/// the Stokes coordinate with `stokes`.
+pub(super) fn subimage_coordinates_with_stokes(
+    coordinates: &CoordinateSystem,
+    start: &[usize],
+    shape: &[usize],
+    stokes: Option<&[StokesType]>,
+) -> Result<CoordinateSystem, ImageError> {
+    let mut coords = subimage_coordinates(coordinates, start, shape)?;
+    if let Some(stokes_list) = stokes {
+        replace_stokes_coordinate(&mut coords, stokes_list);
+    }
+    Ok(coords)
+}
+
+/// Replaces any Stokes coordinate in `coords` with `stokes`.
+pub(super) fn replace_stokes_coordinate(coords: &mut CoordinateSystem, stokes: &[StokesType]) {
+    if let Some(idx) = coords.find_coordinate(CoordinateType::Stokes) {
+        coords.replace_coordinate(idx, StokesCoordinate::new(stokes.to_vec()));
+    }
+}
+
 /// `image`'s own `coords` record for a subimage starting at pixel `start`,
 /// which keeps what CASA wrote there; `None` without one.
 pub(super) fn legacy_subimage_coordinates<T: ImagePixel>(
@@ -60,13 +82,85 @@ pub(super) fn legacy_subimage_coordinates<T: ImagePixel>(
     start: &[usize],
     shape: &[usize],
 ) -> Option<RecordValue> {
+    legacy_subimage_coordinates_with_stokes(image, start, shape, None)
+}
+
+/// `image`'s own `coords` record for a subimage starting at pixel `start`,
+/// optionally replacing its Stokes list.
+pub(super) fn legacy_subimage_coordinates_with_stokes<T: ImagePixel>(
+    image: &PagedImage<T>,
+    start: &[usize],
+    shape: &[usize],
+    stokes: Option<&[StokesType]>,
+) -> Option<RecordValue> {
     let Some(Value::Record(mut coords)) = image.table().keywords().get("coords").cloned() else {
         return None;
     };
     // The image's coordinates were read from this record, so its fields
     // resolve; if not, the output keeps the coordinates casa-rs writes.
     shift_record_reference_pixels(&mut coords, start, shape).ok()?;
+    if let Some(stokes_list) = stokes {
+        replace_stokes_in_record(&mut coords, stokes_list).ok()?;
+    }
     Some(coords)
+}
+
+/// Updates the `stokes*` sub-record inside a stored `coords` record to hold `stokes`.
+pub(super) fn replace_stokes_in_record(
+    record: &mut RecordValue,
+    stokes: &[StokesType],
+) -> Result<(), ImageError> {
+    let placed = CoordinateSystem::record_coordinates(record).map_err(|error| {
+        ImageError::InvalidMetadata(format!("stokes record coordinates: {error}"))
+    })?;
+    for coordinate in placed {
+        if !coordinate.field.starts_with("stokes") {
+            continue;
+        }
+        let Some(Value::Record(stokes_rec)) = record.get_mut(&coordinate.field) else {
+            continue;
+        };
+        let use_codes = matches!(
+            stokes_rec.get("stokes"),
+            Some(Value::Array(ArrayValue::Int32(_)))
+        );
+        if use_codes {
+            stokes_rec.upsert(
+                "stokes",
+                Value::Array(ArrayValue::from_i32_vec(
+                    stokes.iter().map(|s| s.code()).collect(),
+                )),
+            );
+        } else {
+            stokes_rec.upsert(
+                "stokes",
+                Value::Array(ArrayValue::from_string_vec(
+                    stokes.iter().map(|s| s.name().to_string()).collect(),
+                )),
+            );
+        }
+        if let Some(&first) = stokes.first() {
+            if matches!(stokes_rec.get("crval"), Some(Value::Array(_))) {
+                stokes_rec.upsert(
+                    "crval",
+                    Value::Array(ArrayValue::from_f64_vec(vec![f64::from(first.code())])),
+                );
+            }
+            if matches!(stokes_rec.get("crpix"), Some(Value::Array(_))) {
+                stokes_rec.upsert("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0])));
+            }
+            if let Some(suffix) = coordinate.field.strip_prefix("stokes") {
+                let wr_key = format!("worldreplace{suffix}");
+                if matches!(record.get(&wr_key), Some(Value::Array(_))) {
+                    record.upsert(
+                        wr_key,
+                        Value::Array(ArrayValue::from_f64_vec(vec![f64::from(first.code())])),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Moves each coordinate in `record` back by `start`, the subimage's first

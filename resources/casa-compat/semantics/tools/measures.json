@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "measures",
  "casa_version": "6.7.6.14",
- "audit_revision": "bdafcea294c0f8df2b7ee0f053d02aa22e27765f",
+ "audit_revision": "5b2b19bbb6c0549c44353ac119aa5c09b255211f",
  "methods": {
   "addxvalue": {
    "status": "Implemented",
@@ -77,33 +77,36 @@
   },
   "direction": {
    "status": "Implemented",
-   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). The ten planetary labels resolve through DE200, with angular offsets applied before light deflection. The distance of a DE200 body is applied when converting through the APP to TOPO hop. Resolve COMET using the attached frame table's declared coordinates and observer parallax.",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). The ten planetary labels resolve through DE200, with angular offsets applied before light deflection. The distance of a DE200 body is applied when converting through the APP to TOPO hop. Resolve COMET using the attached frame table's declared coordinates and observer parallax. Apply direction constructor origins with casacore's normalized vector addition and subtraction.",
    "evidence": [
     "signature",
     "casa-values",
     "showframe-casa",
     "rise-set-casa",
-    "comet-direction-casa"
+    "comet-direction-casa",
+    "offsets-casa"
    ]
   },
   "dirshow": {
    "status": "Implemented",
-   "scope": "Shows measures as CASA shows them.",
+   "scope": "Shows measures as CASA shows them. Preserve casacore stream representations for epoch, position and frequency as well as direction and other measures.",
    "evidence": [
     "signature",
     "casa-values",
     "spectral-casa",
-    "geometry-casa"
+    "geometry-casa",
+    "offsets-casa"
    ]
   },
   "doframe": {
    "status": "Implemented",
-   "scope": "Sets explicit epoch, position, direction and radial-velocity frame elements. The initial frame is empty under the recorded owner decision. Use the active frame ephemeris when a COMET direction is set.",
+   "scope": "Sets explicit epoch, position, direction and radial-velocity frame elements. The initial frame is empty under the recorded owner decision. Use the active frame ephemeris when a COMET direction is set. Use the first value of vector frame records and materialize reference offsets in the record's own reference while displaying the raw frame coordinates.",
    "evidence": [
     "signature",
     "casa-values",
     "spectral-casa",
-    "comet-direction-casa"
+    "comet-direction-casa",
+    "offsets-casa"
    ]
   },
   "done": {
@@ -132,11 +135,12 @@
   },
   "epoch": {
    "status": "Implemented",
-   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Includes the casacore UT1/UT2 identity conversion.",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Includes the casacore UT1/UT2 identity conversion. Apply constructor output offsets and support casacore R_ input rounding and output labels.",
    "evidence": [
     "signature",
     "casa-values",
-    "showframe-casa"
+    "showframe-casa",
+    "offsets-casa"
    ]
   },
   "expand": {
@@ -166,11 +170,12 @@
   },
   "frequency": {
    "status": "Implemented",
-   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA.",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. Preserve frequency constructor reference origins.",
    "evidence": [
     "signature",
     "casa-values",
-    "undefined-frequency-casa"
+    "undefined-frequency-casa",
+    "offsets-casa"
    ]
   },
   "getoffset": {
@@ -243,7 +248,7 @@
   },
   "measure": {
    "status": "Implemented",
-   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. Reads and converts baseline, UVW and earth magnetic measures. Generic output reference offsets are still unfinished (#1252). Direct planetary and UT1/UT2 conversions are checked against CASA. Resolve an active COMET direction for frequency and radial-velocity conversions.",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. Reads and converts baseline, UVW and earth magnetic measures. Direct planetary and UT1/UT2 conversions are checked against CASA. Resolve an active COMET direction for frequency and radial-velocity conversions. Apply nested input origins before conversion and subtract output reference origins after conversion for all nine measure kinds.",
    "evidence": [
     "signature",
     "casa-values",
@@ -251,7 +256,8 @@
     "spectral-casa",
     "geometry-casa",
     "showframe-casa",
-    "comet-direction-casa"
+    "comet-direction-casa",
+    "offsets-casa"
    ]
   },
   "observatory": {
@@ -275,18 +281,20 @@
   },
   "posangle": {
    "status": "Implemented",
-   "scope": "Angular separation and position angle, as casacore computes them.",
+   "scope": "Angular separation and position angle, as casacore computes them. Use the first values of direction vectors and resolve modeled or cross-reference direction inputs when required.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "offsets-casa"
    ]
   },
   "position": {
    "status": "Implemented",
-   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame).",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Read scalar or vector Cartesian and spherical quantities, preserve output offsets, and use casacore's ITRF-to-WGS84 iteration.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "offsets-casa"
    ]
   },
   "radialvelocity": {
@@ -319,10 +327,11 @@
   },
   "separation": {
    "status": "Implemented",
-   "scope": "Angular separation and position angle, as casacore computes them.",
+   "scope": "Angular separation and position angle, as casacore computes them. Use the first values of direction vectors and resolve modeled or cross-reference direction inputs when required.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "offsets-casa"
    ]
   },
   "shift": {
@@ -354,11 +363,12 @@
   },
   "source": {
    "status": "Implemented",
-   "scope": "The measures data's observatories and sources, and casacore's reference codes.",
+   "scope": "The measures data's observatories and sources, and casacore's reference codes. Preserve the reference origin of a supplied direction record.",
    "evidence": [
     "signature",
     "casa-values",
-    "casa-names"
+    "casa-names",
+    "offsets-casa"
    ]
   },
   "sourcelist": {
@@ -898,6 +908,23 @@
    "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_comet.py; CASAPY tools/simulation/measures_comet_benchmark.py --measures-data target/geometry-snapshot --direction-cases --backend casa/casars",
    "receipt": "resources/casa-compat/evidence/me-comet-direction-equivalence-20261118.json"
+  },
+  "offsets-casa": {
+   "kind": "CASA 6.7.6.14 reference-offset and measures-form equivalence and release performance",
+   "state": "passed",
+   "scope": "Offsets, constructors, active frame references, epoch labels, position vectors and direction consumers.",
+   "result": "140 recorded reference and frame cases pass. All 101 release timings are faster than CASA, from 1.20x to 32.75x.",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_measures_offsets.json",
+    "crates/casars-python/python/tests/test_measures_offsets.py",
+    "tools/simulation/measures_offsets_oracle.py",
+    "tools/simulation/measures_offsets_benchmark.py"
+   ],
+   "source_revision": "5b2b19bbb6c0549c44353ac119aa5c09b255211f",
+   "revision": "5b2b19bbb6c0549c44353ac119aa5c09b255211f",
+   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+   "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_offsets.py; CASAPY tools/simulation/measures_offsets_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars",
+   "receipt": "resources/casa-compat/evidence/me-reference-offset-equivalence-20261118.json"
   }
  }
 }

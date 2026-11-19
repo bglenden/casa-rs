@@ -8,8 +8,8 @@
 //!   to C++ `MPosition`.
 //!
 //! Conversions between ITRF (geocentric Cartesian) and WGS84 (geodetic) use
-//! casacore-compatible WGS84 ellipsoid constants for WGS84-to-ITRF and the
-//! [`sofars`] crate's `gc2gd` inverse for ITRF-to-WGS84.
+//! casacore-compatible WGS84 ellipsoid constants and the iteration in
+//! casacore's `MCPosition` for ITRF-to-WGS84.
 
 use std::fmt;
 use std::str::FromStr;
@@ -274,19 +274,55 @@ impl MPosition {
         }
 
         match (self.refer, target) {
-            (PositionRef::ITRF, PositionRef::WGS84) => {
-                let (lon, lat, h) = sofars::coords::gc2gd(WGS84_ELLIPSOID, self.values)
-                    .map_err(|code| MeasureError::SofarsError { code })?;
-                Ok(MPosition {
-                    values: [lon, lat, h],
-                    refer: PositionRef::WGS84,
-                })
-            }
+            (PositionRef::ITRF, PositionRef::WGS84) => Ok(MPosition {
+                values: casacore_itrf_to_wgs84(self.values)?,
+                refer: PositionRef::WGS84,
+            }),
             (PositionRef::WGS84, PositionRef::ITRF) => Ok(MPosition {
                 values: casacore_wgs84_to_itrf(self.values[0], self.values[1], self.values[2]),
                 refer: PositionRef::ITRF,
             }),
             _ => unreachable!("only two position reference types exist"),
+        }
+    }
+}
+
+fn casacore_itrf_to_wgs84([x, y, z]: [f64; 3]) -> Result<[f64; 3], MeasureError> {
+    const FLATTENING: f64 = 1.0 / 298.257_223_563;
+    const ECCENTRICITY_SQUARED: f64 = FLATTENING * (2.0 - FLATTENING);
+    let radius = (x * x + y * y + z * z).sqrt();
+    if !radius.is_finite() {
+        return Err(MeasureError::ModelError {
+            model: "WGS84",
+            reason: "ITRF position has a non-finite radius".into(),
+        });
+    }
+    let longitude = y.atan2(x);
+    let mut latitude = if radius == 0.0 {
+        0.0
+    } else {
+        (z / radius).clamp(-1.0, 1.0).asin()
+    };
+    let planar_radius = radius * latitude.cos();
+    // For finite positions the iteration is monotone and bounded by ±π/2.
+    // Near the equatorial evolute convergence can take many steps.
+    loop {
+        let previous = latitude;
+        let sine = previous.sin();
+        let normal_radius = CASACORE_WGS84_A_M / (1.0 - ECCENTRICITY_SQUARED * sine * sine).sqrt();
+        let axial = z + normal_radius * ECCENTRICITY_SQUARED * sine;
+        latitude = if planar_radius == 0.0 {
+            if axial >= 0.0 {
+                std::f64::consts::FRAC_PI_2
+            } else {
+                -std::f64::consts::FRAC_PI_2
+            }
+        } else {
+            (axial / planar_radius).atan()
+        };
+        if (latitude - previous).abs() <= 1.0e-10 {
+            let height = planar_radius / latitude.cos() - normal_radius;
+            return Ok([longitude, latitude, height]);
         }
     }
 }

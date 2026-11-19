@@ -13,6 +13,10 @@ permissions:
   contents: read
 
 jobs:
+  release_checks:
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/ci.yml
+
   build_wheels:
     name: Build release assets (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
@@ -197,7 +201,7 @@ jobs:
   publish:
     name: Publish release artifacts
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build_wheels, build_sdist]
+    needs: [release_checks, build_wheels, build_sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: write
