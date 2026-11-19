@@ -17,9 +17,10 @@ use super::stub;
 pub(super) struct SharedImage {
     handle: Mutex<ImageHandle>,
     use_lock: Option<Arc<TableUseLock>>,
+    shareable: bool,
 }
 
-type OpenImages = BTreeMap<PathBuf, Weak<SharedImage>>;
+type OpenImages = BTreeMap<PathBuf, Vec<Weak<SharedImage>>>;
 
 static ATTACHED: Mutex<OpenImages> = Mutex::new(BTreeMap::new());
 
@@ -38,6 +39,7 @@ impl AttachedImage {
             image: Arc::new(SharedImage {
                 handle: Mutex::new(image),
                 use_lock: None,
+                shareable: false,
             }),
             key: None,
         }
@@ -48,31 +50,68 @@ impl AttachedImage {
             return ImageHandle::open(path).map(Self::temporary).map_err(raised);
         }
         let key = key(path)?;
-        if let Some(image) = registry.get(&key).and_then(Weak::upgrade)
-            && image
-                .use_lock
-                .as_ref()
-                .is_none_or(|lease| lease.matches_directory(&key))
+        if let Some(image) = registry
+            .get(&key)
+            .into_iter()
+            .flatten()
+            .filter_map(Weak::upgrade)
+            .find(|image| {
+                image.shareable
+                    && image
+                        .use_lock
+                        .as_ref()
+                        .is_none_or(|lease| lease.matches_directory(&key))
+            })
         {
             return Ok(Self {
                 image,
                 key: Some(key),
             });
         }
+        Self::open_native(registry, path, &key, true, TableUseLock::acquire)
+    }
+
+    /// V1 Data callers get a fresh view on every open. The compatibility
+    /// view is registered for safe replacement and reads the resolved path.
+    pub(super) fn open_data(
+        registry: &mut OpenImages,
+        path: &Path,
+        writable: bool,
+    ) -> PyResult<Self> {
+        let key = key(path)?;
+        let acquire = if writable {
+            TableUseLock::acquire
+        } else {
+            TableUseLock::acquire_readonly
+        };
+        Self::open_native(registry, &key, &key, false, acquire)
+    }
+
+    fn open_native(
+        registry: &mut OpenImages,
+        path: &Path,
+        key: &Path,
+        shareable: bool,
+        acquire: fn(&Path) -> Result<TableUseLock, TableError>,
+    ) -> PyResult<Self> {
         let use_lock = key
             .join("table.dat")
             .is_file()
-            .then(|| TableUseLock::acquire(&key).map(Arc::new))
+            .then(|| acquire(key).map(Arc::new))
             .transpose()
             .map_err(raised)?;
         let image = Arc::new(SharedImage {
             handle: Mutex::new(ImageHandle::open(path).map_err(raised)?),
             use_lock,
+            shareable,
         });
-        registry.insert(key.clone(), Arc::downgrade(&image));
+        registry
+            .entry(key.to_path_buf())
+            .or_default()
+            .push(Arc::downgrade(&image));
         Ok(Self {
             image,
-            key: Some(key),
+            key: Some(key.to_path_buf()),
         })
     }
 
@@ -85,6 +124,18 @@ impl AttachedImage {
 
     pub(super) fn is_persistent(&self) -> bool {
         self.key.is_some() || self.lock().fits().is_some()
+    }
+
+    pub(super) fn check_directory(&self) -> PyResult<()> {
+        if let (Some(key), Some(lease)) = (&self.key, &self.image.use_lock)
+            && !lease.matches_directory(key)
+        {
+            return Err(raised(format!(
+                "The image at {} has changed",
+                key.display()
+            )));
+        }
+        Ok(())
     }
 
     pub(super) fn rename(&self, name: &str, overwrite: bool, history: bool) -> PyResult<Self> {
@@ -220,11 +271,12 @@ impl AttachedImage {
             Ok(image) => Arc::new(SharedImage {
                 handle: Mutex::new(image),
                 use_lock: self.image.use_lock.clone(),
+                shareable: self.image.shareable,
             }),
             Err(error) => return restore_native_move(source, &target, backup, error),
         };
         registry.remove(source);
-        registry.insert(target.clone(), Arc::downgrade(&image));
+        registry.insert(target.clone(), vec![Arc::downgrade(&image)]);
         Ok(Self {
             image,
             key: Some(target),
@@ -275,11 +327,12 @@ pub(super) fn conflicting_images(
     path: &Path,
     expected_at_path: usize,
 ) -> bool {
-    registry.iter().any(|(open_path, image)| {
+    registry.iter().any(|(open_path, images)| {
         if open_path == path {
-            image.strong_count() > expected_at_path
+            images.iter().map(Weak::strong_count).sum::<usize>() > expected_at_path
         } else {
-            (open_path.starts_with(path) || path.starts_with(open_path)) && image.strong_count() > 0
+            (open_path.starts_with(path) || path.starts_with(open_path))
+                && images.iter().any(|image| image.strong_count() > 0)
         }
     })
 }
@@ -464,11 +517,13 @@ impl Drop for AttachedImage {
         if let Some(key) = &self.key {
             let mut registry = registry();
             if Arc::strong_count(&self.image) == 1
-                && registry
-                    .get(key)
-                    .is_some_and(|registered| registered.ptr_eq(&Arc::downgrade(&self.image)))
+                && let Some(images) = registry.get_mut(key)
             {
-                registry.remove(key);
+                let current = Arc::downgrade(&self.image);
+                images.retain(|image| !image.ptr_eq(&current) && image.strong_count() > 0);
+                if images.is_empty() {
+                    registry.remove(key);
+                }
             }
         }
     }

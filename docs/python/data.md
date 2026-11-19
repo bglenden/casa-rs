@@ -153,7 +153,8 @@ the source's history and mask tables.
 
 ### Access an existing image through the Data API
 
-Use `Image.open(path, writable=False)` to open an existing CASA-compatible image. The v1 surface is intentionally narrow:
+`Image.open(path, writable=False)` provides the v1 slice and metadata API
+through `casars.tools.image`. It supports existing native CASA images.
 
 - metadata access through `shape`, `pixel_type`, `units`, `image_info`, `misc_info`, `mask_names`, and `default_mask_name`
 - pixel I/O through `get_slice`, `put_slice`, `get_plane`, and `get_mask_slice`

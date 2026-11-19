@@ -132,7 +132,7 @@ impl Pixels {
 
 // NumPy copies into a private contiguous buffer. No caller can mutate that
 // buffer while Rust reads it with the interpreter detached.
-fn snapshot_array<T: Element + Copy + Send + Sync>(
+pub(super) fn snapshot_array<T: Element + Copy + Send + Sync>(
     py: Python<'_>,
     source: &Bound<'_, PyUntypedArray>,
 ) -> PyResult<ArrayD<T>> {
