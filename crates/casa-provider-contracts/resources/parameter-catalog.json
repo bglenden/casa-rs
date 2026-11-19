@@ -12758,8 +12758,8 @@
       "persistence_class": "profile"
     },
     {
-      "id": "plotbandpass.antenna",
-      "semantic_revision": 1,
+      "id": "ms.selection.antenna",
+      "semantic_revision": 5,
       "casa_name": "antenna",
       "value_domain": {
         "kind": "variant"
@@ -12778,8 +12778,8 @@
       "persistence_class": "profile"
     },
     {
-      "id": "plotbandpass.field",
-      "semantic_revision": 1,
+      "id": "ms.selection.field",
+      "semantic_revision": 6,
       "casa_name": "field",
       "value_domain": {
         "kind": "variant"
@@ -12798,8 +12798,8 @@
       "persistence_class": "profile"
     },
     {
-      "id": "plotbandpass.spw",
-      "semantic_revision": 1,
+      "id": "ms.selection.spw",
+      "semantic_revision": 4,
       "casa_name": "spw",
       "value_domain": {
         "kind": "variant"
@@ -13064,26 +13064,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "plotbandpass.interactive",
-      "semantic_revision": 1,
-      "casa_name": "interactive",
-      "value_domain": {
-        "kind": "bool"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "presentation",
-      "documentation": {
-        "summary": "if False, then run to completion automatically without pause",
-        "details": null,
-        "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "plotbandpass.showpoints",
       "semantic_revision": 1,
       "casa_name": "showpoints",
@@ -13204,8 +13184,8 @@
       "persistence_class": "profile"
     },
     {
-      "id": "plotbandpass.pwv",
-      "semantic_revision": 1,
+      "id": "parameter.pwv",
+      "semantic_revision": 2,
       "casa_name": "pwv",
       "value_domain": {
         "kind": "variant"

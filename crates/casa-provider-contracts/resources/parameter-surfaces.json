@@ -33860,8 +33860,8 @@
         {
           "name": "caltable",
           "concept": {
-            "id": "calibration.tablein",
-            "semantic_revision": 1
+            "id": "calibration.caltable",
+            "semantic_revision": 2
           },
           "order": 0,
           "default": {
@@ -33900,8 +33900,8 @@
         {
           "name": "antenna",
           "concept": {
-            "id": "plotbandpass.antenna",
-            "semantic_revision": 1
+            "id": "ms.selection.antenna",
+            "semantic_revision": 5
           },
           "order": 1,
           "default": {
@@ -33940,8 +33940,8 @@
         {
           "name": "field",
           "concept": {
-            "id": "plotbandpass.field",
-            "semantic_revision": 1
+            "id": "ms.selection.field",
+            "semantic_revision": 6
           },
           "order": 2,
           "default": {
@@ -33980,8 +33980,8 @@
         {
           "name": "spw",
           "concept": {
-            "id": "plotbandpass.spw",
-            "semantic_revision": 1
+            "id": "ms.selection.spw",
+            "semantic_revision": 4
           },
           "order": 3,
           "default": {
@@ -34506,7 +34506,7 @@
         {
           "name": "interactive",
           "concept": {
-            "id": "plotbandpass.interactive",
+            "id": "parameter.interactive",
             "semantic_revision": 1
           },
           "order": 16,
@@ -34783,8 +34783,8 @@
         {
           "name": "pwv",
           "concept": {
-            "id": "plotbandpass.pwv",
-            "semantic_revision": 1
+            "id": "parameter.pwv",
+            "semantic_revision": 2
           },
           "order": 23,
           "default": {
