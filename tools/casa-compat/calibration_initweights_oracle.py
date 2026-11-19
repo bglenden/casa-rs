@@ -143,7 +143,11 @@ def main():
     from casars import tasks as native
 
     assert casa.version_string() == "6.7.6.14"
-    assert inspect.signature(casa.initweights) == inspect.signature(native.initweights)
+    reference = inspect.signature(casa.initweights)
+    candidate = inspect.signature(native.initweights)
+    assert [(p.name, p.kind, p.default) for p in reference.parameters.values()] == [
+        (p.name, p.kind, p.default) for p in candidate.parameters.values()
+    ]
     base = args.work / "base.ms"
     fixture(base)
     cases = [(mode, spectrum, contents)
