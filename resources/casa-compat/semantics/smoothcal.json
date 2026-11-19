@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "task": "smoothcal",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "6076173721a7a1fc39451836fbd518e0d08349e1",
+  "parameters": {
+    "vis": {
+      "scope": "MeasurementSet supplying field names and IDs.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    },
+    "tablein": {
+      "scope": "Existing calibration table. G, T, B, K and Fringe tables have paired coverage.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    },
+    "caltable": {
+      "scope": "Separate result or an in-place update when empty.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    },
+    "field": {
+      "scope": "Field selection expression or a list. Empty selects all fields.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    },
+    "smoothtype": {
+      "scope": "Mean or median over valid solutions. Complex smoothing operates on amplitude and tracked phase.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    },
+    "smoothtime": {
+      "scope": "Strictly positive full duration in seconds. Paired cases include integer inputs and samples on window boundaries.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    },
+    "ratesmooth": {
+      "scope": "Include fringe rate predictions when tracking phase. Ordinary gain solutions are unaffected.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "table-operation"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "table-operation",
+      "title": "Calibration table operation",
+      "status": "Implemented",
+      "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions.",
+      "gap": "The documented CASA behavior differences are recorded below.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "preserve-fringe-delay-units",
+      "state": "Proposed",
+      "inputs": "Fringe Jones smoothing with smoothtype set to median.",
+      "casa": "Wraps delay and other non-phase values as radians and bypasses their median.",
+      "ours": "Preserves their units and applies the numerical median to each non-phase series.",
+      "rationale": "The source condition applies phase handling to every parameter. An 8 ns delay became about 1.717 ns.",
+      "impact": "The fringe phase comparisons pass and the non-phase outputs follow independently calculated medians.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Same-input Python task and casacore interchange",
+      "state": "passed",
+      "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions.",
+      "result": "17 paired case groups and four downstream applications passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "6076173721a7a1fc39451836fbd518e0d08349e1",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_smoothcal_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/calibration-table-maintenance-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_smoothcal_oracle.py"
+      ]
+    }
+  }
+}

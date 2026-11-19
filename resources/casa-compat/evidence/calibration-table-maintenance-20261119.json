@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "oracle": "CASA task and casacore table reader",
+  "casa_version": "6.7.6.14",
+  "revision": "6076173721a7a1fc39451836fbd518e0d08349e1",
+  "execution_date": "2026-11-19",
+  "smoothcal": {
+    "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_smoothcal_oracle.py --work <empty-directory> --native-bin <calibrate>",
+    "case_groups": 17,
+    "downstream_application_combinations": 4,
+    "result": "passed",
+    "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions."
+  },
+  "rerefant": {
+    "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>",
+    "case_groups": 15,
+    "downstream_application_combinations": 4,
+    "result": "passed",
+    "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays."
+  }
+}

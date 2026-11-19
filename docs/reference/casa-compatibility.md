@@ -954,6 +954,59 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 5, in CASA's order: yes
 - Defaults that differ: none
 
+#### rerefant parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `6076173721a7a1fc39451836fbd518e0d08349e1`. Status counts: Default only: 0, Implemented: 5, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | MeasurementSet supplying antenna identifiers and positions. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [paired](#rerefant-evidence-paired) |
+| `tablein` | `''` | `''`; `tablein` → `tablein` | Implemented | Existing gain, bandpass, scalar gain, leakage or fringe table. Unsupported delay input raises a task error. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#rerefant-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Separate result or an in-place update when empty. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#rerefant-evidence-paired) |
+| `refantmode` | `'flex'` | `'flex'`; `refantmode` → `refantmode` | Implemented | Flexible selection maintains the prior reference when the primary loses coverage. Strict accepts only the primary. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `flex`, `strict` | [paired](#rerefant-evidence-paired) |
+| `refant` | `''` | `''`; `refant` → `refant` | Implemented | An ordered antenna selection. Numeric IDs and names are paired. A missing or empty selection fails. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `string` | [paired](#rerefant-evidence-paired) |
+
+#### rerefant interacting modes and task behavior
+
+<a id="rerefant-behavior-table-operation"></a>
+##### Calibration table operation
+
+**Implemented** — Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays.
+
+The documented CASA behavior differences are recorded below.
+
+Evidence: [paired](#rerefant-evidence-paired).
+
+#### rerefant deviations and unfinished work
+
+##### return-error-on-unsupported-delay: Proposed
+
+- Inputs: K Jones delay table with a valid strict reference.
+- CASA: Terminates the process while reading a complex parameter column.
+- casa-rs: Raises a task error and leaves the output path untouched.
+- Rationale: The generic CASA reference method expects CPARAM and K Jones delay tables carry FPARAM.
+- User impact: Callers can handle an unsupported table type without losing the Python process.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#rerefant-evidence-paired).
+
+#### rerefant evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="rerefant-evidence-paired"></a>
+##### paired
+
+**Same-input Python task and casacore interchange — passed.** 15 paired case groups and four downstream applications passed. Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays.
+
+- [tools/casa-compat/calibration_rerefant_oracle.py](https://github.com/bglenden/casa-rs/blob/6076173721a7a1fc39451836fbd518e0d08349e1/tools/casa-compat/calibration_rerefant_oracle.py)
+- Revision: `6076173721a7a1fc39451836fbd518e0d08349e1`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
+
 ### simalma
 
 - CASA source: `casatasks/simalma.py`, 31 parameters
@@ -1500,6 +1553,61 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 7, in CASA's order: yes
 - Defaults that differ: none
+
+#### smoothcal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `6076173721a7a1fc39451836fbd518e0d08349e1`. Status counts: Default only: 0, Implemented: 7, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | MeasurementSet supplying field names and IDs. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [paired](#smoothcal-evidence-paired) |
+| `tablein` | `''` | `''`; `tablein` → `tablein` | Implemented | Existing calibration table. G, T, B, K and Fringe tables have paired coverage. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#smoothcal-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Separate result or an in-place update when empty. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#smoothcal-evidence-paired) |
+| `field` | `[]` | `[]`; `field` → `field` | Implemented | Field selection expression or a list. Empty selects all fields. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [paired](#smoothcal-evidence-paired) |
+| `smoothtype` | `'median'` | `'median'`; `smoothtype` → `smoothtype` | Implemented | Mean or median over valid solutions. Complex smoothing operates on amplitude and tracked phase. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `string` | [paired](#smoothcal-evidence-paired) |
+| `smoothtime` | `60.0` | `60.0`; `smoothtime` → `smoothtime` | Implemented | Strictly positive full duration in seconds. Paired cases include integer inputs and samples on window boundaries. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `float` | [paired](#smoothcal-evidence-paired) |
+| `ratesmooth` | `False` | `False`; `ratesmooth` → `ratesmooth` | Implemented | Include fringe rate predictions when tracking phase. Ordinary gain solutions are unaffected. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `bool` | [paired](#smoothcal-evidence-paired) |
+
+#### smoothcal interacting modes and task behavior
+
+<a id="smoothcal-behavior-table-operation"></a>
+##### Calibration table operation
+
+**Implemented** — Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions.
+
+The documented CASA behavior differences are recorded below.
+
+Evidence: [paired](#smoothcal-evidence-paired).
+
+#### smoothcal deviations and unfinished work
+
+##### preserve-fringe-delay-units: Proposed
+
+- Inputs: Fringe Jones smoothing with smoothtype set to median.
+- CASA: Wraps delay and other non-phase values as radians and bypasses their median.
+- casa-rs: Preserves their units and applies the numerical median to each non-phase series.
+- Rationale: The source condition applies phase handling to every parameter. An 8 ns delay became about 1.717 ns.
+- User impact: The fringe phase comparisons pass and the non-phase outputs follow independently calculated medians.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#smoothcal-evidence-paired).
+
+#### smoothcal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="smoothcal-evidence-paired"></a>
+##### paired
+
+**Same-input Python task and casacore interchange — passed.** 17 paired case groups and four downstream applications passed. Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions.
+
+- [tools/casa-compat/calibration_smoothcal_oracle.py](https://github.com/bglenden/casa-rs/blob/6076173721a7a1fc39451836fbd518e0d08349e1/tools/casa-compat/calibration_smoothcal_oracle.py)
+- Revision: `6076173721a7a1fc39451836fbd518e0d08349e1`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_smoothcal_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
 
 ### split
 
