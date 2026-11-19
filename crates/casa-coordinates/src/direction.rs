@@ -73,6 +73,14 @@ pub struct DirectionCoordinate {
     world_units: [String; 2],
     /// Names supplied by the stored coordinate record, if any.
     world_names: Option<[String; 2]>,
+    removed_axis: Option<RemovedAxis>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RemovedAxis {
+    pub index: usize,
+    pub pixel: f64,
+    pub world_rad: f64,
 }
 
 /// Returns the native latitude of the fiducial point for a given projection type.
@@ -214,6 +222,39 @@ impl DirectionCoordinate {
             native_pole,
             world_units: ["rad".into(), "rad".into()],
             world_names: None,
+            removed_axis: None,
+        }
+    }
+
+    pub(crate) fn remove_record_axis(
+        &mut self,
+        axis: usize,
+        pixel: f64,
+        world: f64,
+    ) -> Result<(), CoordinateError> {
+        self.removed_axis = Some(RemovedAxis {
+            index: axis,
+            pixel,
+            world_rad: convert_value_to_unit(
+                world,
+                &self.world_units[axis],
+                "rad",
+                "worldreplace",
+            )?,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn removed_axis(&self) -> Option<RemovedAxis> {
+        self.removed_axis
+    }
+
+    fn select_axis<T>(&self, values: [T; 2]) -> Vec<T> {
+        let [x, y] = values;
+        match self.removed_axis.map(|axis| axis.index) {
+            Some(0) => vec![y],
+            Some(_) => vec![x],
+            None => vec![x, y],
         }
     }
 
@@ -222,6 +263,19 @@ impl DirectionCoordinate {
     /// among them, are radians whatever these are.
     pub fn world_units(&self) -> &[String; 2] {
         &self.world_units
+    }
+
+    /// The stored unit of each visible world axis, in axis order.
+    pub fn visible_world_units(&self) -> Vec<String> {
+        self.select_axis(self.world_units.clone())
+    }
+
+    /// The visible reference values and increments in their stored world units.
+    pub fn reference_and_increment_in_world_units(&self) -> (Vec<f64>, Vec<f64>) {
+        (
+            self.select_axis(self.in_world_units(self.crval)),
+            self.select_axis(self.in_world_units(self.cdelt)),
+        )
     }
 
     /// Stores and presents the coordinate in the angle units `units`, as
@@ -807,65 +861,82 @@ impl Coordinate for DirectionCoordinate {
     }
 
     fn n_pixel_axes(&self) -> usize {
-        2
+        2 - usize::from(self.removed_axis.is_some())
     }
 
     fn n_world_axes(&self) -> usize {
-        2
+        self.n_pixel_axes()
     }
 
     fn to_world(&self, pixel: &[f64]) -> Result<Vec<f64>, CoordinateError> {
-        if pixel.len() != 2 {
+        if pixel.len() != self.n_pixel_axes() {
             return Err(CoordinateError::DimensionMismatch {
-                expected: 2,
+                expected: self.n_pixel_axes(),
                 got: pixel.len(),
             });
         }
 
-        Ok(self.pixel_to_world([pixel[0], pixel[1]])?.to_vec())
+        let full = if let Some(removed) = self.removed_axis {
+            let mut full = [pixel[0]; 2];
+            full[removed.index] = removed.pixel;
+            full
+        } else {
+            [pixel[0], pixel[1]]
+        };
+        Ok(self.select_axis(self.pixel_to_world(full)?))
     }
 
     fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
-        if world.len() != 2 {
+        if world.len() != self.n_world_axes() {
             return Err(CoordinateError::DimensionMismatch {
-                expected: 2,
+                expected: self.n_world_axes(),
                 got: world.len(),
             });
         }
 
-        Ok(self.world_to_pixel([world[0], world[1]])?.to_vec())
+        let full = if let Some(removed) = self.removed_axis {
+            let mut full = [world[0]; 2];
+            full[removed.index] = removed.world_rad;
+            full
+        } else {
+            [world[0], world[1]]
+        };
+        Ok(self.select_axis(self.world_to_pixel(full)?))
     }
 
     fn reference_value(&self) -> Vec<f64> {
-        self.crval.to_vec()
+        self.select_axis(self.crval)
     }
 
     fn reference_pixel(&self) -> Vec<f64> {
-        self.crpix.to_vec()
+        self.select_axis(self.crpix)
     }
 
     fn increment(&self) -> Vec<f64> {
-        self.cdelt.to_vec()
+        self.select_axis(self.cdelt)
     }
 
     fn axis_names(&self) -> Vec<String> {
-        if let Some(names) = &self.world_names {
-            return names.to_vec();
-        }
-        match self.direction_ref {
-            DirectionRef::GALACTIC | DirectionRef::SUPERGAL => {
-                vec!["Longitude".into(), "Latitude".into()]
-            }
-            _ => vec!["Right Ascension".into(), "Declination".into()],
-        }
+        self.select_axis(self.full_axis_names())
     }
 
     fn axis_units(&self) -> Vec<String> {
-        vec!["rad".into(), "rad".into()]
+        vec!["rad".into(); self.n_world_axes()]
     }
 }
 
 impl DirectionCoordinate {
+    fn full_axis_names(&self) -> [String; 2] {
+        self.world_names
+            .clone()
+            .unwrap_or_else(|| match self.direction_ref {
+                DirectionRef::GALACTIC | DirectionRef::SUPERGAL => {
+                    ["Longitude".into(), "Latitude".into()]
+                }
+                _ => ["Right Ascension".into(), "Declination".into()],
+            })
+    }
+
     pub(crate) fn to_record(&self) -> RecordValue {
         let mut rec = RecordValue::default();
         rec.upsert(
@@ -910,7 +981,7 @@ impl DirectionCoordinate {
         );
         rec.upsert(
             "axes",
-            Value::Array(ArrayValue::from_string_vec(self.axis_names())),
+            Value::Array(ArrayValue::from_string_vec(self.full_axis_names().to_vec())),
         );
         rec.upsert(
             "units",

@@ -14,8 +14,8 @@
 //! coordinates and the pixel value. casa-rs reads the images whose
 //! coordinates each own adjacent axes in order, and those whose linear
 //! coordinate has independent removed axes (`impv`'s position-velocity
-//! image, and a linear image dropped on its first or second axis). It
-//! refuses the three it cannot represent (#1002). The record also holds
+//! image, and a linear image dropped on its first or second axis), and a
+//! direction slice. It refuses the layouts it cannot represent (#1002). The record also holds
 //! CASA's world coordinates and values for boxes cut from three of them,
 //! which casa-rs's `imsubimage` cuts alike.
 
@@ -151,6 +151,7 @@ fn transposed_casa_images_read_as_casa_reads_them() {
         "pv.image",
         "dropdeg_linear.image",
         "dropdeg_linear_between.image",
+        "dropdeg_ra.image",
         "tabular_spectral_first.image",
     ] {
         let casa = casa(name);
@@ -186,7 +187,6 @@ fn casa_images_whose_axes_casa_rs_cannot_represent_are_refused() {
             "Declination, Right Ascension",
         ),
         ("interleaved.image", "direction0", "which are not adjacent"),
-        ("dropdeg_ra.image", "direction0", "has removed axes"),
     ] {
         let maps = &casa(name)["maps"][coordinate];
         let error = PagedImage::<f32>::open(copy_image(name, scratch.path()))

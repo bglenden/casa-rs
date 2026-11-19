@@ -261,6 +261,28 @@ struct Lexer<'s> {
     pos: usize,
 }
 
+/// Image references in the lexical order used by the expression parser.
+pub(crate) fn lattice_image_names(expr: &str) -> Result<Vec<String>, ExprParseError> {
+    let mut lexer = Lexer::new(expr);
+    let mut token = lexer.next_token()?.0;
+    let mut names = Vec::new();
+    while token != Token::Eof {
+        let next = lexer.next_token()?.0;
+        let name = match token {
+            Token::QuotedPath(name) => Some(name),
+            Token::Ident(name) if next != Token::LParen => Some(name),
+            _ => None,
+        };
+        if let Some(name) = name
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+        token = next;
+    }
+    Ok(names)
+}
+
 impl<'s> Lexer<'s> {
     fn new(src: &'s str) -> Self {
         Self { src, pos: 0 }

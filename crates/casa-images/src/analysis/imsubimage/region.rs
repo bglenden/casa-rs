@@ -7,16 +7,20 @@ use std::fs;
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType, StokesType};
+use casa_types::ArrayD;
 use casa_types::quanta::Quantity;
 use casa_types::quanta::casacore::mvangle_radians;
-use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
-use ndarray::{Array2, Axis, Dimension, IxDyn, Zip};
+use ndarray::{Array2, Axis, IxDyn, Zip};
 
 use crate::analysis::axes::{direction_plane_axes, stokes_for_axis};
 use crate::analysis::{
     PixelRegion, parse_box_region, parse_image_channel_selection, parse_stokes_selection,
 };
-use crate::{AnyPagedImage, ImageError, ImageInterface, ImagePixel, PolygonRegion};
+use crate::{ImageError, ImageInterface, ImagePixel};
+
+mod saved;
+
+use saved::{load_saved_region, parse_saved_region};
 
 #[derive(Debug, Clone)]
 pub(super) enum SpatialShape {
@@ -79,7 +83,13 @@ impl SubimageSelection {
     ) -> Result<Self, ImageError> {
         let ndim = image.ndim();
         let full_shape = image.shape().to_vec();
-        let plane = direction_plane_axes(image);
+        let box_arg = box_arg.map(str::trim).filter(|s| !s.is_empty());
+        let region_arg = region_arg.map(str::trim).filter(|s| !s.is_empty());
+        let plane = if box_arg.is_some() || region_arg.is_some() {
+            direction_plane_axes(image)?
+        } else {
+            [0, 1]
+        };
 
         let mut spatial_shapes: Vec<SpatialShape> = Vec::new();
         let mut saved_polygon_mask: Option<ArrayD<bool>> = None;
@@ -87,7 +97,7 @@ impl SubimageSelection {
         let mut crtf_chans: Option<Vec<usize>> = None;
         let mut crtf_stokes: Option<String> = None;
 
-        if let Some(box_text) = box_arg.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(box_text) = box_arg {
             let PixelRegion::Boxes(boxes) = parse_box_region(box_text, &full_shape, plane)? else {
                 unreachable!("parse_box_region returns Boxes")
             };
@@ -96,7 +106,7 @@ impl SubimageSelection {
             }
         }
 
-        if let Some(reg_text) = region_arg.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(reg_text) = region_arg {
             let parsed = parse_region_argument(image, reg_text, &full_shape, plane)?;
             spatial_shapes.extend(parsed.shapes);
             saved_polygon_mask = parsed.saved_polygon_mask;
@@ -302,8 +312,15 @@ fn parse_region_argument<T: ImagePixel>(
                 "Unable to open region file or region table description {text}."
             )));
         }
-        fs::read_to_string(reg_path)
-            .map_err(|e| ImageError::Io(format!("read region file {}: {e}", reg_path.display())))?
+        let bytes = fs::read(reg_path)
+            .map_err(|e| ImageError::Io(format!("read region file {}: {e}", reg_path.display())))?;
+        if bytes.starts_with(&[0xbe; 4]) {
+            let record = casa_tables::read_table_record_file(reg_path)
+                .map_err(|e| ImageError::Io(format!("read saved region {text}: {e}")))?;
+            return parse_saved_region(text, &record, image.coordinates(), full_shape, plane);
+        }
+        String::from_utf8(bytes)
+            .map_err(|e| ImageError::Io(format!("read CRTF file {text}: {e}")))?
     };
 
     parse_crtf_document(image, &crtf_text, full_shape, plane)
@@ -345,267 +362,6 @@ fn parse_single_box(
         )));
     }
     Ok(boxes[0])
-}
-
-fn load_saved_region(
-    image_path: &Path,
-    region_name: &str,
-    target_coords: &CoordinateSystem,
-    full_shape: &[usize],
-    plane: [usize; 2],
-) -> Result<ParsedRegion, ImageError> {
-    let rec = match AnyPagedImage::open(image_path)? {
-        AnyPagedImage::Float32(img) => img.get_region_record(region_name)?,
-        AnyPagedImage::Float64(img) => img.get_region_record(region_name)?,
-        AnyPagedImage::Complex32(img) => img.get_region_record(region_name)?,
-        AnyPagedImage::Complex64(img) => img.get_region_record(region_name)?,
-    };
-
-    let class_name = match rec.get("name") {
-        Some(Value::Scalar(ScalarValue::String(name))) => name.as_str(),
-        _ => "",
-    };
-
-    match class_name {
-        "WCPolygon" | "WCUnion" => {
-            let poly = PolygonRegion::from_record(region_name, &rec, target_coords)?;
-            let mask = poly.mask(target_coords, full_shape)?;
-            let mut min_pt = full_shape.to_vec();
-            let mut max_pt = vec![0usize; full_shape.len()];
-            let mut any_true = false;
-            for (idx, &valid) in mask.indexed_iter() {
-                if valid {
-                    any_true = true;
-                    for (ax, &pos) in idx.slice().iter().enumerate() {
-                        min_pt[ax] = min_pt[ax].min(pos);
-                        max_pt[ax] = max_pt[ax].max(pos);
-                    }
-                }
-            }
-            if !any_true {
-                return Err(ImageError::CasaSelection(format!(
-                    "saved region '{region_name}' selects no pixels in image"
-                )));
-            }
-            let shape: Vec<usize> = min_pt
-                .iter()
-                .zip(max_pt.iter())
-                .map(|(lo, hi)| hi - lo + 1)
-                .collect();
-            Ok(ParsedRegion {
-                shapes: Vec::new(),
-                saved_polygon_mask: Some(mask),
-                saved_bounds: Some((min_pt, shape)),
-                crtf_chans: None,
-                crtf_stokes: None,
-            })
-        }
-        "LCSlicer" | "LCBox" => {
-            let (blc, trc) = decode_lc_box_or_slicer(region_name, &rec, full_shape)?;
-            let shapes = if full_shape.len() >= 2 {
-                vec![SpatialShape::Box([
-                    blc[plane[0]],
-                    blc[plane[1]],
-                    trc[plane[0]],
-                    trc[plane[1]],
-                ])]
-            } else {
-                Vec::new()
-            };
-            let shape: Vec<usize> = blc
-                .iter()
-                .zip(trc.iter())
-                .map(|(lo, hi)| hi - lo + 1)
-                .collect();
-            Ok(ParsedRegion {
-                shapes,
-                saved_polygon_mask: None,
-                saved_bounds: Some((blc, shape)),
-                crtf_chans: None,
-                crtf_stokes: None,
-            })
-        }
-        "WCBox" => {
-            let (blc, trc) = decode_wc_box(region_name, &rec, target_coords, full_shape)?;
-            let shapes = if full_shape.len() >= 2 {
-                vec![SpatialShape::Box([
-                    blc[plane[0]],
-                    blc[plane[1]],
-                    trc[plane[0]],
-                    trc[plane[1]],
-                ])]
-            } else {
-                Vec::new()
-            };
-            let shape: Vec<usize> = blc
-                .iter()
-                .zip(trc.iter())
-                .map(|(lo, hi)| hi - lo + 1)
-                .collect();
-            Ok(ParsedRegion {
-                shapes,
-                saved_polygon_mask: None,
-                saved_bounds: Some((blc, shape)),
-                crtf_chans: None,
-                crtf_stokes: None,
-            })
-        }
-        other => Err(ImageError::InvalidMetadata(format!(
-            "unsupported saved region '{region_name}' of class {other:?}"
-        ))),
-    }
-}
-
-fn decode_lc_box_or_slicer(
-    name: &str,
-    rec: &RecordValue,
-    full_shape: &[usize],
-) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
-    let one_rel = matches!(
-        rec.get("oneRel"),
-        Some(Value::Scalar(ScalarValue::Bool(true)))
-    );
-    let blc_raw = read_numeric_vec(rec.get("blc")).ok_or_else(|| {
-        ImageError::InvalidMetadata(format!("saved region '{name}' missing numeric blc"))
-    })?;
-    let trc_raw = read_numeric_vec(rec.get("trc")).ok_or_else(|| {
-        ImageError::InvalidMetadata(format!("saved region '{name}' missing numeric trc"))
-    })?;
-    if let Some(inc) = read_numeric_vec(rec.get("inc"))
-        && inc.iter().any(|&v| (v - 1.0).abs() > 1e-6)
-    {
-        return Err(ImageError::InvalidMetadata(format!(
-            "saved region '{name}' has non-unit stride {inc:?}"
-        )));
-    }
-    let ndim = full_shape.len();
-    if blc_raw.len() != ndim || trc_raw.len() != ndim {
-        return Err(ImageError::ShapeMismatch {
-            expected: vec![ndim],
-            got: vec![blc_raw.len()],
-        });
-    }
-    let frac_blc = read_bool_vec(rec.get("fracblc"), ndim);
-    let frac_trc = read_bool_vec(rec.get("fractrc"), ndim);
-    let mut blc = Vec::with_capacity(ndim);
-    let mut trc = Vec::with_capacity(ndim);
-    for axis in 0..ndim {
-        let len = full_shape[axis];
-        let lo = if frac_blc[axis] {
-            (blc_raw[axis] * (len.saturating_sub(1)) as f64).round()
-        } else if one_rel {
-            (blc_raw[axis] - 1.0).round()
-        } else {
-            blc_raw[axis].round()
-        };
-        let hi = if frac_trc[axis] {
-            (trc_raw[axis] * (len.saturating_sub(1)) as f64).round()
-        } else if one_rel {
-            (trc_raw[axis] - 1.0).round()
-        } else {
-            trc_raw[axis].round()
-        };
-        if !lo.is_finite() || !hi.is_finite() || lo < 0.0 || hi < lo || (hi as usize) >= len {
-            return Err(ImageError::CasaSelection(format!(
-                "saved region '{name}' bounds [{lo}, {hi}] out of range for axis {axis} (len {len})"
-            )));
-        }
-        blc.push(lo as usize);
-        trc.push(hi as usize);
-    }
-    Ok((blc, trc))
-}
-
-fn decode_wc_box(
-    name: &str,
-    rec: &RecordValue,
-    coords: &CoordinateSystem,
-    full_shape: &[usize],
-) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
-    let blc_world = read_quantum_list(rec.get("blc"))?;
-    let trc_world = read_quantum_list(rec.get("trc"))?;
-    if blc_world.len() > coords.n_world_axes() || trc_world.len() > coords.n_world_axes() {
-        return Err(ImageError::InvalidMetadata(format!(
-            "saved WCBox '{name}' world dimension mismatch"
-        )));
-    }
-    let mut full_w0 = coords.to_world(&vec![0.0; coords.n_pixel_axes()])?;
-    let mut full_w1 = full_w0.clone();
-    for (i, v) in blc_world.iter().enumerate() {
-        full_w0[i] = *v;
-    }
-    for (i, v) in trc_world.iter().enumerate() {
-        full_w1[i] = *v;
-    }
-    let p0 = coords.to_pixel(&full_w0)?;
-    let p1 = coords.to_pixel(&full_w1)?;
-    let mut blc = Vec::with_capacity(full_shape.len());
-    let mut trc = Vec::with_capacity(full_shape.len());
-    for axis in 0..full_shape.len() {
-        let len = full_shape[axis];
-        let lo = p0[axis].min(p1[axis]).round().clamp(0.0, (len - 1) as f64) as usize;
-        let hi = p0[axis].max(p1[axis]).round().clamp(0.0, (len - 1) as f64) as usize;
-        blc.push(lo);
-        trc.push(hi);
-    }
-    Ok((blc, trc))
-}
-
-fn read_quantum_list(val: Option<&Value>) -> Result<Vec<f64>, ImageError> {
-    let Some(Value::Record(rec)) = val else {
-        return Err(ImageError::InvalidMetadata(
-            "WCBox missing blc/trc record".into(),
-        ));
-    };
-    let mut out = Vec::new();
-    for field in rec.fields() {
-        if !field.name.starts_with('*') {
-            continue;
-        }
-        if let Value::Record(qrec) = &field.value {
-            let v = match qrec.get("value") {
-                Some(Value::Scalar(ScalarValue::Float64(x))) => *x,
-                Some(Value::Scalar(ScalarValue::Float32(x))) => f64::from(*x),
-                Some(Value::Scalar(ScalarValue::Int32(x))) => f64::from(*x),
-                _ => {
-                    return Err(ImageError::InvalidMetadata(
-                        "invalid WCBox quantum value".into(),
-                    ));
-                }
-            };
-            let u = match qrec.get("unit") {
-                Some(Value::Scalar(ScalarValue::String(s))) => s.as_str(),
-                _ => "",
-            };
-            if u.eq_ignore_ascii_case("pix") || u.is_empty() {
-                out.push(v);
-            } else {
-                let q =
-                    Quantity::new(v, u).map_err(|e| ImageError::InvalidMetadata(e.to_string()))?;
-                out.push(q.get_si_value());
-            }
-        }
-    }
-    Ok(out)
-}
-
-fn read_numeric_vec(val: Option<&Value>) -> Option<Vec<f64>> {
-    match val? {
-        Value::Array(ArrayValue::Float64(arr)) => Some(arr.iter().copied().collect()),
-        Value::Array(ArrayValue::Float32(arr)) => Some(arr.iter().map(|&v| f64::from(v)).collect()),
-        Value::Array(ArrayValue::Int32(arr)) => Some(arr.iter().map(|&v| f64::from(v)).collect()),
-        Value::Array(ArrayValue::Int64(arr)) => Some(arr.iter().map(|&v| v as f64).collect()),
-        _ => None,
-    }
-}
-
-fn read_bool_vec(val: Option<&Value>, ndim: usize) -> Vec<bool> {
-    if let Some(Value::Array(ArrayValue::Bool(arr))) = val
-        && arr.len() == ndim
-    {
-        return arr.iter().copied().collect();
-    }
-    vec![false; ndim]
 }
 
 fn parse_crtf_document<T: ImagePixel>(
@@ -1195,15 +951,40 @@ fn resolve_spatial_and_saved_bounds(
 
     for s in shapes {
         let (x0, y0, x1, y1) = shape_candidate_bounds(s, nx, ny);
+        let mut has_pixels = false;
         for x in x0..=x1 {
             for y in y0..=y1 {
                 if shape_contains(s, x, y) {
-                    any_pixel = true;
+                    has_pixels = true;
                     min_x = min_x.min(x);
                     min_y = min_y.min(y);
                     max_x = max_x.max(x);
                     max_y = max_y.max(y);
                 }
+            }
+        }
+        if has_pixels {
+            any_pixel = true;
+            // LCEllipsoid uses a square enclosing box for a rotated ellipse,
+            // including rows and columns that its mask excludes entirely.
+            if let SpatialShape::Ellipse {
+                cx,
+                cy,
+                semi_major,
+                semi_minor,
+                cos_pa,
+                sin_pa,
+            } = s
+                && cos_pa.abs() > 1e-7
+                && sin_pa.abs() > 1e-7
+            {
+                let r = semi_major.max(*semi_minor);
+                let lower = |c: f64| (c - r - 1e-5).ceil().max(0.0) as usize;
+                let upper = |c: f64, n: usize| ((c + r + 1e-5).floor() as usize).min(n - 1);
+                min_x = min_x.min(lower(*cx));
+                min_y = min_y.min(lower(*cy));
+                max_x = max_x.max(upper(*cx, nx));
+                max_y = max_y.max(upper(*cy, ny));
             }
         }
     }

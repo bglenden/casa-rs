@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_types::ArrayD;
 use fitsio::images::ImageType as FitsImageType;
 use ndarray::{Axis, IxDyn, ShapeBuilder, Zip};
@@ -28,7 +29,6 @@ use crate::{
 use self::coords::{CoordReductionSpec, reduce_coordinates_and_beams};
 use self::mask::evaluate_subimage_mask;
 use self::region::SubimageSelection;
-use super::patch_saved_coords_keyword;
 
 enum SourceData<T: ImagePixel> {
     Paged {
@@ -248,25 +248,25 @@ fn run_typed<T: ImagePixel + Copy>(
         request.stretch,
         (&selection.start, &selection.shape),
     )? {
-        and_opt_mask(&mut mask, &expr_mask);
+        and_opt_mask(&mut mask, expr_mask);
     }
 
     let data = img.get_slice(&selection.start, &selection.shape, &vec![1; ndim])?;
     let (data, mask, out_shape) = drop_selected_axes(data, mask, &selection.shape, &kept_axes);
 
-    // Defer removing any pre-existing outfile until all fallible computation succeeds.
-    if request.outfile.exists() && request.overwrite {
-        if request.outfile.is_dir() {
-            fs::remove_dir_all(&request.outfile).map_err(|e| ImageError::Io(e.to_string()))?;
-        } else {
-            fs::remove_file(&request.outfile).map_err(|e| ImageError::Io(e.to_string()))?;
-        }
-    }
-
-    let mut output = PagedImage::<T>::create(out_shape.clone(), out_coords, &request.outfile)?;
+    let destination = std::path::absolute(&request.outfile).map_err(output_io)?;
+    let parent = destination.parent().ok_or_else(|| {
+        ImageError::InvalidMetadata("outfile must name an image directory".into())
+    })?;
+    let stage = tempfile::tempdir_in(parent).map_err(output_io)?;
+    let product = stage.path().join("image");
+    let mut output = PagedImage::<T>::create(out_shape.clone(), out_coords, &product)?;
     output.set_units(img.units())?;
     output.set_image_info(&out_info)?;
     output.set_misc_info(img.misc_info())?;
+    if let Some(legacy) = out_legacy_coords {
+        output.set_coords_record_keyword(legacy);
+    }
     output.put_slice(&data, &vec![0; out_shape.len()])?;
     if let Some(m) = mask
         && m.iter().any(|&v| !v)
@@ -275,11 +275,15 @@ fn run_typed<T: ImagePixel + Copy>(
         output.set_default_mask("mask0")?;
     }
     output.save()?;
+    drop(output);
+    write_output_history(&product, source.history(), request)?;
 
-    if let Some(legacy) = out_legacy_coords {
-        patch_saved_coords_keyword(&request.outfile, legacy)?;
+    match rename_without_replacing(&product, &destination) {
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && request.overwrite => {
+            exchange_directories(&product, &destination).map_err(output_io)?;
+        }
+        result => result.map_err(output_io)?,
     }
-    write_output_history(&request.outfile, source.history(), request)?;
 
     Ok(ImageSubimageSummary {
         imagename: request.imagename.display().to_string(),
@@ -296,13 +300,17 @@ fn run_typed<T: ImagePixel + Copy>(
     })
 }
 
-fn and_opt_mask(dst: &mut Option<ArrayD<bool>>, rhs: &ArrayD<bool>) {
+fn output_io(error: std::io::Error) -> ImageError {
+    ImageError::Io(error.to_string())
+}
+
+fn and_opt_mask(dst: &mut Option<ArrayD<bool>>, rhs: ArrayD<bool>) {
     *dst = Some(match dst.take() {
         Some(mut lhs) => {
-            Zip::from(&mut lhs).and(rhs).for_each(|a, &b| *a = *a && b);
+            Zip::from(&mut lhs).and(&rhs).for_each(|a, &b| *a = *a && b);
             lhs
         }
-        None => rhs.clone(),
+        None => rhs,
     });
 }
 

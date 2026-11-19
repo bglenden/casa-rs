@@ -30,11 +30,20 @@ use crate::{ImageError, ImageInterface, ImagePixel, PagedImage};
 ///   coordinates (#1024).
 pub(super) fn direction_plane_axes<T: ImagePixel>(
     image: &(impl ImageInterface<T> + ?Sized),
-) -> [usize; 2] {
-    match image.find_axis(CoordinateType::Direction) {
-        Some(longitude) => [longitude, longitude + 1],
-        None => [0, 1],
+) -> Result<[usize; 2], ImageError> {
+    let coordinates = image.coordinates();
+    let Some(index) = coordinates.find_coordinate(CoordinateType::Direction) else {
+        return Ok([0, 1]);
+    };
+    if coordinates.coordinate(index).n_pixel_axes() != 2 {
+        return Err(ImageError::InvalidMetadata(
+            "selecting a direction plane requires both direction axes".into(),
+        ));
     }
+    let longitude = (0..index)
+        .map(|i| coordinates.coordinate(i).n_pixel_axes())
+        .sum();
+    Ok([longitude, longitude + 1])
 }
 
 /// The axes of a `rank`-axis image other than its plane's, in order.

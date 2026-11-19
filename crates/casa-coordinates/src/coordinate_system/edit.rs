@@ -655,9 +655,7 @@ impl CoordinateSystem {
             .flat_map(|index| {
                 let coordinate = system.coordinate(index);
                 match coordinate {
-                    crate::CoordinateModel::Direction(direction) => {
-                        direction.world_units().to_vec()
-                    }
+                    crate::CoordinateModel::Direction(direction) => direction.visible_world_units(),
                     _ => coordinate.axis_units(),
                 }
             })

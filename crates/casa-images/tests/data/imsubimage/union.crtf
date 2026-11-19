@@ -1,0 +1,3 @@
+#CRTFv0
+box[[1pix, 0pix], [3pix, 2pix]]
+circle[[4pix, 4pix], 1.5pix]

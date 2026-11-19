@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
+use casa_coordinates::{CoordinateSystem, CoordinateType, StokesType};
 use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 
 use crate::analysis::axes::subimage_coordinates_with_stokes;
@@ -40,10 +40,12 @@ pub(super) fn reduce_coordinates_and_beams<T: ImagePixel>(
     let (out_coords, out_legacy) = if spec.kept_axes.len() == ndim {
         (shifted, shifted_legacy)
     } else {
-        let dropped = drop_axes_from_system(&shifted, spec.kept_axes)?;
-        let dropped_legacy =
-            shifted_legacy.and_then(|rec| drop_axes_from_legacy_record(&rec, ndim, spec.kept_axes));
-        (dropped, dropped_legacy)
+        let record = shifted_legacy.unwrap_or_else(|| shifted.to_record());
+        let reduced =
+            drop_axes_from_legacy_record(&record, ndim, spec.kept_axes).ok_or_else(|| {
+                ImageError::InvalidMetadata("could not reduce the subimage axis maps".into())
+            })?;
+        (CoordinateSystem::from_record(&reduced)?, Some(reduced))
     };
 
     image_info.beam_set = subset_beam_set(
@@ -92,55 +94,6 @@ fn subset_beam_set(
         _ => vec![0],
     };
     beam_set.subset(&chans, &stokes)
-}
-
-fn drop_axes_from_system(
-    coords: &CoordinateSystem,
-    kept_axes: &[usize],
-) -> Result<CoordinateSystem, ImageError> {
-    let kept_set: BTreeSet<usize> = kept_axes.iter().copied().collect();
-    let mut out = CoordinateSystem::new().with_obs_info(coords.obs_info().clone());
-    let mut offset = 0usize;
-    for idx in 0..coords.n_coordinates() {
-        let coord = coords.coordinate(idx);
-        let np = coord.n_pixel_axes();
-        let local_kept: Vec<usize> = (0..np)
-            .filter(|&local| kept_set.contains(&(offset + local)))
-            .collect();
-        offset += np;
-
-        if local_kept.is_empty() {
-            continue;
-        }
-        if local_kept.len() == np {
-            out.add_coordinate(coord.clone());
-            continue;
-        }
-        match coord {
-            CoordinateModel::Linear(linear) => {
-                let reduced = linear.kept_axes(&local_kept).ok_or_else(|| {
-                    ImageError::InvalidMetadata(
-                        "cannot drop coupled axis of a Linear coordinate".into(),
-                    )
-                })?;
-                out.add_coordinate(reduced);
-            }
-            CoordinateModel::Direction(_) => {
-                return Err(ImageError::InvalidMetadata(
-                    "cannot drop only one axis of a 2D Direction coordinate (#1002): \
-                     use dropdeg=False or keep both direction axes"
-                        .into(),
-                ));
-            }
-            _ => {
-                return Err(ImageError::InvalidMetadata(format!(
-                    "cannot partially drop axes of a {} coordinate (#1002)",
-                    coord.coordinate_type()
-                )));
-            }
-        }
-    }
-    Ok(out)
 }
 
 fn strip_index_suffix(field: &str) -> (&str, Option<usize>) {
@@ -264,22 +217,32 @@ fn drop_axes_from_legacy_record(
             format!("pixelmap{new_idx}"),
             Value::Array(ArrayValue::from_i32_vec(new_pmap)),
         ));
-        if let Some(pr) = entry.pixelreplace {
-            out_fields.push(RecordField::new(
-                format!("pixelreplace{new_idx}"),
-                pr.clone(),
-            ));
-        }
-        if let Some(wr) = entry.worldreplace {
-            out_fields.push(RecordField::new(
-                format!("worldreplace{new_idx}"),
-                wr.clone(),
-            ));
+        for (kind, field, replacement, map) in [
+            ("pixel", "crpix", entry.pixelreplace, &entry.pixelmap),
+            ("world", "crval", entry.worldreplace, &entry.worldmap),
+        ] {
+            let Some(replacement) = replacement else {
+                continue;
+            };
+            let mut value = replacement.clone();
+            if entry.prefix == "direction"
+                && let Value::Record(direction) = entry.coord_val
+                && let Value::Array(ArrayValue::Float64(values)) = &mut value
+                && let Some(Value::Array(ArrayValue::Float64(reference))) = direction.get(field)
+            {
+                // Rebuilding the surviving direction coordinate uses its
+                // reference values for newly removed axes (dropRemovedAxes).
+                for (axis, &old) in map.iter().enumerate() {
+                    if old >= 0 && axis_remap[old as usize].is_none() {
+                        values[axis] = reference[axis];
+                    }
+                }
+            }
+            out_fields.push(RecordField::new(format!("{kind}replace{new_idx}"), value));
         }
     }
 
     let out = RecordValue::new(out_fields);
-    CoordinateSystem::from_record(&out).ok()?;
     Some(out)
 }
 

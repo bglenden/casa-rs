@@ -132,6 +132,9 @@ pub struct Regridded<T> {
 /// The direction coordinate of `coordinates`: its index and first pixel axis.
 fn direction_of(coordinates: &CoordinateSystem) -> Option<(usize, usize)> {
     let index = coordinates.find_coordinate(CoordinateType::Direction)?;
+    if coordinates.coordinate(index).n_pixel_axes() != 2 {
+        return None;
+    }
     let first = (0..index)
         .map(|k| coordinates.coordinate(k).n_pixel_axes())
         .sum();

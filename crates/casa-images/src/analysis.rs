@@ -1857,11 +1857,8 @@ fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageA
         // A direction coordinate presents its values in the units it is
         // stored in, as casacore's does, though it computes in radians.
         if let casa_coordinates::CoordinateModel::Direction(direction) = coord {
-            refs = direction.in_world_units([refs[0], refs[1]]).to_vec();
-            increments = direction
-                .in_world_units([increments[0], increments[1]])
-                .to_vec();
-            units = direction.world_units().to_vec();
+            (refs, increments) = direction.reference_and_increment_in_world_units();
+            units = direction.visible_world_units();
         }
         for axis_in_coord in 0..coord.n_pixel_axes() {
             summaries.push(ImageAxisSummary {
@@ -1933,7 +1930,7 @@ where
         Some(box_text) => Some(parse_box_region(
             box_text,
             image.shape(),
-            direction_plane_axes(image),
+            direction_plane_axes(image)?,
         )?),
         None => None,
     };
@@ -2671,7 +2668,7 @@ impl Selection {
     ) -> Result<Self, ImageError> {
         let mut start = vec![0; image.ndim()];
         let mut shape = image.shape().to_vec();
-        let plane = direction_plane_axes(image);
+        let plane = region.map_or(Ok([0, 1]), |_| direction_plane_axes(image))?;
         if let Some(region) = region {
             let [x0, y0, x1, y1] = region.bounding_box();
             let [x, y] = plane;
@@ -3118,7 +3115,7 @@ fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
                 .to_string(),
         ));
     }
-    let [x, y] = direction_plane_axes(image);
+    let [x, y] = direction_plane_axes(image)?;
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let base_world = coordinates.to_world(&base_pixel)?;
     pairs
@@ -3236,7 +3233,7 @@ fn crtf_world_box_pixels<T: ImagePixel>(
                 .to_string(),
         ));
     }
-    let [x, y] = direction_plane_axes(image);
+    let [x, y] = direction_plane_axes(image)?;
     let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
     let mut first_world = coordinates.to_world(&base_pixel)?;
     let mut second_world = first_world.clone();
@@ -4011,7 +4008,7 @@ fn feather_typed(
         ));
     }
     // Feathered in the direction plane, wherever its axes are.
-    let direction = direction_plane_axes(high);
+    let direction = direction_plane_axes(high)?;
     let others = other_axes(high_shape.len(), direction);
     let other_shape = others
         .iter()
@@ -4221,7 +4218,7 @@ where
     // takes its first two axes. The output keeps the input's coordinates
     // rather than a PV image's (#1024), so a direction elsewhere is refused
     // until it has them, rather than labelled more wrongly (#1022 review).
-    let plane = direction_plane_axes(image);
+    let plane = direction_plane_axes(image)?;
     if plane[0] != 0 {
         return Err(ImageError::InvalidMetadata(format!(
             "impv takes the direction from the image's first two axes until its output has a PV \

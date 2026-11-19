@@ -10,8 +10,8 @@ use casa_coordinates::CoordinateSystem;
 use casa_lattices::{Lattice, LatticeError};
 use casa_types::{ArrayD, Complex32, Complex64, RecordValue};
 
-use crate::analysis::{mask_error_wording, quoted_expression_names};
-use crate::expr_parser::{ExprValueConvert, HashMapResolver, parse_mask_expr};
+use crate::analysis::mask_error_wording;
+use crate::expr_parser::{ExprValueConvert, HashMapResolver, lattice_image_names, parse_mask_expr};
 use crate::image_expr::ImageExprValue;
 use crate::image_expr_lel::can_broadcast_to;
 use crate::{
@@ -142,19 +142,18 @@ pub(super) fn evaluate_subimage_mask(
         return Ok(None);
     };
 
-    // Collect referenced image paths (quoted paths first, plus any path:mask token).
-    let refs = quoted_expression_names(raw);
     let mut expr = raw.to_string();
-    let mut ref_names = refs;
-    if ref_names.is_empty()
-        && let Some((left, _)) = raw.split_once(':')
+    if Path::new(raw).exists() {
+        // A clean-mask image name alone means its pixels at least 0.5.
+        expr = format!("\"{raw}\" >= 0.5");
+    } else if let Some((left, _)) = raw.split_once(':')
         && !raw.contains([' ', '>', '<', '=', '!', '&', '|', '(', ')'])
         && Path::new(left).exists()
     {
         // Unquoted path:maskname expression in top-level `mask=` parameter.
-        expr = format!("\"{raw}\"");
-        ref_names.push(raw.to_string());
+        expr = format!("mask(\"{raw}\")");
     }
+    let ref_names = lattice_image_names(&expr).map_err(mask_parse_error)?;
 
     let mut opened: Vec<(String, NamedMaskImage<f64>)> = Vec::with_capacity(ref_names.len());
     for name in &ref_names {
@@ -179,12 +178,7 @@ where
         map.insert(name.clone(), img);
     }
     let resolver = HashMapResolver(map);
-    let parsed = parse_mask_expr(expr, &resolver).map_err(|error| {
-        ImageError::CasaSelection(format!(
-            "Input mask specification is incorrect: {}",
-            mask_error_wording(error)
-        ))
-    })?;
+    let parsed = parse_mask_expr(expr, &resolver).map_err(mask_parse_error)?;
     let mask_shape = parsed.shape();
     if mask_shape != target_shape && !mask_shape.is_empty() {
         if !can_broadcast_to(mask_shape, target_shape) {
@@ -203,6 +197,13 @@ where
     parsed
         .eval_window_for_shape(window.0, window.1, target_shape)
         .map(Some)
+}
+
+fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
+    ImageError::CasaSelection(format!(
+        "Input mask specification is incorrect: {}",
+        mask_error_wording(error)
+    ))
 }
 
 fn open_mask_target_f64(spec: &str) -> Result<NamedMaskImage<f64>, ImageError> {
