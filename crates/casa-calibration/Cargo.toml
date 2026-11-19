@@ -33,6 +33,7 @@ serde_json = "1"
 thiserror.workspace = true
 tracing.workspace = true
 ureq = "3"
+tempfile = "3"
 
 [dev-dependencies]
 casa-simulation = { path = "../casa-simulation" }
@@ -42,7 +43,6 @@ flate2 = "1"
 tar = "0.4"
 casa-test-support = { path = "../casa-test-support" }
 ndarray.workspace = true
-tempfile = "3"
 
 [[bin]]
 name = "calibrate"

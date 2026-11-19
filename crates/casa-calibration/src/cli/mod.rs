@@ -28,6 +28,7 @@ mod model_columns;
 mod multi_ms;
 mod read;
 mod render;
+mod getantposalma;
 mod uvmodelfit;
 
 use std::path::Path;
@@ -57,6 +58,9 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    if task.surface() == "getantposalma" {
+        return getantposalma::run(task);
+    }
     if task.surface() == "ft" {
         return ft::run(task);
     }
