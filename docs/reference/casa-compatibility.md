@@ -1405,7 +1405,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `scalar` | `False` | `False`; `scalar` → `scalar` | Implemented | Scalar averaging (False=vector averaging) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `transform` | `True` | `True`; `transform` → `transform` | Partial | Disable the frequency controls when false. Additional active calibration transforms remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `freqframe` | `''` | `''`; `freqframe` → `freqframe` | Partial | Ignore the requested frequency frame when transform is false. Active frequency conversion remains open for calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `LSRK`, `CMB`, `GALACTO`, `GEO`, `TOPO`, `LSRD`, `LGROUP`, `BARY`, `` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
-| `restfreq` | `''` | `''`; `restfreq` → `restfreq` | Partial | Accept rest frequency on modern calibration tables while preserving their frequency coordinates. Velocity conversions remain open for calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `restfreq` | `''` | `''`; `restfreq` → `restfreq` | Partial | CASA leaves modern calibration-table coordinates unchanged for supplied rest-frequency values. Frequency and velocity transforms for other inputs remain separately tracked. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `veldef` | `'RADIO'` | `'RADIO'`; `veldef` → `veldef` | Not implemented | The definition in which to render velocity [advanced](#plotms-behavior-advanced)<br>Catalog domain: `RADIO`, `OPTICAL`, `TRUE` | [remaining](#plotms-evidence-remaining) |
 | `phasecenter` | `''` | `''`; `phasecenter` → `phasecenter` | Default only | The direction coordinates of the desired center [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `extendflag` | `False` | `False`; `extendflag` → `extendflag` | Default only | Extend flagging to other data points not plotted [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
@@ -1596,10 +1596,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-selectors"></a>
 ##### selectors
 
-**Same-input PlotMS calibration types and selectors — passed.** 50 text exports, 1,494 points, 14 exact errors, six paired refusals, 32 rendered coordinates and scan, baseline and time page filenames matched. CASA 6.7.6.14 with casaplotms 2.9.1 on identical modern calibration tables, including Tsys and antenna position.
+**Same-input PlotMS calibration types and selectors — passed.** 56 text exports, 1,688 points, 14 exact errors, six paired refusals and 32 rendered coordinates matched. Scan, baseline, time and antenna-position page exports used the same filenames. CASA 6.7.6.14 with casaplotms 2.9.1 on identical modern calibration tables, including Tsys and antenna position.
 
-- [tools/casa-compat/plotms_calibration_oracle.py](https://github.com/bglenden/casa-rs/blob/e775bd07a6e5b9ebfbb4b812844564b063dc78e9/tools/casa-compat/plotms_calibration_oracle.py)
-- Revision: `874a356658252ccedfd69ba15a293c9c96555100`; CASA: `6.7.6.14`.
+- [https://github.com/bglenden/casa-rs/blob/d3571932be189f719e83e2626ba7fab982d23d33/tools/casa-compat/plotms_calibration_oracle.py](https://github.com/bglenden/casa-rs/blob/d3571932be189f719e83e2626ba7fab982d23d33/tools/casa-compat/plotms_calibration_oracle.py)
+- Revision: `d3571932be189f719e83e2626ba7fab982d23d33`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_calibration_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-calibration-selectors-20261119.json`.
 
