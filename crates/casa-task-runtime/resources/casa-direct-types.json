@@ -479,6 +479,11 @@
     "showimage": "cBool",
     "colorizeoverlay": "cBool"
   },
+  "plotweather": {
+    "seasonal_weight": "cFloat",
+    "doPlot": "cBool",
+    "plotName": "cStr"
+  },
   "rerefant": {
     "caltable": "cStr",
     "refantmode": "cStr",

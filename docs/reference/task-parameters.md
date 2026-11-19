@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 671
-- Surfaces: 41 (41 task, 0 session)
-- Surface bindings: 990
+- Concepts: 674
+- Surfaces: 42 (42 task, 0 session)
+- Surface bindings: 994
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -55,6 +55,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Get ALMA Antenna Positions](#surface-getantposalma)<br><code>getantposalma</code> | task | 1 | <code>calibration</code> | 10 | Retrieve antenna positions from the ALMA archive. |
 | [Smooth Calibration Solutions](#surface-smoothcal)<br><code>smoothcal</code> | task | 1 | <code>calibration</code> | 7 | Smooth selected calibration solutions in time. |
 | [Re-reference Calibration Solutions](#surface-rerefant)<br><code>rerefant</code> | task | 1 | <code>calibration</code> | 5 | Change the reference antenna in a calibration table. |
+| [Plot Weather](#surface-plotweather)<br><code>plotweather</code> | task | 1 | <code>calibration</code> | 4 | Estimate zenith opacity and plot MeasurementSet weather. |
 | [Initialize Visibility Weights](#surface-initweights)<br><code>initweights</code> | task | 1 | <code>calibration</code> | 7 | Initialize MeasurementSet weights and their channel spectra. |
 | [Statistical Weights](#surface-statwt)<br><code>statwt</code> | task | 1 | <code>calibration</code> | 25 | Estimate MeasurementSet weights from visibility variance. |
 
@@ -1522,6 +1523,23 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>caltable</code> | <code>calibration.caltable@r2</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Output | Calibration table the task writes. |
 | <code>refantmode</code> | <code>setsolve.refantmode@r1</code> | <code>choice (2 values)</code> | <code>"flex"</code>; optional | Reference antenna | Whether another reference antenna is used where refant has no solution. |
 | <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; optional | Reference antenna | Reference antenna name or id for solve workflows |
+
+<a id="surface-plotweather"></a>
+
+## Plot Weather (<code>plotweather</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Estimate zenith opacity and plot MeasurementSet weather.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>seasonal_weight</code> | <code>calibration.seasonal_weight@r1</code> | <code>variant</code> | <code>0.5</code>; optional | Weather model | Weight of the seasonal model in the opacity estimate. |
+| <code>doPlot</code> | <code>calibration.weather_plot@r1</code> | <code>bool</code> | <code>true</code>; optional | Plot | Create a weather summary plot when station data are available. |
+| <code>plotName</code> | <code>calibration.weather_plot_name@r1</code> | <code>string</code> | <code>""</code>; optional | Plot | Name of the weather summary plot file. |
 
 <a id="surface-initweights"></a>
 

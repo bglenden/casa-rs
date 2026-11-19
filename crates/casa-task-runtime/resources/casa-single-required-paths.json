@@ -20,6 +20,7 @@
   "imsubimage": "imagename",
   "initweights": "vis",
   "mstransform": "vis",
+  "plotweather": "vis",
   "split": "vis",
   "statwt": "vis",
   "uvmodelfit": "vis",
