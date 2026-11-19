@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import functools
 from http import HTTPStatus
 import inspect
-from json import JSONDecodeError
+from json import JSONDecodeError, loads
 import os
 from os import PathLike
 from pathlib import Path
@@ -219,6 +219,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
         _validate_required_path(values, "vis", arguments["vis"])
+    if name == "listcal":
+        return _call_listcal(values, arguments)
     if name == "calstat":
         _validate_required_path(values, "caltable", arguments["caltable"], search_data=True)
         for parameter in ("axis", "datacolumn"):
@@ -284,6 +286,57 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
+
+
+def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
+    for name in ("vis", "caltable"):
+        value = arguments[name]
+        if not isinstance(value, str):
+            raise AssertionError(f"the {name} parameter must be a path that exists ('{value}' does not exist)")
+        _validate_required_path(values, name, value, search_data=True)
+    for name in ("field", "antenna", "spw", "listfile"):
+        if not isinstance(arguments[name], str):
+            message = "null value not allowed" if arguments[name] is None else "must be of cStr type"
+            raise AssertionError(str({name: [message]}))
+    pagerows = arguments["pagerows"]
+    if not isinstance(pagerows, int):
+        import numpy as np
+
+        if not isinstance(pagerows, (np.int32, np.int64)):
+            message = "null value not allowed" if pagerows is None else "must be of cInt type"
+            raise AssertionError(str({"pagerows": [message]}))
+        values["pagerows"] = int(pagerows)
+    elif isinstance(pagerows, bool):
+        values["pagerows"] = int(pagerows)
+    try:
+        completion = run("listcal", **values)
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
+    report = loads(completion.stdout)["result"]
+    if report["listfile"] is not None:
+        print(f"Writing output to file: {report['listfile']}")
+        return
+    prompt = True
+    quit_requested = False
+    solutions = 0
+    listing = report["listing"]
+    for part in listing["parts"]:
+        print(part["text"], end="")
+        solutions = part["solutions"]
+        if prompt and part["prompt"]:
+            try:
+                response = input("Type Q to quit, A to list all, or RETURN to continue [continue]: ")
+            except EOFError:
+                response = ""
+            command = response[:1].lower()
+            quit_requested |= command == "q"
+            prompt &= command != "a"
+        if quit_requested and part["last_in_integration"]:
+            break
+    else:
+        if listing["error"] is not None:
+            raise RuntimeError(listing["error"])
+    print(f"\nListed {solutions} antenna solutions.\n")
 
 
 def _call_initweights(values: dict[str, Any]) -> Any:
@@ -567,6 +620,9 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
     executable = _task_executable(task)
     command = (executable, *invocation.args)
     environment = dict(os.environ)
+    if task == "listcal":
+        # A later listing error takes effect only when the reader reaches it.
+        environment["CASARS_LISTCAL_PAGED_REPLY"] = "1"
     if task in {"simobserve", "simanalyze", "simalma"}:
         environment.pop("CASARS_PLOT_PAYLOAD", None)
     if payload is not None:

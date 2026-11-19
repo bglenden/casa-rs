@@ -357,6 +357,13 @@
     "spwmap": "cIntVec",
     "dowtsp": "cBool"
   },
+  "listcal": {
+    "field": "cStr",
+    "antenna": "cStr",
+    "spw": "cStr",
+    "listfile": "cStr",
+    "pagerows": "cInt"
+  },
   "mstransform": {
     "outputvis": "cStr",
     "createmms": "cBool",

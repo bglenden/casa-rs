@@ -7062,3 +7062,15 @@ splits at 72 characters on the first card and `>` plus 71 characters on each
 continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
 all 17 original history entries intact (#977).
+
+## Listing an incomplete antenna integration can terminate CASA
+
+CASA 6.7.6.14's `listcal` reshapes each spectral window's solution
+rows into complete antenna integrations. Removing the last antenna
+row from an otherwise regular G Jones table terminated the paired
+CASA subprocess after opening the requested listing file.
+
+casa-rs validates the antenna blocks before publishing a listing. The
+same input raises a recoverable error and leaves the destination absent.
+Complete integrations retain their original order, even when two have
+the same time and field (#1526).

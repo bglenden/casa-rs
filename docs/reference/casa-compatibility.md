@@ -42,6 +42,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imstat | imstat | yes | 20 | 20 | 0 | 0 | 0 | 0 |
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 7 | 0 | 0 |
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
+| listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 38 | 0 | 0 |
 | plotms | plotms | pending | 102 | pending | | | | |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
@@ -984,6 +985,72 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **Matched release performance — planned.** Scheduled during the programme performance qualification in #979. End-to-end throughput, I/O and compute phases, workers and memory.
 
 - [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
+
+### listcal
+
+- CASA source: `casatasks/listcal.py`, 7 parameters
+- Implementation: `casatasks/private/task_listcal.py`, `listcal` (line 6): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 7, in CASA's order: yes
+- Defaults that differ: none
+
+#### listcal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35`. Status counts: Default only: 0, Implemented: 7, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `vis` | Implemented | MeasurementSet supplying fields, antenna expressions and spectral-window/channel selection. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `path` (measurement_set) | [paired](#listcal-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Existing CASA antenna calibration table. Complex and real solutions use their subtype's units and labels. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `path` (calibration_table) | [paired](#listcal-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Field names, IDs and CASA field expressions. Empty lists all available fields. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `string` | [paired](#listcal-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Antenna names, IDs, ranges and the first antenna list of a baseline expression. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `string` | [paired](#listcal-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral windows and channel ranges, including stride. The first range for a repeated window is listed. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `string` | [paired](#listcal-evidence-paired) |
+| `listfile` | `''` | `''`; `listfile` → `listfile` | Implemented | A new text file or terminal output when empty. Existing files are preserved. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `path` (file) | [paired](#listcal-evidence-paired) |
+| `pagerows` | `50` | `50`; `pagerows` → `pagerows` | Implemented | Rows per page and the terminal continue, quit and list-all controls. Zero and negative values print continuously. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `integer` | [paired](#listcal-evidence-paired) |
+
+#### listcal interacting modes and task behavior
+
+<a id="listcal-behavior-solution-listing"></a>
+##### Selected calibration solution listings
+
+**Implemented** — Complex gain and bandpass values, real delay and fringe units, flags, field and antenna selectors, channel ranges and strides, multiple spectral windows, repeated physical integrations, terminal paging and atomic text output. Includes relative symlink paths, non-finite formatting, invalid arguments, baseline and unknown types, and a later spectral-window error after the first prompt.
+
+The incomplete-antenna error behavior is recorded below.
+
+Evidence: [paired](#listcal-evidence-paired).
+
+#### listcal deviations and unfinished work
+
+##### reject-incomplete-antenna-integration: Proposed
+
+- Inputs: A standard G Jones calibration solution table with the final antenna row removed.
+- CASA: Terminates after opening the output while reshaping the window into antenna blocks.
+- casa-rs: Raises a recoverable layout error before publishing the output.
+- Rationale: An incomplete block cannot be associated with the requested antenna solutions.
+- User impact: The caller can handle the error and the listing path remains available for a corrected retry.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#listcal-evidence-paired).
+
+#### listcal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="listcal-evidence-paired"></a>
+##### paired
+
+**Same-input Python task and terminal output — passed.** 20 byte-exact files, eight terminal cases and 15 refusal cases passed. Complex gain and bandpass values, real delay and fringe units, flags, field and antenna selectors, channel ranges and strides, multiple spectral windows, repeated physical integrations, terminal paging and atomic text output. Includes relative symlink paths, non-finite formatting, invalid arguments, baseline and unknown types, and a later spectral-window error after the first prompt.
+
+- [tools/casa-compat/listcal_oracle.py](https://github.com/bglenden/casa-rs/blob/d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35/tools/casa-compat/listcal_oracle.py)
+- Revision: `d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/listcal_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/listcal-20261119.json`.
 
 ### mstransform
 
