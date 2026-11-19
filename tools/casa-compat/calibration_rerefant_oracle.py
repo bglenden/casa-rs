@@ -14,10 +14,12 @@ import numpy as np
 
 from calibration_smoothcal_oracle import (
     apply_round_trip,
+    assert_detached_tables,
     columns,
     compare_mapping,
     copy_ms,
     fixture,
+    link_control_files,
     opened,
     synthetic_table,
 )
@@ -180,8 +182,11 @@ def main():
     else:
         raise AssertionError('native rerefant accepted an unsupported delay table')
     compare(root, native, vis, root/'solved.cal', 'apply-pair', 'A0,A1')
+    linked, originals = link_control_files(root, gains)
+    compare(root, native, vis, linked, 'file-linked-input', 'A0,A1,A3')
+    assert_detached_tables(linked, root/'native-file-linked-input.cal', originals)
     apply_round_trip(root, native, vis, 'apply-pair')
-    print('23 paired CASA rerefant case groups and four downstream applications')
+    print('24 paired CASA rerefant case groups and four downstream applications')
 
 
 if __name__ == '__main__':
