@@ -12,7 +12,7 @@ use super::PyImageTool;
 use super::attachment::{self, AttachedImage};
 use super::handle::raised;
 
-fn open_image(infile: &str) -> PyResult<AttachedImage> {
+pub(super) fn open_image(infile: &str) -> PyResult<AttachedImage> {
     if infile.is_empty() {
         return Err(raised("Exception: File name is empty."));
     }

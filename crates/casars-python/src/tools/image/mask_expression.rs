@@ -41,7 +41,7 @@ fn evaluate_typed<T: ImageExprValue + PartialOrd + ExprValueConvert>(
     compiled.get().map_err(raised)
 }
 
-fn evaluate(expression: &str, shape: &[usize]) -> PyResult<ArrayD<bool>> {
+pub(super) fn evaluate(expression: &str, shape: &[usize]) -> PyResult<ArrayD<bool>> {
     if expression.is_empty() {
         return Err(raised("Exception: You must specify an expression."));
     }

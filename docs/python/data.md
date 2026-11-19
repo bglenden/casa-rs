@@ -121,6 +121,11 @@ restoring beams. `ia.fromrecord(record)` restores a temporary image. Pass an
 output path to write a native CASA image. As in CASA, restoring a record uses
 single-precision pixels and starts a new history.
 
+Use `ia.fromimage(outfile="copy.im", infile="example.im")` to copy an image
+with its coordinates, active pixel mask, metadata and history. Use
+`newimagefromimage` to keep the current attachment and receive a separate tool.
+An absolute CASA `LCSlicer` region selects a pixel box and its stride.
+
 The remaining CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
 
