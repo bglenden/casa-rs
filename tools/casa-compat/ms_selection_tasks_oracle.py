@@ -47,7 +47,14 @@ def casa_table(path, *, writable=False):
 
 def columns_from_casacore(path, names):
     with core_table(str(path), ack=False) as tool:
-        return {name: tool.getcol(name) for name in names}
+        result = {}
+        for name in names:
+            value = tool.getcol(name)
+            # python-casacore represents string arrays as a shape and flat list.
+            if isinstance(value, dict):
+                value = np.asarray(value["array"]).reshape(value["shape"])
+            result[name] = value
+        return result
 
 
 def compare_columns(expected, actual, names, case):
