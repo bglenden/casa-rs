@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::CoordinateSystem;
-use casa_types::quanta::Unit;
+use casa_types::quanta::{Unit, unit::normalize_casa_unit_name};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -30,10 +30,10 @@ impl PyImageTool {
                 return Ok(false);
             };
             image.check_single_precision("setbrightnessunit")?;
-            let unit = unit.trim();
-            Unit::new(unit)
+            let normalized = normalize_casa_unit_name(unit.trim());
+            Unit::new(&normalized)
                 .map_err(|_| raised(format!("Unit::check Illegal unit string '{unit}'")))?;
-            with_pixels!(image, storage => with_storage!(storage, image => image.set_units(unit)))
+            with_pixels!(image, storage => with_storage!(storage, image => image.set_units(normalized)))
                 .map_err(raised)?;
             if history {
                 image.record_history(

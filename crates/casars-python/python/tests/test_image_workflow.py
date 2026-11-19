@@ -204,3 +204,11 @@ def test_explicit_coordinates_and_existing_non_table_directory(tmp_path):
     assert image.open(path, False)
     _assert_value(image.coordsys().torecord(), record)
     assert image.done()
+
+
+def test_brightness_unit_spelling_and_history():
+    ia = tools.image()
+    assert ia.fromshape(shape=[2, 3])
+    assert ia.setbrightnessunit(" Jy beam-1 ")
+    assert ia.brightnessunit() == "Jy.beam-1"
+    assert ia.history(False)[-1] == 'ia.setbrightnessunit(unit=" Jy beam-1 ")'
