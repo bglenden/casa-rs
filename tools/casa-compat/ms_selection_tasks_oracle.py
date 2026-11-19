@@ -26,12 +26,12 @@ class Observation(IntEnum):
 
 
 MAIN = ("TIME", "SCAN_NUMBER", "ANTENNA1", "ANTENNA2", "FIELD_ID", "DATA_DESC_ID",
-        "OBSERVATION_ID", "STATE_ID",
+        "OBSERVATION_ID", "STATE_ID", "ARRAY_ID", "FEED1", "FEED2",
         "DATA", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA", "UVW")
 SUBTABLES = {
     "ANTENNA": ("NAME", "POSITION"),
     "DATA_DESCRIPTION": ("SPECTRAL_WINDOW_ID", "POLARIZATION_ID"),
-    "FEED": ("ANTENNA_ID", "SPECTRAL_WINDOW_ID"),
+    "FEED": ("ANTENNA_ID", "SPECTRAL_WINDOW_ID", "FEED_ID"),
     "FIELD": ("NAME", "PHASE_DIR", "SOURCE_ID"),
     "OBSERVATION": ("PROJECT", "TIME_RANGE"),
     "POINTING": ("ANTENNA_ID", "TIME"),
@@ -145,6 +145,28 @@ def add_observation_and_intent(source, *, interleaved=False):
         tool.putcol("STATE_ID", (indices // 3) % 3 if interleaved else fields)
 
 
+def add_arrays_and_feeds(source):
+    with core_table(str(source / "FEED"), readonly=False, ack=False) as tool:
+        old_rows = tool.nrows()
+        tool.addrows(old_rows)
+        for old in range(old_rows):
+            for column in tool.colnames():
+                if tool.iscelldefined(column, old):
+                    value = 2 if column == "FEED_ID" else tool.getcell(column, old)
+                    tool.putcell(column, old + old_rows, value)
+    with core_table(str(source), readonly=False, ack=False) as tool:
+        indices = np.arange(tool.nrows())
+        tool.putcol("ARRAY_ID", 2 + 2 * (indices % 4))
+        tool.putcol("FEED1", 2 * (indices % 2))
+        tool.putcol("FEED2", 2 * ((indices // 2) % 2))
+        # 14.9 m is below 5 klambda at 100 GHz and above it at 101 GHz.
+        # Give these samples a nonzero V component and a larger W component.
+        edge = indices % 8 == 3
+        u = np.where(edge, 8.94, 5 * (indices % 8))
+        v = np.where(edge, 11.92, 0)
+        tool.putcol("UVW", np.stack([u, v, 100 + indices], axis=1))
+
+
 def succeeds(root, source, name, case, options, subtables=SUBTABLES, *, via_run=False):
     paths = [root / f"{name}-{case}-{side}.ms" for side in ("casa", "native")]
     for module, path in zip((casatasks, tasks), paths):
@@ -210,6 +232,107 @@ def rejected_selector_types(root, source, name):
     return len(cases)
 
 
+def compare_array_uv_feed(root, source, name, subtables):
+    first_time = columns_from_casacore(source, ("TIME",))["TIME"].min()
+    cases = {
+        "array-ordered": {"array": "8,2"},
+        "array-repeated": {"array": "8,2,8"},
+        "array-with-range": {"array": "8,2~4"},
+        "array-with-bound": {"array": "8,>3"},
+        "array-both-bounds": {"array": ">=2&<=6"},
+        "array-strict-bounds": {"array": ">2&<6"},
+        "array-numpy-int": {"array": np.int64(2)},
+        "uv-less-inclusive": {"uvrange": "<10m"},
+        "uv-greater-strict": {"uvrange": ">10m"},
+        "uv-distance-union": {"uvrange": "0~5m,0.025~0.035km"},
+        "uv-scientific-bounds": {"uvrange": "2.5e1~3.5e1m"},
+        "uv-exponent-without-mantissa": {"uvrange": "e-3~5m"},
+        "uv-wavelength-bounds": {"uvrange": "5~10klambda"},
+        "uv-mixed-units": {"uvrange": "0~5m,5~10klambda"},
+        "uv-percentage": {"uvrange": "5~10m:50%"},
+        "uv-single-percentage": {"uvrange": "5m:100%"},
+        "uv-numpy-int": {"uvrange": np.int64(10)},
+        "feed-either": {"feed": "0"},
+        "feed-cross": {"feed": "0&2"},
+        "feed-include-equal": {"feed": "0,2&&"},
+        "feed-equal": {"feed": "2&&&"},
+        "feed-partial-id-list": {"feed": "0,1"},
+        "feed-range": {"feed": "0~2&&"},
+        "feed-negation": {"feed": "!0;2"},
+        "feed-remove": {"feed": "0&&&;!2&&&"},
+        "feed-numpy-int": {"feed": np.int64(0)},
+        "array-uv-feed": {"array": "8,2~6", "uvrange": "5~30m", "feed": "0&2"},
+        "array-uv-feed-time": {"array": "8,2~6", "uvrange": "5~30m", "feed": "0&2",
+                               "timerange": f">{calendar(first_time - 1)}"},
+    }
+    if name == "split":
+        cases.update({"array-int": {"array": 2}, "feed-int": {"feed": 0},
+                      "array-scalar-array": {"array": np.array(2)}})
+    else:
+        cases["array-uv-feed-taql"] = cases["array-uv-feed"] | {"taql": "SCAN_NUMBER >= 0"}
+        cases["uv-mixed-units-taql"] = cases["uv-mixed-units"] | {"taql": "SCAN_NUMBER >= 0"}
+    for case, options in cases.items():
+        selected = succeeds(root, source, name, case, options, subtables)
+        if case == "uv-wavelength-bounds":
+            output = columns_from_casacore(selected, ("UVW", "DATA_DESC_ID"))
+            edges = output["DATA_DESC_ID"][output["UVW"][:, 1] != 0]
+            assert len(edges) > 0 and (edges == 1).all(), (name, edges)
+    provider_cases = {
+        "provider-array-numpy-int": {"array": np.int32(2)},
+        "provider-feed-numpy-int": {"feed": np.int32(0)},
+    }
+    for case, options in provider_cases.items():
+        succeeds(root, source, name, case, options, subtables, via_run=True)
+
+    rejections = [
+        ("array", " ", RuntimeError, "Array Expression"),
+        ("array", "4~4", RuntimeError, "Array Expression"),
+        ("array", "<0", RuntimeError, "MSSelectionNullSelection"),
+        ("array", None, AssertionError, "null value not allowed"),
+        ("uvrange", "<=10m", RuntimeError, "UV Distribution Expression"),
+        ("uvrange", "5m~10m", RuntimeError, "UV Distribution Expression"),
+        ("uvrange", "10~5m", RuntimeError, "MSSelectionNullSelection"),
+        ("uvrange", "10m", RuntimeError, "MSSelectionNullSelection"),
+        ("uvrange", "5~10KM", RuntimeError, "Unrecognized units k"),
+        ("uvrange", 10, RuntimeError, "used for field uvrange with type Int"),
+        ("uvrange", [">10m"], RuntimeError, "used for field uvrange with type unknown"),
+        ("feed", "0&", RuntimeError, "MSSelectionNullSelection"),
+        ("feed", "1", RuntimeError, "No match found for requested feeds"),
+        ("feed", "*", RuntimeError, "Feed Expression"),
+        ("feed", 1.5, AssertionError, "must be of cInt type"),
+        ("array", np.array(2, dtype=np.int16), AssertionError, "must be of cInt type"),
+        ("array", np.array(2, dtype=np.uint8), AssertionError, "must be of cInt type"),
+    ]
+    if name == "split":
+        rejections.append(("feed", [0], RuntimeError, "Feed Expression"))
+    else:
+        rejections.extend([
+            ("array", 2, RuntimeError, "used for field array with type Int"),
+            ("feed", 0, RuntimeError, "used for field feed with type Int"),
+        ])
+    for index, (parameter, value, error_type, message) in enumerate(rejections):
+        for module in (casatasks, tasks):
+            path = root / f"{name}-array-uv-feed-error-{index}-{module.__name__}.ms"
+            try:
+                getattr(module, name)(vis=str(source), outputvis=str(path), datacolumn="data", **{parameter: value})
+            except error_type as error:
+                assert message in str(error), (name, parameter, value, str(error))
+            else:
+                raise AssertionError(f"{module.__name__}.{name} accepted {parameter}={value!r}")
+            assert not path.exists(), path
+    for dtype in (np.int16, np.uint8):
+        path = root / f"{name}-provider-array-{dtype.__name__}.ms"
+        try:
+            tasks.run(name, vis=str(source), outputvis=str(path), datacolumn="data",
+                      array=np.array(2, dtype=dtype))
+        except ValueError as error:
+            assert "must be of cInt type" in str(error), str(error)
+        else:
+            raise AssertionError(f"tasks.run accepted ARRAY_ID as {dtype.__name__}")
+        assert not path.exists(), path
+    return len(cases) + len(provider_cases), len(rejections)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14], casatasks.version()
     with TemporaryDirectory(prefix="ms-task-selection-") as scratch:
@@ -269,7 +392,16 @@ def main():
             succeeds(root, source, name, "provider-scalar-array", {"observation": np.array(1)}, subtables, via_run=True)
             succeeds(root, interleaved, name, "interleaved-observations-and-states", {"observation": "2,0", "intent": "2,1"})
             rejected += rejected_selector_types(root, source, name)
-        print(f"{(len(cases) + len(observation_cases) + 6) * 2} selected products and {rejected} rejected calls matched CASA 6.7.6.14")
+        products = (len(cases) + len(observation_cases) + 6) * 2
+        add_arrays_and_feeds(source)
+        before = columns_from_casacore(source, MAIN)
+        for name in ("split", "mstransform"):
+            more_products, more_rejections = compare_array_uv_feed(root, source, name, subtables)
+            products += more_products
+            rejected += more_rejections
+        for column, values in columns_from_casacore(source, MAIN).items():
+            np.testing.assert_array_equal(values, before[column], err_msg=f"input {column}")
+        print(f"{products} selected products and {rejected} rejected calls matched CASA 6.7.6.14")
 
 
 if __name__ == "__main__":
