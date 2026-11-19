@@ -50,15 +50,23 @@ mod simulated;
 mod solve;
 mod solve_stats;
 mod stats;
+mod statwt;
 mod summary;
 mod task_contract;
 mod timing;
 mod uvmodelfit;
 mod uvsub;
+mod weight_spectra;
 mod writer;
 
+pub use statwt::{
+    StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,
+    StatWtSummary, StatWtTimeBin, estimate_statwt, statwt_weight_range,
+};
+
 pub use uvsub::{
-    subtract_visibility_model, subtract_visibility_model_holding, visibility_model_source_paths,
+    subtract_visibility_model, subtract_visibility_model_holding,
+    subtract_visibility_model_selected, visibility_model_source_paths,
 };
 
 pub use output::CalibrationOutputMode;

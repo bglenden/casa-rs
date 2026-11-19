@@ -80,6 +80,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("simalma", "casatasks"),
     ("simobserve", "casatasks"),
     ("split", "casatasks"),
+    ("statwt", "casatasks"),
     ("tclean", "casatasks"),
     ("tsdimaging", "casatasks"),
     ("uvsub", "casatasks"),

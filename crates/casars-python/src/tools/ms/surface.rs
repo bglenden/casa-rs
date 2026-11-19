@@ -295,8 +295,8 @@ const METHODS: &[Method] = &[
             param("items", K::Record, EmptyRecord),
             param("onlyparse", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method("msselectedindices", &[], R::Any, No),
     method(
@@ -637,8 +637,8 @@ const METHODS: &[Method] = &[
             param("preview", K::Bool, Bool(false)),
             param("datacolumn", K::Text, Text("corrected")),
         ],
-        R::Any,
-        No,
+        R::Record,
+        Yes,
     ),
     method(
         "summary",

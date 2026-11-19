@@ -6915,3 +6915,18 @@ silently over-thresholds and masks the entire output plane.
 casa-rs validates unit conformance via `get_conformant_value` when `sigma > 0`
 (`crates/casa-images/src/analysis/immath/pol.rs`) and refuses non-conforming or
 unitless `sigma` against non-empty image `bunit` with a clear error (#977).
+
+## `statwt` creates spectra then fails on an explicitly selected subset
+
+CASA 6.7.6.14 initializes a required `WEIGHT_SPECTRUM` or `SIGMA_SPECTRUM`
+column for the original MS when `chanbin` requests channel bins. When the
+selected table predates the new column, CASA then raises a `RuntimeError`
+and asks the caller to rerun the selection. The first call writes the
+initial spectrum across the MS and leaves the original flags and scalar
+columns intact.
+
+casa-rs initializes the physical MAIN tables and subsequently applies
+statistical weights to the requested rows in one call. Unselected rows
+retain the spectrum obtained by expanding their original scalar values.
+The paired fixture compares this result with CASA's documented two-call
+sequence and checks unselected rows (#1524).

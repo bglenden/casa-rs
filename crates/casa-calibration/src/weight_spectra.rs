@@ -11,16 +11,23 @@ use casa_tables::{
 };
 use casa_types::{ArrayValue, PrimitiveType};
 
-use super::{SIGMA_SPECTRUM, WEIGHT_SPECTRUM, has_column};
+pub(crate) const WEIGHT_SPECTRUM: &str = "WEIGHT_SPECTRUM";
+pub(crate) const SIGMA_SPECTRUM: &str = "SIGMA_SPECTRUM";
+
+pub(crate) fn has_column(table: &Table, name: &str) -> bool {
+    table
+        .schema()
+        .is_some_and(|schema| schema.contains_column(name))
+}
 
 #[derive(Default)]
-pub(super) struct NewSpectra {
+pub(crate) struct NewSpectra {
     writers: BTreeMap<&'static str, StreamingTiledShapeWriter>,
     _staging: Option<tempfile::TempDir>,
 }
 
 impl NewSpectra {
-    pub(super) fn prepare(
+    pub(crate) fn prepare(
         main: &Table,
         columns: &[&'static str],
         row_shapes: impl Iterator<Item = [usize; 2]>,
@@ -53,7 +60,7 @@ impl NewSpectra {
             MsError::InvalidInput("weight spectrum needs an on-disk MeasurementSet".into())
         })?;
         let staging = tempfile::Builder::new()
-            .prefix(".initweights-")
+            .prefix(".weight-spectrum-")
             .tempdir_in(path)
             .map_err(|error| {
                 TableError::Storage(format!(
@@ -88,11 +95,11 @@ impl NewSpectra {
         })
     }
 
-    pub(super) fn contains(&self, name: &str) -> bool {
+    pub(crate) fn contains(&self, name: &str) -> bool {
         self.writers.contains_key(name)
     }
 
-    pub(super) fn append(&mut self, name: &str, value: &ArrayValue) -> MsResult<bool> {
+    pub(crate) fn append(&mut self, name: &str, value: &ArrayValue) -> MsResult<bool> {
         let Some(writer) = self.writers.get_mut(name) else {
             return Ok(false);
         };
@@ -110,7 +117,7 @@ impl NewSpectra {
         Ok(true)
     }
 
-    pub(super) fn append_unity(&mut self, shape: [usize; 2]) -> MsResult<()> {
+    pub(crate) fn append_unity(&mut self, shape: [usize; 2]) -> MsResult<()> {
         if !self.writers.is_empty() {
             let ones = vec![1.0; shape[0] * shape[1]];
             for writer in self.writers.values_mut() {
@@ -122,7 +129,7 @@ impl NewSpectra {
         Ok(())
     }
 
-    pub(super) fn publish(self, main: &mut Table, lock: &mut TableWriteLock) -> MsResult<()> {
+    pub(crate) fn publish(self, main: &mut Table, lock: &mut TableWriteLock) -> MsResult<()> {
         let finished = self
             .writers
             .into_iter()
