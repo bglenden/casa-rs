@@ -126,6 +126,7 @@ def succeeds(root, source, name, case, options, subtables=SUBTABLES):
     compare_columns(*paths, MAIN, f"{name} {case} MAIN")
     for subtable, names in subtables.items():
         compare_columns(*(path / subtable for path in paths), names, f"{name} {case} {subtable}")
+    return paths[1]
 
 
 def empty_selection(root, source, name, time):
@@ -158,6 +159,7 @@ def main():
             "segments": {"spw": "SPW0:0~1;3~6"},
             "repeated-window": {"spw": "0:5~7,0:0~1"},
             "clipped-channel": {"spw": "0:5~90"},
+            "drop-flagged": {"field": "PHASE", "spw": "SPW0:1~3", "keepflags": False},
             "combined": {"field": "FL*", "antenna": "A2&A4", "timerange": time, "spw": "SPW0:0~3"},
         }
         for name in ("split", "mstransform"):
@@ -172,8 +174,9 @@ def main():
         }
         for name in ("split", "mstransform"):
             succeeds(root, source, name, "unused-window", {"field": "PHASE"}, subtables)
-            succeeds(root, source, name, "compact-second-window", {"spw": "SPW1:2~6"}, subtables)
-        print(f"{(len(cases) + 2) * 2} selected products and 2 rejected calls matched CASA 6.7.6.14")
+            selected = succeeds(root, source, name, "compact-second-window", {"spw": "SPW1:2~6"}, subtables)
+            succeeds(root, selected, name, "native-input", {"spw": "SPW1:0~2"}, subtables)
+        print(f"{(len(cases) + 3) * 2} selected products and 2 rejected calls matched CASA 6.7.6.14")
 
 
 if __name__ == "__main__":
