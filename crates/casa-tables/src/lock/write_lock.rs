@@ -7,6 +7,73 @@ use std::path::{Path, PathBuf};
 use super::{LockFile, LockOptions, LockOutcome, LockType, SyncData};
 use crate::TableError;
 
+/// Casacore's in-use marker for an open table that acquires access locks
+/// separately for its I/O.
+pub struct TableUseLock {
+    #[cfg(unix)]
+    _lock_file: LockFile,
+    #[cfg(unix)]
+    directory: std::fs::File,
+}
+
+impl TableUseLock {
+    /// Mark the table open for other processes until this guard is dropped.
+    ///
+    /// # Errors
+    /// Returns an error if the table cannot be opened or a writer holds an
+    /// access lock while this handle attaches.
+    pub fn acquire(path: &Path) -> Result<Self, TableError> {
+        #[cfg(unix)]
+        {
+            let lock_io = |error: std::io::Error| TableError::LockIo {
+                path: path.display().to_string(),
+                message: error.to_string(),
+            };
+            let directory = std::fs::File::open(path).map_err(lock_io)?;
+            let mut lock_file = LockFile::create_or_open(
+                path,
+                false,
+                LockOptions::default().inspection_interval,
+                false,
+            )
+            .map_err(lock_io)?;
+            let outcome = lock_file.acquire(LockType::Read, 1).map_err(lock_io)?;
+            if !outcome.is_acquired() {
+                return Err(TableError::LockFailed {
+                    path: path.display().to_string(),
+                    message: outcome.refusal(LockType::Read, 1),
+                });
+            }
+            lock_file.release().map_err(lock_io)?;
+            Ok(Self {
+                _lock_file: lock_file,
+                directory,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Ok(Self {})
+        }
+    }
+
+    /// Check whether the table's original directory is still at `path`.
+    pub fn matches_directory(&self, path: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            let opened = self.directory.metadata();
+            let current = std::fs::metadata(path);
+            matches!((opened, current), (Ok(old), Ok(new)) if old.dev() == new.dev() && old.ino() == new.ino())
+        }
+        #[cfg(not(unix))]
+        {
+            path.is_dir()
+        }
+    }
+}
+
 /// casacore's table write lock, held for one in-place change of a table on
 /// disk.
 ///

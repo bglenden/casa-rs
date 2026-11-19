@@ -78,23 +78,26 @@ def test_removefile_handles_table_alias_and_refuses_other_files(tmp_path, backen
     assert not target.exists() and not alias.is_symlink()
 
 
-def test_removefile_respects_an_unlocked_casa_process(tmp_path):
-    casa = _backend("casa")
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_removefile_respects_an_unlocked_process(tmp_path, backend):
+    module = _backend(backend)
     path = tmp_path / "external.im"
-    source = casa.image()
+    source = module.image()
     assert source.fromshape(str(path), [2, 2])
     assert source.done()
     holder = subprocess.Popen(
         [sys.executable, "-u", "-c", """
+import importlib
 import sys
-from casatools import image
-holder = image()
+module = importlib.import_module(sys.argv[2])
+holder = module.image()
 assert holder.open(sys.argv[1])
-assert holder.unlock()
+if sys.argv[2] == "casatools":
+    assert holder.unlock()
 print('READY', flush=True)
 sys.stdin.readline()
 assert holder.done()
-""", str(path)],
+""", str(path), "casatools" if backend == "casa" else "casars.tools"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     tool = tools.image()
@@ -138,3 +141,65 @@ def test_removefile_preserves_an_open_log_subtable(tmp_path):
     assert table.nrows() > 0
     assert table.done()
     assert image.removefile(str(path)) is True
+
+
+def test_removefile_preserves_table_used_by_an_attached_ancestor(tmp_path):
+    path = tmp_path / "holder.im"
+    image = tools.image()
+    assert image.fromshape(str(path), [2, 2])
+    original = image.history()
+    assert image.removefile(str(path / "logtable")) is False
+    assert image.history() == original
+    assert image.done()
+
+
+def test_removal_preserves_attached_descendants(tmp_path):
+    root = tmp_path / "parent.im"
+    leaf = root / "child.im"
+    image, child = tools.image(), tools.image()
+    assert image.fromshape(str(root), [2, 2])
+    assert child.fromshape(str(leaf), [3, 2])
+    assert image.removefile(str(root)) is False
+    with pytest.raises(RuntimeError, match="still open in this process"):
+        image.remove()
+    assert not image.isopen()
+    assert child.getchunk().shape == (3, 2)
+    assert leaf.is_dir()
+    assert child.done()
+    assert image.removefile(str(root)) is True
+
+
+def test_attached_removal_checks_the_directory_identity(tmp_path):
+    original, moved, replacement = (tmp_path / name for name in ("original.im", "moved.im", "replacement.im"))
+    image, other = tools.image(), tools.image()
+    assert image.fromshape(str(original), [2, 2])
+    assert other.fromshape(str(replacement), [3, 2])
+    assert other.done()
+    original.rename(moved)
+    replacement.rename(original)
+    with pytest.raises(RuntimeError, match="image at that path has changed"):
+        image.remove()
+    assert not image.isopen()
+    assert other.open(str(original))
+    assert other.shape().tolist() == [3, 2]
+    assert other.done()
+    assert other.open(str(moved))
+    assert other.shape().tolist() == [2, 2]
+    assert other.done()
+
+
+def test_unwritable_alias_parent_does_not_remove_the_target(tmp_path):
+    target = tmp_path / "native.im"
+    tool = tools.image()
+    assert tool.fromshape(str(target), [2, 2])
+    assert tool.done()
+    folder = tmp_path / "readonly"
+    folder.mkdir()
+    alias = folder / "alias.im"
+    alias.symlink_to(target, target_is_directory=True)
+    folder.chmod(0o555)
+    try:
+        assert tool.removefile(str(alias)) is False
+        assert target.is_dir() and alias.is_symlink()
+    finally:
+        folder.chmod(0o755)

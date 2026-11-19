@@ -6970,3 +6970,12 @@ removing through the link deletes the link and table as CASA does. See
 When `table.open()` holds the native image's `logtable`, CASA can also remove
 the parent image and its log. casa-rs checks live subtables before deleting
 the image.
+
+An external directory move can also leave an attached tool pointing at a
+pathname that now contains another image. CASA can delete that replacement
+image through `ia.remove()`. casa-rs checks the directory identity captured
+at open and refuses the removal if the pathname was rebound.
+
+When a symbolic link lies inside a read-only directory, CASA can delete the
+linked image and leave the link dangling. casa-rs checks that directory
+before deleting the image and preserves both entries when it refuses.
