@@ -3424,7 +3424,7 @@ pub(crate) struct LoadedCalibrationTable {
 enum TimeParameterFamily {
     Delay,
     Antpos,
-    GainCurve,
+    GainCurve { power: bool },
     Opacity,
 }
 
@@ -3433,7 +3433,8 @@ impl TimeParameterFamily {
         match subtype {
             "K Jones" | "Kcross Jones" => Some(Self::Delay),
             "KAntPos Jones" => Some(Self::Antpos),
-            "EGainCurve" | "EPowerCurve" => Some(Self::GainCurve),
+            "EGainCurve" => Some(Self::GainCurve { power: false }),
+            "EPowerCurve" => Some(Self::GainCurve { power: true }),
             "TOpac" => Some(Self::Opacity),
             _ => None,
         }
