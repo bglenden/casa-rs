@@ -125,14 +125,19 @@ pub(crate) struct CompiledMsSelection {
     antenna_ids: Vec<i32>,
     antenna_names: Vec<String>,
     baselines: Vec<(i32, i32)>,
+    casa_baseline: Option<BaselineSelection>,
     time_range: Option<(f64, f64)>,
+    casa_time: Option<TimeSelection>,
     scan_numbers: Vec<i32>,
+    casa_scan_ranges: Option<Vec<(i32, i32)>>,
     state_ids: Vec<i32>,
     observation_ids: Vec<i32>,
+    casa_observation_ranges: Option<Vec<(i32, i32)>>,
     array_ids: Vec<i32>,
     uv_ranges: Vec<UvSelectionRange>,
     uv_taql_exprs: Vec<String>,
     taql_exprs: Vec<String>,
+    casa_taql_exprs: Vec<String>,
     correlation_types: Vec<i32>,
 }
 
@@ -959,6 +964,10 @@ impl CompiledMsSelection {
             clauses.push(format!("({expr})"));
         }
 
+        for expr in &self.casa_taql_exprs {
+            clauses.push(format!("({expr})"));
+        }
+
         for expr in &self.taql_exprs {
             clauses.push(format!("({expr})"));
         }
@@ -974,7 +983,7 @@ impl MeasurementSet {
         request: &MsSelection,
         io: MsSelectionIoBudget,
     ) -> Result<ResolvedMsSelection, MsSelectionError> {
-        self.resolve_rows(request, io, false)
+        self.resolve_rows(request, io, false).map(|(rows, _)| rows)
     }
 
     /// Resolve CASA's full row and channel selection grammars.
@@ -985,6 +994,14 @@ impl MeasurementSet {
         request: &MsSelection,
         io: MsSelectionIoBudget,
     ) -> Result<ResolvedMsSelection, MsSelectionError> {
+        self.resolve_rows(request, io, true).map(|(rows, _)| rows)
+    }
+
+    pub(crate) fn resolve_casa_selection_with_time(
+        &self,
+        request: &MsSelection,
+        io: MsSelectionIoBudget,
+    ) -> Result<(ResolvedMsSelection, Option<TimeSelection>), MsSelectionError> {
         self.resolve_rows(request, io, true)
     }
 
@@ -993,7 +1010,7 @@ impl MeasurementSet {
         request: &MsSelection,
         io: MsSelectionIoBudget,
         full: bool,
-    ) -> Result<ResolvedMsSelection, MsSelectionError> {
+    ) -> Result<(ResolvedMsSelection, Option<TimeSelection>), MsSelectionError> {
         if io.requested_bytes_per_row < std::mem::size_of::<ResolvedMsSelectionRow>() {
             return Err(MsSelectionError::InvalidBudget(format!(
                 "requested_bytes_per_row must include the {}-byte resolved row contract",
@@ -1005,15 +1022,18 @@ impl MeasurementSet {
         let selected_row_indices = compiled.apply_with_budget(self, io)?;
         let row_blocks = plan_selected_row_blocks(&selected_row_indices, io)?;
         let selected_rows = resolve_selected_row_facts(self, &selected_row_indices, &row_blocks)?;
-        Ok(ResolvedMsSelection {
-            request: request.clone(),
-            selected_rows,
-            row_blocks,
-            channel_selections: compiled.spw_channel_selections,
-            correlation_types: compiled.correlation_types,
-            taql_predicate,
-            requested_bytes_per_row: io.requested_bytes_per_row,
-        })
+        Ok((
+            ResolvedMsSelection {
+                request: request.clone(),
+                selected_rows,
+                row_blocks,
+                channel_selections: compiled.spw_channel_selections,
+                correlation_types: compiled.correlation_types,
+                taql_predicate,
+                requested_bytes_per_row: io.requested_bytes_per_row,
+            },
+            compiled.casa_time,
+        ))
     }
 }
 
@@ -1231,8 +1251,10 @@ fn apply_structured_selection(
     }
 
     let table = ms.main_table();
-    let needs_antennas =
-        exclude_autocorrelations || !antenna_ids.is_empty() || !baselines.is_empty();
+    let needs_antennas = exclude_autocorrelations
+        || !antenna_ids.is_empty()
+        || !baselines.is_empty()
+        || sel.casa_baseline.is_some();
     let column_request = StructuredSelectionColumnRequest {
         field: !field_ids.is_empty(),
         data_desc: !spw_ddids.is_empty()
@@ -1240,10 +1262,10 @@ fn apply_structured_selection(
             || !uv_lambda_by_ddid.is_empty(),
         antenna1: needs_antennas,
         antenna2: needs_antennas,
-        time: sel.time_range.is_some(),
-        scan: !scan_numbers.is_empty(),
+        time: sel.time_range.is_some() || sel.casa_time.is_some(),
+        scan: !scan_numbers.is_empty() || sel.casa_scan_ranges.is_some(),
         state: !state_ids.is_empty(),
-        observation: !observation_ids.is_empty(),
+        observation: !observation_ids.is_empty() || sel.casa_observation_ranges.is_some(),
         array: !array_ids.is_empty(),
         uvw: !sel.uv_ranges.is_empty(),
     };
@@ -1302,10 +1324,10 @@ fn apply_structured_selection(
             !field_ids.is_empty(),
             !spw_ddids.is_empty() || !data_desc_ids.is_empty(),
             needs_antennas,
-            sel.time_range.is_some(),
-            !scan_numbers.is_empty(),
+            column_request.time,
+            column_request.scan,
             !state_ids.is_empty(),
-            !observation_ids.is_empty(),
+            column_request.observation,
             !array_ids.is_empty(),
             !sel.uv_ranges.is_empty(),
         )),
@@ -1352,12 +1374,23 @@ fn structured_row_matches(
             && !antenna_ids.contains(&pair.0)
             && !antenna_ids.contains(&pair.1))
             || (!baselines.is_empty() && !baselines.contains(&pair))
+            || sel.casa_baseline.as_ref().is_some_and(|selection| {
+                // Existing and out-of-table IDs have distinct predicate
+                // slots. Offset signed IDs into out-of-table slots without
+                // changing equality between negative values.
+                !selection.holds(pair.0 as usize, pair.1 as usize)
+            })
         {
             return false;
         }
     }
     if let (Some((start, end)), Some(column)) = (sel.time_range, columns.time.as_ref())
         && !(start..=end).contains(&column[slot])
+    {
+        return false;
+    }
+    if let (Some(time), Some(column)) = (&sel.casa_time, columns.time.as_ref())
+        && !time.holds(column[slot])
     {
         return false;
     }
@@ -1378,19 +1411,27 @@ fn structured_row_matches(
     columns
         .scan
         .as_ref()
-        .is_none_or(|column| scan_numbers.contains(&column[slot]))
+        .is_none_or(|column| row_id_matches(column[slot], scan_numbers, &sel.casa_scan_ranges))
         && columns
             .state
             .as_ref()
             .is_none_or(|column| state_ids.contains(&column[slot]))
-        && columns
-            .observation
-            .as_ref()
-            .is_none_or(|column| observation_ids.contains(&column[slot]))
+        && columns.observation.as_ref().is_none_or(|column| {
+            row_id_matches(column[slot], observation_ids, &sel.casa_observation_ranges)
+        })
         && columns
             .array
             .as_ref()
             .is_none_or(|column| array_ids.contains(&column[slot]))
+}
+
+fn row_id_matches(id: i32, ids: &HashSet<i32>, ranges: &Option<Vec<(i32, i32)>>) -> bool {
+    (ids.is_empty() || ids.contains(&id))
+        && ranges.as_ref().is_none_or(|ranges| {
+            ranges
+                .iter()
+                .any(|&(start, end)| (start..=end).contains(&id))
+        })
 }
 
 fn uv_range_matches(

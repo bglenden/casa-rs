@@ -8,8 +8,7 @@ use std::process::ExitCode;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     MsTransformError, MsTransformRequest, TransformDataColumn, ms_task_success, mstransform,
-    mstransform_task_schema_bundle, parse_numeric_id_selector, parse_spw_selector,
-    task_selection_text,
+    mstransform_task_schema_bundle, task_selection_text,
 };
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{
@@ -36,32 +35,22 @@ fn main() -> ExitCode {
 /// Both surfaces run the one transform; CASA's tasks return None.
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = transform_request(task)?;
-    // The output the transform refuses before it starts is the argument's
-    // fault; anything else failed the transform.
     let report = mstransform(&request).map_err(|error| match error {
         MsTransformError::OutputExists { .. } | MsTransformError::SameInputOutput { .. } => {
             TaskFailure::validation(error.to_string()).at("outputvis")
         }
+        MsTransformError::InvalidSpw { .. } => TaskFailure::validation(error.to_string()).at("spw"),
         other => TaskFailure::execution(other.to_string()),
     })?;
     ms_task_success(CasaValue::None, &report)
 }
 
 fn transform_request(task: &TaskInvocation<'_>) -> Result<MsTransformRequest, TaskFailure> {
-    let width = channel_width(task)?;
-    // The selector's syntax is checked here, before the transform prepares
-    // its output; the windows it names are checked against the input there.
-    let spw = task_selection_text(task, "spw")?;
-    if !spw.trim().is_empty() {
-        parse_spw_selector(&spw).map_err(|error| {
-            TaskFailure::validation(format!("invalid spw {spw:?}: {error}")).at("spw")
-        })?;
-    }
     Ok(MsTransformRequest {
         input_ms: task.path("vis")?,
         output_ms: task.path("outputvis")?,
-        spw,
-        width,
+        spw: task_selection_text(task, "spw")?,
+        width: channel_width(task)?,
         data_column: data_column(&task.required_text("datacolumn")?)?,
         selection: selection(task)?,
         keep_flags: task.flag("keepflags")?,
@@ -97,39 +86,28 @@ fn channel_width(task: &TaskInvocation<'_>) -> Result<usize, TaskFailure> {
 /// The row selection; the TaQL expression is split's `msselect`, a
 /// casa-rs control, and mstransform's `taql`.
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
-    let ids = |name: &str| -> Result<Option<Vec<i32>>, TaskFailure> {
+    let selector = |name: &str| -> Result<Option<String>, TaskFailure> {
         let text = task_selection_text(task, name)?;
-        if text.is_empty() {
-            return Ok(None);
-        }
-        parse_numeric_id_selector(&text, name)
-            .map(Some)
-            .map_err(|error| TaskFailure::validation(error.to_string()).at(name))
+        Ok((!text.trim().is_empty()).then_some(text))
     };
-    let mut selection = MsSelection::default();
-    if let Some(field) = ids("field")? {
-        selection = selection.field(&field);
-    }
-    if let Some(scan) = ids("scan")? {
-        selection = selection.scan(&scan);
-    }
-    if let Some(antenna) = ids("antenna")? {
-        selection = selection.antenna(&antenna);
-    }
-    let timerange = task_selection_text(task, "timerange")?;
-    if !timerange.is_empty() {
-        let (start, end) = time_range(&timerange)
-            .map_err(|message| TaskFailure::validation(message).at("timerange"))?;
-        selection = selection.time_range(start, end);
-    }
     let taql_name = if task.surface() == "split" {
         "msselect"
     } else {
         "taql"
     };
-    let taql = task_selection_text(task, taql_name)?;
-    if !taql.is_empty() {
-        selection = selection.taql(&taql);
+    let mut selection = MsSelection {
+        field: selector("field")?,
+        scan: selector("scan")?,
+        antenna: selector("antenna")?,
+        timerange: selector("timerange")?,
+        msselect: selector(taql_name)?,
+        ..MsSelection::default()
+    };
+    // Earlier releases accepted absolute MJD seconds as a numeric pair.
+    // CASA reads bare numbers in its clock grammar as seconds within the minute.
+    if let Some((start, end)) = selection.timerange.as_deref().and_then(absolute_time_range) {
+        selection.timerange = None;
+        selection = selection.time_range(start, end);
     }
     Ok(selection)
 }
@@ -160,19 +138,14 @@ fn data_column(value: &str) -> Result<TransformDataColumn, TaskFailure> {
     }
 }
 
-fn time_range(value: &str) -> Result<(f64, f64), String> {
-    let (start, end) = value
-        .split_once('~')
-        .ok_or_else(|| format!("timerange must be start~end MJD seconds, got {value:?}"))?;
-    let start = start
-        .trim()
-        .parse::<f64>()
-        .map_err(|error| format!("invalid timerange start {start:?}: {error}"))?;
-    let end = end
-        .trim()
-        .parse::<f64>()
-        .map_err(|error| format!("invalid timerange end {end:?}: {error}"))?;
-    Ok((start, end))
+fn absolute_time_range(value: &str) -> Option<(f64, f64)> {
+    let (start, end) = value.split_once('~')?;
+    let start = start.trim().parse::<f64>().ok()?;
+    let end = end.trim().parse::<f64>().ok()?;
+    (start.is_finite()
+        && end.is_finite()
+        && (start > f64::from(i32::MAX) || end > f64::from(i32::MAX)))
+    .then_some((start, end))
 }
 
 #[cfg(test)]

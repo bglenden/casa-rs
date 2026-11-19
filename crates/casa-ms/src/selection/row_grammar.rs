@@ -50,17 +50,28 @@ pub(super) fn apply(
     }
     if let Some(text) = options.antenna.as_deref().filter(|text| !text.is_empty()) {
         let baseline = ms.resolve_antenna_selector(text)?;
-        compiled = compiled.taql(&baseline_predicate(&baseline));
+        compiled.casa_taql_exprs.push(baseline_predicate(&baseline));
+        compiled.casa_baseline = Some(baseline);
     }
-    for (column, label, text) in [
-        ("SCAN_NUMBER", "scan", &options.scan),
-        ("OBSERVATION_ID", "observation", &options.observation),
+    for (column, label, text, target) in [
+        (
+            "SCAN_NUMBER",
+            "scan",
+            &options.scan,
+            &mut compiled.casa_scan_ranges,
+        ),
+        (
+            "OBSERVATION_ID",
+            "observation",
+            &options.observation,
+            &mut compiled.casa_observation_ranges,
+        ),
     ] {
         if let Some(text) = text.as_deref().filter(|text| !text.is_empty()) {
             let ranges = parse_numeric_row_id_ranges(text, label)?;
             let terms = ranges
-                .into_iter()
-                .map(|(start, end)| {
+                .iter()
+                .map(|&(start, end)| {
                     if start == end {
                         format!("{column}=={start}")
                     } else {
@@ -68,7 +79,8 @@ pub(super) fn apply(
                     }
                 })
                 .collect::<Vec<_>>();
-            compiled = compiled.taql(&disjunction(terms));
+            compiled.casa_taql_exprs.push(disjunction(terms));
+            *target = Some(ranges);
         }
     }
     Ok(compiled)
@@ -126,7 +138,10 @@ pub(super) fn with_time(
             format!("((TIME > {lower_s} OR ABS(TIME - {lower_s}) < {edge}) AND (TIME < {upper_s} OR ABS(TIME - {upper_s}) < {edge}))")
         }
     }).collect();
-    Ok(selection.taql(&disjunction(terms)))
+    let mut selection = selection;
+    selection.casa_taql_exprs.push(disjunction(terms));
+    selection.casa_time = Some(time);
+    Ok(selection)
 }
 
 fn disjunction(terms: Vec<String>) -> String {
