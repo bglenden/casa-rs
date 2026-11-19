@@ -550,6 +550,8 @@ fn gaincurve_rows(
         }
     })?;
     let antenna_keys = vla_gaincurve_antenna_keys(ms, gaincurve_infile.is_none())?;
+    // The native gaincurve_table extension also accepts shorter polynomials.
+    let require_full_curve = gaincurve_infile.is_some() || request.gaincurve_table.is_none();
     let spw = ms
         .spectral_window()
         .map_err(|source| GencalError::OpenMeasurementSet {
@@ -576,6 +578,7 @@ fn gaincurve_rows(
                 &valid_rows,
                 center_hz,
                 vla_spw_band(&spw, window)?.as_deref(),
+                require_full_curve,
             )?
         } else {
             BTreeMap::new()
@@ -896,6 +899,7 @@ fn gaincurves_for_window(
     valid: &[usize],
     center_hz: f64,
     band: Option<&str>,
+    require_full_curve: bool,
 ) -> Result<BTreeMap<String, Vec<f32>>, GencalError> {
     let mut selected = Vec::new();
     if table
@@ -923,7 +927,7 @@ fn gaincurves_for_window(
         let antenna = get_string(table, row, COL_ANTENNA)?;
         if let std::collections::btree_map::Entry::Vacant(entry) = curves.entry(antenna) {
             let gain = get_f32_array_fortran(table, row, COL_GAIN)?;
-            if gain.len() != 8 {
+            if require_full_curve && gain.len() != 8 {
                 return Err(GencalError::UnsupportedTableValue(format!(
                     "gain-curve table row {row} has {} coefficients, expected eight",
                     gain.len(),
