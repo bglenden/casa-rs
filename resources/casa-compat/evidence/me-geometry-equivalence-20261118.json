@@ -1,0 +1,595 @@
+{
+  "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+  "source_revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4",
+  "runtime_revision": "c6d7701e626fd223af83e082006a33f4f8245763",
+  "scope": "baseline, asbaseline, uvw, touvw, expand, earthmagnetic and shared geometry record consumers. Issue #1252 retains remaining measures methods and forms.",
+  "work_item": "https://github.com/bglenden/casa-rs/issues/1252",
+  "public_sources": [
+    "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/raw/casatools/src/tools/measures/measures_cmpt.cc?at=6.7.6.14",
+    "https://github.com/casacore/casacore/tree/27a35f8b2a6a4c8ef86296fe353a1cc95387a8a3/measures/Measures",
+    "https://github.com/casacore/casacore/tree/v3.7.1/measures/Measures"
+  ],
+  "measures_snapshot": {
+    "generated_at_utc": "2026-04-09T16:32:00Z",
+    "casarundata_version": "casarundata-2026.02.19-1.tar.gz",
+    "measures_version": "WSRT_Measures_20260408-160001.ztar",
+    "measures_site": "https://www.astron.nl/iers/",
+    "included_paths": [
+      "readme.txt",
+      "geodetic",
+      "ephemerides/DE200",
+      "ephemerides/DE405",
+      "ephemerides/VGEO",
+      "ephemerides/VTOP",
+      "ephemerides/JPL-Horizons",
+      "ephemerides/Sources",
+      "ephemerides/Lines"
+    ]
+  },
+  "build": {
+    "profile": "release",
+    "command": "maturin develop --release --manifest-path crates/casars-python/Cargo.toml",
+    "runtime": "Built from the source revision above.",
+    "evidence_reuse": "The benchmark revision updates only the Rust test for the formerly unimplemented IGRF reference. It does not change the executable runtime."
+  },
+  "comparison": {
+    "fixture": "crates/casars-python/python/tests/data/casa_measures_geometry.json",
+    "count": 362,
+    "capture": "CASAPY tools/simulation/measures_geometry_oracle.py --measures-data target/geometry-snapshot --out crates/casars-python/python/tests/data/casa_measures_geometry.json",
+    "comparator": "test_measures_geometry.py checks exact record keys, units, Python return types, exception classes/text and vector shapes. Numeric comparisons use rtol=2e-11 and atol=2e-7. Baseline/UVW comparisons use Cartesian vectors because angles are undefined at zero length. Native expectations for documented CASA defects use independent CASA controls.",
+    "result": "362 passed. Affected Python suite: 1135 passed, 1 optional skip. The snapshot is required on both sides for strict Earth-radius comparisons."
+  },
+  "performance": {
+    "command": "CASAPY tools/simulation/measures_geometry_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --repeat 1000 --samples 7",
+    "conditions": "Both implementations run in CASA Python against the same measures data. Native runs use the release build and no concurrent local build/test. Seven retained samples per case with one preceding warmup sample.",
+    "casa": {
+      "backend": "casa",
+      "casa_version": "6.7.6-14",
+      "revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "baseline_values_0": {
+          "median_ns": 47739.083,
+          "samples_ns": [
+            47603.875,
+            49345.125,
+            47973.375,
+            48810.542,
+            47739.083,
+            47646.208,
+            46613.791
+          ]
+        },
+        "baseline_vector_1": {
+          "median_ns": 47436.875,
+          "samples_ns": [
+            47049.25,
+            46721.417,
+            48875.459,
+            47436.875,
+            47518.333,
+            47169.208,
+            49564.792
+          ]
+        },
+        "baseline_vector_3": {
+          "median_ns": 59350.291,
+          "samples_ns": [
+            59662.25,
+            61115.291,
+            59598.667,
+            59350.291,
+            56928.541,
+            57188.167,
+            58399.917
+          ]
+        },
+        "baseline_offset_0": {
+          "median_ns": 95200.25,
+          "samples_ns": [
+            96461.917,
+            97240.209,
+            97543.0,
+            95200.25,
+            94749.542,
+            94615.833,
+            95143.459
+          ]
+        },
+        "uvw_values_0": {
+          "median_ns": 48811.75,
+          "samples_ns": [
+            49310.333,
+            49829.042,
+            48811.75,
+            48736.917,
+            48622.041,
+            49106.417,
+            48385.0
+          ]
+        },
+        "uvw_vector_3": {
+          "median_ns": 59422.209,
+          "samples_ns": [
+            60605.167,
+            59404.292,
+            60098.75,
+            59422.209,
+            58940.959,
+            60349.958,
+            58546.75
+          ]
+        },
+        "uvw_offset_0": {
+          "median_ns": 74350.292,
+          "samples_ns": [
+            74473.208,
+            74094.292,
+            73469.584,
+            74350.292,
+            74118.833,
+            76161.458,
+            109928.792
+          ]
+        },
+        "earthmagnetic_ref_ITRF": {
+          "median_ns": 42630.917,
+          "samples_ns": [
+            45074.0,
+            42630.917,
+            42816.25,
+            43113.667,
+            41799.833,
+            41304.291,
+            41602.542
+          ]
+        },
+        "earthmagnetic_measure_0": {
+          "median_ns": 43100.875,
+          "samples_ns": [
+            42853.667,
+            43374.292,
+            43324.333,
+            42925.792,
+            43247.25,
+            42861.667,
+            43100.875
+          ]
+        },
+        "asbaseline_0": {
+          "median_ns": 82889.458,
+          "samples_ns": [
+            82889.458,
+            82544.167,
+            94024.584,
+            85549.25,
+            89029.542,
+            82379.5,
+            81975.166
+          ]
+        },
+        "asbaseline_1": {
+          "median_ns": 122350.875,
+          "samples_ns": [
+            124498.209,
+            122350.875,
+            123587.5,
+            121780.667,
+            121219.333,
+            120168.417,
+            122446.083
+          ]
+        },
+        "baseline_touvw_0": {
+          "median_ns": 78769.875,
+          "samples_ns": [
+            74278.75,
+            75955.667,
+            79827.084,
+            75444.75,
+            79299.833,
+            78769.875,
+            79533.375
+          ]
+        },
+        "touvw_baseline_vector_4": {
+          "median_ns": 141447.791,
+          "samples_ns": [
+            140592.5,
+            141447.791,
+            136248.375,
+            139418.166,
+            142662.375,
+            142606.042,
+            149275.583
+          ]
+        },
+        "baseline_expand_0": {
+          "median_ns": 40451.917,
+          "samples_ns": [
+            39627.792,
+            41191.916,
+            40959.833,
+            39671.334,
+            40451.917,
+            40354.458,
+            40873.75
+          ]
+        },
+        "expand_baseline_vector_4": {
+          "median_ns": 67719.708,
+          "samples_ns": [
+            67806.417,
+            67719.708,
+            67464.167,
+            67590.917,
+            66798.417,
+            67929.792,
+            68606.041
+          ]
+        },
+        "baseline_convert_HADEC": {
+          "median_ns": 37964.166,
+          "samples_ns": [
+            37521.792,
+            37289.667,
+            37964.166,
+            37739.417,
+            38335.708,
+            38888.541,
+            39688.834
+          ]
+        },
+        "baseline_convert_J2000": {
+          "median_ns": 68827.292,
+          "samples_ns": [
+            69659.459,
+            68418.083,
+            69641.25,
+            67521.833,
+            67828.583,
+            68827.292,
+            68905.583
+          ]
+        },
+        "uvw_convert_B1950": {
+          "median_ns": 65456.208,
+          "samples_ns": [
+            65027.208,
+            66257.25,
+            65616.416,
+            65183.041,
+            65456.208,
+            65499.0,
+            65370.292
+          ]
+        },
+        "uvw_convert_J2000": {
+          "median_ns": 76846.958,
+          "samples_ns": [
+            78018.958,
+            76846.958,
+            77174.625,
+            78689.0,
+            76741.25,
+            76577.042,
+            76371.708
+          ]
+        },
+        "baseline_inspect_1_addxvalue": {
+          "median_ns": 29589.666,
+          "samples_ns": [
+            30299.458,
+            29385.75,
+            29021.792,
+            30156.5,
+            30321.541,
+            29589.666,
+            29276.958
+          ]
+        }
+      }
+    },
+    "native": {
+      "backend": "casars",
+      "casa_version": "6.7.6-14",
+      "revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "baseline_values_0": {
+          "median_ns": 2576.958,
+          "samples_ns": [
+            2594.583,
+            3085.666,
+            2574.292,
+            2576.958,
+            2581.958,
+            2576.292,
+            2567.75
+          ]
+        },
+        "baseline_vector_1": {
+          "median_ns": 6051.417,
+          "samples_ns": [
+            6051.417,
+            6450.041,
+            5984.833,
+            5948.0,
+            6264.083,
+            6054.167,
+            6049.917
+          ]
+        },
+        "baseline_vector_3": {
+          "median_ns": 6814.125,
+          "samples_ns": [
+            6698.625,
+            7019.041,
+            6800.291,
+            6814.125,
+            6982.334,
+            6694.833,
+            7068.167
+          ]
+        },
+        "baseline_offset_0": {
+          "median_ns": 6800.291,
+          "samples_ns": [
+            7113.708,
+            6309.542,
+            6274.25,
+            6802.916,
+            6800.291,
+            7074.625,
+            6427.416
+          ]
+        },
+        "uvw_values_0": {
+          "median_ns": 2267.042,
+          "samples_ns": [
+            2286.667,
+            2265.625,
+            2262.125,
+            2299.208,
+            2267.042,
+            2271.083,
+            2262.709
+          ]
+        },
+        "uvw_vector_3": {
+          "median_ns": 6559.042,
+          "samples_ns": [
+            6591.542,
+            6529.084,
+            6559.042,
+            6496.0,
+            6508.708,
+            6899.5,
+            6979.084
+          ]
+        },
+        "uvw_offset_0": {
+          "median_ns": 6741.334,
+          "samples_ns": [
+            6741.334,
+            6732.583,
+            6840.375,
+            6798.042,
+            6763.667,
+            6734.625,
+            6721.416
+          ]
+        },
+        "earthmagnetic_ref_ITRF": {
+          "median_ns": 2801.125,
+          "samples_ns": [
+            2800.667,
+            2792.75,
+            2807.166,
+            2801.125,
+            2789.0,
+            2882.708,
+            2859.875
+          ]
+        },
+        "earthmagnetic_measure_0": {
+          "median_ns": 5202.5,
+          "samples_ns": [
+            5251.25,
+            5193.792,
+            5203.417,
+            5202.5,
+            5201.667,
+            5174.25,
+            5237.209
+          ]
+        },
+        "asbaseline_0": {
+          "median_ns": 16007.5,
+          "samples_ns": [
+            15886.458,
+            15833.291,
+            16210.625,
+            16169.25,
+            15973.125,
+            16231.958,
+            16007.5
+          ]
+        },
+        "asbaseline_1": {
+          "median_ns": 20666.792,
+          "samples_ns": [
+            20960.125,
+            21364.25,
+            20652.375,
+            20666.792,
+            20640.25,
+            20526.792,
+            20736.834
+          ]
+        },
+        "baseline_touvw_0": {
+          "median_ns": 16799.959,
+          "samples_ns": [
+            16886.417,
+            16879.958,
+            16799.959,
+            16883.917,
+            16684.209,
+            16693.667,
+            16666.833
+          ]
+        },
+        "touvw_baseline_vector_4": {
+          "median_ns": 21725.417,
+          "samples_ns": [
+            21725.417,
+            21737.833,
+            21690.292,
+            22404.5,
+            22612.792,
+            21620.916,
+            21523.542
+          ]
+        },
+        "baseline_expand_0": {
+          "median_ns": 5638.958,
+          "samples_ns": [
+            5653.792,
+            5635.042,
+            5727.333,
+            5628.0,
+            5638.958,
+            5656.459,
+            5631.708
+          ]
+        },
+        "expand_baseline_vector_4": {
+          "median_ns": 10336.958,
+          "samples_ns": [
+            10220.333,
+            10224.125,
+            10324.541,
+            10433.75,
+            10542.084,
+            10487.0,
+            10336.958
+          ]
+        },
+        "baseline_convert_HADEC": {
+          "median_ns": 4266.209,
+          "samples_ns": [
+            4180.292,
+            4271.625,
+            4258.417,
+            4261.041,
+            4333.208,
+            4274.0,
+            4266.209
+          ]
+        },
+        "baseline_convert_J2000": {
+          "median_ns": 15588.125,
+          "samples_ns": [
+            15588.125,
+            15799.0,
+            15453.334,
+            15672.25,
+            15464.167,
+            15644.0,
+            15503.208
+          ]
+        },
+        "uvw_convert_B1950": {
+          "median_ns": 13919.083,
+          "samples_ns": [
+            13919.083,
+            13845.208,
+            14053.375,
+            13944.041,
+            13704.667,
+            13630.709,
+            13930.583
+          ]
+        },
+        "uvw_convert_J2000": {
+          "median_ns": 18174.625,
+          "samples_ns": [
+            17940.0,
+            18174.625,
+            18313.542,
+            18067.25,
+            18250.5,
+            18283.917,
+            18082.875
+          ]
+        },
+        "baseline_inspect_1_addxvalue": {
+          "median_ns": 7417.709,
+          "samples_ns": [
+            7440.625,
+            7418.083,
+            7355.916,
+            7117.041,
+            7183.667,
+            7417.709,
+            7464.5
+          ]
+        }
+      }
+    },
+    "speedups": {
+      "baseline_values_0": 18.52536323836089,
+      "baseline_vector_1": 7.838969781788298,
+      "baseline_vector_3": 8.709891732247353,
+      "baseline_offset_0": 13.999437671123191,
+      "uvw_values_0": 21.53103030292337,
+      "uvw_vector_3": 9.059586598164794,
+      "uvw_offset_0": 11.029017698870877,
+      "earthmagnetic_ref_ITRF": 15.219212637779464,
+      "earthmagnetic_measure_0": 8.284646804420952,
+      "asbaseline_0": 5.178163860690302,
+      "asbaseline_1": 5.920167726079597,
+      "baseline_touvw_0": 4.6886944783615245,
+      "touvw_baseline_vector_4": 6.510705456194465,
+      "baseline_expand_0": 7.173651053971319,
+      "expand_baseline_vector_4": 6.551222129373071,
+      "baseline_convert_HADEC": 8.898805942231148,
+      "baseline_convert_J2000": 4.415366954011467,
+      "uvw_convert_B1950": 4.702623585188765,
+      "uvw_convert_J2000": 4.228255493579647,
+      "baseline_inspect_1_addxvalue": 3.989057268221226
+    },
+    "all_faster": true
+  },
+  "experiments": [
+    "First geometry candidate passed 237/348; linear routes and controls raised this to 308/350.",
+    "A rigid-hop port passed 329/350. Direct per-hop captures isolated the remaining FK4 and HADEC signs. A casacore 3.7.1 C++ probe reproduced CASA and traced the direct APP FK4 mismatch to MeasMath::applyETerms default epoch argument 2000.0.",
+    "The 0.142 nT IGRF residual came from decimal-year interpolation instead of MeasTable::IGRF fractional MJD. The 0.203 mm Earth-radius position residual traced to the moment LAST is rounded by MCFrame::getLASTr. Both corrected before recapture.",
+    "Running the old CASA capture on the bundled snapshot showed three failures (up to 0.0186 m). CASA with the same bundled snapshot removes those test-input mismatches at the original tolerances."
+  ],
+  "review": {
+    "state": "pending",
+    "scope": "One fresh-context Astra xhigh shared-code review after local gates."
+  },
+  "validation": [
+    {
+      "command": "cargo fmt --all",
+      "result": "passed"
+    },
+    {
+      "command": "cargo clippy -p casa-types -p casa-measures-data -p casars-python --all-targets --no-deps -- -D warnings",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test -p casa-types -p casa-measures-data -p casars-python",
+      "result": "419 passed, including crate tests, provider conformance and doctests, with bundled measures data and isolated embedded-Python environment"
+    },
+    {
+      "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures*.py crates/casars-python/python/tests/test_tools_measures.py crates/casars-python/python/tests/test_binding_snapshots.py",
+      "result": "1135 passed, 1 optional skip excluded"
+    }
+  ]
+}

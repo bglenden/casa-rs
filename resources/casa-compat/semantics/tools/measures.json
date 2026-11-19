@@ -2,34 +2,32 @@
  "schema_version": 1,
  "tool": "measures",
  "casa_version": "6.7.6.14",
- "audit_revision": "8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7",
+ "audit_revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4",
  "methods": {
   "addxvalue": {
-   "status": "Partial",
-   "issue": 1252,
-   "scope": "Returns direction cosines or the position vector for scalar supported records, resolving nested offsets; returns an empty record for epoch, frequency, Doppler and radial velocity. Vector direction/position extras and remaining measure kinds are unfinished; cyclic or excessively deep records are rejected safely.",
+   "status": "Implemented",
+   "scope": "Returns the first Cartesian vector for direction, position, baseline, uvw and magnetic measures, and an empty record for epoch, frequency, Doppler and radial velocity. Cyclic and excessively deep records are rejected safely.",
    "evidence": [
     "signature",
     "addxvalue-casa",
-    "spectral-casa"
+    "spectral-casa",
+    "geometry-casa"
    ]
   },
   "asbaseline": {
-   "status": "Not implemented",
-   "issue": 1252,
-   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Passes through baselines and converts scalar/vector positions through ITRF into J2000 baselines.",
    "evidence": [
     "signature",
-    "refusals"
+    "geometry-casa"
    ]
   },
   "baseline": {
-   "status": "Not implemented",
-   "issue": 1252,
-   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Defines scalar/vector baselines from Cartesian or spherical quantities and supports a reference origin. Rigid reference changes use the explicit frame.",
    "evidence": [
     "signature",
-    "refusals"
+    "geometry-casa"
    ]
   },
   "cometangdiam": {
@@ -91,7 +89,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "spectral-casa"
+    "spectral-casa",
+    "geometry-casa"
    ]
   },
   "doframe": {
@@ -120,12 +119,11 @@
    ]
   },
   "earthmagnetic": {
-   "status": "Not implemented",
-   "issue": 1252,
-   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Defines field strength and direction in the supported reference, reads explicit magnetic vectors and evaluates IGRF at the frame position and exact TDB epoch.",
    "evidence": [
     "signature",
-    "refusals"
+    "geometry-casa"
    ]
   },
   "epoch": {
@@ -137,12 +135,11 @@
    ]
   },
   "expand": {
-   "status": "Not implemented",
-   "issue": 1252,
-   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Returns ordered pair differences for position, baseline and uvw vectors with the original type and reference. Single input returns its coordinates. Failures return empty records.",
    "evidence": [
     "signature",
-    "refusals"
+    "geometry-casa"
    ]
   },
   "framecomet": {
@@ -172,13 +169,13 @@
    ]
   },
   "getoffset": {
-   "status": "Partial",
-   "issue": 1252,
-   "scope": "Copies valid scalar/vector/nested offsets for direction, epoch, position, frequency, Doppler and radial velocity without aliasing mutable containers or losing large integers. Remaining measure kinds are unfinished; recursive and object-array records are rejected safely.",
+   "status": "Implemented",
+   "scope": "Copies offsets for all nine measure kinds, retaining scalar/vector/nested values and large integers. Recursive and object-array records are rejected safely.",
    "evidence": [
     "signature",
     "getoffset-casa",
-    "spectral-casa"
+    "spectral-casa",
+    "geometry-casa"
    ]
   },
   "getref": {
@@ -187,7 +184,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "spectral-casa"
+    "spectral-casa",
+    "geometry-casa"
    ]
   },
   "gettype": {
@@ -196,7 +194,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "spectral-casa"
+    "spectral-casa",
+    "geometry-casa"
    ]
   },
   "getvalue": {
@@ -205,7 +204,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "spectral-casa"
+    "spectral-casa",
+    "geometry-casa"
    ]
   },
   "ismeasure": {
@@ -214,7 +214,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "spectral-casa"
+    "spectral-casa",
+    "geometry-casa"
    ]
   },
   "linelist": {
@@ -231,17 +232,19 @@
    "evidence": [
     "signature",
     "casa-values",
-    "spectral-casa"
+    "spectral-casa",
+    "geometry-casa"
    ]
   },
   "measure": {
    "status": "Implemented",
-   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA.",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. Reads and converts baseline, UVW and earth magnetic measures. Generic output reference offsets are still unfinished (#1252).",
    "evidence": [
     "signature",
     "casa-values",
     "undefined-frequency-casa",
-    "spectral-casa"
+    "spectral-casa",
+    "geometry-casa"
    ]
   },
   "observatory": {
@@ -328,7 +331,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "spectral-casa"
+    "spectral-casa",
+    "geometry-casa"
    ]
   },
   "showframe": {
@@ -398,12 +402,11 @@
    ]
   },
   "touvw": {
-   "status": "Not implemented",
-   "issue": 1252,
-   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Converts scalar/vector baselines to J2000 uvw, flattened Cartesian coordinates and sidereal rates using the explicit frame.",
    "evidence": [
     "signature",
-    "refusals"
+    "geometry-casa"
    ]
   },
   "type": {
@@ -415,12 +418,11 @@
    ]
   },
   "uvw": {
-   "status": "Not implemented",
-   "issue": 1252,
-   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Defines scalar/vector uvw measures from Cartesian or spherical quantities and retains valid reference offsets.",
    "evidence": [
     "signature",
-    "refusals"
+    "geometry-casa"
    ]
   }
  },
@@ -510,6 +512,36 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md CASA deviations: correct CASA crashes, data loss and contradictions of evident intent."
+  },
+  {
+   "id": "geometry-unit-offset-loss",
+   "record": "Measures geometry constructors lose values and mislabel units",
+   "inputs": "Length-first baseline/UVW quantities, incompatible dimensions, valid UVW reference offsets and spherical magnetic fields.",
+   "casa": "Can replace valid geometry with zero, discard the UVW offset, or mislabel tesla as nanotesla and magnetic extra values as metres.",
+   "ours": "Retains geometry and its reference origin, checks dimensions, and returns magnetic components in nanotesla.",
+   "rationale": "The angle-first constructor, generic measure offset and explicit Cartesian magnetic records supply independent controls for data and unit corruption.",
+   "impact": "Geometry and magnetic field strengths are preserved with consistent units.",
+   "evidence": [
+    "geometry-casa",
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md CASA deviations: correct data loss, corruption and contradictions of evident intent."
+  },
+  {
+   "id": "geometry-stale-auxiliary-results",
+   "record": "Failed measures geometry calls can expose earlier outputs",
+   "inputs": "Failed touvw or expand following a successful call, and expand with an incompatible magnetic measure.",
+   "casa": "Can return stale auxiliary results or relabel an incompatible record with zero length coordinates.",
+   "ours": "Returns empty records for all outputs on failure and refuses non-geometric expansion.",
+   "rationale": "Auxiliary values must correspond to the requested inputs.",
+   "impact": "Callers can identify missing or incompatible results from all outputs.",
+   "evidence": [
+    "geometry-casa",
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md CASA deviations: correct data loss, corruption and contradictions of evident intent."
   }
  ],
  "evidence": {
@@ -522,7 +554,7 @@
     "crates/casars-python/python/tests/test_tools_measures.py",
     "crates/casars-python/src/tools/measures/surface.rs"
    ],
-   "source_revision": "3f8e6726c60d3ff270d57063befec54302d1fe07"
+   "source_revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4"
   },
   "refusals": {
    "kind": "Refusal test",
@@ -532,7 +564,7 @@
     "crates/casars-python/python/tests/test_tools_measures.py",
     "crates/casars-python/src/tools/mod.rs"
    ],
-   "source_revision": "3f8e6726c60d3ff270d57063befec54302d1fe07"
+   "source_revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4"
   },
   "casa-values": {
    "kind": "CASA-probed values",
@@ -555,7 +587,7 @@
    "links": [
     "docs/CASA (C++) bugs.md"
    ],
-   "source_revision": "3f8e6726c60d3ff270d57063befec54302d1fe07"
+   "source_revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4"
   },
   "casa-lists": {
    "kind": "CASA-recorded values",
@@ -663,6 +695,24 @@
    "revision": "cecd62488304f66d95405494bbe2eae2de115e55",
    "command": "target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_spectral.py; CASAPY tools/simulation/measures_spectral_benchmark.py --backend casa --repeat 1000 --samples 7; CASAPY tools/simulation/measures_spectral_benchmark.py --backend casars --repeat 1000 --samples 7",
    "receipt": "resources/casa-compat/evidence/me-spectral-equivalence-20261119.json"
+  },
+  "geometry-casa": {
+   "kind": "CASA 6.7.6.14 direct geometry comparisons and release performance",
+   "state": "passed",
+   "scope": "Six geometry methods, their common record consumers, and rigid reference conversions on the bundled measures snapshot.",
+   "result": "362 CASA cases pass on the matching bundled snapshot. The affected Python selection passes 1135 tests. All 20 release benchmark cases are faster than CASA, see the receipt for the minimum speedup.",
+   "links": [
+    "tools/simulation/measures_geometry_oracle.py",
+    "tools/simulation/measures_geometry_benchmark.py",
+    "crates/casars-python/python/tests/data/casa_measures_geometry.json",
+    "crates/casars-python/python/tests/test_measures_geometry.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4",
+   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+   "revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4",
+   "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_geometry.py; CASAPY tools/simulation/measures_geometry_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --repeat 1000 --samples 7",
+   "receipt": "resources/casa-compat/evidence/me-geometry-equivalence-20261118.json"
   }
  }
 }
