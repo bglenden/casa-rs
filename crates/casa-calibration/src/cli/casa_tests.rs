@@ -580,7 +580,8 @@ fn gencal_reads_casas_values() {
     };
     assert!(refused(caltype(""), "caltype").contains("requires a caltype"));
     assert!(caltype("tsys").is_ok());
-    for value in ["antposvla", "eop"] {
+    assert!(caltype("antposvla").is_ok());
+    for value in ["eop"] {
         assert!(
             refused(caltype(value), "caltype").contains("#979"),
             "{value}"

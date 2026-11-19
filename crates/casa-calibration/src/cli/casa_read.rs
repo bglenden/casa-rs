@@ -263,6 +263,7 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         "sbd" => GencalType::Sbd,
         "mbd" => GencalType::Mbd,
         "antpos" => GencalType::Antpos,
+        "antposvla" => GencalType::AntposVla,
         "gc" => GencalType::Gc,
         "gceff" => GencalType::Gceff,
         "eff" => GencalType::Eff,

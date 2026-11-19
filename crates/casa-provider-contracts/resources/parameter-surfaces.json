@@ -18550,7 +18550,9 @@
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "gceff"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eff"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tsys"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "opac"}}
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "opac"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antposvla"}}
           ]}}}
         },
         {
