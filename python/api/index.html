@@ -2584,6 +2584,13 @@ CASA's value, with NumPy arrays where CASA returns them. A parameter casa-rs
 does not implement yet is taken only at CASA's default; its docstring names
 the issue. The other wrappers take keyword arguments and return the
 <code>TaskCompletion</code>.</p>
+<p>On a single MeasurementSet, <code>split</code> and <code>mstransform</code> accept named field and
+spectral-window selections, antenna names and baseline expressions, scan
+predicates, and calendar time ranges. Channel selectors can include disjoint
+ranges and strides. The CASA comparison exercises unaveraged copies and
+checks selected visibilities, flags, weights, and remapped metadata. The
+remaining split and transform behaviors are tracked in
+<a href="https://github.com/bglenden/casa-rs/issues/978">#978</a>.</p>
 <p>A value the contract refuses raises <code>ValueError</code> before anything starts, or
 <code>TypeError</code> for a value of the wrong type. A task that refuses its
 parameters raises <code>TaskParameterError</code>, a <code>ValueError</code>, and one that starts
