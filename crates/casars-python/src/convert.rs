@@ -572,13 +572,16 @@ fn mixed_bool_numeric_kind(
     signed_integer: &Bound<'_, PyAny>,
 ) -> PyResult<RecordScalarKind> {
     let floating = numpy.getattr("floating")?;
+    let longdouble = numpy.getattr("longdouble")?;
     let mut has_float = false;
     let mut has_complex = false;
     for item in items {
         if item.is_instance_of::<PyInt>() || item.is_instance(signed_integer)? {
             continue;
         }
-        if item.is_instance_of::<PyFloat>() || item.is_instance(&floating)? {
+        if item.is_instance_of::<PyFloat>()
+            || (item.is_instance(&floating)? && !item.is_instance(&longdouble)?)
+        {
             has_float = true;
         } else if item.is_instance_of::<PyComplex>() {
             has_complex = true;
@@ -587,10 +590,11 @@ fn mixed_bool_numeric_kind(
         }
     }
     if has_float && !has_complex {
-        if items
-            .iter()
-            .any(|item| item.is_instance_of::<PyInt>() && item.extract::<i64>().is_err())
-        {
+        if items.iter().any(|item| {
+            item.is_instance_of::<PyInt>()
+                && !item.is_instance_of::<PyBool>()
+                && item.extract::<i64>().is_err()
+        }) {
             return Ok(RecordScalarKind::IntegerOverflow);
         }
         let values = items

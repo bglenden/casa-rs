@@ -759,6 +759,102 @@
       }
     },
     {
+      "name": "boolean_numpy_half",
+      "method": "quantity",
+      "value": [
+        true,
+        {
+          "dtype": "float16",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.5
+        ]
+      }
+    },
+    {
+      "name": "boolean_numpy_half",
+      "method": "getunit",
+      "value": [
+        true,
+        {
+          "dtype": "float16",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "name": "boolean_numpy_half",
+      "method": "add",
+      "value": [
+        true,
+        {
+          "dtype": "float16",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "boolean_numpy_longdouble",
+      "method": "quantity",
+      "value": [
+        true,
+        {
+          "dtype": "longdouble",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_numpy_longdouble",
+      "method": "getunit",
+      "value": [
+        true,
+        {
+          "dtype": "longdouble",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "name": "boolean_numpy_longdouble",
+      "method": "add",
+      "value": [
+        true,
+        {
+          "dtype": "longdouble",
+          "scalar": 2.5
+        }
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
       "name": "boolean_float_matrix",
       "method": "quantity",
       "value": [

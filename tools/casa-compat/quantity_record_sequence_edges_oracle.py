@@ -47,6 +47,8 @@ CASES = [
     ("boolean_float", [True, 2.5], "m", None),
     ("float_boolean_tuple", {"tuple": [2.5, False]}, "m", None),
     ("boolean_numpy_float", [True, numpy_scalar("float32", 2.5)], "m", None),
+    ("boolean_numpy_half", [True, numpy_scalar("float16", 2.5)], "m", None),
+    ("boolean_numpy_longdouble", [True, numpy_scalar("longdouble", 2.5)], "m", None),
     ("boolean_float_matrix", [[True, 2.5], [1.5, False]], "m", None),
     ("boolean_integer_matrix", [[True, 1]], "m", None),
     ("boolean_complex", [True, {"complex": [2, 3]}], "m", None),
