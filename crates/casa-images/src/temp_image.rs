@@ -30,7 +30,6 @@
 //! ```
 
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
@@ -62,7 +61,7 @@ pub struct TempImage<T: ImagePixel> {
     units: String,
     misc_info: RecordValue,
     image_info: ImageInfo,
-    masks: BTreeMap<String, ArrayD<bool>>,
+    masks: Vec<(String, ArrayD<bool>)>,
     default_mask: Option<String>,
     history: Vec<(String, String)>,
 }
@@ -83,7 +82,7 @@ impl<T: ImagePixel> TempImage<T> {
             units: String::new(),
             misc_info: RecordValue::default(),
             image_info: ImageInfo::default(),
-            masks: BTreeMap::new(),
+            masks: Vec::new(),
             default_mask: None,
             history: Vec::new(),
         })
@@ -288,8 +287,9 @@ impl<T: ImagePixel> TempImage<T> {
     /// Returns a named mask as a full-image boolean array.
     pub fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
         self.masks
-            .get(name)
-            .cloned()
+            .iter()
+            .find(|(candidate, _)| candidate == name)
+            .map(|(_, mask)| mask.clone())
             .ok_or_else(|| ImageError::MaskNotFound(name.to_string()))
     }
 
@@ -301,24 +301,57 @@ impl<T: ImagePixel> TempImage<T> {
                 got: data.shape().to_vec(),
             });
         }
-        self.masks.insert(name.to_string(), data.clone());
+        if let Some((_, mask)) = self
+            .masks
+            .iter_mut()
+            .find(|(candidate, _)| candidate == name)
+        {
+            *mask = data.clone();
+        } else {
+            self.masks.push((name.to_owned(), data.clone()));
+        }
         Ok(())
     }
 
     /// Removes a named mask.
     pub fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {
-        if self.masks.remove(name).is_none() {
-            return Err(ImageError::MaskNotFound(name.to_string()));
-        }
+        let index = self
+            .masks
+            .iter()
+            .position(|(candidate, _)| candidate == name)
+            .ok_or_else(|| ImageError::MaskNotFound(name.into()))?;
+        self.masks.remove(index);
         if self.default_mask.as_deref() == Some(name) {
             self.default_mask = None;
         }
         Ok(())
     }
 
+    /// Renames a mask in its original order and keeps it selected if default.
+    ///
+    /// # Errors
+    /// Returns an error if the source is absent or the destination exists.
+    pub fn rename_mask(&mut self, from: &str, to: &str) -> Result<(), ImageError> {
+        if self.masks.iter().any(|(name, _)| name == to) {
+            return Err(ImageError::InvalidMetadata(format!(
+                "Mask {to} already exists"
+            )));
+        }
+        let (name, _) = self
+            .masks
+            .iter_mut()
+            .find(|(name, _)| name == from)
+            .ok_or_else(|| ImageError::MaskNotFound(from.into()))?;
+        *name = to.into();
+        if self.default_mask.as_deref() == Some(from) {
+            self.default_mask = Some(to.into());
+        }
+        Ok(())
+    }
+
     /// Sets the default mask name, validating that it exists.
     pub fn set_default_mask(&mut self, name: &str) -> Result<(), ImageError> {
-        if !self.masks.contains_key(name) {
+        if !self.masks.iter().any(|(candidate, _)| candidate == name) {
             return Err(ImageError::MaskNotFound(name.to_string()));
         }
         self.default_mask = Some(name.to_string());
@@ -343,7 +376,7 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Returns the names of all stored masks.
     pub fn mask_names(&self) -> Vec<String> {
-        self.masks.keys().cloned().collect()
+        self.masks.iter().map(|(name, _)| name.clone()).collect()
     }
 }
 

@@ -7081,3 +7081,16 @@ table raises `NameError` in CASA 6.7.6.14 when it tries to read
 `needToClose_mymsmd`. casa-rs evaluates the native atmospheric profile
 with the station defaults and plots the original calibration spectra
 with the resulting curve (#1526).
+
+
+## Listing an incomplete antenna integration can terminate CASA
+
+CASA 6.7.6.14's `listcal` reshapes each spectral window's solution
+rows into complete antenna integrations. Removing the last antenna
+row from an otherwise regular G Jones table terminated the paired
+CASA subprocess after opening the requested listing file.
+
+casa-rs validates the antenna blocks before publishing a listing. The
+same input raises a recoverable error and leaves the destination absent.
+Complete integrations retain their original order, even when two have
+the same time and field (#1526).

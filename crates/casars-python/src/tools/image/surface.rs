@@ -694,7 +694,7 @@ const METHODS: &[Method] = &[
             param("name", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "maxfit",
