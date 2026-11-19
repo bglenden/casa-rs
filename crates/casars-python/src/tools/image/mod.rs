@@ -14,6 +14,7 @@ mod default_record;
 mod fits_import;
 mod handle;
 mod lifecycle;
+mod locking;
 mod mask_expression;
 mod masks;
 mod metadata;

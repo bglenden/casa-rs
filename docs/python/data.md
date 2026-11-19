@@ -34,6 +34,12 @@ Use `ia.open("example.im")` to reopen the product. Use
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
 
+For a native image, `ia.haslock()` reports its read and write locks in that
+order. Use `ia.lock(writelock=True, nattempts=1)` to try for a write lock
+without waiting. `ia.unlock()` flushes pending changes and releases the
+lock. `putchunk` normally releases the lock after writing. Pass
+`locking=False` to keep it while making several updates.
+
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits on this attachment last until `ia.done()`.
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a

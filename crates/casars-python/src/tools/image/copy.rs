@@ -259,7 +259,11 @@ impl CopyImage<'_> {
             }
         }
         publish_image(self.outfile, self.overwrite, |path| {
-            self.build(&original.lock(), path, history)
+            let mut image = original.lock();
+            original.require_lock(&mut image, casa_tables::LockType::Read)?;
+            let copied = self.build(&image, path, history)?;
+            image.release_requested_lock()?;
+            Ok(copied)
         })
     }
 }

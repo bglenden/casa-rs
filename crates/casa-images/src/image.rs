@@ -100,6 +100,8 @@ impl ImageHistoryEntry {
 }
 
 mod history;
+#[cfg(unix)]
+mod locking;
 pub use history::{image_history_entries, image_history_rows};
 
 const REGION_TYPE_FIELD: &str = "isRegion";
@@ -670,6 +672,8 @@ pub struct PagedImage<T: ImagePixel> {
     /// needs mutation even through `&self` trait methods.
     tiled_io: Option<RefCell<TiledArrayStorage>>,
     max_cache_bytes: Cell<usize>,
+    #[cfg(unix)]
+    cached_modify_counter: Option<u32>,
     _pixel: PhantomData<T>,
 }
 
@@ -930,6 +934,8 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
             max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
+            #[cfg(unix)]
+            cached_modify_counter: None,
             _pixel: PhantomData,
         })
     }
@@ -1007,6 +1013,8 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
             max_cache_bytes: Cell::new(cache_bytes),
+            #[cfg(unix)]
+            cached_modify_counter: None,
             _pixel: PhantomData,
         })
     }
@@ -1025,19 +1033,16 @@ impl<T: ImagePixel> PagedImage<T> {
         } else {
             Table::open(TableOptions::new(&path))?
         };
-        let coords = match table.keywords().get("coords") {
-            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
-                .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
-            _ => CoordinateSystem::new(),
-        };
-        let units = match table.keywords().get("units") {
-            Some(Value::Scalar(ScalarValue::String(s))) => s.clone(),
-            _ => String::new(),
-        };
-        let misc_info = match table.keywords().get("miscinfo") {
-            Some(Value::Record(rec)) => rec.clone(),
-            _ => RecordValue::default(),
-        };
+        Self::from_disk(path, table, tiled_io, max_cache_bytes)
+    }
+
+    fn from_disk(
+        path: PathBuf,
+        table: Table,
+        tiled_io: Option<RefCell<TiledArrayStorage>>,
+        max_cache_bytes: usize,
+    ) -> Result<Self, ImageError> {
+        let (coords, units, misc_info) = Self::read_table_metadata(&table)?;
         let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
         if map_primitive != T::PRIMITIVE_TYPE {
             return Err(ImageError::InvalidMetadata(format!(
@@ -1057,8 +1062,10 @@ impl<T: ImagePixel> PagedImage<T> {
             (shape, ts)
         };
         Ok(Self {
+            #[cfg(unix)]
+            cached_modify_counter: table.locked_modify_counter().ok(),
             table,
-            shape: shape.clone(),
+            shape,
             tile_shape,
             coords,
             path: Some(path),
@@ -1077,15 +1084,9 @@ impl<T: ImagePixel> PagedImage<T> {
         })
     }
 
-    /// Opens an existing image from disk as the requested typed image.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
-        let path = path.as_ref().to_path_buf();
-        let tiled_io = Self::open_tiled_io(&path, 0).ok().map(RefCell::new);
-        let table = if tiled_io.is_some() {
-            Table::open_metadata_only(TableOptions::new(&path))?
-        } else {
-            Table::open(TableOptions::new(&path))?
-        };
+    fn read_table_metadata(
+        table: &Table,
+    ) -> Result<(CoordinateSystem, String, RecordValue), ImageError> {
         let coords = match table.keywords().get("coords") {
             Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
@@ -1099,47 +1100,12 @@ impl<T: ImagePixel> PagedImage<T> {
             Some(Value::Record(rec)) => rec.clone(),
             _ => RecordValue::default(),
         };
+        Ok((coords, units, misc_info))
+    }
 
-        // Enable tile-aware I/O whenever the on-disk image has a compatible
-        // tiled payload. Rust-created `_tiled_io` images are the fast-path,
-        // but standard casacore images created by C++ may also be compatible.
-        let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
-        if map_primitive != T::PRIMITIVE_TYPE {
-            return Err(ImageError::InvalidMetadata(format!(
-                "image pixel type mismatch: requested {:?}, found {:?}",
-                T::PRIMITIVE_TYPE,
-                map_primitive
-            )));
-        }
-
-        // When tile-aware I/O is active, the real shape comes from the TSM header
-        // (the table cell may hold only a placeholder array).
-        let (shape, tile_shape) = if let Some(ref tio) = tiled_io {
-            let tio_ref = tio.borrow();
-            (tio_ref.cube_shape().to_vec(), tio_ref.tile_shape().to_vec())
-        } else {
-            let shape = Self::map_column_shape(&table)?;
-            let ts = TiledShape::new(shape.clone(), T::ELEM_SIZE)?
-                .tile_shape()
-                .to_vec();
-            (shape, ts)
-        };
-
-        Ok(Self {
-            table,
-            shape: shape.clone(),
-            tile_shape,
-            coords,
-            path: Some(path),
-            units,
-            misc_info,
-            temp_masks: BTreeMap::new(),
-            persistent_masks: RefCell::new(BTreeMap::new()),
-            temp_history: Vec::new(),
-            tiled_io,
-            max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
-            _pixel: PhantomData,
-        })
+    /// Opens an existing image from disk as the requested typed image.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
+        Self::open_with_cache(path, 0)
     }
 
     /// Detects the pixel type of an image on disk without opening it as a
