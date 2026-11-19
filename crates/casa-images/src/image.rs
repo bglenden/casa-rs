@@ -56,7 +56,33 @@ pub struct ImageHistoryEntry {
     pub message: String,
 }
 
+/// Complete casacore log metadata retained when importing history records.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageHistoryRow {
+    /// Time, priority, source location and message of the entry.
+    pub entry: ImageHistoryEntry,
+    /// Object identifier as stored in the CASA log table.
+    pub object_id: String,
+}
+
+impl ImageHistoryRow {
+    pub(crate) fn informational(entry: ImageHistoryEntry) -> Self {
+        Self {
+            entry,
+            object_id: String::new(),
+        }
+    }
+}
+
 impl ImageHistoryEntry {
+    pub(crate) fn current_time() -> Result<f64, ImageError> {
+        const UNIX_EPOCH_MJD_SECONDS: f64 = 40_587.0 * 86_400.0;
+        let duration = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| ImageError::Io(error.to_string()))?;
+        Ok(UNIX_EPOCH_MJD_SECONDS + duration.as_secs_f64())
+    }
+
     /// Origin used when casacore replays this entry through `ImageHistory`.
     ///
     /// An empty location becomes `ImageHistory::get`. Otherwise casacore
@@ -1950,6 +1976,38 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
+    /// Append imported history with its original location and MJD time.
+    ///
+    /// # Errors
+    /// Returns an error if the image log cannot be created, written or locked.
+    pub fn append_history_entries(
+        &mut self,
+        entries: &[ImageHistoryRow],
+    ) -> Result<(), ImageError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        if let Some(path) = self.path.clone() {
+            self.ensure_logtable()?;
+            Self::append_logtable_entries(
+                &Self::logtable_path(&path),
+                entries.iter().map(|entry| {
+                    (
+                        entry.entry.time_mjd_seconds,
+                        entry.entry.location.as_str(),
+                        entry.entry.message.as_str(),
+                        entry.entry.priority.as_str(),
+                        entry.object_id.as_str(),
+                    )
+                }),
+            )
+        } else {
+            self.temp_history
+                .extend(entries.iter().map(|row| row.entry.message.clone()));
+            Ok(())
+        }
+    }
+
     /// Clears the history log.
     pub fn clear_history(&mut self) -> Result<(), ImageError> {
         match self.path.clone() {
@@ -2562,29 +2620,21 @@ impl<T: ImagePixel> PagedImage<T> {
         location: &str,
         messages: &[String],
     ) -> Result<(), ImageError> {
-        const UNIX_EPOCH_MJD_SECONDS: f64 = 40_587.0 * 86_400.0;
-        let time = UNIX_EPOCH_MJD_SECONDS
-            + std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| ImageError::Io(e.to_string()))?
-                .as_secs_f64();
-        let entries = messages
-            .iter()
-            .map(|message| ImageHistoryEntry {
-                time_mjd_seconds: time,
-                message: message.clone(),
-                priority: "INFO".into(),
-                location: location.to_string(),
-            })
-            .collect::<Vec<_>>();
-        Self::append_logtable_entries(path, &entries)
+        let time = ImageHistoryEntry::current_time()?;
+        Self::append_logtable_entries(
+            path,
+            messages
+                .iter()
+                .map(|message| (time, location, message.as_str(), "INFO", "")),
+        )
     }
 
-    fn append_logtable_entries(
+    fn append_logtable_entries<'a>(
         path: &Path,
-        entries: &[ImageHistoryEntry],
+        entries: impl IntoIterator<Item = (f64, &'a str, &'a str, &'a str, &'a str)>,
     ) -> Result<(), ImageError> {
-        if entries.is_empty() {
+        let mut entries = entries.into_iter().peekable();
+        if entries.peek().is_none() {
             return Ok(());
         }
         // casacore takes a reopened table's row count from the sync data in
@@ -2592,27 +2642,24 @@ impl<T: ImagePixel> PagedImage<T> {
         // `logtable` CASA wrote unreadable to it.
         let mut lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
-        for entry in entries {
+        for (time, location, message, priority, object_id) in entries {
             table.add_row(RecordValue::new(vec![
-                RecordField::new(
-                    "TIME",
-                    Value::Scalar(ScalarValue::Float64(entry.time_mjd_seconds)),
-                ),
+                RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
                 RecordField::new(
                     "PRIORITY",
-                    Value::Scalar(ScalarValue::String(entry.priority.clone())),
+                    Value::Scalar(ScalarValue::String(priority.into())),
                 ),
                 RecordField::new(
                     "MESSAGE",
-                    Value::Scalar(ScalarValue::String(entry.message.clone())),
+                    Value::Scalar(ScalarValue::String(message.into())),
                 ),
                 RecordField::new(
                     "LOCATION",
-                    Value::Scalar(ScalarValue::String(entry.location.clone())),
+                    Value::Scalar(ScalarValue::String(location.into())),
                 ),
                 RecordField::new(
                     "OBJECT_ID",
-                    Value::Scalar(ScalarValue::String(String::new())),
+                    Value::Scalar(ScalarValue::String(object_id.into())),
                 ),
             ]))?;
         }
@@ -2762,7 +2809,18 @@ pub fn append_image_history_entries(
     image: &Path,
     entries: &[ImageHistoryEntry],
 ) -> Result<(), ImageError> {
-    PagedImage::<f32>::append_logtable_entries(&image.join(LOGTABLE_NAME), entries)
+    PagedImage::<f32>::append_logtable_entries(
+        &image.join(LOGTABLE_NAME),
+        entries.iter().map(|entry| {
+            (
+                entry.time_mjd_seconds,
+                entry.location.as_str(),
+                entry.message.as_str(),
+                entry.priority.as_str(),
+                "",
+            )
+        }),
+    )
 }
 
 impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {

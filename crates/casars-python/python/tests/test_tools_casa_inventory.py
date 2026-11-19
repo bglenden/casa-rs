@@ -42,9 +42,9 @@ IMPLEMENTED["coordsys"] = {
     "stokes", "telescope", "torecord", "type", "units",
 }
 IMPLEMENTED["image"] = {
-    "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "coordsys", "dohistory", "done", "fromarray", "fromshape",
+    "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "coordsys", "dohistory", "done", "fromarray", "fromfits", "fromshape",
     "getchunk", "history", "isopen", "ispersistent", "name", "open", "pixeltype", "putchunk", "restoringbeam",
-    "newimage", "newimagefromarray", "newimagefromfile", "newimagefromshape",
+    "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
     "makearray", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "type",
 }
 IMPLEMENTED["table"] = {

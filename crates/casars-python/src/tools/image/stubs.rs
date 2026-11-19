@@ -425,20 +425,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, infile = None, whichrep = None, whichhdu = None, zeroblanks = None, overwrite = None), text_signature = "($self, outfile='', infile='', whichrep=0, whichhdu=0, zeroblanks=False, overwrite=False)")]
-    fn fromfits(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        infile: Option<&Bound<'_, PyAny>>,
-        whichrep: Option<&Bound<'_, PyAny>>,
-        whichhdu: Option<&Bound<'_, PyAny>>,
-        zeroblanks: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fromfits")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, infile = None, region = None, mask = None, dropdeg = None, overwrite = None), text_signature = "($self, outfile='', infile='', region=[], mask='', dropdeg=False, overwrite=False)")]
     fn fromimage(
         &self,
@@ -677,20 +663,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("moments")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, infile = None, whichrep = None, whichhdu = None, zeroblanks = None, overwrite = None), text_signature = "($self, outfile='', infile='', whichrep=0, whichhdu=0, zeroblanks=False, overwrite=False)")]
-    fn newimagefromfits(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        infile: Option<&Bound<'_, PyAny>>,
-        whichrep: Option<&Bound<'_, PyAny>>,
-        whichhdu: Option<&Bound<'_, PyAny>>,
-        zeroblanks: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("newimagefromfits")
     }
 
     /// Not yet implemented in casa-rs.

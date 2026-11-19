@@ -421,6 +421,21 @@ pub fn from_fits_header(
     header: &FitsHeader,
     shape: &[usize],
 ) -> Result<CoordinateSystem, CoordinateError> {
+    from_fits_header_with_axis_order(header, shape).map(|(coordinates, _)| coordinates)
+}
+
+/// Decode a FITS header and report each model axis's original FITS pixel axis.
+///
+/// The model groups direction axes together, even when their position differs
+/// in the input array. Use the resulting permutation when saving a record for
+/// an array that retains the original FITS axis order.
+///
+/// # Errors
+/// Returns a coordinate error when the header cannot produce a model.
+pub fn from_fits_header_with_axis_order(
+    header: &FitsHeader,
+    shape: &[usize],
+) -> Result<(CoordinateSystem, Vec<usize>), CoordinateError> {
     let naxis = header.get_int("NAXIS").unwrap_or(shape.len() as i64) as usize;
 
     // Read CTYPEn for all axes
@@ -435,6 +450,11 @@ pub fn from_fits_header(
 
     let mut cs = CoordinateSystem::new();
     let mut consumed = vec![false; naxis];
+    let mut axis_order = Vec::with_capacity(naxis);
+    let has_rest_frequency = header
+        .get_float("RESTFRQ")
+        .or_else(|| header.get_float("RESTFREQ"))
+        .is_some_and(|frequency| frequency > 0.0);
 
     // Pass 1: find direction coordinate pairs
     for i in 0..naxis {
@@ -446,6 +466,7 @@ pub fn from_fits_header(
         {
             let coord = parse_direction(header, lon_axis, lat_axis, &proj_code, dir_ref)?;
             cs.add_coordinate(coord);
+            axis_order.extend([lon_axis, lat_axis]);
             consumed[lon_axis] = true;
             consumed[lat_axis] = true;
         }
@@ -459,8 +480,12 @@ pub fn from_fits_header(
         let ctype = &ctypes[i];
         let upper = ctype.to_uppercase();
 
-        if upper.starts_with("FREQ") || upper.starts_with("VRAD") || upper.starts_with("VELO") {
-            let coord = parse_spectral(header, i + 1)?;
+        if upper.starts_with("FREQ")
+            || upper.starts_with("VRAD")
+            || upper.starts_with("VELO")
+            || (upper == "VOPT" && has_rest_frequency)
+        {
+            let coord = parse_spectral(header, i + 1, shape.get(i).copied().unwrap_or(1))?;
             cs.add_coordinate(coord);
         } else if upper == "STOKES" {
             let axis_len = shape.get(i).copied().unwrap_or(1);
@@ -471,6 +496,7 @@ pub fn from_fits_header(
             cs.add_coordinate(coord);
         }
         consumed[i] = true;
+        axis_order.push(i);
     }
 
     // Observation info
@@ -488,7 +514,7 @@ pub fn from_fits_header(
     );
     *cs.obs_info_mut() = obs;
 
-    Ok(cs)
+    Ok((cs, axis_order))
 }
 
 /// Identifies a direction coordinate pair starting from axis index `start`.
@@ -699,12 +725,16 @@ fn read_linear_transform_2d(
             .get_float(&format!("CDELT{a2}"))
             .ok_or_else(|| CoordinateError::InvalidRecord(format!("missing CDELT{a2}")))?;
 
-        let pc = if let Some(pc11) = h.get_float(&format!("PC{a1}_{a1}")) {
+        let matrix = [(a1, a1), (a1, a2), (a2, a1), (a2, a2)]
+            .map(|(i, j)| h.get_float(&format!("PC{i}_{j}")));
+        let pc = if matrix.iter().any(Option::is_some) {
             // Explicit PC matrix
-            let pc12 = h.get_float(&format!("PC{a1}_{a2}")).unwrap_or(0.0);
-            let pc21 = h.get_float(&format!("PC{a2}_{a1}")).unwrap_or(0.0);
-            let pc22 = h.get_float(&format!("PC{a2}_{a2}")).unwrap_or(1.0);
-            ndarray::Array2::from_shape_vec((2, 2), vec![pc11, pc12, pc21, pc22]).unwrap()
+            let values = matrix
+                .into_iter()
+                .zip([1.0, 0.0, 0.0, 1.0])
+                .map(|(value, default)| value.unwrap_or(default))
+                .collect();
+            ndarray::Array2::from_shape_vec((2, 2), values).unwrap()
         } else if let Some(crota2) = h.get_float("CROTA2") {
             // Legacy CROTA2 rotation (in degrees)
             let rot = crota2 * DEG_TO_RAD;
@@ -735,7 +765,11 @@ fn celestial_unit_scale_to_rad(h: &FitsHeader, axis: usize) -> Result<f64, Coord
 }
 
 /// Parses a spectral coordinate from the FITS header.
-fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, CoordinateError> {
+fn parse_spectral(
+    h: &FitsHeader,
+    axis: usize,
+    axis_len: usize,
+) -> Result<SpectralCoordinate, CoordinateError> {
     let crval = h
         .get_float(&format!("CRVAL{axis}"))
         .ok_or_else(|| CoordinateError::InvalidRecord(format!("missing CRVAL{axis}")))?;
@@ -772,12 +806,18 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
         FrequencyRef::TOPO
     };
 
-    let radio_velocity = h
+    let ctype = h
         .get_string(&format!("CTYPE{axis}"))
-        .is_some_and(|ctype| ctype.to_ascii_uppercase().starts_with("VRAD"));
+        .map_or_else(String::new, str::to_ascii_uppercase);
+    let radio_velocity = ctype.starts_with("VRAD");
+    let optical_velocity = ctype == "VOPT";
     let unit = h
         .get_string(&format!("CUNIT{axis}"))
-        .unwrap_or(if radio_velocity { "m/s" } else { "Hz" })
+        .unwrap_or(if radio_velocity || optical_velocity {
+            "m/s"
+        } else {
+            "Hz"
+        })
         .to_string();
     // FITS permits the historical uppercase Hz spelling (Unit::addFITS in
     // casacore), including the ppdisk tutorial's CUNIT4='HZ'.
@@ -787,14 +827,19 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
         unit
     };
 
-    if radio_velocity {
+    if radio_velocity || optical_velocity {
         let velocity_unit = casa_types::quanta::Unit::new(&unit)
             .map_err(|error| CoordinateError::InvalidRecord(error.to_string()))?;
         let metres_per_second =
             casa_types::quanta::Unit::new("m/s").expect("built-in velocity unit");
         if !velocity_unit.conformant(&metres_per_second) {
             return Err(CoordinateError::InvalidRecord(
-                "radio velocity axis needs a velocity unit".into(),
+                if radio_velocity {
+                    "radio velocity axis needs a velocity unit"
+                } else {
+                    "optical velocity axis needs a velocity unit"
+                }
+                .into(),
             ));
         }
         let scale = velocity_unit.val().factor / metres_per_second.val().factor;
@@ -810,6 +855,19 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
             ));
         }
         let speed_of_light = 299_792_458.0;
+        if optical_velocity {
+            let frequency = |pixel: f64| {
+                rest_freq / (1.0 + (crval + (pixel - crpix) * cdelt) * scale / speed_of_light)
+            };
+            let pixels: Vec<_> = (0..axis_len).map(|pixel| pixel as f64).collect();
+            let worlds: Vec<_> = pixels.iter().copied().map(frequency).collect();
+            let first = frequency(0.0);
+            let last = axis_len.saturating_sub(1).max(1) as f64;
+            let increment = (frequency(last) - first) / last;
+            return SpectralCoordinate::from_tabular(
+                freq_ref, pixels, worlds, first, increment, 0.0, rest_freq,
+            );
+        }
         let reference_hz = rest_freq * (1.0 - crval * scale / speed_of_light);
         let increment_hz = -rest_freq * cdelt * scale / speed_of_light;
         return Ok(SpectralCoordinate::new(
@@ -912,579 +970,4 @@ fn parse_linear_single(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::fits::header::FitsHeader;
-
-    /// Helper: build a typical 4-axis coordinate system (RA+Dec+Freq+Stokes).
-    fn make_4axis_cs() -> CoordinateSystem {
-        let mut cs = CoordinateSystem::new();
-
-        let proj = Projection::new(ProjectionType::SIN);
-        let dir = DirectionCoordinate::new(
-            DirectionRef::J2000,
-            proj,
-            [3.5, 0.8],    // RA ~200 deg, Dec ~46 deg
-            [-1e-4, 1e-4], // ~20 arcsec pixels
-            [512.0, 512.0],
-        );
-        cs.add_coordinate(dir);
-
-        let spec =
-            SpectralCoordinate::new(FrequencyRef::LSRK, 1.42040575e9, 1e6, 128.0, 1.42040575e9);
-        cs.add_coordinate(spec);
-
-        let stokes = StokesCoordinate::new(vec![
-            StokesType::I,
-            StokesType::Q,
-            StokesType::U,
-            StokesType::V,
-        ]);
-        cs.add_coordinate(stokes);
-
-        let obs = ObsInfo::new("ALMA")
-            .with_observer("Test Observer")
-            .with_date(casa_types::measures::epoch::MEpoch::from_mjd(
-                59_000.5,
-                casa_types::measures::EpochRef::TAI,
-            ));
-        *cs.obs_info_mut() = obs;
-
-        cs
-    }
-
-    #[test]
-    fn legacy_tutorial_frequency_matches_casacore() {
-        use crate::Coordinate;
-        // Actual CASA 6.7.6.14 ia.open of the Guide's ppdisk672_GHz_50pc.fits:
-        // spectral2 is LSRK/Hz, with these reference, increment and rest values.
-        let mut header = FitsHeader::new();
-        header.set("CTYPE1", FitsValue::String("FREQ-LSR".into()));
-        header.set("CUNIT1", FitsValue::String("HZ".into()));
-        header.set("CRVAL1", FitsValue::Float(672_000_001_103.0));
-        header.set("CDELT1", FitsValue::Float(32_000_000_029.8));
-        header.set("CRPIX1", FitsValue::Float(1.0));
-        header.set("RESTFREQ", FitsValue::Float(1_420_405_758.37));
-        let restored = from_fits_header(&header, &[1]).unwrap();
-        let CoordinateModel::Spectral(spectral) = restored.coordinate(0) else {
-            panic!("not spectral")
-        };
-        assert_eq!(spectral.frequency_ref(), FrequencyRef::LSRK);
-        assert_eq!(spectral.axis_units(), vec!["Hz".to_owned()]);
-        assert_eq!(spectral.reference_value(), vec![672_000_001_103.0]);
-        assert_eq!(spectral.increment(), vec![32_000_000_029.8]);
-        assert_eq!(spectral.rest_frequency(), 1_420_405_758.37);
-    }
-
-    #[test]
-    fn roundtrip_4axis() {
-        let cs1 = make_4axis_cs();
-        let shape = [1024, 1024, 256, 4];
-        let header = to_fits_header(&cs1, &shape);
-        let cs2 = from_fits_header(&header, &shape).unwrap();
-
-        assert_eq!(cs2.n_pixel_axes(), 4);
-        assert_eq!(cs2.n_coordinates(), 3);
-
-        // Check direction coordinate
-        let dir_idx = cs2.find_coordinate(CoordinateType::Direction).unwrap();
-        let dir = cs2.coordinate(dir_idx);
-        let crval = dir.reference_value();
-        assert!(
-            (crval[0] - 3.5).abs() < 1e-8,
-            "RA crval: {} vs 3.5",
-            crval[0]
-        );
-        assert!(
-            (crval[1] - 0.8).abs() < 1e-8,
-            "Dec crval: {} vs 0.8",
-            crval[1]
-        );
-
-        // Check spectral
-        let spec_idx = cs2.find_coordinate(CoordinateType::Spectral).unwrap();
-        let spec = cs2.coordinate(spec_idx);
-        let spec_crval = spec.reference_value();
-        assert!(
-            (spec_crval[0] - 1.42040575e9).abs() < 1.0,
-            "freq crval: {}",
-            spec_crval[0]
-        );
-
-        // Check stokes
-        let stokes_idx = cs2.find_coordinate(CoordinateType::Stokes).unwrap();
-        let stokes = cs2.coordinate(stokes_idx);
-        // Stokes I = code 1 at pixel 0
-        let w = stokes.to_world(&[0.0]).unwrap();
-        assert_eq!(w[0] as i32, 1);
-        // Stokes V = code 4 at pixel 3
-        let w = stokes.to_world(&[3.0]).unwrap();
-        assert_eq!(w[0] as i32, 4);
-
-        // Obs info, with the date in its own time scale (#1017).
-        assert_eq!(cs2.obs_info().telescope, "ALMA");
-        assert_eq!(cs2.obs_info().observer, "Test Observer");
-        let date = cs2.obs_info().date.as_ref().expect("observation date");
-        assert_eq!(date.refer(), casa_types::measures::EpochRef::TAI);
-        assert_eq!(date.value().as_mjd(), 59_000.5);
-    }
-
-    #[test]
-    fn parse_realistic_header() {
-        let cards = [
-            "NAXIS   =                    4",
-            "NAXIS1  =                 1024",
-            "NAXIS2  =                 1024",
-            "NAXIS3  =                  256",
-            "NAXIS4  =                    4",
-            "CTYPE1  = 'RA---SIN'",
-            "CRVAL1  =   2.005000000000000E+02",
-            "CRPIX1  =   5.130000000000000E+02",
-            "CDELT1  =  -5.729577951308232E-03",
-            "CUNIT1  = 'deg     '",
-            "CTYPE2  = 'DEC--SIN'",
-            "CRVAL2  =   4.583662361046586E+01",
-            "CRPIX2  =   5.130000000000000E+02",
-            "CDELT2  =   5.729577951308232E-03",
-            "CUNIT2  = 'deg     '",
-            "CTYPE3  = 'FREQ    '",
-            "CRVAL3  =   1.420405750000000E+09",
-            "CRPIX3  =   1.290000000000000E+02",
-            "CDELT3  =   1.000000000000000E+06",
-            "CUNIT3  = 'Hz      '",
-            "CTYPE4  = 'STOKES  '",
-            "CRVAL4  =   1.000000000000000E+00",
-            "CRPIX4  =   1.000000000000000E+00",
-            "CDELT4  =   1.000000000000000E+00",
-            "RADESYS = 'FK5     '",
-            "EQUINOX =   2.000000000000000E+03",
-            "SPECSYS = 'LSRK    '",
-            "RESTFRQ =   1.420405750000000E+09",
-            "TELESCOP= 'VLA     '",
-            "OBSERVER= 'Jane    '",
-        ];
-
-        let h = FitsHeader::from_cards(&cards);
-        let shape = [1024, 1024, 256, 4];
-        let cs = from_fits_header(&h, &shape).unwrap();
-
-        assert_eq!(cs.n_pixel_axes(), 4);
-        assert_eq!(cs.n_coordinates(), 3);
-
-        // Direction
-        let dir_idx = cs.find_coordinate(CoordinateType::Direction).unwrap();
-        let dir = cs.coordinate(dir_idx);
-        let crval = dir.reference_value();
-        // 200.5 degrees in radians
-        assert!(
-            (crval[0] - 200.5 * DEG_TO_RAD).abs() < 1e-6,
-            "RA: {} vs {}",
-            crval[0],
-            200.5 * DEG_TO_RAD
-        );
-
-        // Spectral
-        let spec_idx = cs.find_coordinate(CoordinateType::Spectral).unwrap();
-        let spec = cs.coordinate(spec_idx);
-        assert!((spec.reference_value()[0] - 1.420405750e9).abs() < 1.0,);
-
-        // Stokes
-        let stokes_idx = cs.find_coordinate(CoordinateType::Stokes).unwrap();
-        let stokes = cs.coordinate(stokes_idx);
-        assert_eq!(stokes.to_world(&[0.0]).unwrap()[0] as i32, 1); // I
-        assert_eq!(stokes.to_world(&[3.0]).unwrap()[0] as i32, 4); // V
-
-        // Obs info
-        assert_eq!(cs.obs_info().telescope, "VLA");
-        assert_eq!(cs.obs_info().observer, "Jane");
-    }
-
-    #[test]
-    fn direction_sin_roundtrip() {
-        let mut cs = CoordinateSystem::new();
-        let proj = Projection::new(ProjectionType::SIN);
-        let dir = DirectionCoordinate::new(
-            DirectionRef::J2000,
-            proj,
-            [1.0, 0.5],
-            [-2e-5, 2e-5],
-            [256.0, 256.0],
-        );
-        cs.add_coordinate(dir);
-
-        let shape = [512, 512];
-        let header = to_fits_header(&cs, &shape);
-        let cs2 = from_fits_header(&header, &shape).unwrap();
-
-        let dir2 = cs2.coordinate(0);
-        let crval = dir2.reference_value();
-        assert!((crval[0] - 1.0).abs() < 1e-10);
-        assert!((crval[1] - 0.5).abs() < 1e-10);
-
-        let cdelt = dir2.increment();
-        assert!((cdelt[0] - (-2e-5)).abs() < 1e-15);
-        assert!((cdelt[1] - 2e-5).abs() < 1e-15);
-    }
-
-    #[test]
-    fn spectral_roundtrip() {
-        let mut cs = CoordinateSystem::new();
-        let spec = SpectralCoordinate::new(FrequencyRef::BARY, 1.5e9, -500e3, 64.0, 1.42040575e9);
-        cs.add_coordinate(spec);
-
-        let shape = [128];
-        let header = to_fits_header(&cs, &shape);
-
-        assert_eq!(header.get_string("SPECSYS"), Some("BARYCENT"));
-
-        let cs2 = from_fits_header(&header, &shape).unwrap();
-        let spec2 = cs2.coordinate(0);
-
-        assert!((spec2.reference_value()[0] - 1.5e9).abs() < 1.0,);
-        assert!((spec2.increment()[0] - (-500e3)).abs() < 0.1,);
-        assert!((spec2.reference_pixel()[0] - 64.0).abs() < 1e-10,);
-    }
-
-    #[test]
-    fn undefined_spectral_frame_does_not_claim_a_fits_reference_frame() {
-        let mut cs = CoordinateSystem::new();
-        cs.add_coordinate(
-            SpectralCoordinate::new(FrequencyRef::TOPO, 1.5e9, 1e6, 0., 1.4e9)
-                .with_undefined_frame(),
-        );
-        let header = to_fits_header(&cs, &[8]);
-        assert!(header.get("SPECSYS").is_none());
-        assert_eq!(header.get_float("RESTFRQ"), Some(1.4e9));
-    }
-
-    #[test]
-    fn spectral_reference_frames_use_casa_fits_names_and_roundtrip() {
-        for (reference, name) in [
-            (FrequencyRef::LSRK, "LSRK"),
-            (FrequencyRef::LSRD, "LSRD"),
-            (FrequencyRef::BARY, "BARYCENT"),
-            (FrequencyRef::TOPO, "TOPOCENT"),
-            (FrequencyRef::GEO, "GEOCENTR"),
-            (FrequencyRef::GALACTO, "GALACTOC"),
-            (FrequencyRef::LGROUP, "LOCALGRP"),
-            (FrequencyRef::CMB, "CMBDIPOL"),
-            (FrequencyRef::REST, "SOURCE"),
-        ] {
-            let mut cs = CoordinateSystem::new();
-            cs.add_coordinate(SpectralCoordinate::new(reference, 1.5e9, 1e6, 0., 1.4e9));
-            let header = to_fits_header(&cs, &[8]);
-            assert_eq!(header.get_string("SPECSYS"), Some(name));
-            let restored = from_fits_header(&header, &[8]).unwrap();
-            let CoordinateModel::Spectral(spectral) = restored.coordinate(0) else {
-                panic!("not spectral")
-            };
-            assert_eq!(spectral.frequency_ref(), reference);
-        }
-    }
-
-    #[test]
-    fn missing_crval_error() {
-        let cards = [
-            "NAXIS   =                    1",
-            "CTYPE1  = 'FREQ    '",
-            "CDELT1  =   1.000000000000000E+06",
-        ];
-        let h = FitsHeader::from_cards(&cards);
-        let result = from_fits_header(&h, &[256]);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("CRVAL"), "error: {err}");
-    }
-
-    #[test]
-    fn unsupported_projection_error() {
-        let cards = [
-            "NAXIS   =                    2",
-            "CTYPE1  = 'RA---BON'",
-            "CRVAL1  =   0.0",
-            "CDELT1  =  -1.0E-03",
-            "CRPIX1  =   1.0",
-            "CTYPE2  = 'DEC--BON'",
-            "CRVAL2  =   0.0",
-            "CDELT2  =   1.0E-03",
-            "CRPIX2  =   1.0",
-        ];
-        let h = FitsHeader::from_cards(&cards);
-        let result = from_fits_header(&h, &[256, 256]);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("BON"), "error: {err}");
-    }
-
-    #[test]
-    fn cd_matrix_handling() {
-        // Use CD matrix instead of CDELT + PC
-        let cards = [
-            "NAXIS   =                    2",
-            "CTYPE1  = 'RA---TAN'",
-            "CRVAL1  =   1.800000000000000E+02",
-            "CRPIX1  =   5.130000000000000E+02",
-            "CTYPE2  = 'DEC--TAN'",
-            "CRVAL2  =   4.500000000000000E+01",
-            "CRPIX2  =   5.130000000000000E+02",
-            "CD1_1   =  -1.000000000000000E-03",
-            "CD1_2   =   0.000000000000000E+00",
-            "CD2_1   =   0.000000000000000E+00",
-            "CD2_2   =   1.000000000000000E-03",
-            "RADESYS = 'FK5     '",
-        ];
-
-        let h = FitsHeader::from_cards(&cards);
-        let cs = from_fits_header(&h, &[1024, 1024]).unwrap();
-        assert_eq!(cs.n_pixel_axes(), 2);
-
-        let dir = cs.coordinate(0);
-        let cdelt = dir.increment();
-        // CD1_1 = -1e-3 deg -> radians
-        assert!(
-            (cdelt[0] - (-1e-3 * DEG_TO_RAD)).abs() < 1e-15,
-            "cdelt[0]: {} vs {}",
-            cdelt[0],
-            -1e-3 * DEG_TO_RAD
-        );
-    }
-
-    #[test]
-    fn pc_matrix_roundtrip() {
-        // Direction with a non-identity PC matrix
-        let mut cs = CoordinateSystem::new();
-        let proj = Projection::new(ProjectionType::TAN);
-        let rot = 0.1_f64; // small rotation
-        let pc = ndarray::Array2::from_shape_vec(
-            (2, 2),
-            vec![rot.cos(), -rot.sin(), rot.sin(), rot.cos()],
-        )
-        .unwrap();
-        let dir = DirectionCoordinate::new(
-            DirectionRef::J2000,
-            proj,
-            [3.0, 0.7],
-            [-1e-4, 1e-4],
-            [256.0, 256.0],
-        )
-        .with_pc_matrix(pc.clone());
-        cs.add_coordinate(dir);
-
-        let shape = [512, 512];
-        let header = to_fits_header(&cs, &shape);
-
-        // Verify PC keywords were emitted
-        assert!(header.get_float("PC1_1").is_some());
-        assert!(header.get_float("PC1_2").is_some());
-
-        let cs2 = from_fits_header(&header, &shape).unwrap();
-        let dir2 = cs2.coordinate(0);
-
-        // Verify roundtrip via pixel conversion
-        let pixel = [270.0, 280.0];
-        let world1 = cs.coordinate(0).to_world(&pixel).unwrap();
-        let world2 = dir2.to_world(&pixel).unwrap();
-        assert!(
-            (world1[0] - world2[0]).abs() < 1e-8,
-            "lon: {} vs {}",
-            world1[0],
-            world2[0]
-        );
-        assert!(
-            (world1[1] - world2[1]).abs() < 1e-8,
-            "lat: {} vs {}",
-            world1[1],
-            world2[1]
-        );
-    }
-
-    #[test]
-    fn parses_direction_units_in_radians() {
-        let cards = [
-            "NAXIS   =                    2",
-            "NAXIS1  =                   32",
-            "NAXIS2  =                   32",
-            "CTYPE1  = 'RA---SIN'",
-            "CRVAL1  =   1.230000000000000E+00",
-            "CRPIX1  =   1.700000000000000E+01",
-            "CDELT1  =  -1.000000000000000E-06",
-            "CUNIT1  = 'rad     '",
-            "CTYPE2  = 'DEC--SIN'",
-            "CRVAL2  =  -4.500000000000000E-01",
-            "CRPIX2  =   1.700000000000000E+01",
-            "CDELT2  =   1.000000000000000E-06",
-            "CUNIT2  = 'rad     '",
-        ];
-
-        let header = FitsHeader::from_cards(&cards);
-        let cs = from_fits_header(&header, &[32, 32]).unwrap();
-        let dir = cs.coordinate(cs.find_coordinate(CoordinateType::Direction).unwrap());
-
-        assert!((dir.reference_value()[0] - 1.23).abs() < 1e-12);
-        assert!((dir.reference_value()[1] + 0.45).abs() < 1e-12);
-        assert!((dir.increment()[0] + 1e-6).abs() < 1e-18);
-        assert!((dir.increment()[1] - 1e-6).abs() < 1e-18);
-    }
-
-    #[test]
-    fn crota2_handling() {
-        // Legacy CROTA2 convention
-        let cards = [
-            "NAXIS   =                    2",
-            "CTYPE1  = 'RA---SIN'",
-            "CRVAL1  =   0.000000000000000E+00",
-            "CRPIX1  =   5.130000000000000E+02",
-            "CDELT1  =  -1.000000000000000E-03",
-            "CTYPE2  = 'DEC--SIN'",
-            "CRVAL2  =   4.500000000000000E+01",
-            "CRPIX2  =   5.130000000000000E+02",
-            "CDELT2  =   1.000000000000000E-03",
-            "CROTA2  =   5.000000000000000E+00",
-        ];
-
-        let h = FitsHeader::from_cards(&cards);
-        let cs = from_fits_header(&h, &[1024, 1024]).unwrap();
-        assert_eq!(cs.n_pixel_axes(), 2);
-
-        // The rotation should be present in the PC matrix
-        let dir = cs.coordinate(0);
-        let pixel = [520.0, 530.0];
-        let world = dir.to_world(&pixel).unwrap();
-        // Just verify it doesn't crash and the pixel is near the reference
-        assert!(world[0].is_finite());
-        assert!(world[1].is_finite());
-    }
-
-    #[test]
-    fn unknown_ctype_becomes_linear() {
-        let cards = [
-            "NAXIS   =                    1",
-            "CTYPE1  = 'VOPT    '",
-            "CRVAL1  =   1.000000000000000E+03",
-            "CRPIX1  =   1.000000000000000E+00",
-            "CDELT1  =   1.000000000000000E+01",
-            "CUNIT1  = 'km/s    '",
-        ];
-        let h = FitsHeader::from_cards(&cards);
-        let cs = from_fits_header(&h, &[128]).unwrap();
-
-        assert_eq!(cs.n_coordinates(), 1);
-        assert_eq!(cs.coordinate(0).coordinate_type(), CoordinateType::Linear);
-        assert!((cs.coordinate(0).reference_value()[0] - 1000.0).abs() < 1e-10,);
-    }
-
-    #[test]
-    fn galactic_direction_roundtrip() {
-        let mut cs = CoordinateSystem::new();
-        let proj = Projection::new(ProjectionType::CAR);
-        let dir = DirectionCoordinate::new(
-            DirectionRef::GALACTIC,
-            proj,
-            [0.5, 0.3],
-            [-1e-3, 1e-3],
-            [100.0, 100.0],
-        );
-        cs.add_coordinate(dir);
-
-        let shape = [200, 200];
-        let header = to_fits_header(&cs, &shape);
-
-        // Verify CTYPE uses GLON/GLAT
-        assert_eq!(header.get_string("CTYPE1"), Some("GLON-CAR"));
-        assert_eq!(header.get_string("CTYPE2"), Some("GLAT-CAR"));
-
-        let cs2 = from_fits_header(&header, &shape).unwrap();
-        let dir2 = cs2.coordinate(0);
-        let crval = dir2.reference_value();
-        assert!((crval[0] - 0.5).abs() < 1e-8);
-        assert!((crval[1] - 0.3).abs() < 1e-8);
-    }
-
-    #[test]
-    fn non_equatorial_fits_axes_are_not_overridden_by_radesys() {
-        for (frame, lon, lat) in [
-            (DirectionRef::GALACTIC, "GLON-SIN", "GLAT-SIN"),
-            (DirectionRef::SUPERGAL, "SLON-SIN", "SLAT-SIN"),
-            (DirectionRef::ECLIPTIC, "ELON-SIN", "ELAT-SIN"),
-        ] {
-            let mut system = CoordinateSystem::new();
-            system.add_coordinate(DirectionCoordinate::new(
-                frame,
-                Projection::new(ProjectionType::SIN),
-                [0.5, 0.3],
-                [-1e-3, 1e-3],
-                [2.0, 2.0],
-            ));
-            let mut header = to_fits_header(&system, &[4, 4]);
-            assert_eq!(header.get_string("CTYPE1"), Some(lon));
-            assert_eq!(header.get_string("CTYPE2"), Some(lat));
-            assert_eq!(header.get_string("RADESYS"), None);
-            header.set("RADESYS", FitsValue::String("ICRS".into()));
-            let restored = from_fits_header(&header, &[4, 4]).unwrap();
-            let CoordinateModel::Direction(direction) = restored.coordinate(0) else {
-                panic!("direction")
-            };
-            assert_eq!(direction.direction_ref(), frame);
-        }
-    }
-
-    #[test]
-    fn empty_system_roundtrip() {
-        let cs = CoordinateSystem::new();
-        let header = to_fits_header(&cs, &[]);
-        assert_eq!(header.get_int("NAXIS"), Some(0));
-
-        let cs2 = from_fits_header(&header, &[]).unwrap();
-        assert_eq!(cs2.n_pixel_axes(), 0);
-    }
-
-    #[test]
-    fn stokes_roundtrip_circular() {
-        let mut cs = CoordinateSystem::new();
-        let stokes = StokesCoordinate::new(vec![
-            StokesType::RR,
-            StokesType::RL,
-            StokesType::LR,
-            StokesType::LL,
-        ]);
-        cs.add_coordinate(stokes);
-
-        let shape = [4];
-        let header = to_fits_header(&cs, &shape);
-        let cs2 = from_fits_header(&header, &shape).unwrap();
-
-        let st = cs2.coordinate(0);
-        assert_eq!(st.to_world(&[0.0]).unwrap()[0] as i32, 5); // RR
-        assert_eq!(st.to_world(&[3.0]).unwrap()[0] as i32, 8); // LL
-    }
-
-    #[test]
-    fn extended_stokes_codes_match_casa_fits_cards() {
-        // CRVAL and CDELT read from CASA 6.7.6.14 ia.tofits products.
-        for (values, reference, increment) in [
-            (vec![StokesType::RX], 113.0, 1.0),
-            (vec![StokesType::RX, StokesType::RY], 113.0, 1.0),
-            (vec![StokesType::I, StokesType::RX], 1.0, 112.0),
-            (vec![StokesType::RCircular], 125.0, 1.0),
-            (vec![StokesType::Undefined], 100.0, 1.0),
-        ] {
-            let mut coordinates = CoordinateSystem::new();
-            coordinates.add_coordinate(StokesCoordinate::new(values.clone()));
-            let shape = [values.len()];
-            let mut header = to_fits_header(&coordinates, &shape);
-            assert_eq!(header.get_float("CRVAL1"), Some(reference));
-            assert_eq!(header.get_float("CDELT1"), Some(increment));
-            let restored = from_fits_header(&header, &shape).unwrap();
-            let CoordinateModel::Stokes(stokes) = restored.coordinate(0) else {
-                panic!("expected the FITS Stokes axis");
-            };
-            assert_eq!(stokes.stokes(), values);
-            header.set("CRVAL1", FitsValue::Float(13.0));
-            let restored = from_fits_header(&header, &[1]).unwrap();
-            let CoordinateModel::Stokes(stokes) = restored.coordinate(0) else {
-                panic!("expected the FITS Stokes axis");
-            };
-            assert_eq!(stokes.stokes(), [StokesType::Undefined]);
-        }
-    }
-}
+mod tests;

@@ -228,7 +228,16 @@ impl CasaValue {
             Self::TextArray { shape, values } => {
                 let numpy = py.import("numpy")?;
                 let keywords = PyDict::new(py);
-                keywords.set_item("dtype", "str")?;
+                let dtype = if values.iter().any(String::is_empty)
+                    && values.iter().all(|text| text.chars().count() <= 5)
+                {
+                    // The CASA record converter reserves five characters for
+                    // an empty string before it creates the NumPy array.
+                    "U5"
+                } else {
+                    "str"
+                };
+                keywords.set_item("dtype", dtype)?;
                 let flat =
                     numpy.call_method("array", (PyList::new(py, values)?,), Some(&keywords))?;
                 let order = PyDict::new(py);
