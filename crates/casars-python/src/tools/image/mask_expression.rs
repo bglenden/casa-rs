@@ -12,12 +12,20 @@ use pyo3::prelude::*;
 
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::masks::{has_region, validate_name};
+use super::pixels::Chunk;
 use super::{PyImageTool, stub};
+
+pub(super) struct MaskTarget<'a> {
+    pub shape: &'a [usize],
+    pub section: Option<&'a Chunk>,
+    pub stretch: bool,
+    pub method: &'static str,
+}
 
 fn evaluate_typed<T: ImageExprValue + PartialOrd + ExprValueConvert>(
     expression: &str,
     sources: HashMap<String, &dyn ImageInterface<T>>,
-    shape: &[usize],
+    target: &MaskTarget<'_>,
 ) -> PyResult<ArrayD<bool>> {
     let compiled = parse_mask_expr(expression, &HashMapResolver(sources)).map_err(|error| {
         if error.message.contains("boolean") || error.message.contains("Boolean") {
@@ -26,6 +34,14 @@ fn evaluate_typed<T: ImageExprValue + PartialOrd + ExprValueConvert>(
             raised(format!("Image Expression: {error}"))
         }
     })?;
+    let shape = target.shape;
+    if let Some(section) = target.section
+        && (target.stretch || compiled.shape().is_empty() || compiled.shape() == shape)
+    {
+        return compiled
+            .eval_section_for_shape(&section.start, &section.size, &section.stride, shape)
+            .map_err(raised);
+    }
     if compiled.shape().is_empty() {
         return Ok(ArrayD::from_elem(
             IxDyn(shape).f(),
@@ -42,13 +58,33 @@ fn evaluate_typed<T: ImageExprValue + PartialOrd + ExprValueConvert>(
 }
 
 pub(super) fn evaluate(expression: &str, shape: &[usize]) -> PyResult<ArrayD<bool>> {
+    evaluate_mask(
+        expression,
+        MaskTarget {
+            shape,
+            section: None,
+            stretch: false,
+            method: "calcmask",
+        },
+    )
+}
+
+pub(super) fn evaluate_mask(expression: &str, target: MaskTarget<'_>) -> PyResult<ArrayD<bool>> {
     if expression.is_empty() {
         return Err(raised("Exception: You must specify an expression."));
     }
     let images = referenced_images(expression).map_err(raised)?
         .into_iter()
         .map(|name| {
-            let image = AnyPagedImage::open(&name).map_err(|_| {
+            #[cfg(unix)]
+            let opened = if target.section.is_some() {
+                AnyPagedImage::open_with_lock(&name, 0)
+            } else {
+                AnyPagedImage::open(&name)
+            };
+            #[cfg(not(unix))]
+            let opened = AnyPagedImage::open(&name);
+            let image = opened.map_err(|_| {
                 raised(format!("ImageExprParse: '{name}' is an unknown lattice or image or it is an unqualified region"))
             })?;
             Ok((name, image))
@@ -67,7 +103,7 @@ pub(super) fn evaluate(expression: &str, shape: &[usize]) -> PyResult<ArrayD<boo
                 _ => None,
             })
             .collect();
-        evaluate_typed(expression, images, shape)
+        evaluate_typed(expression, images, &target)
     } else if images
         .iter()
         .all(|(_, image)| matches!(image, AnyPagedImage::Float64(_)))
@@ -81,9 +117,9 @@ pub(super) fn evaluate(expression: &str, shape: &[usize]) -> PyResult<ArrayD<boo
                 _ => None,
             })
             .collect();
-        evaluate_typed(expression, images, shape)
+        evaluate_typed(expression, images, &target)
     } else {
-        Err(stub("calcmask").unwrap_err())
+        Err(stub(target.method).unwrap_err())
     }
 }
 

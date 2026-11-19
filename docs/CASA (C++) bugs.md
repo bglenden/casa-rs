@@ -6989,3 +6989,13 @@ and call `rename()` on the first tool. CASA can move the table, then raise
 the old name and can abort while closing that stale handle. casa-rs refuses
 the move before changing either path while another tool holds the image.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## Image region collapse can select the first pixel or abort
+
+With a 5×4×2 image whose coordinate is linear, CASA 6.7.6.14
+`image.getregion(axes=[0])` can return shape `(1, 1, 2)` with the first
+two input pixels. With the standard coordinates and double-complex
+pixels, the same call can terminate the process.
+
+casa-rs averages valid pixels over the requested axes and retains all
+other axes, for every supported image pixel type (#1627).

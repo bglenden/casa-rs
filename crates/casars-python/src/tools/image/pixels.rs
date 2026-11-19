@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_images::{ImageInterface, ImagePixel};
-use ndarray::{ArrayD, Dimension, IxDyn, ShapeBuilder};
+use ndarray::{ArrayD, Dimension, IxDyn, ShapeBuilder, Zip};
 use num_complex::{Complex32, Complex64};
 use numpy::{
     Element, PyArrayDescrMethods, PyArrayDyn, PyArrayMethods, PyUntypedArray,
@@ -10,6 +10,7 @@ use numpy::{
 use pyo3::prelude::*;
 
 use super::PyImageTool;
+use super::copy_region::Selection;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use crate::convert::{IntList, Variant, value::CasaValue};
 
@@ -152,10 +153,20 @@ pub(super) fn snapshot_array<T: Element + Copy + Send + Sync>(
     py.detach(|| ArrayD::from_shape_vec(IxDyn(&shape).f(), values.to_vec()).map_err(raised))
 }
 
-struct Chunk {
-    start: Vec<usize>,
-    size: Vec<usize>,
-    stride: Vec<usize>,
+pub(super) struct Chunk {
+    pub(super) start: Vec<usize>,
+    pub(super) size: Vec<usize>,
+    pub(super) stride: Vec<usize>,
+}
+
+impl From<Selection> for Chunk {
+    fn from(selection: Selection) -> Self {
+        Self {
+            start: selection.start,
+            size: selection.shape,
+            stride: selection.stride,
+        }
+    }
 }
 
 impl Chunk {
@@ -279,21 +290,27 @@ impl Chunk {
     fn get<T: ImagePixel, U: Average>(
         &self,
         image: &impl ImageInterface<T>,
-        axes: &[usize],
-        dropdeg: bool,
-        getmask: bool,
+        request: &ChunkRead<'_>,
+        expression: Option<ArrayD<bool>>,
         wide: (impl Fn(T) -> U, impl Fn(U) -> U),
     ) -> PyResult<CasaValue> {
-        let mask = if getmask || !axes.is_empty() {
-            self.mask(image)?
+        let mask = if request.getmask || !request.axes.is_empty() {
+            and_mask(self.mask(image)?, expression)
         } else {
             None
         };
-        self.format(axes, dropdeg, getmask, wide, mask, || {
-            image
-                .get_slice(&self.start, &self.size, &self.stride)
-                .map_err(raised)
-        })
+        self.format(
+            request.axes,
+            request.dropdeg,
+            request.getmask,
+            wide,
+            mask,
+            || {
+                image
+                    .get_slice(&self.start, &self.size, &self.stride)
+                    .map_err(raised)
+            },
+        )
     }
 
     fn format<T: ImagePixel, U: Average>(
@@ -371,6 +388,78 @@ impl Chunk {
     }
 }
 
+fn and_mask(
+    original: Option<ArrayD<bool>>,
+    expression: Option<ArrayD<bool>>,
+) -> Option<ArrayD<bool>> {
+    match (original, expression) {
+        (Some(mut original), Some(expression)) => {
+            Zip::from(&mut original)
+                .and(&expression)
+                .for_each(|valid, &passes| *valid &= passes);
+            Some(original)
+        }
+        (original, expression) => original.or(expression),
+    }
+}
+
+pub(super) struct ChunkRead<'a> {
+    pub axes: &'a [usize],
+    pub dropdeg: bool,
+    pub getmask: bool,
+}
+
+pub(super) fn collapse_axes(axes: &[i64], rank: usize) -> PyResult<Vec<usize>> {
+    if matches!(axes, [only] if *only < 0) {
+        return Ok(Vec::new());
+    }
+    let mut collapse = Vec::with_capacity(axes.len());
+    for &axis in axes {
+        if axis < 0 || axis as usize >= rank || collapse.contains(&(axis as usize)) {
+            return Err(raised("IPosition::makeAxisPath: invalid defined axes"));
+        }
+        collapse.push(axis as usize);
+    }
+    Ok(collapse)
+}
+
+impl Chunk {
+    pub(super) fn read_from(
+        &self,
+        image: &ImageHandle,
+        request: &ChunkRead<'_>,
+        expression: Option<ArrayD<bool>>,
+    ) -> PyResult<CasaValue> {
+        if let Some(fits) = image.fits() {
+            let pixels = fits.read(&self.start, &self.size, &self.stride)?;
+            let mask = (request.getmask || !request.axes.is_empty())
+                .then(|| pixels.mapv(|value| !value.is_nan()));
+            return self.format(
+                request.axes,
+                request.dropdeg,
+                request.getmask,
+                (f64::from, |v| f64::from(v as f32)),
+                and_mask(mask, expression),
+                || Ok(pixels),
+            );
+        }
+        match image {
+            ImageHandle::Float(storage) => {
+                with_storage!(storage, image => self.get(image.as_ref(), request, expression, (f64::from, |v| f64::from(v as f32))))
+            }
+            ImageHandle::Double(storage) => {
+                with_storage!(storage, image => self.get(image.as_ref(), request, expression, (f64::from, std::convert::identity)))
+            }
+            ImageHandle::Complex(storage) => {
+                with_storage!(storage, image => self.get(image.as_ref(), request, expression, (widen_complex, |v: Complex64| widen_complex(Complex32::new(v.re as f32, v.im as f32)))))
+            }
+            ImageHandle::DComplex(storage) => {
+                with_storage!(storage, image => self.get(image.as_ref(), request, expression, (std::convert::identity, std::convert::identity)))
+            }
+        }
+    }
+}
+
 fn widen_complex(value: Complex32) -> Complex64 {
     Complex64::new(f64::from(value.re), f64::from(value.im))
 }
@@ -421,26 +510,8 @@ impl PyImageTool {
                 return Err(raised("LCSlicer::makeComplete - referencePixel and newLatticeShape vectors do not have same length"));
             }
             let chunk = Chunk::read(shape, &blc.map_or_else(Vec::new, |arg| arg.0), &trc.map_or_else(Vec::new, |arg| arg.0), &inc.map_or_else(Vec::new, |arg| arg.0))?;
-            let axes = axes.map_or_else(Vec::new, |arg| arg.0);
-            let axes = if matches!(axes.as_slice(), [only] if *only < 0) { &[][..] } else { axes.as_slice() };
-            let mut collapse = Vec::with_capacity(axes.len());
-            for &axis in axes {
-                if axis < 0 || axis as usize >= shape.len() || collapse.contains(&(axis as usize)) {
-                    return Err(raised("IPosition::makeAxisPath: invalid defined axes"));
-                }
-                collapse.push(axis as usize);
-            }
-            if let Some(fits) = image.fits() {
-                let pixels = fits.read(&chunk.start, &chunk.size, &chunk.stride)?;
-                let mask = (getmask || !collapse.is_empty()).then(|| pixels.mapv(|value| !value.is_nan()));
-                return chunk.format(&collapse, dropdeg, getmask, (f64::from, |v| f64::from(v as f32)), mask, || Ok(pixels));
-            }
-            let value = match &*image {
-                ImageHandle::Float(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (f64::from, |v| f64::from(v as f32)))),
-                ImageHandle::Double(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (f64::from, std::convert::identity))),
-                ImageHandle::Complex(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (widen_complex, |v: Complex64| widen_complex(Complex32::new(v.re as f32, v.im as f32))))),
-                ImageHandle::DComplex(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (std::convert::identity, std::convert::identity))),
-            }?;
+            let collapse = collapse_axes(axes.as_ref().map_or(&[], |axes| axes.0.as_slice()), shape.len())?;
+            let value = chunk.read_from(&image, &ChunkRead { axes: &collapse, dropdeg, getmask }, None)?;
             image.release_requested_lock()?;
             Ok(value)
         })?;

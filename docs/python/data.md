@@ -57,6 +57,9 @@ Use `ia.fromimage(outfile="copy.im", infile="example.im")` to copy an image
 with its coordinates, active pixel mask, metadata and history. Use
 `newimagefromimage` to keep the current attachment and receive a separate tool.
 An absolute CASA `LCSlicer` region selects a pixel box and its stride.
+Use `ia.getregion(region=...)` to read that same selection. Pass
+`getmask=True` to read validity, `mask` to apply a lattice expression,
+or `axes` to average the valid pixels along selected axes.
 
 The remaining CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
