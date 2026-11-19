@@ -28,7 +28,6 @@ pub(super) struct SolutionRow {
     pub(super) window: i32,
     pub(super) scan: Option<i32>,
     pub(super) time: f64,
-    pub(super) interval: f64,
 }
 
 #[derive(Debug, Default)]
@@ -36,6 +35,7 @@ pub(super) struct SolutionWindow {
     pub(super) name: String,
     pub(super) original_id: i32,
     pub(super) sky_frequencies_hz: Vec<f64>,
+    pub(super) reference_frequency_hz: Option<f64>,
     pub(super) frame: i32,
     pub(super) sideband: i32,
     pub(super) baseband: Option<i32>,
@@ -57,8 +57,19 @@ impl Solutions {
         let owner = subtable_owner(&table, path).map_err(message)?;
         let (layout, stored_ms) = Layout::read(&table, &owner)?;
         let measurement_set = associated_ms(vis, &stored_ms, path);
-        let (windows, antennas, fields) =
+        let (mut windows, antennas, fields) =
             layout.coordinates(&table, &owner, measurement_set.as_deref())?;
+        if let Some(ms) = &measurement_set
+            && let Ok(metadata) = open(&ms.join("SPECTRAL_WINDOW"))
+        {
+            for window in &mut windows {
+                if window.baseband.is_none() {
+                    window.baseband = usize::try_from(window.original_id)
+                        .ok()
+                        .and_then(|id| integer_cell(&metadata, id, "BBC_NO"));
+                }
+            }
+        }
         let rows = solution_rows(&table, &layout)?;
         let subtype = keyword(&table, "VisCal").unwrap_or_else(|| table.info().sub_type.clone());
         let polarization_basis = keyword(&table, "PolBasis").unwrap_or_default();
@@ -195,7 +206,6 @@ fn solution_rows(table: &Table, layout: &Layout) -> Result<Vec<SolutionRow>, Str
     let field = integers(table, "FIELD_ID")?;
     let window = integers(table, layout.window_column())?;
     let time = numbers(table, "TIME")?;
-    let intervals = numbers(table, "INTERVAL")?;
     let scans = has_column(table, "SCAN_NUMBER")
         .then(|| integers(table, "SCAN_NUMBER"))
         .transpose()?;
@@ -206,7 +216,6 @@ fn solution_rows(table: &Table, layout: &Layout) -> Result<Vec<SolutionRow>, Str
             window: window[row],
             scan: scans.as_ref().map(|scans| scans[row]),
             time: time[row],
-            interval: intervals[row],
         })
         .collect())
 }
@@ -236,24 +245,34 @@ fn window(table: &Table, original_id: i32) -> Result<SolutionWindow, String> {
             _ => None,
         })
         .unwrap_or_default();
-    let integer = |column| {
-        table
-            .cell_accessor(row, column)
-            .and_then(|cell| cell.scalar())
-            .ok()
-            .and_then(|value| match value {
-                ScalarValue::Int32(value) => Some(*value),
-                _ => None,
-            })
-    };
+    let reference_frequency_hz = table
+        .cell_accessor(row, "REF_FREQUENCY")
+        .and_then(|cell| cell.scalar())
+        .ok()
+        .and_then(|value| match value {
+            ScalarValue::Float64(value) => Some(*value),
+            _ => None,
+        });
     Ok(SolutionWindow {
         name,
         original_id,
         sky_frequencies_hz: frequencies,
-        frame: integer("MEAS_FREQ_REF").unwrap_or(5),
-        sideband: integer("NET_SIDEBAND").unwrap_or(0),
-        baseband: integer("BBC_NO"),
+        reference_frequency_hz,
+        frame: integer_cell(table, row, "MEAS_FREQ_REF").unwrap_or(5),
+        sideband: integer_cell(table, row, "NET_SIDEBAND").unwrap_or(0),
+        baseband: integer_cell(table, row, "BBC_NO"),
     })
+}
+
+fn integer_cell(table: &Table, row: usize, name: &str) -> Option<i32> {
+    table
+        .cell_accessor(row, name)
+        .and_then(|cell| cell.scalar())
+        .ok()
+        .and_then(|value| match value {
+            ScalarValue::Int32(value) => Some(*value),
+            _ => None,
+        })
 }
 
 fn names(table: &Table) -> Result<Vec<String>, String> {

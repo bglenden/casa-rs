@@ -23,7 +23,32 @@ pub(crate) struct DisplayOptions<'a> {
     pub(crate) interactive: bool,
     pub(crate) limits: [f64; 4],
     pub(crate) phase_limits: Option<[f64; 2]>,
+    pub(crate) channel_range: Option<ChannelRange>,
+    pub(crate) limit_channels: bool,
     pub(crate) resample: u32,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ChannelRange {
+    Indices([usize; 2]),
+    CentralPercent(f64),
+}
+
+impl ChannelRange {
+    fn frequencies(self, coordinates: &[f64]) -> Option<[f64; 2]> {
+        let last = coordinates.len().checked_sub(1)?;
+        let [start, end] = match self {
+            Self::Indices(bounds) => bounds,
+            Self::CentralPercent(percent) => {
+                let outer = (100.0 - percent) * 0.005;
+                [
+                    (last as f64 * outer).round_ties_even() as usize,
+                    (last as f64 * (1.0 - outer)).round_ties_even() as usize,
+                ]
+            }
+        };
+        Some([*coordinates.get(start)?, *coordinates.get(end)?])
+    }
 }
 
 #[derive(Serialize)]
@@ -109,14 +134,14 @@ fn output_file(
         .figfile
         .split_once(".png")
         .map_or(display.figfile, |(base, _)| base);
-    let name = if count == 1 {
+    let name = if count == 1 && display.sequential_names {
         name.to_string()
     } else if display.sequential_names {
         format!("{name}.{page:03}")
     } else {
         format!("{name}.{suffix}")
     };
-    if display.resample > 1 && count > 1 {
+    if display.resample > 1 && (count > 1 || !display.sequential_names) {
         Some(format!("{name}.resample{}.png", display.resample).into())
     } else {
         Some(format!("{name}.png").into())
@@ -222,7 +247,15 @@ fn axis(id: &str, label: &str, [lower, upper]: [f64; 2]) -> PlotDocumentAxis {
 }
 
 fn x_limits(panel: &BandpassPanel, display: &DisplayOptions<'_>) -> [f64; 2] {
-    let [lower, upper, ..] = display.limits;
+    let requested = display
+        .limit_channels
+        .then(|| {
+            display
+                .channel_range
+                .and_then(|range| range.frequencies(&panel.frequency_channels))
+        })
+        .flatten();
+    let [lower, upper] = requested.unwrap_or([display.limits[0], display.limits[1]]);
     if lower == 0.0 && upper == 0.0 {
         return panel.x_limits;
     }
@@ -240,15 +273,30 @@ fn y_limits(panel: &BandpassPanel, display: &DisplayOptions<'_>) -> Option<[f64;
         if let Some(limits) = display.phase_limits {
             return Some(limits);
         }
-        let mut lower = f64::INFINITY;
-        let mut upper = f64::NEG_INFINITY;
-        for sample in panel.series.iter().flat_map(|series| &series.curve.y) {
-            lower = lower.min(*sample);
-            upper = upper.max(*sample);
-        }
-        if upper - lower < 0.2 {
-            return Some([lower.min(0.0) - 0.2, upper.max(0.0) + 0.2]);
+        if let Some(first) = panel.series.first()
+            && first.curve.y.iter().all(|sample| sample.abs() < 0.2)
+        {
+            return Some([-0.2, 0.2]);
         }
     }
-    None
+    let channel_limits = display
+        .channel_range
+        .and_then(|range| range.frequencies(&panel.frequency_channels));
+    let requested = channel_limits.or_else(|| {
+        let [lower, upper, ..] = display.limits;
+        (lower != 0.0 || upper != 0.0).then_some([lower, upper])
+    })?;
+    let lower = requested[0].min(requested[1]);
+    let upper = requested[0].max(requested[1]);
+    let mut values = panel.series.iter().flat_map(|series| {
+        series
+            .curve
+            .x
+            .iter()
+            .zip(&series.curve.y)
+            .filter_map(move |(&x, &y)| (x >= lower && x <= upper && y.is_finite()).then_some(y))
+    });
+    let first = values.next()?;
+    let [min, max] = values.fold([first, first], |[min, max], y| [min.min(y), max.max(y)]);
+    (min < max).then_some([min, max])
 }

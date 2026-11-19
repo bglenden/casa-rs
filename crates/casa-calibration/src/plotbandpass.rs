@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use casa_types::quanta::format::{YMD, format_time};
 
-pub(crate) use document::{BandpassPage, DisplayOptions, pages};
+pub(crate) use document::{BandpassPage, ChannelRange, DisplayOptions, pages};
 use selection::{GroupKey, SelectedRow, groups};
 pub(crate) use selection::{Overlay, Selectors};
 use spectrum::{Curve, Derivative, Ordinate};
@@ -29,6 +29,7 @@ pub(crate) struct PlotRequest<'a> {
     pub(crate) polarizations: &'a [&'a str],
     pub(crate) threshold_seconds: f64,
     pub(crate) show_flagged: bool,
+    pub(crate) show_baseband_number: bool,
     pub(crate) derivative_sigma: f64,
     pub(crate) edge: usize,
 }
@@ -47,6 +48,7 @@ pub(crate) struct BandpassPanel {
     pub(crate) series: Vec<BandpassSeries>,
     pub(crate) suffix: String,
     pub(crate) x_limits: [f64; 2],
+    pub(crate) frequency_channels: Vec<f64>,
 }
 
 pub(crate) struct BandpassSeries {
@@ -178,7 +180,7 @@ fn panel(
         }
     }
     let metadata = metadata.ok_or("empty bandpass panel")?;
-    let (title, suffix) = captions(source, key, selected[0])?;
+    let (title, suffix) = captions(source, key, selected[0], request.show_baseband_number)?;
     let x_limits = metadata.x_limits();
     Ok(BandpassPanel {
         ordinate,
@@ -188,12 +190,14 @@ fn panel(
         y_label: ordinate_label(ordinate, request.derivative_sigma > 0.0, &source.subtype),
         series,
         x_limits,
+        frequency_channels: metadata.frequency_channels,
     })
 }
 
 struct PanelMetadata {
     label: String,
     domain: [f64; 2],
+    frequency_channels: Vec<f64>,
 }
 
 impl PanelMetadata {
@@ -216,15 +220,28 @@ impl PanelMetadata {
             .and_then(|id| frames.get(id))
             .copied()
             .unwrap_or("");
-        let sideband = if window.sideband == 1 { "LSB" } else { "USB" };
-        let label = if request.frequency_axis {
+        let high_frequency = window
+            .reference_frequency_hz
+            .filter(|reference| *reference > 60e9);
+        let label = if !request.frequency_axis {
+            format!("Channels ({count})")
+        } else if let Some(reference) = high_frequency {
+            let frequencies = &window.sky_frequencies_hz;
+            let reversed = frequencies.is_empty() && window.sideband < 0
+                || reference > frequencies.iter().sum::<f64>() / frequencies.len() as f64;
+            let sideband = if reversed { "LSB" } else { "USB" };
             format!("{frame} {sideband} Frequency (GHz) ({count} channels)")
         } else {
-            format!("Channels ({count})")
+            format!("Frequency (GHz) ({count} channels)")
         };
         Self {
             label,
             domain: [f64::INFINITY, f64::NEG_INFINITY],
+            frequency_channels: window
+                .sky_frequencies_hz
+                .iter()
+                .map(|value| value * 1e-9)
+                .collect(),
         }
     }
 
@@ -321,6 +338,7 @@ fn captions(
     source: &Solutions,
     key: GroupKey,
     first: SelectedRow,
+    show_baseband: bool,
 ) -> Result<(String, String), String> {
     let row = source.rows[first.row];
     let mut title = Vec::new();
@@ -332,7 +350,12 @@ fn captions(
     }
     if let Some(window) = key.window {
         let original_id = spectral_window(source, window)?.original_id;
-        title.push(format!("spw {original_id}"));
+        let mut window_title = format!("spw {original_id}");
+        if show_baseband {
+            let baseband = spectral_window(source, window)?.baseband.unwrap_or(-1);
+            window_title.push_str(&format!(", bb{baseband}"));
+        }
+        title.push(window_title);
         suffix.push(format!("spw{window:02}"));
     }
     if let Some(name) = usize::try_from(row.field)

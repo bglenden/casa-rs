@@ -8,8 +8,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
 use crate::plotbandpass::{
-    BandpassPage, DisplayOptions, Overlay, PlotRequest, Selectors, derivative_record, pages,
-    prepare_bandpass,
+    BandpassPage, ChannelRange, DisplayOptions, Overlay, PlotRequest, Selectors, derivative_record,
+    pages, prepare_bandpass,
 };
 
 #[derive(Serialize)]
@@ -55,6 +55,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         polarizations: &polarizations,
         threshold_seconds: task.number("solutionTimeThresholdSeconds")?,
         show_flagged: task.flag("showflagged")?,
+        show_baseband_number: task.flag("showBasebandNumber")?,
         derivative_sigma: numeric(task, "channeldiff")?,
         edge: unsigned(task, "edge")? as usize,
     };
@@ -71,7 +72,13 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         limits: task.numbers("plotrange")?.try_into().map_err(|_| {
             TaskFailure::validation("plotrange must contain four values").at("plotrange")
         })?,
-        phase_limits: phase_limits(task)?,
+        phase_limits: if y_axis.to_ascii_lowercase().contains("both") {
+            phase_limits(task)?
+        } else {
+            None
+        },
+        channel_range: channel_range(task, frequency_axis)?,
+        limit_channels: task.flag("chanrangeSetXrange")?,
         resample: unsigned(task, "resample")?,
     };
     let plan = prepare_bandpass(&request).map_err(TaskFailure::execution)?;
@@ -160,6 +167,37 @@ fn phase_limits(task: &TaskInvocation<'_>) -> Result<Option<[f64; 2]>, TaskFailu
         .ok_or_else(|| TaskFailure::validation("phase must provide two limits").at("phase"))
 }
 
+fn channel_range(
+    task: &TaskInvocation<'_>,
+    frequency_axis: bool,
+) -> Result<Option<ChannelRange>, TaskFailure> {
+    let values = selector(task, "chanrange")?;
+    let error = || {
+        TaskFailure::validation("chanrange must be a channel pair or a percentage").at("chanrange")
+    };
+    match values.as_slice() {
+        [] => Ok(None),
+        [value] if value.is_empty() => Ok(None),
+        [value] if frequency_axis => {
+            if let Some(percent) = value.strip_suffix('%') {
+                let percent = percent.parse::<f64>().map_err(|_| error())?;
+                return Ok((0.0 < percent && percent < 100.0)
+                    .then_some(ChannelRange::CentralPercent(percent)));
+            }
+            let (start, stop) = value.split_once('~').ok_or_else(error)?;
+            let start = start.trim().parse().map_err(|_| error())?;
+            let stop = stop.trim().parse().map_err(|_| error())?;
+            Ok(Some(ChannelRange::Indices([start, stop])))
+        }
+        [start, stop] => {
+            let start = start.parse().map_err(|_| error())?;
+            let stop = stop.parse().map_err(|_| error())?;
+            Ok(Some(ChannelRange::Indices([start, stop])))
+        }
+        _ => Err(error()),
+    }
+}
+
 fn check_remaining_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
     for name in [
         "caltable2",
@@ -170,7 +208,6 @@ fn check_remaining_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure
         "pwv",
         "gs",
         "convert",
-        "chanrange",
         "showtsky",
         "showfdm",
         "showatmfield",
@@ -181,8 +218,6 @@ fn check_remaining_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure
         "pdftk",
         "platformingThreshold",
         "platformingSigma",
-        "showBasebandNumber",
-        "chanrangeSetXrange",
     ] {
         if task.is_set(name) {
             return Err(
