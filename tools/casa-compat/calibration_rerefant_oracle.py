@@ -5,12 +5,15 @@
 import argparse
 import inspect
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import casatasks as casa
 import numpy as np
 
 from calibration_smoothcal_oracle import (
+    apply_round_trip,
     columns,
     compare_mapping,
     copy_ms,
@@ -131,7 +134,25 @@ def main():
                 assert not output.exists()
             else:
                 raise AssertionError(f'{label} accepted {name} reference configuration')
-    print('13 paired CASA rerefant case groups')
+    delay = root/'delay.cal'
+    synthetic_table(vis, delay, 'K Jones', True, 2)
+    output = root/'unsupported-delay.cal'
+    probe = subprocess.run([
+        sys.executable, '-c',
+        'import resource,sys; resource.setrlimit(resource.RLIMIT_CORE,(0,0)); '
+        'from casatasks import rerefant; rerefant(*sys.argv[1:])',
+        str(vis), str(delay), str(output), 'strict', 'A0',
+    ], capture_output=True, timeout=45)
+    assert probe.returncode in (-6, -11), probe.stderr.decode()
+    try:
+        native.rerefant(str(vis), str(delay), str(output), 'strict', 'A0')
+    except RuntimeError:
+        assert not output.exists()
+    else:
+        raise AssertionError('native rerefant accepted an unsupported delay table')
+    compare(root, native, vis, root/'solved.cal', 'apply-pair', 'A0,A1')
+    apply_round_trip(root, native, vis, 'apply-pair')
+    print('15 paired CASA rerefant case groups and four downstream applications')
 
 
 if __name__ == '__main__':

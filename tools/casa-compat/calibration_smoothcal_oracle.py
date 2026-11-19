@@ -113,6 +113,28 @@ def compare_mapping(actual, expected, fringe_median):
         else:
             np.testing.assert_array_equal(got, want, err_msg=name)
 
+def apply_round_trip(root, native, vis, case):
+    """Apply each engine's calibration table with both engines."""
+    expected = None
+    for reader, api in (('casa', casa), ('native', native)):
+        for writer in ('casa', 'native'):
+            applied = root/f'apply-{reader}-{writer}-{case}.ms'
+            copy_ms(vis, applied)
+            cal = root/f'{writer}-{case}.cal'
+            assert api.applycal(str(applied), gaintable=[str(cal)], calwt=False,
+                                flagbackup=False) is None
+            with opened(applied) as result:
+                flags = result.getcol('FLAG')
+                data = result.getcol('CORRECTED_DATA')
+            if expected is None:
+                expected = flags, data
+            else:
+                np.testing.assert_array_equal(flags, expected[0])
+                assert np.any(~flags)
+                np.testing.assert_allclose(data[~flags], expected[1][~flags], rtol=2e-6)
+
+
+
 
 def compare(root, native, vis, source, name, options, *, in_place=False, fringe_median=False):
     products = []
@@ -194,7 +216,8 @@ def main():
                 assert not output.exists()
             else:
                 raise AssertionError(f'{label} accepted invalid smoothing {name}')
-    print('17 paired CASA smoothcal case groups')
+    apply_round_trip(root, native, vis, 'mean-edges')
+    print('17 paired CASA smoothcal case groups and four downstream applications')
 
 
 if __name__ == '__main__':

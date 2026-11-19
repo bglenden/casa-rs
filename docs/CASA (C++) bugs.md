@@ -6929,3 +6929,14 @@ casa-rs wraps only the two phase parameters and applies the numerical
 median to the delay, rate, and dispersive delay parameters. The use of
 fringe rates for predicting phase wraps and the phase outputs follow
 CASA (#1525).
+
+## Re-referencing a delay table crashes CASA
+
+In CASA 6.7.6.14, `rerefant(refantmode='strict', refant='A0')`
+terminates the process when the input is a `K Jones` delay table.
+`SolvableVisJones::applyRefAnt` reads CPARAM before dispatching on the
+table type. Delay tables use FPARAM, and only Fringe overrides the
+reference calculation for real-valued parameters.
+
+casa-rs raises a task error for unsupported table types before publishing
+a result. The paired oracle runs this CASA check in a child process (#1525).
