@@ -46,6 +46,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::antpos_vla::{TROPO_KEYWORD, TropoDelay, only_vla_observations};
 use crate::constants::{
     COL_ANTENNA1, COL_CAL_DESC_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_FPARAM, COL_N_POLY_AMP,
     COL_N_POLY_PHASE, COL_PHASE_UNITS, COL_POLY_COEFF_AMP, COL_POLY_COEFF_PHASE, COL_SCALE_FACTOR,
@@ -74,7 +75,7 @@ pub(crate) use solve_priors::{PriorSolveBoundary, evaluate_solve_priors};
 
 const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
 const PERF_DIR_ENV: &str = "CASA_RS_CALIBRATION_PERF_DIR";
-const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+pub(crate) const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 
 fn calibration_profile_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -1538,7 +1539,10 @@ struct RowGeometryCache {
     elevations: HashMap<RowGeometryKey, f64>,
     projected_offsets: HashMap<ProjectedOffsetKey, [f64; 3]>,
     materialized_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
-    calibration_lookups: HashMap<CalibrationLookupKey, Option<Arc<CalibrationGrid>>>,
+    calibration_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
+    temperature_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
+    temperature_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
+    temperature_time: Option<u64>,
     last_elevation_context: Option<RowGeometryContextKey>,
     last_elevations: Vec<Option<f64>>,
     last_projected_context: Option<RowGeometryContextKey>,
@@ -1755,16 +1759,27 @@ impl RowGeometryCache {
     fn calibration_lookup<F>(
         &mut self,
         key: CalibrationLookupKey,
+        temperature_time: Option<u64>,
         load: F,
-    ) -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError>
+    ) -> Result<Option<fields::GridAtTime>, ApplyExecutionError>
     where
-        F: FnOnce() -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError>,
+        F: FnOnce() -> Result<Option<fields::GridAtTime>, ApplyExecutionError>,
     {
-        if let Some(grid) = self.calibration_lookups.get(&key) {
+        let lookups = if let Some(time) = temperature_time {
+            if self.temperature_time != Some(time) {
+                self.temperature_grids.clear();
+                self.temperature_lookups.clear();
+                self.temperature_time = Some(time);
+            }
+            &mut self.temperature_lookups
+        } else {
+            &mut self.calibration_lookups
+        };
+        if let Some(grid) = lookups.get(&key) {
             return Ok(grid.clone());
         }
         let grid = load()?;
-        self.calibration_lookups.insert(key, grid.clone());
+        lookups.insert(key, grid.clone());
         Ok(grid)
     }
 }
@@ -2050,6 +2065,7 @@ fn apply_row_all_channels(
                 .unwrap_or(-1);
         }
 
+        let is_tsys = table_plan.summary.table_subtype == "B TSYS";
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
             let mut key = calibration_lookup_key(
                 table_index,
@@ -2065,7 +2081,11 @@ fn apply_row_all_channels(
             let calculate =
                 || fields::lookup(loaded_table, field_id, cal_spw_id, antenna, row, data_spw);
             if let Some(cache) = cache {
-                cache.calibration_lookup(key, calculate)
+                cache.calibration_lookup(
+                    key,
+                    is_tsys.then(|| row.time_seconds.to_bits()),
+                    calculate,
+                )
             } else {
                 calculate()
             }
@@ -2114,13 +2134,17 @@ fn apply_row_all_channels(
 
         // CASA samples BPOLY on its CAL_DESC window and then interpolates
         // the resulting B grid onto the data window.
-        let is_bandpass = matches!(
-            table_plan.summary.table_subtype.as_str(),
-            "B Jones" | "BPOLY"
-        );
+        let is_bandpass = is_tsys
+            || matches!(
+                table_plan.summary.table_subtype.as_str(),
+                "B Jones" | "BPOLY"
+            );
         let scalar_bandpass = is_bandpass && correlation_types.len() == 1;
-        let bandpass_weights = (is_bandpass && calibrate_weights)
-            .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types))
+        let (ant1_transient, ant2_transient) =
+            (is_tsys && ant1.interpolated, is_tsys && ant2.interpolated);
+        let (ant1, ant2) = (ant1.grid, ant2.grid);
+        let bandpass_weights = (is_bandpass && !is_tsys && calibrate_weights)
+            .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types, None))
             .flatten();
         let (ant1, ant2) = if is_bandpass {
             let ant1 = bandpass::prepare(
@@ -2129,6 +2153,7 @@ fn apply_row_all_channels(
                 data_spw,
                 geometry_cache.as_deref_mut(),
                 loaded_table,
+                ant1_transient,
             )?;
             let ant2 = bandpass::prepare(
                 ant2,
@@ -2136,10 +2161,16 @@ fn apply_row_all_channels(
                 data_spw,
                 geometry_cache.as_deref_mut(),
                 loaded_table,
+                ant2_transient,
             )?;
             (ant1, ant2)
         } else {
             (ant1, ant2)
+        };
+        let bandpass_weights = if is_tsys && calibrate_weights && !has_weight_spectrum {
+            bandpass::weight_factors(&ant1, &ant2, correlation_types, Some(data_channels))
+        } else {
+            bandpass_weights
         };
         let sampling_context = CalibrationSamplingContext {
             data_channels,
@@ -2158,6 +2189,7 @@ fn apply_row_all_channels(
             },
             path: &loaded_table.path,
             engine: loaded_table.engine.as_deref(),
+            antpos_tropo: loaded_table.antpos_tropo.as_ref(),
         };
 
         let materialize_started_at = compute_profile.as_ref().map(|_| Instant::now());
@@ -2172,8 +2204,7 @@ fn apply_row_all_channels(
                 row.antenna1,
                 row.antenna2,
                 row.time_seconds,
-                loaded_table.engine.as_deref(),
-                &loaded_table.path,
+                loaded_table,
                 reborrow_geometry_cache(&mut geometry_cache),
             )?
         {
@@ -2193,8 +2224,7 @@ fn apply_row_all_channels(
             row.antenna1,
             row.time_seconds,
             data_spw,
-            loaded_table.engine.as_deref(),
-            &loaded_table.path,
+            loaded_table,
             geometry_cache.as_deref_mut(),
         )?;
         let ant2 = materialize_row_dependent_grid(
@@ -2203,8 +2233,7 @@ fn apply_row_all_channels(
             row.antenna2,
             row.time_seconds,
             data_spw,
-            loaded_table.engine.as_deref(),
-            &loaded_table.path,
+            loaded_table,
             geometry_cache.as_deref_mut(),
         )?;
         if let Some(profile) = compute_profile.as_deref_mut() {
@@ -2317,10 +2346,14 @@ fn apply_row_all_channels(
                     corrected[[corr_index, chan_index]] /= factor;
                 }
                 if calibrate_weights {
-                    let factor = bandpass_weights.as_ref().map_or_else(
-                        || value1.norm_sqr() * value2.norm_sqr(),
-                        |factors| factors[corr_index],
-                    );
+                    let factor = if is_tsys && has_weight_spectrum && (flag1 || flag2) {
+                        0.0
+                    } else {
+                        bandpass_weights.as_ref().map_or_else(
+                            || value1.norm_sqr() * value2.norm_sqr(),
+                            |factors| factors[corr_index],
+                        )
+                    };
                     if let Some(weight_spectrum) = weight_spectrum.as_mut() {
                         weight_spectrum[[corr_index, chan_index]] *= factor;
                     }
@@ -2816,10 +2849,11 @@ fn build_fast_gain_pair(
     antenna1_id: i32,
     antenna2_id: i32,
     time_seconds: f64,
-    engine: Option<&MsCalEngine>,
-    path: &Path,
+    table: &LoadedCalibrationTable,
     geometry_cache: Option<&mut RowGeometryCache>,
 ) -> Result<Option<FastGainPair>, ApplyExecutionError> {
+    let engine = table.engine.as_deref();
+    let path = &table.path;
     let mut geometry_cache = geometry_cache;
     match (ant1.as_ref(), ant2.as_ref()) {
         (CalibrationGrid::Complex(_), CalibrationGrid::Complex(_)) => Ok(Some(
@@ -2834,6 +2868,7 @@ fn build_fast_gain_pair(
                 antenna1_id,
                 time_seconds,
                 path,
+                table.antpos_tropo.as_ref(),
                 reborrow_geometry_cache(&mut geometry_cache),
             )?;
             let delay2_ns = fast_antpos_delay_ns(
@@ -2844,6 +2879,7 @@ fn build_fast_gain_pair(
                 antenna2_id,
                 time_seconds,
                 path,
+                table.antpos_tropo.as_ref(),
                 reborrow_geometry_cache(&mut geometry_cache),
             )?;
             Ok(Some(FastGainPair::Antpos {
@@ -2924,6 +2960,7 @@ fn fast_antpos_delay_ns(
     antenna_id: i32,
     time_seconds: f64,
     path: &Path,
+    tropo: Option<&TropoDelay>,
     geometry_cache: Option<&mut RowGeometryCache>,
 ) -> Result<f64, ApplyExecutionError> {
     let mut geometry_cache = geometry_cache;
@@ -2944,7 +2981,7 @@ fn fast_antpos_delay_ns(
         offset_m[2].to_bits(),
     ];
     let antenna_index = usize::try_from(antenna_id).ok();
-    let uvw = if let Some(cache) = reborrow_geometry_cache(&mut geometry_cache) {
+    if let Some(cache) = reborrow_geometry_cache(&mut geometry_cache) {
         cache.ensure_fast_term_context(time_seconds, field_id);
         if let Some(antenna_index) = antenna_index
             && let Some(delay_ns) =
@@ -2952,26 +2989,55 @@ fn fast_antpos_delay_ns(
         {
             return Ok(delay_ns);
         }
-        cache.project_itrf_offset_to_uvw(engine, time_seconds, field_id, antenna_id, offset_m)
-    } else {
-        engine.project_itrf_offset_to_uvw(
-            time_seconds,
-            usize::try_from(field_id).unwrap_or(usize::MAX),
-            usize::try_from(antenna_id).unwrap_or(usize::MAX),
-            offset_m,
-        )
     }
-    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-        path: path.display().to_string(),
-        source,
-    })?;
-    let delay_ns = uvw[2] / SPEED_OF_LIGHT_M_PER_S * 1.0e9;
+    let delay_ns = antpos_delay_ns(
+        engine,
+        field_id,
+        antenna_id,
+        time_seconds,
+        offset_m,
+        path,
+        tropo,
+        reborrow_geometry_cache(&mut geometry_cache),
+    )?;
     if let (Some(cache), Some(antenna_index)) =
         (reborrow_geometry_cache(&mut geometry_cache), antenna_index)
     {
         cache.remember_fast_antpos_delay(table_index, antenna_index, offset_bits, delay_ns);
     }
     Ok(delay_ns)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn antpos_delay_ns(
+    engine: &MsCalEngine,
+    field: i32,
+    antenna: i32,
+    time_seconds: f64,
+    offset_m: [f64; 3],
+    path: &Path,
+    tropo: Option<&TropoDelay>,
+    cache: Option<&mut RowGeometryCache>,
+) -> Result<f64, ApplyExecutionError> {
+    let field_id = usize::try_from(field).unwrap_or(usize::MAX);
+    let antenna_id = usize::try_from(antenna).unwrap_or(usize::MAX);
+    let failed = |source| ApplyExecutionError::MutateMeasurementSet {
+        path: path.display().to_string(),
+        source,
+    };
+    let uvw = match cache {
+        Some(cache) => {
+            cache.project_itrf_offset_to_uvw(engine, time_seconds, field, antenna, offset_m)
+        }
+        None => engine.project_itrf_offset_to_uvw(time_seconds, field_id, antenna_id, offset_m),
+    }
+    .map_err(failed)?;
+    let tropo_m = tropo
+        .map(|tropo| tropo.metres(engine, time_seconds, field_id, antenna_id))
+        .transpose()
+        .map_err(failed)?
+        .unwrap_or(0.0);
+    Ok((uvw[2] + tropo_m) / SPEED_OF_LIGHT_M_PER_S * 1.0e9)
 }
 
 fn fast_gain_curve_values(
@@ -3103,10 +3169,11 @@ fn materialize_row_dependent_grid(
     antenna_id: i32,
     time_seconds: f64,
     data_spw: &crate::plan::SpectralWindowPlan,
-    engine: Option<&MsCalEngine>,
-    path: &Path,
+    table: &LoadedCalibrationTable,
     geometry_cache: Option<&mut RowGeometryCache>,
 ) -> Result<Arc<CalibrationGrid>, ApplyExecutionError> {
+    let engine = table.engine.as_deref();
+    let path = &table.path;
     let mut geometry_cache = geometry_cache;
     let cache_key =
         materialized_grid_key(&grid, field_id, antenna_id, time_seconds, data_spw.spw_id);
@@ -3123,35 +3190,16 @@ fn materialize_row_dependent_grid(
                     reason: "KAntPos Jones apply requires MeasurementSet geometry".to_string(),
                 });
             };
-            let uvw = if let Some(cache) = geometry_cache.as_deref_mut() {
-                cache.project_itrf_offset_to_uvw(
-                    engine,
-                    time_seconds,
-                    field_id,
-                    antenna_id,
-                    [
-                        f64::from(grid.offsets_m[0]),
-                        f64::from(grid.offsets_m[1]),
-                        f64::from(grid.offsets_m[2]),
-                    ],
-                )
-            } else {
-                engine.project_itrf_offset_to_uvw(
-                    time_seconds,
-                    usize::try_from(field_id).unwrap_or(usize::MAX),
-                    usize::try_from(antenna_id).unwrap_or(usize::MAX),
-                    [
-                        f64::from(grid.offsets_m[0]),
-                        f64::from(grid.offsets_m[1]),
-                        f64::from(grid.offsets_m[2]),
-                    ],
-                )
-            }
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: path.display().to_string(),
-                source,
-            })?;
-            let delay_ns = uvw[2] / SPEED_OF_LIGHT_M_PER_S * 1.0e9;
+            let delay_ns = antpos_delay_ns(
+                engine,
+                field_id,
+                antenna_id,
+                time_seconds,
+                grid.offsets_m.map(f64::from),
+                path,
+                table.antpos_tropo.as_ref(),
+                geometry_cache.as_deref_mut(),
+            )?;
             let values = data_spw
                 .channel_frequencies_hz
                 .iter()
@@ -3412,6 +3460,7 @@ pub(crate) struct LoadedCalibrationTable {
     interp: ApplyInterpolationMode,
     supports_calwt: bool,
     engine: Option<Arc<MsCalEngine>>,
+    antpos_tropo: Option<TropoDelay>,
     pub(crate) solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
 }
 
@@ -3421,6 +3470,7 @@ enum TimeParameterFamily {
     Antpos,
     GainCurve { power: bool },
     Opacity,
+    Tsys,
 }
 
 impl TimeParameterFamily {
@@ -3431,6 +3481,7 @@ impl TimeParameterFamily {
             "EGainCurve" => Some(Self::GainCurve { power: false }),
             "EPowerCurve" => Some(Self::GainCurve { power: true }),
             "TOpac" => Some(Self::Opacity),
+            "B TSYS" => Some(Self::Tsys),
             _ => None,
         }
     }
@@ -3477,6 +3528,7 @@ struct CalibrationSamplingContext<'a> {
     interp: ApplyInterpolationMode,
     path: &'a Path,
     engine: Option<&'a MsCalEngine>,
+    antpos_tropo: Option<&'a TropoDelay>,
 }
 
 #[derive(Clone)]
@@ -3534,15 +3586,9 @@ impl CalibrationGrid {
                 context.cal_ref_frequency_hz,
                 context.path,
             ),
-            Self::Antpos(grid) => grid.sample(
-                data_chan_index,
-                field_id,
-                antenna_id,
-                time_seconds,
-                context.data_channels.frequencies_hz,
-                context.engine,
-                context.path,
-            ),
+            Self::Antpos(grid) => {
+                grid.sample(data_chan_index, field_id, antenna_id, time_seconds, context)
+            }
             Self::GainCurve(grid) => {
                 grid.sample(receptor, field_id, antenna_id, time_seconds, context)
             }
@@ -3840,10 +3886,10 @@ impl AntposGrid {
         field_id: i32,
         antenna_id: i32,
         time_seconds: f64,
-        data_frequencies_hz: &[f64],
-        engine: Option<&MsCalEngine>,
-        path: &Path,
+        context: &CalibrationSamplingContext<'_>,
     ) -> Result<GainSample, ApplyExecutionError> {
+        let path = context.path;
+        let data_frequencies_hz = context.data_channels.frequencies_hz;
         let frequency_hz = *data_frequencies_hz.get(data_chan_index).ok_or_else(|| {
             ApplyExecutionError::UnsupportedInterpolation {
                 path: path.display().to_string(),
@@ -3851,28 +3897,22 @@ impl AntposGrid {
                 reason: "data channel index is outside the MeasurementSet SPW grid".to_string(),
             }
         })?;
-        let Some(engine) = engine else {
+        let Some(engine) = context.engine else {
             return Err(ApplyExecutionError::UnsupportedCalibrationTable {
                 path: path.display().to_string(),
                 reason: "KAntPos Jones apply requires MeasurementSet geometry".to_string(),
             });
         };
-        let uvw = engine
-            .project_itrf_offset_to_uvw(
-                time_seconds,
-                usize::try_from(field_id).unwrap_or(usize::MAX),
-                usize::try_from(antenna_id).unwrap_or(usize::MAX),
-                [
-                    f64::from(self.offsets_m[0]),
-                    f64::from(self.offsets_m[1]),
-                    f64::from(self.offsets_m[2]),
-                ],
-            )
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: path.display().to_string(),
-                source,
-            })?;
-        let delay_ns = uvw[2] / SPEED_OF_LIGHT_M_PER_S * 1.0e9;
+        let delay_ns = antpos_delay_ns(
+            engine,
+            field_id,
+            antenna_id,
+            time_seconds,
+            self.offsets_m.map(f64::from),
+            path,
+            context.antpos_tropo,
+            None,
+        )?;
         let phase_rad = 2.0 * std::f64::consts::PI * delay_ns * (frequency_hz / 1.0e9);
         Ok(GainSample {
             value: Complex32::new(phase_rad.cos() as f32, phase_rad.sin() as f32),
@@ -4168,19 +4208,20 @@ pub(crate) fn load_calibration_table(
     table_plan: &ApplyCalibrationTablePlan,
     geometry_engine: Option<&Arc<MsCalEngine>>,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
-    load_parameters(table_plan, geometry_engine, false)
+    load_parameters(table_plan, geometry_engine, false, None)
 }
 
 pub(crate) fn load_simulator_table(
     table_plan: &ApplyCalibrationTablePlan,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
-    load_parameters(table_plan, None, true)
+    load_parameters(table_plan, None, true, None)
 }
 
 fn load_parameters(
     table_plan: &ApplyCalibrationTablePlan,
     geometry_engine: Option<&Arc<MsCalEngine>>,
     real_parameters: bool,
+    ms: Option<&MeasurementSet>,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
     if table_plan.summary.table_subtype == "BPOLY" {
         return load_bpoly_calibration_table(table_plan);
@@ -4194,8 +4235,16 @@ fn load_parameters(
     let supports_calwt = table_plan.summary.parameter_family == CalibrationParameterFamily::Complex
         || matches!(
             table_plan.summary.table_subtype.as_str(),
-            "TOpac" | "EGainCurve" | "EPowerCurve"
+            "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS"
         );
+    let antpos_tropo = match (
+        table_plan.summary.table_subtype.as_str(),
+        ms,
+        geometry_engine,
+    ) {
+        ("KAntPos Jones", Some(ms), Some(engine)) => load_antpos_tropo(&table, ms, engine)?,
+        _ => None,
+    };
 
     let mut solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>> = HashMap::new();
     for row_index in 0..table.row_count() {
@@ -4332,6 +4381,7 @@ fn load_parameters(
         interp: table_plan.interp,
         supports_calwt,
         engine: geometry_engine.cloned(),
+        antpos_tropo,
         solutions,
         callibrary: None,
         time_plans: HashMap::new(),
@@ -4339,6 +4389,44 @@ fn load_parameters(
         time_parameter_family: None,
         phase_delay: false,
     })
+}
+
+fn load_antpos_tropo(
+    table: &Table,
+    ms: &MeasurementSet,
+    engine: &MsCalEngine,
+) -> Result<Option<TropoDelay>, ApplyExecutionError> {
+    let Some(value) = table.keywords().get(TROPO_KEYWORD) else {
+        return Ok(None);
+    };
+    let failed = |source| ApplyExecutionError::MutateMeasurementSet {
+        path: display_ms_path(ms),
+        source,
+    };
+    if !only_vla_observations(ms).map_err(failed)? {
+        return Ok(None);
+    }
+    let scale = match value {
+        Value::Scalar(ScalarValue::Float64(scale)) => *scale,
+        Value::Scalar(ScalarValue::Float32(scale)) => f64::from(*scale),
+        Value::Scalar(ScalarValue::UInt8(scale)) => f64::from(*scale),
+        Value::Scalar(ScalarValue::Int16(scale)) => f64::from(*scale),
+        Value::Scalar(ScalarValue::UInt32(scale)) => f64::from(*scale),
+        Value::Scalar(ScalarValue::Int32(scale)) => f64::from(*scale),
+        Value::Scalar(ScalarValue::Int64(scale)) => *scale as f64,
+        _ => {
+            return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                path: table
+                    .path()
+                    .map_or_else(String::new, |path| path.display().to_string()),
+                reason: format!("{TROPO_KEYWORD} must be a numeric keyword"),
+            });
+        }
+    };
+    (scale != 0.0)
+        .then(|| TropoDelay::new(ms, engine, scale))
+        .transpose()
+        .map_err(failed)
 }
 
 fn load_bpoly_calibration_table(
@@ -4416,6 +4504,7 @@ fn load_bpoly_calibration_table(
         interp: table_plan.interp,
         supports_calwt: false,
         engine: None,
+        antpos_tropo: None,
         solutions,
         callibrary: None,
         time_plans: HashMap::new(),
@@ -5463,32 +5552,40 @@ mod tests {
 
         let mut load_count = 0;
         let first = cache
-            .calibration_lookup(lookup_key, || {
+            .calibration_lookup(lookup_key, None, || {
                 load_count += 1;
-                Ok(Some(gain_curve.clone()))
+                Ok(Some(fields::GridAtTime {
+                    grid: gain_curve.clone(),
+                    interpolated: false,
+                }))
             })
             .expect("first lookup")
             .expect("grid");
         let second = cache
-            .calibration_lookup(lookup_key, || {
+            .calibration_lookup(lookup_key, None, || {
                 load_count += 1;
-                Ok(Some(opacity.clone()))
+                Ok(Some(fields::GridAtTime {
+                    grid: opacity.clone(),
+                    interpolated: false,
+                }))
             })
             .expect("cached lookup")
             .expect("grid");
         assert_eq!(load_count, 1);
-        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first.grid, &second.grid));
 
         let missing_key = calibration_lookup_key(6, 3, 7, 2, 12.5, ApplyInterpolationMode::Nearest);
         assert!(
             cache
-                .calibration_lookup(missing_key, || Ok(None))
+                .calibration_lookup(missing_key, None, || Ok(None))
                 .expect("missing lookup")
                 .is_none()
         );
         assert!(
             cache
-                .calibration_lookup(missing_key, || panic!("cached None should not reload"))
+                .calibration_lookup(missing_key, None, || panic!(
+                    "cached None should not reload"
+                ))
                 .expect("cached missing lookup")
                 .is_none()
         );

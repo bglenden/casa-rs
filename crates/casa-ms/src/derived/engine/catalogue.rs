@@ -66,11 +66,13 @@ impl MsCalEngine {
         );
         let mut field_directions = Vec::with_capacity(catalogue.fields.len());
         let mut field_phase_offsets = Vec::with_capacity(catalogue.fields.len());
+        let mut field_phase_references = Vec::with_capacity(catalogue.fields.len());
         let mut field_reference_epochs = Vec::with_capacity(catalogue.fields.len());
         let mut field_motions = Vec::with_capacity(catalogue.fields.len());
         for field in &catalogue.fields {
             let (longitude, latitude) = field.phase_centre.as_angles();
             field_phase_offsets.push([longitude, latitude]);
+            field_phase_references.push(field.phase_centre.refer());
             field_directions.push(if field.phase_centre.refer() == DirectionRef::J2000 {
                 field.phase_centre.clone()
             } else {
@@ -99,6 +101,7 @@ impl MsCalEngine {
             antenna_feed_mounts: antenna_feed_mounts.into_boxed_slice(),
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
+            field_phase_references: field_phase_references.into_boxed_slice(),
             field_motions: field_motions.into_boxed_slice(),
             calibration_field_directions: false,
             field_reference_epochs: field_reference_epochs.into_boxed_slice(),

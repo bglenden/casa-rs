@@ -1,0 +1,320 @@
+{
+  "schema_version": 1,
+  "task": "gencal",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "dc16c0d90b3ec79dbc50d317fe293b0d661ec20c",
+  "parameters": {
+    "vis": {
+      "scope": "Input MeasurementSet geometry, metadata and table source for the routine families.",
+      "evidence": [
+        "specified",
+        "vla-priors",
+        "tsys",
+        "opacity",
+        "manual-positions",
+        "vla-archive"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "tables"
+      ]
+    },
+    "caltable": {
+      "scope": "CASA-readable output, cumulative corrections, and validation before replacing an existing table.",
+      "evidence": [
+        "specified",
+        "vla-priors",
+        "tsys",
+        "opacity",
+        "manual-positions",
+        "vla-archive"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "tables"
+      ]
+    },
+    "caltype": {
+      "scope": "Eleven routine prior types. Eight advanced types belong to CAL-24 (#1535).",
+      "evidence": [
+        "specified",
+        "vla-priors",
+        "tsys",
+        "opacity",
+        "manual-positions",
+        "vla-archive"
+      ],
+      "status": "Partial",
+      "behaviors": [
+        "tables"
+      ]
+    },
+    "infile": {
+      "scope": "Explicit VLA gain curves and ALMA position JSON. The contract tracks the advanced source-file modes in #1535.",
+      "evidence": [
+        "vla-priors",
+        "manual-positions",
+        "alma-service"
+      ],
+      "behaviors": [
+        "positions"
+      ]
+    },
+    "endpoint": {
+      "scope": "Inactive for routine types. Its Jy/K endpoint behavior belongs to CAL-24 (#1535).",
+      "evidence": [
+        "alma-service"
+      ]
+    },
+    "timeout": {
+      "scope": "Inactive for routine types. Jy/K service timeout belongs to CAL-24 (#1535).",
+      "evidence": [
+        "alma-service"
+      ]
+    },
+    "retry": {
+      "scope": "Inactive for routine types. Jy/K service retries belong to CAL-24 (#1535).",
+      "evidence": [
+        "alma-service"
+      ]
+    },
+    "retry_wait_time": {
+      "scope": "Inactive for routine types. Jy/K retry delays belong to CAL-24 (#1535).",
+      "evidence": [
+        "alma-service"
+      ]
+    },
+    "ant_pos_time_limit": {
+      "scope": "Automatic VLA correction lookup, with a strict archive-day cutoff and the whole-second posting boundary.",
+      "evidence": [
+        "vla-archive"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "positions"
+      ]
+    },
+    "spw": {
+      "scope": "Routine spectral-window selection and the family-specific output axes.",
+      "evidence": [
+        "specified",
+        "vla-priors",
+        "tsys",
+        "opacity",
+        "manual-positions",
+        "vla-archive"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "tables"
+      ]
+    },
+    "antenna": {
+      "scope": "Ordered IDs and expressions, all-antenna defaults, and the applicable automatic lookup.",
+      "evidence": [
+        "specified",
+        "opacity",
+        "manual-positions",
+        "vla-archive"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "positions"
+      ]
+    },
+    "pol": {
+      "scope": "Ordered receptor behavior for the applicable routine types. Advanced overrides belong to CAL-24 (#1535).",
+      "evidence": [
+        "specified",
+        "opacity"
+      ],
+      "behaviors": [
+        "tables"
+      ]
+    },
+    "parameter": {
+      "scope": "Scalar or vector routine correction values, CASA cycling and family-specific units.",
+      "evidence": [
+        "specified",
+        "opacity",
+        "manual-positions"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "tables"
+      ]
+    },
+    "uniform": {
+      "scope": "Both antenna-grid policies for scalar and spectral SYSCAL temperatures.",
+      "evidence": [
+        "tsys"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "tables"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "tables",
+      "title": "Routine prior tables and calibrated data",
+      "status": "Implemented",
+      "scope": "Compare generated calibration parameters, selections, flags, weights and applied visibilities in both writer-reader directions.",
+      "gap": "Compared with the installed CASA reference.",
+      "evidence": [
+        "specified",
+        "vla-priors",
+        "tsys",
+        "opacity",
+        "manual-positions",
+        "vla-archive"
+      ]
+    },
+    {
+      "id": "positions",
+      "title": "Antenna offsets and service inputs",
+      "status": "Implemented",
+      "scope": "Direct vectors, legacy rotated coordinates, ALMA file input and automatic VLA archive corrections, including historical tropospheric delays.",
+      "gap": "Compared with the installed CASA reference.",
+      "evidence": [
+        "manual-positions",
+        "vla-archive",
+        "alma-service"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "safe-whole-axis-selection",
+      "state": "Previously agreed",
+      "record": "Explicit gencal wildcards can index outside the calibration array",
+      "inputs": "An explicit whole-axis wildcard, a negated antenna index, or an empty legacy VLA antenna selection.",
+      "casa": "Some of these selections abort the process when they index a nonexistent table element.",
+      "ours": "Whole-axis selections broadcast, and invalid negative antenna indices raise a task error.",
+      "rationale": "Prevent native crashes and preserve prior calibration products.",
+      "impact": "Explicit and equivalent all-antenna selections produce the same intended correction.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "specified",
+        "manual-positions"
+      ]
+    },
+    {
+      "id": "safe-scalar-opacity",
+      "state": "Previously agreed",
+      "record": "Opacity priors can index a nonexistent second receptor",
+      "inputs": "A scalar opacity table with a second-receptor or two-receptor selection.",
+      "casa": "Indexes a nonexistent second receptor and terminates the task process.",
+      "ours": "Raises a task error and preserves the existing product.",
+      "rationale": "The opacity coefficient is scalar and the requested selection cannot be applied.",
+      "impact": "Empty and first-receptor selectors remain usable.",
+      "owner_decision": "Standing CASA bug policy in AGENTS.md.",
+      "evidence": [
+        "opacity"
+      ]
+    }
+  ],
+  "evidence": {
+    "specified": {
+      "kind": "Specified G Jones and K Jones corrections",
+      "state": "passed",
+      "scope": "31 comparisons cover ordered selectors, both calibration families, precision and cumulative updates. An incompatible grid preserves all 12 existing solutions.",
+      "result": "31 recorded case groups passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "31ed10ad3054053ea218b83ef68fdec3c4719610",
+      "command": "python tools/casa-compat/calibration_gencal_specify_oracle.py --work <empty-work-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/routine-calibration-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_gencal_specify_oracle.py"
+      ]
+    },
+    "vla-priors": {
+      "kind": "VLA gain curves and efficiency",
+      "state": "passed",
+      "scope": "25 comparisons cover standard, explicit and embedded curve data, sparse antennas and gains with and without weight calibration. Sixteen tables agree exactly.",
+      "result": "25 recorded case groups passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "900221a72c0c57229a02328b01fe935464a99a98",
+      "command": "python tools/casa-compat/calibration_gencal_gaincurve_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms> --gaincurves <GainCurves>",
+      "receipt": "resources/casa-compat/evidence/routine-calibration-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_gencal_gaincurve_oracle.py"
+      ]
+    },
+    "tsys": {
+      "kind": "Scalar and spectral system temperatures",
+      "state": "passed",
+      "scope": "14 comparisons cover both uniform settings, selected image-channel weights, floating-point temperatures, retuned windows and safety of linked SYSCAL inputs.",
+      "result": "14 recorded case groups passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "d9d24a3fdab9ab18735b68cb7aa6704527784825",
+      "command": "python tools/casa-compat/calibration_gencal_tsys_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms>",
+      "receipt": "resources/casa-compat/evidence/routine-calibration-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_gencal_tsys_oracle.py"
+      ]
+    },
+    "opacity": {
+      "kind": "Zenith-opacity priors",
+      "state": "passed",
+      "scope": "16 comparisons cover spectral windows, ordered antennas, receptor behavior, cumulative updates and cross-application. Eleven calibration tables agree exactly.",
+      "result": "16 recorded case groups passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "8f5f9c14021326b9bcc2c11fd83ec368d77f39ac",
+      "command": "python tools/casa-compat/calibration_gencal_opacity_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms>",
+      "receipt": "resources/casa-compat/evidence/routine-calibration-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_gencal_opacity_oracle.py"
+      ]
+    },
+    "manual-positions": {
+      "kind": "Manual antenna coordinates and ALMA files",
+      "state": "passed",
+      "scope": "24 comparisons cover direct ITRF and legacy VLA coordinates, ALMA JSON, moving field reference epochs, forced SPW zero and shared input protection. Thirteen tables agree exactly.",
+      "result": "24 recorded case groups passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "c953d400699acd7e35faa2cc446c3751927312b6",
+      "command": "python tools/casa-compat/calibration_gencal_antpos_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms>",
+      "receipt": "resources/casa-compat/evidence/routine-calibration-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_gencal_antpos_oracle.py"
+      ]
+    },
+    "vla-archive": {
+      "kind": "Frozen and live VLA archive correction",
+      "state": "passed",
+      "scope": "Frozen comparisons cover correction dates, moves, a day cutoff, service failures and the 2016B tropospheric keyword. The live archive yielded the same 3 mm eastward component for ea01 in both products.",
+      "result": "7 recorded case groups passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "dc16c0d90b3ec79dbc50d317fe293b0d661ec20c",
+      "command": "python tools/casa-compat/calibration_gencal_evla_oracle.py --work <empty-work-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/routine-calibration-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_gencal_evla_oracle.py"
+      ]
+    },
+    "alma-service": {
+      "kind": "Frozen and live ALMA position service",
+      "state": "passed",
+      "scope": "The two clients send matching valid queries, select hosts in the same order, and produce matching antenna data and request metadata. The live case agrees on all ten antennas. Cross-engine files produce exact gencal tables.",
+      "result": "30 recorded case groups passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "dc16c0d90b3ec79dbc50d317fe293b0d661ec20c",
+      "command": "python tools/casa-compat/calibration_getantposalma_oracle.py --work <empty-work-directory> --native-bin <calibrate> --live",
+      "receipt": "resources/casa-compat/evidence/routine-calibration-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_getantposalma_oracle.py"
+      ]
+    },
+    "performance": {
+      "kind": "Matched release performance",
+      "state": "planned",
+      "scope": "Representative end-to-end throughput, I/O and compute phases, workers and memory.",
+      "result": "Scheduled for the programme performance qualification in #979.",
+      "links": [
+        "https://github.com/bglenden/casa-rs/issues/979"
+      ]
+    }
+  }
+}

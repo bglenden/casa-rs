@@ -252,6 +252,21 @@ fn validated_cli_value(
     }
     let parsed = if one_selector {
         ParameterValue::String(text.to_string())
+    } else if concept.normalization == NormalizationRule::NumericVariant {
+        let token = text.trim();
+        token
+            .parse::<i64>()
+            .map(ParameterValue::Integer)
+            .unwrap_or_else(|_| {
+                token
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite())
+                    .map_or_else(
+                        || ParameterValue::String(text.to_string()),
+                        ParameterValue::Float,
+                    )
+            })
     } else {
         parse_parameter_text(text, &concept.value_domain)
             .map_err(|error| format!("parameter {:?}: {error}", binding.name))?

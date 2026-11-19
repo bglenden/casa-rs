@@ -145,11 +145,7 @@ fn gencal_opacity_expands_selected_spws_across_antennas() {
         gaincurve_table: None,
     })
     .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("one opacity, or one for each selected SPW"),
-        "{err}"
-    );
+    assert!(err.to_string().contains("expected 1 or 2, got 3"), "{err}");
 }
 
 #[test]
@@ -217,7 +213,10 @@ fn gencal_rejects_invalid_antpos_and_spw_contracts() {
         gaincurve_table: None,
     })
     .unwrap_err();
-    assert!(err.to_string().contains("requires explicit --antenna"));
+    assert!(
+        err.to_string()
+            .contains("requires resolved antenna selections")
+    );
 
     let err = gencal(&GencalRequest {
         measurement_set: ms_path,
@@ -229,7 +228,7 @@ fn gencal_rejects_invalid_antpos_and_spw_contracts() {
         gaincurve_table: None,
     })
     .unwrap_err();
-    assert!(err.to_string().contains("outside 0.."));
+    assert!(err.to_string().contains("No match found for 9"), "{err}");
 }
 
 fn write_gaincurve_table(path: &std::path::Path) {

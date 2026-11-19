@@ -181,12 +181,14 @@ impl TimePlan {
             .map(|(key, rows)| (key, rows.as_slice()))
     }
 
-    /// Exact, nearest and endpoint queries share immutable complex payloads.
+    /// Exact, nearest and endpoint queries can share an immutable payload.
+    /// Real families can share it when the caller can use the raw parameters.
     pub(crate) fn registered_grid(
         &self,
         query: &TimeQuery,
+        allow_raw_real: bool,
     ) -> Option<std::sync::Arc<CalibrationGrid>> {
-        if self.real || query.frequency_hz.is_some() {
+        if (self.real && !allow_raw_real) || query.frequency_hz.is_some() {
             return None;
         }
         let (_, rows) = self.candidates(query)?;

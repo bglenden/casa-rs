@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native generation of externally specified CASA calibration tables.
 
+mod antpos_evla;
+mod antpos_file;
 mod power_curve;
+mod tsys;
+
+pub use antpos_file::AntposInputError;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -51,12 +56,17 @@ pub enum GencalType {
     Mbd,
     /// Antenna-position delay correction table (`KAntPos Jones`).
     Antpos,
+    /// Legacy VLA antenna offsets, rotated into ITRF (`KAntPos Jones`).
+    #[serde(rename = "antposvla")]
+    AntposVla,
     /// VLA gain curve alone (`EGainCurve`).
     Gc,
     /// VLA gain-curve plus antenna-efficiency table (`EGainCurve`).
     Gceff,
     /// VLA efficiency alone (`EGainCurve`).
     Eff,
+    /// System temperature from the MeasurementSet's SYSCAL subtable (`B TSYS`).
+    Tsys,
     /// Zenith-opacity table (`TOpac`).
     Opac,
 }
@@ -66,8 +76,9 @@ impl GencalType {
         match self {
             Self::Amp | Self::Ph => "G Jones",
             Self::Sbd | Self::Mbd => "K Jones",
-            Self::Antpos => "KAntPos Jones",
+            Self::Antpos | Self::AntposVla => "KAntPos Jones",
             Self::Gc | Self::Gceff | Self::Eff => "EGainCurve",
+            Self::Tsys => "B TSYS",
             Self::Opac => "TOpac",
         }
     }
@@ -77,10 +88,6 @@ impl GencalType {
             Self::Amp | Self::Ph => (COL_CPARAM, PrimitiveType::Complex32, "Complex"),
             _ => (COL_FPARAM, PrimitiveType::Float32, "Float"),
         }
-    }
-
-    fn is_specified(self) -> bool {
-        matches!(self, Self::Amp | Self::Ph | Self::Sbd | Self::Mbd)
     }
 
     pub(crate) fn is_gain_curve(self) -> bool {
@@ -98,11 +105,13 @@ impl std::str::FromStr for GencalType {
             "sbd" => Ok(Self::Sbd),
             "mbd" => Ok(Self::Mbd),
             "antpos" => Ok(Self::Antpos),
+            "antposvla" => Ok(Self::AntposVla),
             "gceff" | "gc" => Ok(Self::Gceff),
             "eff" => Ok(Self::Eff),
+            "tsys" => Ok(Self::Tsys),
             "opac" | "opacity" => Ok(Self::Opac),
             other => Err(format!(
-                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, gceff, or opac"
+                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, antposvla, gc, gceff, eff, opac, or tsys"
             )),
         }
     }
@@ -117,14 +126,15 @@ pub struct GencalRequest {
     pub output_table: PathBuf,
     /// Prior calibration family to generate.
     pub caltype: GencalType,
-    /// CASA-style antenna selector for `antpos`.
+    /// CASA-style antenna selection for antenna positions and specified priors.
     #[serde(default)]
     pub antenna: String,
-    /// CASA-style SPW selector for `opac`.
+    /// CASA-style spectral-window selection for specified priors.
     #[serde(default)]
     pub spw: String,
-    /// Numeric parameters. `antpos` expects triples per selected antenna; `opac`
-    /// expects one opacity per selected SPW.
+    /// Numeric parameters. `antpos` expects triples of antenna offsets.
+    /// `opac` accepts one broadcast value or values ordered by spectral
+    /// window and then antenna. An omitted axis broadcasts across that axis.
     #[serde(default)]
     pub parameter: Vec<f64>,
     /// Optional explicit VLA GainCurves table path for `gceff`.
@@ -200,6 +210,20 @@ pub enum GencalError {
     /// The request does not match the supported native surface.
     #[error("{0}")]
     InvalidRequest(String),
+    /// A supplied ALMA position file or its arguments are invalid.
+    #[error(transparent)]
+    PositionInput(#[from] AntposInputError),
+    /// The MeasurementSet does not identify one observation for automatic lookup.
+    #[error("{0}")]
+    AutomaticPositionInput(String),
+    /// A VLA archive request failed after the initial connection probe.
+    #[error("{source} at {url}")]
+    VlaArchive {
+        /// Archive URL, including the year being retrieved.
+        url: String,
+        /// HTTP or transport error.
+        source: Box<ureq::Error>,
+    },
     /// A needed value in a CASA table had an unsupported type or shape.
     #[error("{0}")]
     UnsupportedTableValue(String),
@@ -213,6 +237,7 @@ struct PriorCalRow {
     spw_id: i32,
     antenna_id: i32,
     observation_id: i32,
+    scan_number: i32,
     parameters: ArrayValue,
     snr_value: f32,
     preserved: Option<RecordValue>,
@@ -220,63 +245,99 @@ struct PriorCalRow {
 
 /// Generate one native prior calibration table.
 pub fn gencal(request: &GencalRequest) -> Result<GencalReport, GencalError> {
-    gencal_with_output_mode(request, "", None, crate::CalibrationOutputMode::Update)
+    gencal_with_output_mode(
+        request,
+        "",
+        None,
+        None,
+        true,
+        crate::CalibrationOutputMode::Update,
+    )
 }
 
 pub(crate) fn gencal_with_output_mode(
     request: &GencalRequest,
     polarization: &str,
-    gaincurve_infile: Option<&Path>,
+    infile: Option<&Path>,
+    ant_pos_time_limit: Option<i64>,
+    uniform: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
-    // Reserve before reading prior parameters, so concurrent updates cannot
-    // both accumulate from the same old product and silently lose a correction.
-    let output = crate::output::CalibrationOutput::prepare(&request.output_table, mode)?;
-    let ms = MeasurementSet::open(&request.measurement_set).map_err(|source| {
-        GencalError::OpenMeasurementSet {
-            path: request.measurement_set.display().to_string(),
-            source: Box::new(source),
-        }
-    })?;
-    let updating = mode == crate::CalibrationOutputMode::Update
-        && request.output_table.exists()
-        && !request.caltype.is_gain_curve();
+    let ms = open_measurement_set(&request.measurement_set)?;
     let embedded = match request.caltype {
         GencalType::Gc | GencalType::Gceff => {
             power_curve::source_path(&request.measurement_set, ms.main_table())?
         }
         _ => None,
     };
-    let mut rows = match request.caltype {
-        GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd => {
+    let linked_input = match request.caltype {
+        GencalType::Tsys => ms.subtable(SubtableId::SysCal).and_then(Table::path),
+        GencalType::Antpos => infile,
+        _ => embedded.as_deref(),
+    };
+    if let Some(path) = linked_input {
+        refuse_prior_input_overlap(request, path)?;
+    }
+    let positions = match (request.caltype, infile, ant_pos_time_limit) {
+        (GencalType::Antpos, Some(path), _) => {
+            Some(antpos_file::resolve(&ms, request, polarization, path)?)
+        }
+        (GencalType::Antpos, None, Some(limit)) if request.antenna.is_empty() => {
+            let positions = antpos_evla::resolve(&ms, request, limit)?;
+            if positions.is_none() {
+                tracing::warn!("No offsets found. No caltable created.");
+                return Ok(GencalReport {
+                    output_table: request.output_table.clone(),
+                    caltype: request.caltype,
+                    table_subtype: request.caltype.table_subtype().to_string(),
+                    row_count: 0,
+                    spectral_window_ids: Vec::new(),
+                    antenna_ids: Vec::new(),
+                });
+            }
+            positions
+        }
+        _ => None,
+    };
+    let request = positions.as_ref().unwrap_or(request);
+    // Reserve before reading prior parameters, so concurrent updates cannot
+    // both accumulate from the same old product and silently lose a correction.
+    let output = crate::output::CalibrationOutput::prepare(&request.output_table, mode)?;
+    let updating = mode == crate::CalibrationOutputMode::Update
+        && request.output_table.exists()
+        && !request.caltype.is_gain_curve()
+        && request.caltype != GencalType::Tsys;
+    let mut collapse_spw = true;
+    let rows = match request.caltype {
+        GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd | GencalType::Opac => {
             specified_rows(&ms, request, polarization, updating)?
         }
-        GencalType::Antpos => antpos_rows(&ms, request)?,
+        GencalType::Antpos | GencalType::AntposVla => antpos_rows(&ms, request, updating)?,
         GencalType::Gc | GencalType::Gceff | GencalType::Eff => {
-            validate_gaincurve_selection(&ms, request)?;
+            validate_prior_selection(&ms, request)?;
             if let Some(path) = embedded.as_deref() {
-                refuse_curve_input_overlap(request, path)?;
                 power_curve::rows(&ms, path)?
             } else {
-                gaincurve_rows(&ms, request, gaincurve_infile)?
+                gaincurve_rows(&ms, request, infile)?
             }
         }
-        GencalType::Opac => opacity_rows(&ms, request)?,
+        GencalType::Tsys => {
+            validate_prior_selection(&ms, request)?;
+            let (rows, spectral) = tsys::rows(&ms, uniform)?;
+            collapse_spw = !spectral;
+            rows
+        }
     };
-    if updating && !request.caltype.is_specified() {
-        apply_existing_parameters(request, &mut rows)?;
-    }
     let subtype = if embedded.is_some() {
         "EPowerCurve"
     } else {
         request.caltype.table_subtype()
     };
-    write_prior_caltable(&ms, request, subtype, &rows, output, mode)
+    write_prior_caltable(&ms, request, subtype, &rows, output, mode, collapse_spw)
 }
 
 /// Load the existing `setSpecify` parameters and metadata. The ordered gain
 /// and delay selectors apply their corrections directly to the loaded cells.
-/// Other prior writers already contain one additive correction per cell.
 fn apply_existing_parameters(
     request: &GencalRequest,
     rows: &mut [PriorCalRow],
@@ -333,13 +394,7 @@ fn apply_existing_parameters(
                 (ArrayValue::Float32(delta), Some(Value::Array(ArrayValue::Float32(previous))))
                     if delta.shape() == previous.shape() =>
                 {
-                    if request.caltype.is_specified() {
-                        delta.assign(previous);
-                    } else {
-                        for (value, old) in delta.iter_mut().zip(previous) {
-                            *value += old;
-                        }
-                    }
+                    delta.assign(previous);
                 }
                 (
                     ArrayValue::Complex32(factor),
@@ -404,12 +459,13 @@ fn specified_rows(
     } else {
         antennas.into_iter().map(|id| vec![id]).collect()
     };
-    let receptor_groups: &[&[usize]] = match polarization {
-        "" => &[&[0, 1]],
-        "R" | "X" => &[&[0]],
-        "L" | "Y" => &[&[1]],
-        "R,L" | "X,Y" => &[&[0], &[1]],
-        "L,R" | "Y,X" => &[&[1], &[0]],
+    let scalar = request.caltype == GencalType::Opac;
+    let receptor_groups: &[&[usize]] = match (scalar, polarization) {
+        (_, "R" | "X") | (true, "") => &[&[0]],
+        (false, "") => &[&[0, 1]],
+        (false, "L" | "Y") => &[&[1]],
+        (false, "R,L" | "X,Y") => &[&[0], &[1]],
+        (false, "L,R" | "Y,X") => &[&[1], &[0]],
         _ => return Err(invalid("Invalid pol specification".into())),
     };
 
@@ -431,7 +487,7 @@ fn specified_rows(
     let identity = if complex {
         complex_column([Complex32::new(1.0, 0.0); 2])
     } else {
-        f32_column(&[0.0; 2])
+        f32_column(&[0.0; 2][..if scalar { 1 } else { 2 }])
     };
     let mut rows = (0..antenna_count * window_count)
         .map(|row| PriorCalRow {
@@ -441,6 +497,7 @@ fn specified_rows(
             spw_id: (row / antenna_count) as i32,
             antenna_id: (row % antenna_count) as i32,
             observation_id: 0,
+            scan_number: -1,
             parameters: identity.clone(),
             snr_value: 1.0,
             preserved: None,
@@ -475,8 +532,10 @@ fn specified_rows(
                     for receptor in *receptors {
                         match parameters {
                             ArrayValue::Complex32(gains) => gains[[*receptor, 0]] *= value,
-                            ArrayValue::Float32(delays) => delays[[*receptor, 0]] += value.re,
-                            _ => unreachable!("specified prior columns contain gains or delays"),
+                            ArrayValue::Float32(values) => values[[*receptor, 0]] += value.re,
+                            _ => unreachable!(
+                                "specified prior columns contain complex or real parameters"
+                            ),
                         }
                     }
                 }
@@ -496,44 +555,105 @@ fn complex_column(values: [Complex32; 2]) -> ArrayValue {
 fn antpos_rows(
     ms: &MeasurementSet,
     request: &GencalRequest,
+    updating: bool,
 ) -> Result<Vec<PriorCalRow>, GencalError> {
-    let antenna = ms
+    let invalid = |detail: String| {
+        GencalError::InvalidRequest(format!("Error in Calibrater::specifycal. {detail}"))
+    };
+    if !request.spw.is_empty() && request.spw != "*" {
+        ms.resolve_spw_selector(&request.spw)
+            .map_err(|error| invalid(error.to_string()))?;
+    }
+    if request.caltype == GencalType::Antpos && request.antenna.trim().is_empty() {
+        return Err(invalid(
+            "antpos requires resolved antenna selections and position offsets".into(),
+        ));
+    }
+    let antenna_count = ms
         .antenna()
         .map_err(|source| GencalError::OpenMeasurementSet {
             path: "ANTENNA".to_string(),
             source: Box::new(source),
-        })?;
-    let selected = parse_antenna_offsets(ms, &request.antenna, &request.parameter)?;
-    let mut rows = Vec::with_capacity(antenna.row_count());
-    for antenna_id in 0..antenna.row_count() {
-        let offsets = selected
-            .get(&(antenna_id as i32))
-            .copied()
-            .unwrap_or([0.0, 0.0, 0.0]);
-        rows.push(PriorCalRow {
+        })?
+        .row_count();
+    if request.parameter.is_empty() || !request.parameter.len().is_multiple_of(3) {
+        return Err(invalid(
+            "antpos requires three parameters per antenna.".into(),
+        ));
+    }
+    let selected = match request.antenna.as_str() {
+        "" | "*" => Vec::new(),
+        selector => ms
+            .resolve_specified_antennas(selector)
+            .map_err(|error| invalid(error.to_string()))?,
+    };
+    let broadcast = selected.is_empty();
+    let selected = if broadcast {
+        (0..antenna_count).collect()
+    } else {
+        selected
+    };
+    let rotate = if request.caltype == GencalType::AntposVla {
+        let provider =
+            casa_ms::open_measures_runtime().map_err(|error| invalid(error.to_string()))?;
+        let vla = casa_types::measures::position::MPosition::from_observatory_name(
+            "VLA",
+            provider.as_ref(),
+        )
+        .map_err(|error| invalid(error.to_string()))?
+        .ok_or_else(|| invalid("missing VLA observatory position".into()))?;
+        Some(vla.longitude_rad().sin_cos())
+    } else {
+        None
+    };
+    let mut rows = (0..antenna_count)
+        .map(|antenna_id| PriorCalRow {
             time_seconds: 0.0,
             interval_seconds: 0.0,
             field_id: -1,
             spw_id: 0,
             antenna_id: antenna_id as i32,
             observation_id: 0,
-            parameters: f32_column(&offsets.map(|value| value as f32)),
+            scan_number: -1,
+            parameters: f32_column(&[0.0; 3]),
             snr_value: 1.0,
             preserved: None,
-        });
+        })
+        .collect::<Vec<_>>();
+    if updating {
+        apply_existing_parameters(request, &mut rows)?;
+    }
+    let mut offsets = request.parameter.as_chunks::<3>().0.to_vec();
+    let triple_count = offsets.len();
+    for (order, antenna) in selected.into_iter().enumerate() {
+        let offset = &mut offsets[if broadcast { 0 } else { order % triple_count }];
+        // CASA rotates a view of each triple. An explicit selection that
+        // cycles through a short vector rotates the shared triple again.
+        if let Some((sin, cos)) = rotate
+            && (!broadcast || order == 0)
+        {
+            let [x, y, z] = *offset;
+            *offset = [x * cos - y * sin, x * sin + y * cos, z];
+        }
+        let ArrayValue::Float32(values) = &mut rows[antenna].parameters else {
+            unreachable!("antenna positions use real parameters");
+        };
+        for (coordinate, &delta) in offset.iter().enumerate() {
+            values[[coordinate, 0]] += delta as f32;
+        }
     }
     Ok(rows)
 }
 
-fn validate_gaincurve_selection(
+fn validate_prior_selection(
     ms: &MeasurementSet,
     request: &GencalRequest,
 ) -> Result<(), GencalError> {
     let invalid = |detail: String| {
         GencalError::InvalidRequest(format!("Error in Calibrater::specifycal. {detail}"))
     };
-    // Calibrater resolves these expressions before EGainCurve writes the
-    // full antenna and spectral-window grid.
+    // Calibrater resolves these expressions before the selected family
+    // generates its own antenna and spectral-window grid.
     if !request.spw.is_empty() && request.spw != "*" {
         ms.resolve_spw_selector(&request.spw)
             .map_err(|error| invalid(error.to_string()))?;
@@ -573,7 +693,7 @@ fn gaincurve_rows(
             invalid("the standard VLA GainCurves table is missing from the CASA data tree".into())
         })?
     };
-    refuse_curve_input_overlap(request, &source_path)?;
+    refuse_prior_input_overlap(request, &source_path)?;
     let gaincurves = Table::open(TableOptions::new(&source_path)).map_err(|source| {
         GencalError::OpenGainCurves {
             path: source_path.display().to_string(),
@@ -633,6 +753,7 @@ fn gaincurve_rows(
                 spw_id: window as i32,
                 antenna_id: antenna as i32,
                 observation_id: -1,
+                scan_number: -1,
                 parameters: f32_column(&values),
                 snr_value: 0.0,
                 preserved: None,
@@ -645,7 +766,7 @@ fn gaincurve_rows(
     Ok(rows)
 }
 
-fn refuse_curve_input_overlap(request: &GencalRequest, input: &Path) -> Result<(), GencalError> {
+fn refuse_prior_input_overlap(request: &GencalRequest, input: &Path) -> Result<(), GencalError> {
     let invalid = |reason| GencalError::PrepareOutput {
         path: request.output_table.display().to_string(),
         reason,
@@ -653,17 +774,32 @@ fn refuse_curve_input_overlap(request: &GencalRequest, input: &Path) -> Result<(
     if crate::paths::overlap(&request.output_table, input)
         .map_err(|error| invalid(error.to_string()))?
     {
-        return Err(invalid(
-            "caltable overlaps the gain-curve input table".into(),
-        ));
+        return Err(invalid("caltable overlaps the prior input table".into()));
     }
     Ok(())
 }
 
-pub(crate) fn gaincurve_report_input(
+fn open_measurement_set(path: &Path) -> Result<MeasurementSet, GencalError> {
+    MeasurementSet::open(path).map_err(|source| GencalError::OpenMeasurementSet {
+        path: path.display().to_string(),
+        source: Box::new(source),
+    })
+}
+
+pub(crate) fn prior_input_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
 ) -> Result<Option<PathBuf>, GencalError> {
+    if request.caltype == GencalType::Antpos {
+        return Ok(infile.map(Path::to_path_buf));
+    }
+    if request.caltype == GencalType::Tsys {
+        let ms = open_measurement_set(&request.measurement_set)?;
+        return Ok(ms
+            .subtable(SubtableId::SysCal)
+            .and_then(Table::path)
+            .map(Path::to_path_buf));
+    }
     if !request.caltype.is_gain_curve() {
         return Ok(None);
     }
@@ -685,77 +821,6 @@ pub(crate) fn gaincurve_report_input(
         .or_else(default_vla_gaincurve_table))
 }
 
-fn opacity_rows(
-    ms: &MeasurementSet,
-    request: &GencalRequest,
-) -> Result<Vec<PriorCalRow>, GencalError> {
-    let antenna_count = ms
-        .antenna()
-        .map_err(|source| GencalError::OpenMeasurementSet {
-            path: "ANTENNA".to_string(),
-            source: Box::new(source),
-        })?
-        .row_count();
-    let selected_spws = parse_spw_selector(ms, &request.spw)?;
-    // One opacity holds for every selected window, as in CASA's
-    // specifycal; otherwise there is one for each.
-    let opacity = match request.parameter.as_slice() {
-        [one] => vec![*one; selected_spws.len()],
-        values if values.len() == selected_spws.len() => values.to_vec(),
-        values => {
-            return Err(GencalError::InvalidRequest(format!(
-                "opac takes one opacity, or one for each selected SPW (got {} for {} SPWs)",
-                values.len(),
-                selected_spws.len()
-            )));
-        }
-    };
-    let opacities = selected_spws
-        .into_iter()
-        .zip(opacity)
-        .collect::<BTreeMap<_, _>>();
-    let selected_antennas = opacity_antennas(ms, &request.antenna, antenna_count)?;
-    let mut rows = Vec::new();
-    for spw_id in parse_spw_selector(ms, "")? {
-        for antenna_id in 0..antenna_count {
-            rows.push(PriorCalRow {
-                time_seconds: 0.0,
-                interval_seconds: 0.0,
-                field_id: -1,
-                spw_id,
-                antenna_id: antenna_id as i32,
-                observation_id: 0,
-                parameters: f32_column(&[if selected_antennas.contains(&(antenna_id as i32)) {
-                    opacities.get(&spw_id).copied().unwrap_or(0.0) as f32
-                } else {
-                    0.0
-                }]),
-                snr_value: 1.0,
-                preserved: None,
-            });
-        }
-    }
-    Ok(rows)
-}
-
-fn opacity_antennas(
-    ms: &MeasurementSet,
-    selector: &str,
-    count: usize,
-) -> Result<BTreeSet<i32>, GencalError> {
-    if selector.trim().is_empty() {
-        return Ok((0..count as i32).collect());
-    }
-    let parameters = vec![0.0; selector.split(',').count() * 3];
-    let selected = parse_antenna_offsets(ms, selector, &parameters)?;
-    if selected.keys().any(|id| *id < 0 || *id >= count as i32) {
-        return Err(GencalError::InvalidRequest(
-            "antenna outside input MS".to_string(),
-        ));
-    }
-    Ok(selected.into_keys().collect())
-}
-
 fn write_prior_caltable(
     ms: &MeasurementSet,
     request: &GencalRequest,
@@ -763,6 +828,7 @@ fn write_prior_caltable(
     rows: &[PriorCalRow],
     output: crate::output::CalibrationOutput,
     mode: crate::CalibrationOutputMode,
+    collapse_spw: bool,
 ) -> Result<GencalReport, GencalError> {
     let (parameter_column, parameter_type, parameter_name) = request.caltype.parameter_column();
     let schema = TableSchema::new(vec![
@@ -800,11 +866,28 @@ fn write_prior_caltable(
         mode,
     );
 
+    if matches!(request.caltype, GencalType::Antpos | GencalType::AntposVla)
+        && let Some(value) = antpos_evla::tropo_keyword(ms, request, mode)?
+    {
+        writer
+            .table_mut()
+            .keywords_mut()
+            .upsert(crate::antpos_vla::TROPO_KEYWORD, value);
+    }
+
     for row in rows {
-        let len = row.parameters.shape()[0];
-        let zeros = vec![0.0_f32; len];
-        let flags = vec![false; len];
-        let snr = vec![row.snr_value; len];
+        let shape = IxDyn(row.parameters.shape());
+        let tsys = request.caltype == GencalType::Tsys;
+        let parameter_error = if tsys { 0.1 } else { 0.0 };
+        let flags = if let ArrayValue::Float32(values) = &row.parameters
+            && tsys
+        {
+            values.mapv(|value| value < f32::MIN_POSITIVE || value.is_nan())
+        } else {
+            ArrayD::from_elem(shape.clone(), false)
+        };
+        let errors = ArrayD::from_elem(shape.clone(), parameter_error);
+        let snr = ArrayD::from_elem(shape, row.snr_value);
         let mut record = RecordValue::new(vec![
             RecordField::new(
                 COL_TIME,
@@ -827,15 +910,18 @@ fn write_prior_caltable(
                 COL_INTERVAL,
                 Value::Scalar(ScalarValue::Float64(row.interval_seconds)),
             ),
-            RecordField::new(COL_SCAN_NUMBER, Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new(
+                COL_SCAN_NUMBER,
+                Value::Scalar(ScalarValue::Int32(row.scan_number)),
+            ),
             RecordField::new(
                 COL_OBSERVATION_ID,
                 Value::Scalar(ScalarValue::Int32(row.observation_id)),
             ),
             RecordField::new(parameter_column, Value::Array(row.parameters.clone())),
-            RecordField::new(COL_PARAMERR, Value::Array(f32_column(&zeros))),
-            RecordField::new(COL_FLAG, Value::Array(bool_column(&flags))),
-            RecordField::new(COL_SNR, Value::Array(f32_column(&snr))),
+            RecordField::new(COL_PARAMERR, Value::Array(ArrayValue::Float32(errors))),
+            RecordField::new(COL_FLAG, Value::Array(ArrayValue::Bool(flags))),
+            RecordField::new(COL_SNR, Value::Array(ArrayValue::Float32(snr))),
         ]);
         if let Some(prior) = &row.preserved {
             for column in [COL_PARAMERR, COL_FLAG, COL_SNR] {
@@ -854,7 +940,11 @@ fn write_prior_caltable(
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
         (SubtableId::History, "HISTORY"),
     ])?;
-    collapse_spectral_axis(&writer.output_path().join("SPECTRAL_WINDOW"), rows)?;
+    write_spectral_axis(
+        &writer.output_path().join("SPECTRAL_WINDOW"),
+        rows,
+        collapse_spw,
+    )?;
     writer.save_main()?;
 
     let spectral_window_ids = rows
@@ -877,102 +967,6 @@ fn write_prior_caltable(
         spectral_window_ids,
         antenna_ids,
     })
-}
-
-fn parse_antenna_offsets(
-    ms: &MeasurementSet,
-    antenna_selector: &str,
-    parameters: &[f64],
-) -> Result<BTreeMap<i32, [f64; 3]>, GencalError> {
-    if antenna_selector.trim().is_empty() {
-        return Err(GencalError::InvalidRequest(
-            "antpos currently requires explicit --antenna and --parameter offsets; automatic VLA baseline lookup is not implemented".to_string(),
-        ));
-    }
-    let antenna = ms
-        .antenna()
-        .map_err(|source| GencalError::OpenMeasurementSet {
-            path: "ANTENNA".to_string(),
-            source: Box::new(source),
-        })?;
-    let mut name_to_id = BTreeMap::new();
-    for row in 0..antenna.row_count() {
-        let name = antenna.name(row).map_err(|source| {
-            GencalError::InvalidRequest(format!("failed to read ANTENNA.NAME row {row}: {source}"))
-        })?;
-        name_to_id.insert(name.to_ascii_lowercase(), row as i32);
-    }
-    let selected = antenna_selector
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            if let Ok(index) = part.parse::<i32>() {
-                return Ok(index);
-            }
-            name_to_id
-                .get(&part.to_ascii_lowercase())
-                .copied()
-                .ok_or_else(|| GencalError::InvalidRequest(format!("unknown antenna {part:?}")))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if parameters.len() != selected.len() * 3 {
-        return Err(GencalError::InvalidRequest(format!(
-            "antpos requires three parameters per selected antenna (got {} parameters for {} antennas)",
-            parameters.len(),
-            selected.len()
-        )));
-    }
-    let mut offsets = BTreeMap::new();
-    for (index, antenna_id) in selected.iter().copied().enumerate() {
-        offsets.insert(
-            antenna_id,
-            [
-                parameters[index * 3],
-                parameters[index * 3 + 1],
-                parameters[index * 3 + 2],
-            ],
-        );
-    }
-    Ok(offsets)
-}
-
-fn parse_spw_selector(ms: &MeasurementSet, selector: &str) -> Result<Vec<i32>, GencalError> {
-    let count = ms
-        .spectral_window()
-        .map_err(|source| GencalError::OpenMeasurementSet {
-            path: "SPECTRAL_WINDOW".to_string(),
-            source: Box::new(source),
-        })?
-        .row_count() as i32;
-    if selector.trim().is_empty() {
-        return Ok((0..count).collect());
-    }
-    let mut ids = BTreeSet::new();
-    for part in selector.split(',').map(str::trim).filter(|p| !p.is_empty()) {
-        if let Some((start, end)) = part.split_once('~') {
-            let start = start.parse::<i32>().map_err(|_| {
-                GencalError::InvalidRequest(format!("invalid SPW selector {part:?}"))
-            })?;
-            let end = end.parse::<i32>().map_err(|_| {
-                GencalError::InvalidRequest(format!("invalid SPW selector {part:?}"))
-            })?;
-            for id in start.min(end)..=start.max(end) {
-                ids.insert(id);
-            }
-        } else {
-            ids.insert(part.parse::<i32>().map_err(|_| {
-                GencalError::InvalidRequest(format!("invalid SPW selector {part:?}"))
-            })?);
-        }
-    }
-    if ids.iter().any(|id| *id < 0 || *id >= count) {
-        return Err(GencalError::InvalidRequest(format!(
-            "SPW selector {selector:?} is outside 0..{}",
-            count.saturating_sub(1)
-        )));
-    }
-    Ok(ids.into_iter().collect())
 }
 
 fn gaincurves_for_window(
@@ -1027,7 +1021,11 @@ fn gaincurves_for_window(
 /// SolvableVisCal::initSVC collapses all spectral vectors for uniform
 /// parameters: mean channel frequency and summed widths/resolutions.
 /// Keep this inside the writer's staging directory, before publication.
-fn collapse_spectral_axis(path: &Path, solutions: &[PriorCalRow]) -> Result<(), GencalError> {
+fn write_spectral_axis(
+    path: &Path,
+    solutions: &[PriorCalRow],
+    collapse: bool,
+) -> Result<(), GencalError> {
     let mut table = Table::open(TableOptions::new(path))
         .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
     for row in 0..table.row_count() {
@@ -1038,8 +1036,10 @@ fn collapse_spectral_axis(path: &Path, solutions: &[PriorCalRow]) -> Result<(), 
             .cell_accessor_mut(row, "FLAG_ROW")
             .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Bool(absent))))
             .map_err(|e| GencalError::InvalidRequest(e.to_string()))?;
-
         for column in ["CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"] {
+            if !collapse && column != "CHAN_WIDTH" {
+                continue;
+            }
             let ArrayValue::Float64(values) = table
                 .cell_accessor(row, column)
                 .and_then(|cell| cell.array())
@@ -1066,6 +1066,9 @@ fn collapse_spectral_axis(path: &Path, solutions: &[PriorCalRow]) -> Result<(), 
                     .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Float64(value.abs()))))
                     .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
             }
+            if !collapse {
+                continue;
+            }
             table
                 .cell_accessor_mut(row, column)
                 .and_then(|mut cell| {
@@ -1076,10 +1079,12 @@ fn collapse_spectral_axis(path: &Path, solutions: &[PriorCalRow]) -> Result<(), 
                 })
                 .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
         }
-        table
-            .cell_accessor_mut(row, "NUM_CHAN")
-            .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Int32(1))))
-            .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
+        if collapse {
+            table
+                .cell_accessor_mut(row, "NUM_CHAN")
+                .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Int32(1))))
+                .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
+        }
     }
     table
         .save(TableOptions::new(path))
@@ -1289,13 +1294,6 @@ fn f32_column(values: &[f32]) -> ArrayValue {
     ArrayValue::Float32(
         ArrayD::from_shape_vec(IxDyn(&[values.len(), 1]).f(), values.to_vec())
             .expect("float gencal vector should reshape to receptor x channel"),
-    )
-}
-
-fn bool_column(values: &[bool]) -> ArrayValue {
-    ArrayValue::Bool(
-        ArrayD::from_shape_vec(IxDyn(&[values.len(), 1]).f(), values.to_vec())
-            .expect("flag gencal vector should reshape to receptor x channel"),
     )
 }
 

@@ -693,20 +693,12 @@ fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     let ms = ms.to_str().unwrap();
-    let with = |base: &Value, name: &str, value: Value| {
-        let mut values = base.clone();
-        values[name] = value;
-        values
-    };
-    // Fluxscale's former fitorder/time/scan refusals are replaced by the
-    // positive scientific check above now that those behaviors are implemented.
-    // gencal reads infile only for the caltypes CASA's task XML shows it
-    // under, antpos among them.
-    let gencal = json!({"vis": ms, "caltable": "o.cal", "caltype": "antpos"});
+    // The paired antenna-position oracle now covers ALMA files for antpos.
+    // TEC images still need the advanced-prior implementation in #1535.
     refused_naming_979(
         dir.path(),
         "gencal",
-        with(&gencal, "infile", json!("w.txt")),
+        json!({"vis": ms, "caltable": "tec.cal", "caltype": "tecim", "infile": "iono.im"}),
         "infile",
     );
 }

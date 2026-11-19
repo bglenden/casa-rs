@@ -569,6 +569,9 @@ fn gencal_reads_casas_values() {
             },
             polarization: String::new(),
             gaincurve_infile: None,
+            antpos_infile: None,
+            ant_pos_time_limit: None,
+            uniform: None,
         })
     );
     let caltype = |value: &str| {
@@ -578,16 +581,33 @@ fn gencal_reads_casas_values() {
         )
     };
     assert!(refused(caltype(""), "caltype").contains("requires a caltype"));
-    for value in ["tsys", "antposvla", "eop"] {
-        assert!(
-            refused(caltype(value), "caltype").contains("#979"),
-            "{value}"
+    assert!(caltype("tsys").is_ok());
+    assert!(caltype("antposvla").is_ok());
+    assert!(refused(caltype("eop"), "caltype").contains("#979"));
+}
+
+#[test]
+fn gencal_keeps_the_gaincurve_input_key_on_the_wire() {
+    for (caltype, key) in [("gc", "gaincurve_infile"), ("antpos", "antpos_infile")] {
+        let CalibrationTaskRequest::Gencal(request) = casa(
+            "gencal",
+            json!({"vis": "t.ms", "caltable": "c.cal", "caltype": caltype, "infile": "prior"}),
+        )
+        .unwrap() else {
+            panic!("expected gencal request");
+        };
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert_eq!(encoded[key], "prior");
+        assert!(encoded.get("infile").is_none());
+        assert_eq!(
+            serde_json::from_value::<GencalTaskRequest>(encoded).unwrap(),
+            request
         );
     }
 }
 
 #[test]
-fn gencal_selects_opacity_antennas_and_refuses_automatic_antpos_lookup() {
+fn gencal_selects_opacity_antennas_and_reads_automatic_antpos_lookup() {
     let gencal = |values: Value| {
         let mut base = json!({"vis": "t.ms", "caltable": "c.cal"});
         base.as_object_mut()
@@ -595,21 +615,18 @@ fn gencal_selects_opacity_antennas_and_refuses_automatic_antpos_lookup() {
             .extend(values.as_object().unwrap().clone());
         casa("gencal", base)
     };
-    // CASA looks antenna position corrections up when no antenna is named,
-    // while named-antenna opacity is implemented (#945).
-    assert!(
-        refused(
-            gencal(json!({"caltype": "antpos", "parameter": [0.01, 0, 0]})),
-            "antenna"
-        )
-        .contains("#979")
-    );
+    let CalibrationTaskRequest::Gencal(request) =
+        gencal(json!({"caltype": "antpos", "ant_pos_time_limit": 42})).unwrap()
+    else {
+        panic!("expected gencal request");
+    };
+    assert!(request.prior.antenna.is_empty());
+    assert_eq!(request.ant_pos_time_limit, Some(42));
     assert!(gencal(json!({"caltype":"opac","antenna":"VA01","parameter":[0.05]})).is_ok());
-    // With no window named, CASA takes one opacity, which holds for all.
-    let message = refused(
-        gencal(json!({"caltype": "opac", "parameter": [0.05, 0.06]})),
-        "parameter",
+    assert!(
+        gencal(json!({"caltype":"opac","antenna":"VA02,VA01","pol":"R",
+                          "parameter":[0.05,0.06]}))
+        .is_ok()
     );
-    assert!(message.contains("one opacity"), "{message}");
     assert!(gencal(json!({"caltype": "opac", "parameter": [0.05]})).is_ok());
 }

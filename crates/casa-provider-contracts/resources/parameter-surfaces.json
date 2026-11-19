@@ -18420,7 +18420,6 @@
           "unimplemented": {"issue": 979, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tecim"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eop"}}
           ]}}
         },
@@ -18496,8 +18495,7 @@
             "provider": {"field": "ant_pos_time_limit"},
             "python": {"name": "ant_pos_time_limit"},
             "presentation": {"label": "Antenna Position Time Limit", "group": "Gencal", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}}}
+          }
         },
         {
           "name": "spw",
@@ -18548,7 +18546,11 @@
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "mbd"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "gc"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "gceff"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eff"}}
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eff"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tsys"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "opac"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}},
+            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antposvla"}}
           ]}}}
         },
         {
@@ -18578,8 +18580,7 @@
             "provider": {"field": "uniform"},
             "python": {"name": "uniform"},
             "presentation": {"label": "Uniform", "group": "Gencal", "advanced": true}
-          },
-          "unimplemented": {"issue": 979, "applies_when": {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tsys"}}}
+          }
         },
         {
           "name": "output",
@@ -32885,6 +32886,441 @@
             }
           },
           "reviewed_homonym": null
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "getantposalma",
+      "contract_version": 1,
+      "display_name": "Get ALMA Antenna Positions",
+      "category": "Calibration",
+      "summary": "Retrieve antenna positions from the ALMA archive.",
+      "provider_family": "calibration",
+      "casa_task": "getantposalma",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "getantposalma"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": false,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "positions.output.outfile",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile"
+            },
+            "presentation": {
+              "label": "Output File",
+              "group": "Output"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "The retrieved ALMA position document is a JSON file."
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite"
+            },
+            "presentation": {
+              "label": "Overwrite",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "asdm",
+          "concept": {
+            "id": "getantposalma.asdm",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--asdm"
+              ],
+              "metavar": "UID"
+            },
+            "provider": {
+              "field": "asdm"
+            },
+            "python": {
+              "name": "asdm"
+            },
+            "presentation": {
+              "label": "ASDM UID",
+              "group": "ALMA Service"
+            }
+          }
+        },
+        {
+          "name": "tw",
+          "concept": {
+            "id": "getantposalma.tw",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--tw"
+              ],
+              "metavar": "WINDOW"
+            },
+            "provider": {
+              "field": "tw"
+            },
+            "python": {
+              "name": "tw"
+            },
+            "presentation": {
+              "label": "Time Window",
+              "group": "ALMA Service"
+            }
+          }
+        },
+        {
+          "name": "snr",
+          "concept": {
+            "id": "getantposalma.snr",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "default"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--snr"
+              ],
+              "metavar": "SNR"
+            },
+            "provider": {
+              "field": "snr"
+            },
+            "python": {
+              "name": "snr",
+              "type_hint": "Literal['default'] | int | float"
+            },
+            "presentation": {
+              "label": "Signal-to-Noise Ratio",
+              "group": "ALMA Service"
+            }
+          }
+        },
+        {
+          "name": "search",
+          "concept": {
+            "id": "getantposalma.search",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "both_latest"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--search"
+              ],
+              "metavar": "METHOD"
+            },
+            "provider": {
+              "field": "search"
+            },
+            "python": {
+              "name": "search"
+            },
+            "presentation": {
+              "label": "Search",
+              "group": "ALMA Service"
+            }
+          }
+        },
+        {
+          "name": "hosts",
+          "concept": {
+            "id": "getantposalma.hosts",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "string",
+                  "value": "https://asa.alma.cl/uncertainties-service/uncertainties/versions/last/measurements/casa/"
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--hosts"
+              ],
+              "metavar": "URLS"
+            },
+            "provider": {
+              "field": "hosts"
+            },
+            "python": {
+              "name": "hosts"
+            },
+            "presentation": {
+              "label": "Service URLs",
+              "group": "ALMA Service"
+            }
+          }
+        },
+        {
+          "name": "firstintegration",
+          "concept": {
+            "id": "getantposalma.firstintegration",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--firstintegration"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "firstintegration"
+            },
+            "python": {
+              "name": "firstintegration"
+            },
+            "presentation": {
+              "label": "Exclude First Integrations",
+              "group": "ALMA Service"
+            }
+          }
+        },
+        {
+          "name": "nretry",
+          "concept": {
+            "id": "getantposalma.nretry",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--nretry"
+              ],
+              "metavar": "COUNT"
+            },
+            "provider": {
+              "field": "nretry"
+            },
+            "python": {
+              "name": "nretry"
+            },
+            "presentation": {
+              "label": "Retries",
+              "group": "ALMA Service"
+            }
+          }
+        },
+        {
+          "name": "rdelay",
+          "concept": {
+            "id": "getantposalma.rdelay",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 3.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--rdelay"
+              ],
+              "metavar": "SECONDS"
+            },
+            "provider": {
+              "field": "rdelay"
+            },
+            "python": {
+              "name": "rdelay"
+            },
+            "presentation": {
+              "label": "Retry Delay",
+              "group": "ALMA Service"
+            }
+          }
         }
       ]
     }

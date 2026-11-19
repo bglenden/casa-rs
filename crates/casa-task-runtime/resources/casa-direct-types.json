@@ -223,6 +223,17 @@
     "parameter": "cFloatVec",
     "uniform": "cBool"
   },
+  "getantposalma": {
+    "outfile": "cPath",
+    "overwrite": "cBool",
+    "asdm": "cStr",
+    "tw": "cStr",
+    "search": "cStr",
+    "hosts": "cStrVec",
+    "firstintegration": "cBool",
+    "nretry": "cInt",
+    "rdelay": "cFloat"
+  },
   "imhead": {
     "mode": "cStr",
     "hdkey": "cStr",

@@ -333,6 +333,7 @@ mod tests {
         // CASA 6.7.6 tasks with an `overwrite` parameter, and its default.
         let casa = BTreeMap::from([
             ("exportfits", false),
+            ("getantposalma", false),
             ("importfits", false),
             ("impbcor", false),
             ("impv", false),

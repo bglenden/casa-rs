@@ -907,9 +907,8 @@ fn build_table_plan(
         fields::selected_spectral_windows(&summary, &resolved_gainfields)?
     };
     let effective_spec;
-    let spec_for_spw_mapping = if summary.table_subtype == "KAntPos Jones" && spec.spwmap.is_empty()
-    {
-        effective_spec = k_antpos_default_spwmap_spec(spec, &applicable_data_spw_ids);
+    let spec_for_spw_mapping = if summary.table_subtype == "KAntPos Jones" {
+        effective_spec = k_antpos_spwmap_spec(spec, &applicable_data_spw_ids);
         &effective_spec
     } else {
         spec
@@ -964,7 +963,7 @@ fn build_table_plan(
     Ok((plan, keys))
 }
 
-fn k_antpos_default_spwmap_spec(
+fn k_antpos_spwmap_spec(
     spec: &ApplyCalibrationTableSpec,
     applicable_data_spw_ids: &[i32],
 ) -> ApplyCalibrationTableSpec {

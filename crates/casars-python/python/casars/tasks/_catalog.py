@@ -806,7 +806,7 @@ def gencal(
     CASA's ``gencal``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #979:
     ``infile``, ``endpoint``, ``timeout``, ``retry``, ``retry_wait_time``,
-    ``ant_pos_time_limit``, ``pol``, ``uniform``.
+    ``pol``.
     """
     return _call_casa(gencal, locals())
 
@@ -1313,6 +1313,24 @@ def simalma(
     """
     return _call_casa(simalma, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma')
+def getantposalma(
+    outfile: StrPath = '',
+    overwrite: bool = False,
+    asdm: str = '',
+    tw: str = '',
+    snr: Literal['default'] | int | float = 'default',
+    search: str = 'both_latest',
+    hosts: str | list[str] | tuple[str, ...] = ['https://asa.alma.cl/uncertainties-service/uncertainties/versions/last/measurements/casa/'],
+    firstintegration: bool = True,
+    nretry: int = 0,
+    rdelay: float = 3.0,
+) -> Any:
+    """Retrieve antenna positions from the ALMA archive.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma']
+    CASA's ``getantposalma``: its parameters, defaults and return value.
+    """
+    return _call_casa(getantposalma, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma']

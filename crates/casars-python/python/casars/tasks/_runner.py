@@ -12,7 +12,9 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import functools
+from http import HTTPStatus
 import inspect
+from json import JSONDecodeError
 import os
 from os import PathLike
 from pathlib import Path
@@ -22,6 +24,7 @@ import sys
 import threading
 import tempfile
 from typing import Any, TypeAlias
+from urllib.error import HTTPError, URLError
 
 from ..parameters import (
     ParameterData,
@@ -211,20 +214,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         _validate_required_vis(values, arguments["vis"])
     if name == "applycal":
         return _call_applycal(values)
-    if name == "gencal" and "parameter" in values:
-        import numpy as np
-
-        parameter = values["parameter"]
-        numbers = (float, int, np.float32, np.float64, np.int32, np.int64)
-        # CASA applies to_list before to_floatvec. Python bools are numeric
-        # inside the resulting list, whereas boolean scalars and np.bool_ are not.
-        try:
-            vector = [parameter] if isinstance(parameter, str) else list(parameter)
-        except TypeError:
-            vector = [parameter] if type(parameter) in numbers else None
-        if vector is None or not all(isinstance(item, numbers) for item in vector):
-            raise TypeError("{'parameter': ['must be of cFloatVec type']}")
-        values["parameter"] = [float(item) for item in vector]
+    if name == "gencal":
+        return _call_gencal(values)
+    if name == "getantposalma":
+        return _call_getantposalma(values)
     if name == "ft":
         for selector in ("uvrange", "observation"):
             if not isinstance(arguments[selector], str):
@@ -253,6 +246,93 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
+
+
+def _call_gencal(values: dict[str, Any]) -> Any:
+    if "parameter" in values:
+        import numpy as np
+
+        parameter = values["parameter"]
+        numbers = (float, int, np.float32, np.float64, np.int32, np.int64)
+        # CASA applies to_list before to_floatvec. Python bools are numeric
+        # inside the resulting list, whereas boolean scalars and np.bool_ are not.
+        try:
+            vector = [parameter] if isinstance(parameter, str) else list(parameter)
+        except TypeError:
+            vector = [parameter] if type(parameter) in numbers else None
+        if vector is None or not all(isinstance(item, numbers) for item in vector):
+            raise TypeError("{'parameter': ['must be of cFloatVec type']}")
+        values["parameter"] = [float(item) for item in vector]
+    try:
+        return run("gencal", **values).value
+    except TaskExecutionError as error:
+        parameter, message = error.completion.parameter, error.completion.message
+        errors = {
+            "infile.missing": FileNotFoundError,
+            "infile.permission": PermissionError,
+            "infile.directory": IsADirectoryError,
+            "infile.io": OSError,
+            "infile.key": KeyError,
+            "infile.index": IndexError,
+            "infile.type": TypeError,
+            "infile.attribute": AttributeError,
+        }
+        if parameter in errors:
+            raise errors[parameter](message) from error
+        if parameter == "infile.json":
+            raise JSONDecodeError(message, "", 0) from error
+        if parameter == "antenna.archive.url":
+            raise URLError(message) from error
+        if parameter and parameter.startswith("antenna.archive.http."):
+            status = int(parameter.rsplit(".", 1)[-1])
+            url = message.rsplit(" at ", 1)[-1]
+            try:
+                reason = HTTPStatus(status).phrase
+            except ValueError:
+                reason = message
+            raise HTTPError(url, status, reason, None, None) from error
+        raise
+
+
+def _call_getantposalma(values: dict[str, Any]) -> Any:
+    import numpy as np
+
+    outfile = values.get("outfile")
+    if isinstance(outfile, (str, PathLike)):
+        values["outfile"] = os.path.expanduser(os.fspath(outfile))
+    hosts = values.get("hosts")
+    if hosts is not None and not isinstance(hosts, str):
+        try:
+            values["hosts"] = list(hosts)
+        except TypeError:
+            pass
+    snr = values.get("snr")
+    if isinstance(snr, np.int32):
+        values["snr"] = int(snr)
+    elif isinstance(snr, (np.int64, np.float32, np.float64)):
+        values["snr"] = float(snr)
+    retries = values.get("nretry")
+    if isinstance(retries, (bool, np.int32, np.int64)):
+        values["nretry"] = int(retries)
+    delay = values.get("rdelay")
+    if isinstance(delay, (int, np.int32, np.int64, np.float32, np.float64)):
+        values["rdelay"] = float(delay)
+    if isinstance(values.get("overwrite"), np.bool_):
+        values["overwrite"] = bool(values["overwrite"])
+    if isinstance(values.get("firstintegration"), np.bool_):
+        raise ValueError("Parameter firstintegration must be a boolean")
+    try:
+        return run("getantposalma", **values).value
+    except TaskExecutionError as error:
+        if error.completion.parameter == "hosts.json":
+            raise JSONDecodeError(error.completion.message, "", 0) from error
+        if error.completion.parameter == "snr.type":
+            raise TypeError(error.completion.message) from error
+        raise
+    except TaskParameterError:
+        raise
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
 
 
 def _validate_required_vis(values: dict[str, Any], vis: Any) -> None:

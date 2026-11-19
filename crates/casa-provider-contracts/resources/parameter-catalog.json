@@ -2,6 +2,184 @@
   "schema_version": 1,
   "concepts": [
     {
+      "id": "positions.output.outfile",
+      "semantic_revision": 1,
+      "casa_name": "outfile",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "file"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "JSON file for the retrieved antenna positions.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "getantposalma.asdm",
+      "semantic_revision": 1,
+      "casa_name": "asdm",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "service_reference"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "ASDM UID passed to the ALMA antenna-position service.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "getantposalma.tw",
+      "semantic_revision": 1,
+      "casa_name": "tw",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Optional pair of UTC timestamps defining the measurement window.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "getantposalma.snr",
+      "semantic_revision": 1,
+      "casa_name": "snr",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Minimum signal-to-noise ratio or the service default.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "getantposalma.search",
+      "semantic_revision": 1,
+      "casa_name": "search",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Search algorithm sent to the ALMA service.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "getantposalma.hosts",
+      "semantic_revision": 1,
+      "casa_name": "hosts",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "service_reference"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "ALMA service URLs in fallback order.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "getantposalma.firstintegration",
+      "semantic_revision": 1,
+      "casa_name": "firstintegration",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Exclude measurements flagged as first integrations.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "getantposalma.nretry",
+      "semantic_revision": 1,
+      "casa_name": "nretry",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Number of retries after the initial round of service requests.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "getantposalma.rdelay",
+      "semantic_revision": 1,
+      "casa_name": "rdelay",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Seconds between retries.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "calibration.report.output",
       "semantic_revision": 1,
       "casa_name": "output",

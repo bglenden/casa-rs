@@ -20,7 +20,9 @@
 //! storage stack, so every on-disk assumption made here is exercised against
 //! the same table reader/writer substrate used elsewhere in the repo.
 
+mod antpos_vla;
 mod bandpass;
+mod calibration_service;
 mod callib;
 mod casa_return;
 mod cli;
@@ -82,7 +84,7 @@ pub use fluxscale::{
     FluxScaleError, FluxScaleFieldResult, FluxScaleOptions, FluxScaleReport, FluxScaleRequest,
     FluxScaleSpwResult, fluxscale,
 };
-pub use gencal::{GencalError, GencalReport, GencalRequest, GencalType, gencal};
+pub use gencal::{AntposInputError, GencalError, GencalReport, GencalRequest, GencalType, gencal};
 pub use lookup::{
     CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection,
     LOOKUP_KEPT_ROW_BYTES, LOOKUP_LOADING_ROW_BYTES, TimeInterpolation, TimeInterpolationOptions,

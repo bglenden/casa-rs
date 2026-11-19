@@ -30,13 +30,14 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// The surfaces `calibrate` hosts, with the default surface first.
-pub const CALIBRATION_SURFACES: [&str; 11] = [
+pub const CALIBRATION_SURFACES: [&str; 12] = [
     "calibrate",
     "applycal",
     "gaincal",
     "bandpass",
     "fluxscale",
     "gencal",
+    "getantposalma",
     "clearcal",
     "delmod",
     "uvsub",
@@ -176,6 +177,38 @@ pub struct GencalTaskRequest {
     /// Explicit CASA gain-curve `infile`, which uses unmodified antenna names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gaincurve_infile: Option<PathBuf>,
+    /// Explicit CASA ALMA antenna-position JSON `infile`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub antpos_infile: Option<PathBuf>,
+    /// Request an automatic VLA lookup, with the optional cutoff in days.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ant_pos_time_limit: Option<i64>,
+    /// Fill the full antenna grid when importing SYSCAL. CASA defaults to true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uniform: Option<bool>,
+}
+
+impl GencalTaskRequest {
+    pub(crate) fn generate(
+        &self,
+        mode: crate::CalibrationOutputMode,
+    ) -> Result<crate::gencal::GencalReport, crate::gencal::GencalError> {
+        crate::gencal::gencal_with_output_mode(
+            &self.prior,
+            &self.polarization,
+            self.infile(),
+            self.ant_pos_time_limit,
+            self.uniform.unwrap_or(true),
+            mode,
+        )
+    }
+
+    pub(crate) fn infile(&self) -> Option<&std::path::Path> {
+        match self.prior.caltype {
+            crate::GencalType::Antpos => self.antpos_infile.as_deref(),
+            _ => self.gaincurve_infile.as_deref(),
+        }
+    }
 }
 
 /// Request for planning an `applycal`-class operation.
@@ -539,14 +572,10 @@ impl CalibrationTaskRequest {
             )
             .map(CalibrationTaskResult::FluxScale)
             .map_err(|error| error.to_string()),
-            Self::Gencal(request) => crate::gencal::gencal_with_output_mode(
-                &request.prior,
-                &request.polarization,
-                request.gaincurve_infile.as_deref(),
-                mode.unwrap_or(Update),
-            )
-            .map(CalibrationTaskResult::Gencal)
-            .map_err(|error| error.to_string()),
+            Self::Gencal(request) => request
+                .generate(mode.unwrap_or(Update))
+                .map(CalibrationTaskResult::Gencal)
+                .map_err(|error| error.to_string()),
         }
     }
 }
@@ -698,6 +727,7 @@ mod tests {
                 "bandpass",
                 "fluxscale",
                 "gencal",
+                "getantposalma",
                 "clearcal",
                 "delmod",
                 "uvsub",

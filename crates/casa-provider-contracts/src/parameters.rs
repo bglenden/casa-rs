@@ -386,6 +386,10 @@ pub enum NormalizationRule {
     /// CASA selector expressions are data parsed natively; preserve every
     /// literal character, including quoted names and regex dollar anchors.
     CasaField,
+    /// Preserve an archive URL or remote identifier passed as service data.
+    ServiceReference,
+    /// A CASA variant whose CLI spelling may be a bare number or a string.
+    NumericVariant,
     Trim,
     Lowercase,
     Path,

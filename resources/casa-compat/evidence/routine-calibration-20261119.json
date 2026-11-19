@@ -1,0 +1,536 @@
+{
+  "casa_version": "6.7.6.14",
+  "issue": 32,
+  "comparison_revision": "dc16c0d90b3ec79dbc50d317fe293b0d661ec20c",
+  "runs": {
+    "specified": {
+      "revision": "31ed10ad3054053ea218b83ef68fdec3c4719610",
+      "script": "tools/casa-compat/calibration_gencal_specify_oracle.py",
+      "cases": 31,
+      "results": {
+        "amp-broadcast": {
+          "table_nrms": 0.0
+        },
+        "amp-ordered": {
+          "table_nrms": 0.0,
+          "apply_nrms": 1.0062822723380346e-08
+        },
+        "amp-nonuniform": {
+          "table_nrms": 0.0
+        },
+        "amp-boolean-list": {
+          "table_nrms": 0.0
+        },
+        "amp-boolean-object": {
+          "table_nrms": 0.0
+        },
+        "amp-neg-and-zero": {
+          "table_nrms": 0.0
+        },
+        "amp-baseline": {
+          "table_nrms": 0.0
+        },
+        "amp-regex-baseline": {
+          "table_nrms": 0.0
+        },
+        "amp-channel-ranges": {
+          "table_nrms": 0.0
+        },
+        "phase-selected": {
+          "table_nrms": 0.0
+        },
+        "amp-then-phase": {
+          "table_nrms": 0.0,
+          "apply_nrms": 0.0
+        },
+        "amp-twice": {
+          "table_nrms": 0.0
+        },
+        "amp-repeated-update": {
+          "table_nrms": 0.0
+        },
+        "single-band-delay": {
+          "table_nrms": 0.0,
+          "apply_nrms": 2.321488584538704e-08
+        },
+        "multi-band-delay": {
+          "table_nrms": 0.0,
+          "apply_nrms": 1.2028131247476841e-08
+        },
+        "delay-update": {
+          "table_nrms": 0.0
+        },
+        "delay-repeated-update": {
+          "table_nrms": 0.0
+        },
+        "object-array": {
+          "table_nrms": 0.0
+        },
+        "range": {
+          "table_nrms": 0.0
+        },
+        "generator": {
+          "table_nrms": 0.0
+        },
+        "array": {
+          "table_nrms": 0.0
+        },
+        "deque": {
+          "table_nrms": 0.0
+        },
+        "different-antenna-grid": {
+          "refused": true,
+          "table_nrms": 0.0
+        },
+        "empty-parameter": {
+          "refused": true
+        },
+        "wrong-count": {
+          "refused": true
+        },
+        "bad-polarization": {
+          "refused": true
+        },
+        "missing-antenna": {
+          "refused": true
+        },
+        "boolean-scalar": {
+          "refused": true
+        },
+        "boolean-array": {
+          "refused": true
+        },
+        "wildcards": {
+          "table_nrms": 0.0
+        },
+        "negative-antenna": {
+          "refused": true
+        }
+      }
+    },
+    "vla-priors": {
+      "revision": "900221a72c0c57229a02328b01fe935464a99a98",
+      "script": "tools/casa-compat/calibration_gencal_gaincurve_oracle.py",
+      "cases": 25,
+      "results": {
+        "gc": {
+          "table_nrms": 0.0,
+          "apply_nrms": 1.1733548891655326e-07
+        },
+        "gceff": {
+          "table_nrms": 0.0,
+          "apply_nrms": 1.5098294880799737e-07
+        },
+        "eff": {
+          "table_nrms": 0.0,
+          "apply_nrms": 1.345639788155973e-07
+        },
+        "gc-explicit-file": {
+          "table_nrms": 0.0
+        },
+        "gc-missing-file": {
+          "refused": true
+        },
+        "gceff-explicit-file": {
+          "table_nrms": 0.0
+        },
+        "gceff-missing-file": {
+          "refused": true
+        },
+        "eff-explicit-file": {
+          "table_nrms": 0.0
+        },
+        "eff-missing-file": {
+          "refused": true
+        },
+        "gc-missing-bandname": {
+          "refused": true
+        },
+        "gceff-missing-bandname": {
+          "refused": true
+        },
+        "eff-missing-bandname": {
+          "table_nrms": 0.0
+        },
+        "inactive-selectors": {
+          "table_nrms": 0.0
+        },
+        "eff-below": {
+          "table_nrms": 0.0
+        },
+        "eff-above": {
+          "table_nrms": 0.0
+        },
+        "unmatched-window": {
+          "table_nrms": 0.0
+        },
+        "all-windows-unmatched": {
+          "refused": true
+        },
+        "absolute-overwrite": {
+          "table_nrms": 0.0
+        },
+        "embedded-gc": {
+          "table_nrms": 0.0,
+          "apply_nrms": 5.4204033814416105e-08
+        },
+        "embedded-gc-without-calwt": {
+          "apply_nrms": 5.4204033814416105e-08
+        },
+        "embedded-gceff": {
+          "table_nrms": 0.0
+        },
+        "embedded-eff": {
+          "table_nrms": 0.0
+        },
+        "sparse-external": {
+          "table_nrms": 0.0,
+          "apply_nrms": 5.152002806731163e-08
+        },
+        "sparse-external-without-calwt": {
+          "apply_nrms": 5.152002806731163e-08
+        },
+        "external-input-protection": {
+          "refused": true
+        }
+      }
+    },
+    "tsys": {
+      "revision": "d9d24a3fdab9ab18735b68cb7aa6704527784825",
+      "script": "tools/casa-compat/calibration_gencal_tsys_oracle.py",
+      "cases": 14,
+      "results": {
+        "external-input-protection": {
+          "refused": true
+        },
+        "scalar-True": {
+          "table_nrms": 0.0
+        },
+        "scalar-spectrum-weights": {
+          "apply_nrms": 9.62669145096399e-08
+        },
+        "scalar-False": {
+          "table_nrms": 0.0
+        },
+        "scalar-replacement": {
+          "table_nrms": 0.0
+        },
+        "spectrum-True": {
+          "table_nrms": 0.0
+        },
+        "spectrum-spectrum-weights": {
+          "apply_nrms": 1.8307087110951876e-07
+        },
+        "spectrum-scalar-weights": {
+          "apply_nrms": 7.816510494503723e-08
+        },
+        "selected-channels": {
+          "apply_nrms": 8.221007706676746e-08
+        },
+        "shifted-spectral-window": {
+          "apply_nrms": 7.39413635780489e-08
+        },
+        "spectrum-False": {
+          "table_nrms": 0.0
+        },
+        "spectrum-replacement": {
+          "table_nrms": 0.0
+        },
+        "absent-syscal": {
+          "refused": true
+        },
+        "bad-channels": {
+          "refused": true
+        }
+      }
+    },
+    "opacity": {
+      "revision": "8f5f9c14021326b9bcc2c11fd83ec368d77f39ac",
+      "script": "tools/casa-compat/calibration_gencal_opacity_oracle.py",
+      "cases": 16,
+      "results": {
+        "broadcast": {
+          "table_nrms": 0.0
+        },
+        "per-antenna": {
+          "table_nrms": 0.0,
+          "apply_nrms": 3.120866740153719e-08
+        },
+        "window-and-antenna-order": {
+          "table_nrms": 0.0
+        },
+        "ranges": {
+          "table_nrms": 0.0
+        },
+        "named-window": {
+          "table_nrms": 0.0
+        },
+        "repeat-window": {
+          "table_nrms": 0.0
+        },
+        "negative-depth": {
+          "table_nrms": 0.0
+        },
+        "inactive-options": {
+          "table_nrms": 0.0
+        },
+        "incomplete-grid": {
+          "refused": true
+        },
+        "invalid-polarization": {
+          "refused": true
+        },
+        "missing-parameter": {
+          "refused": true
+        },
+        "wildcard-spw": {
+          "table_nrms": 0.0
+        },
+        "wildcard-antenna": {
+          "table_nrms": 0.0
+        },
+        "preserve-on-L": {
+          "refused": true
+        },
+        "preserve-on-X,Y": {
+          "refused": true
+        },
+        "ordered-accumulation": {
+          "table_nrms": 0.0
+        }
+      }
+    },
+    "manual-positions": {
+      "revision": "c953d400699acd7e35faa2cc446c3751927312b6",
+      "script": "tools/casa-compat/calibration_gencal_antpos_oracle.py",
+      "cases": 24,
+      "results": {
+        "manual": {
+          "table_nrms": 0.0,
+          "apply_nrms": 1.9441256300867738e-08
+        },
+        "cycle-triple": {
+          "table_nrms": 0.0
+        },
+        "extra-triple": {
+          "table_nrms": 0.0
+        },
+        "range": {
+          "table_nrms": 0.0
+        },
+        "empty-antenna-ids": {
+          "table_nrms": 0.0
+        },
+        "legacy-vla": {
+          "table_nrms": 0.0
+        },
+        "legacy-repeated": {
+          "table_nrms": 0.0
+        },
+        "forced-window-map": {
+          "apply_nrms": 1.9441256300867738e-08
+        },
+        "incomplete-triple": {
+          "refused": true
+        },
+        "wildcard": {
+          "table_nrms": 0.0
+        },
+        "legacy-all": {
+          "table_nrms": 0.0
+        },
+        "alma-json": {
+          "table_nrms": 0.0
+        },
+        "unused-coordinate": {
+          "table_nrms": 0.0
+        },
+        "missing-file": {
+          "refused": true
+        },
+        "invalid-json": {
+          "refused": true
+        },
+        "no-metadata": {
+          "refused": true
+        },
+        "short-position": {
+          "refused": true
+        },
+        "unrelated-telescope": {
+          "refused": true
+        },
+        "mixed-antenna": {
+          "refused": true
+        },
+        "mixed-polarization": {
+          "refused": true
+        },
+        "mixed-position": {
+          "refused": true
+        },
+        "protected-source": {
+          "refused": true
+        },
+        "moving-position": {
+          "table_nrms": 0.0,
+          "apply_nrms": 3.566482534809556e-07,
+          "matches_field_reference_snapshot": true
+        },
+        "accumulation": {
+          "table_nrms": 0.0
+        }
+      }
+    },
+    "vla-archive": {
+      "revision": "dc16c0d90b3ec79dbc50d317fe293b0d661ec20c",
+      "script": "tools/casa-compat/calibration_gencal_evla_oracle.py",
+      "cases": 7,
+      "results": {
+        "archive-offsets": {
+          "table_nrms": 0.0,
+          "apply_nrms": 2.9753795707952947e-08
+        },
+        "day-cutoff": {
+          "table_nrms": 0.0
+        },
+        "initial-connection-failure": {
+          "preserved": true
+        },
+        "empty-cutoff": {
+          "preserved": true
+        },
+        "later-transfer-failure": {
+          "preserved": true
+        },
+        "lookup-scope": {
+          "pre_evla_and_alma_skipped": true,
+          "multiple_observations_refused": true,
+          "whole_second_posting_boundary": true
+        },
+        "tropo-marker": {
+          "table_nrms": 0.0,
+          "tropo_scale_1.0_nrms": 7.347246390856811e-08,
+          "tropo_scale_0.0_nrms": 0.0,
+          "tropo_scale_-2.0_nrms": 8.257409305795756e-08,
+          "tropo_scale_-2_nrms": 8.257409305795756e-08
+        }
+      },
+      "service": "NRAO EVLA baseline correction archive",
+      "ea01_correction_metres": [
+        0.0,
+        0.003000000026077032,
+        0.0
+      ],
+      "table_nrms": 0.0,
+      "reference": "Pinned CASA live HTTP response and native HTTPS response from the same archive."
+    },
+    "alma-service": {
+      "revision": "dc16c0d90b3ec79dbc50d317fe293b0d661ec20c",
+      "script": "tools/casa-compat/calibration_getantposalma_oracle.py",
+      "cases": 30,
+      "results": {
+        "defaults": {
+          "antennas": 5,
+          "requests": 1
+        },
+        "fallback": {
+          "antennas": 5,
+          "requests": 2
+        },
+        "retry": {
+          "antennas": 5,
+          "requests": 2
+        },
+        "numpy-inputs": {
+          "antennas": 5,
+          "requests": 1
+        },
+        "angular-window": {
+          "antennas": 5,
+          "requests": 1
+        },
+        "no-overwrite": {
+          "preserved": true
+        },
+        "no-hosts": {
+          "preserved": true
+        },
+        "missing-first-host": {
+          "preserved": true
+        },
+        "bad-host": {
+          "preserved": true
+        },
+        "missing-asdm": {
+          "preserved": true
+        },
+        "bad-window-count": {
+          "preserved": true
+        },
+        "bad-window-time": {
+          "preserved": true
+        },
+        "subsecond-window": {
+          "preserved": true
+        },
+        "reversed-window": {
+          "preserved": true
+        },
+        "negative-snr": {
+          "preserved": true
+        },
+        "bad-snr": {
+          "preserved": true
+        },
+        "bad-snr-kind": {
+          "preserved": true
+        },
+        "nonpython-firstintegration": {
+          "preserved": true
+        },
+        "negative-retries": {
+          "preserved": true
+        },
+        "invalid-retry-delay": {
+          "preserved": true
+        },
+        "no-position-service": {
+          "preserved": true
+        },
+        "invalid-service-response": {
+          "preserved": true
+        },
+        "empty-service-response": {
+          "preserved": true
+        },
+        "overwrite": {
+          "replaced_file_and_directory": true
+        },
+        "symlink-parent": {
+          "unrelated_output_preserved": true
+        },
+        "missing-outfile": {
+          "refused": true
+        },
+        "numeric-cli": {
+          "numeric_snr": true
+        },
+        "gencal": {
+          "table_nrms": 0.0,
+          "apply_nrms": 8.521623459147047e-08
+        },
+        "routine-service-options": {
+          "casa_parameters": 14,
+          "table_nrms": 0.0
+        },
+        "live-service": {
+          "antennas": 10,
+          "identical": true
+        }
+      },
+      "service": "ALMA uncertainties service",
+      "reference": "Both clients used the configured local CA bundle for the cloud proxy."
+    }
+  }
+}
