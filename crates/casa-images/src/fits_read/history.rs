@@ -8,7 +8,11 @@ use crate::{ImageError, image::ImageHistoryEntry};
 
 pub(crate) fn history_entries(path: &Path) -> Result<Vec<ImageHistoryEntry>, ImageError> {
     let cards = read_cards(path)?;
-    let cards = cards.into_iter().filter_map(|card| {
+    Ok(history_from_cards(&cards))
+}
+
+pub(super) fn history_from_cards(cards: &[String]) -> Vec<ImageHistoryEntry> {
+    let cards = cards.iter().filter_map(|card| {
         card.strip_prefix("HISTORY ")
             .map(|line| line.trim_end().to_string())
     });
@@ -39,7 +43,7 @@ pub(crate) fn history_entries(path: &Path) -> Result<Vec<ImageHistoryEntry>, Ima
         }
     }
     append_group(&mut entries, &group, &lines);
-    Ok(entries)
+    entries
 }
 
 pub(crate) fn read_cards(path: &Path) -> Result<Vec<String>, ImageError> {

@@ -55,6 +55,14 @@ pub struct ImageHistoryEntry {
 }
 
 impl ImageHistoryEntry {
+    pub(crate) fn current_time() -> Result<f64, ImageError> {
+        const UNIX_EPOCH_MJD_SECONDS: f64 = 40_587.0 * 86_400.0;
+        let duration = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| ImageError::Io(error.to_string()))?;
+        Ok(UNIX_EPOCH_MJD_SECONDS + duration.as_secs_f64())
+    }
+
     /// Origin used when casacore replays this entry through `ImageHistory`.
     ///
     /// An empty location becomes `ImageHistory::get`. Otherwise casacore
@@ -1936,6 +1944,36 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
+    /// Append imported history with its original location and MJD time.
+    ///
+    /// # Errors
+    /// Returns an error if the image log cannot be created, written or locked.
+    pub fn append_history_entries(
+        &mut self,
+        entries: &[ImageHistoryEntry],
+    ) -> Result<(), ImageError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        if let Some(path) = self.path.clone() {
+            self.ensure_logtable()?;
+            Self::append_logtable_entries(
+                &Self::logtable_path(&path),
+                entries.iter().map(|entry| {
+                    (
+                        entry.time_mjd_seconds,
+                        entry.location.as_str(),
+                        &entry.message,
+                    )
+                }),
+            )
+        } else {
+            self.temp_history
+                .extend(entries.iter().map(|entry| entry.message.clone()));
+            Ok(())
+        }
+    }
+
     /// Clears the history log.
     pub fn clear_history(&mut self) -> Result<(), ImageError> {
         match self.path.clone() {
@@ -2548,18 +2586,23 @@ impl<T: ImagePixel> PagedImage<T> {
         location: &str,
         messages: &[String],
     ) -> Result<(), ImageError> {
-        const UNIX_EPOCH_MJD_SECONDS: f64 = 40_587.0 * 86_400.0;
-        let time = UNIX_EPOCH_MJD_SECONDS
-            + std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| ImageError::Io(e.to_string()))?
-                .as_secs_f64();
+        let time = ImageHistoryEntry::current_time()?;
+        Self::append_logtable_entries(
+            path,
+            messages.iter().map(|message| (time, location, message)),
+        )
+    }
+
+    fn append_logtable_entries<'a>(
+        path: &Path,
+        entries: impl IntoIterator<Item = (f64, &'a str, &'a String)>,
+    ) -> Result<(), ImageError> {
         // casacore takes a reopened table's row count from the sync data in
         // `table.lock`, which this lock publishes: a save alone leaves a
         // `logtable` CASA wrote unreadable to it.
         let mut lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
-        for message in messages {
+        for (time, location, message) in entries {
             table.add_row(RecordValue::new(vec![
                 RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
                 RecordField::new(

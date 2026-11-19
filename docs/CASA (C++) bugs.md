@@ -19,6 +19,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[FITS import of an empty primary HDU](#fits-import-can-abort-on-an-empty-primary-hdu),
 [restoring-beam removal with a malformed record](#beam-removal-can-delete-metadata-before-rejecting-a-record),
 [a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
 [non-frequency component frequency units](#a-non-frequency-component-unit-corrupts-casas-spectrum),
@@ -6942,4 +6943,13 @@ the beam, even when history is disabled.
 
 casa-rs validates the supplied record before it saves any changes, so a
 rejected call preserves the restoring beam and history. See
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## FITS import can abort on an empty primary HDU
+
+CASA 6.7.6.14 aborts in `ia.fromfits(infile=path, whichhdu=0)` when the FITS
+primary HDU has `NAXIS=0` and a later extension contains the image. The same
+file imports successfully when `whichhdu=-1` selects the first image or
+`whichhdu=1` selects its extension. casa-rs returns `RuntimeError` for the
+empty HDU and accepts both ways to select the extension. See
 [#1625](https://github.com/bglenden/casa-rs/issues/1625).

@@ -34,7 +34,13 @@ Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
-`ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid. The remaining
+`ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+
+Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
+native CASA image. `whichhdu` selects the image HDU and `whichrep` selects the
+coordinate representation. `zeroblanks=True` writes zero at blank pixels
+while preserving their invalid mask values. `ia.newimagefromfits(...)` returns
+a separate image tool. The remaining
 CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
 
