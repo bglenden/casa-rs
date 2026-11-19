@@ -809,6 +809,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#smooth-calibration-solutions-smoothcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smooth Calibration Solutions (smoothcal)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#re-reference-calibration-solutions-rerefant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Re-reference Calibration Solutions (rerefant)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#initialize-visibility-weights-initweights" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1567,6 +1589,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#smooth-calibration-solutions-smoothcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smooth Calibration Solutions (smoothcal)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#re-reference-calibration-solutions-rerefant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Re-reference Calibration Solutions (rerefant)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#initialize-visibility-weights-initweights" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1616,9 +1660,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 664</li>
-<li>Surfaces: 39 (39 task, 0 session)</li>
-<li>Surface bindings: 978</li>
+<li>Concepts: 671</li>
+<li>Surfaces: 41 (41 task, 0 session)</li>
+<li>Surface bindings: 990</li>
 </ul>
 <table>
 <thead>
@@ -1927,6 +1971,22 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">10</td>
 <td>Retrieve antenna positions from the ALMA archive.</td>
+</tr>
+<tr>
+<td><a href="#surface-smoothcal">Smooth Calibration Solutions</a><br><code>smoothcal</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">7</td>
+<td>Smooth selected calibration solutions in time.</td>
+</tr>
+<tr>
+<td><a href="#surface-rerefant">Re-reference Calibration Solutions</a><br><code>rerefant</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">5</td>
+<td>Change the reference antenna in a calibration table.</td>
 </tr>
 <tr>
 <td><a href="#surface-initweights">Initialize Visibility Weights</a><br><code>initweights</code></td>
@@ -10362,6 +10422,148 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>3.0</code>; optional</td>
 <td>ALMA Service</td>
 <td>Seconds between retries.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-smoothcal"></a></p>
+<h2 id="smooth-calibration-solutions-smoothcal">Smooth Calibration Solutions (<code>smoothcal</code>)<a class="headerlink" href="#smooth-calibration-solutions-smoothcal" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Smooth selected calibration solutions in time.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r3</code></td>
+<td><code>path (measurement_set)</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>One input MeasurementSet path.</td>
+</tr>
+<tr>
+<td><code>tablein</code></td>
+<td><code>calibration.tablein@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Existing input calibration table.</td>
+</tr>
+<tr>
+<td><code>caltable</code></td>
+<td><code>calibration.caltable@r2</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>Calibration table the task writes.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r5</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Data selection</td>
+<td>Field selection expressions. Empty selects every field.</td>
+</tr>
+<tr>
+<td><code>smoothtype</code></td>
+<td><code>smoothing.smoothtype@r1</code></td>
+<td><code>string</code></td>
+<td><code>"median"</code>; optional</td>
+<td>Smoothing</td>
+<td>Use the median or mean smoothing filter.</td>
+</tr>
+<tr>
+<td><code>smoothtime</code></td>
+<td><code>smoothing.smoothtime@r1</code></td>
+<td><code>float</code></td>
+<td><code>60.0</code>; optional</td>
+<td>Smoothing</td>
+<td>Full width of the smoothing window in seconds.</td>
+</tr>
+<tr>
+<td><code>ratesmooth</code></td>
+<td><code>smoothing.ratesmooth@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Smoothing</td>
+<td>Use the fringe rate to predict phase wraps when smoothing fringe solutions.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-rerefant"></a></p>
+<h2 id="re-reference-calibration-solutions-rerefant">Re-reference Calibration Solutions (<code>rerefant</code>)<a class="headerlink" href="#re-reference-calibration-solutions-rerefant" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Change the reference antenna in a calibration table.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r3</code></td>
+<td><code>path (measurement_set)</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>One input MeasurementSet path.</td>
+</tr>
+<tr>
+<td><code>tablein</code></td>
+<td><code>calibration.tablein@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Existing input calibration table.</td>
+</tr>
+<tr>
+<td><code>caltable</code></td>
+<td><code>calibration.caltable@r2</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>Calibration table the task writes.</td>
+</tr>
+<tr>
+<td><code>refantmode</code></td>
+<td><code>setsolve.refantmode@r1</code></td>
+<td><code>choice (2 values)</code></td>
+<td><code>"flex"</code>; optional</td>
+<td>Reference antenna</td>
+<td>Whether another reference antenna is used where refant has no solution.</td>
+</tr>
+<tr>
+<td><code>refant</code></td>
+<td><code>parameter.refant@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Reference antenna</td>
+<td>Reference antenna name or id for solve workflows</td>
 </tr>
 </tbody>
 </table>

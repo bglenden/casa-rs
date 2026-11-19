@@ -4170,6 +4170,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#median-fringe-smoothing-wraps-delay-values-as-phase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Median fringe smoothing wraps delay values as phase
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#re-referencing-a-delay-table-crashes-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Re-referencing a delay table crashes CASA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#statwt-creates-spectra-then-fails-on-an-explicitly-selected-subset" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10566,6 +10588,25 @@ silently over-thresholds and masks the entire output plane.</p>
 <p>casa-rs validates unit conformance via <code>get_conformant_value</code> when <code>sigma &gt; 0</code>
 (<code>crates/casa-images/src/analysis/immath/pol.rs</code>) and refuses non-conforming or
 unitless <code>sigma</code> against non-empty image <code>bunit</code> with a clear error (#977).</p>
+<h2 id="median-fringe-smoothing-wraps-delay-values-as-phase">Median fringe smoothing wraps delay values as phase<a class="headerlink" href="#median-fringe-smoothing-wraps-delay-values-as-phase" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>smoothcal(smoothtype='median')</code> on a <code>Fringe Jones</code>
+calibration table applies phase wrapping to every FPARAM component. The
+condition <code>ipar == 0 || 4</code> in <code>FringeJones::smooth</code> is always true. A
+valid 8 ns delay therefore became about 1.717 ns in a window with only
+that sample. The same branch also skips the median filter for delays and
+dispersive delays.</p>
+<p>casa-rs wraps only the two phase parameters and applies the numerical
+median to the delay, rate, and dispersive delay parameters. The use of
+fringe rates for predicting phase wraps and the phase outputs follow
+CASA (#1525).</p>
+<h2 id="re-referencing-a-delay-table-crashes-casa">Re-referencing a delay table crashes CASA<a class="headerlink" href="#re-referencing-a-delay-table-crashes-casa" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>rerefant(refantmode='strict', refant='A0')</code>
+terminates the process when the input is a <code>K Jones</code> delay table.
+<code>SolvableVisJones::applyRefAnt</code> reads CPARAM before dispatching on the
+table type. Delay tables use FPARAM, and only Fringe overrides the
+reference calculation for real-valued parameters.</p>
+<p>casa-rs raises a task error for unsupported table types before publishing
+a result. The paired oracle runs this CASA check in a child process (#1525).</p>
 <h2 id="statwt-creates-spectra-then-fails-on-an-explicitly-selected-subset"><code>statwt</code> creates spectra then fails on an explicitly selected subset<a class="headerlink" href="#statwt-creates-spectra-then-fails-on-an-explicitly-selected-subset" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14 initializes a required <code>WEIGHT_SPECTRUM</code> or <code>SIGMA_SPECTRUM</code>
 column for the original MS when <code>chanbin</code> requests channel bins. When the

@@ -1400,6 +1400,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.rerefant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rerefant
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1437,6 +1448,17 @@
     <span class="md-ellipsis">
       
         simobserve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.smoothcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        smoothcal
       
     </span>
   </a>
@@ -2383,6 +2405,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.rerefant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rerefant
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2420,6 +2453,17 @@
     <span class="md-ellipsis">
       
         simobserve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.smoothcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        smoothcal
       
     </span>
   </a>
@@ -6573,20 +6617,20 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1331</span>
-<span class="normal">1332</span>
-<span class="normal">1333</span>
-<span class="normal">1334</span>
-<span class="normal">1335</span>
-<span class="normal">1336</span>
-<span class="normal">1337</span>
-<span class="normal">1338</span>
-<span class="normal">1339</span>
-<span class="normal">1340</span>
-<span class="normal">1341</span>
-<span class="normal">1342</span>
-<span class="normal">1343</span>
-<span class="normal">1344</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">initweights</span><span class="p">(</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1359</span>
+<span class="normal">1360</span>
+<span class="normal">1361</span>
+<span class="normal">1362</span>
+<span class="normal">1363</span>
+<span class="normal">1364</span>
+<span class="normal">1365</span>
+<span class="normal">1366</span>
+<span class="normal">1367</span>
+<span class="normal">1368</span>
+<span class="normal">1369</span>
+<span class="normal">1370</span>
+<span class="normal">1371</span>
+<span class="normal">1372</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">initweights</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">wtmode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'delwtsp'</span><span class="p">,</span> <span class="s1">'nyq'</span><span class="p">,</span> <span class="s1">'ones'</span><span class="p">,</span> <span class="s1">'tsys'</span><span class="p">,</span> <span class="s1">'weight'</span><span class="p">,</span> <span class="s1">'tinttsys'</span><span class="p">,</span> <span class="s1">'sigma'</span><span class="p">,</span> <span class="s1">'delsigsp'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'nyq'</span><span class="p">,</span>
     <span class="n">tsystable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -7167,6 +7211,52 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <div class="doc doc-object doc-function">
 
 
+<h2 id="casars.tasks.rerefant" class="doc doc-heading">
+            <code class=" language-python"><span class="n">rerefant</span><span class="p">(</span><span class="n">vis</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">tablein</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">caltable</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">refantmode</span><span class="o">=</span><span class="s1">'flex'</span><span class="p">,</span> <span class="n">refant</span><span class="o">=</span><span class="s1">''</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.rerefant" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Change the reference antenna in a calibration table.</p>
+<p>CASA's <code>rerefant</code>: its parameters, defaults and return value.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1346</span>
+<span class="normal">1347</span>
+<span class="normal">1348</span>
+<span class="normal">1349</span>
+<span class="normal">1350</span>
+<span class="normal">1351</span>
+<span class="normal">1352</span>
+<span class="normal">1353</span>
+<span class="normal">1354</span>
+<span class="normal">1355</span>
+<span class="normal">1356</span>
+<span class="normal">1357</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">rerefant</span><span class="p">(</span>
+    <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">tablein</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">refantmode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'flex'</span><span class="p">,</span> <span class="s1">'strict'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'flex'</span><span class="p">,</span>
+    <span class="n">refant</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Change the reference antenna in a calibration table.</span>
+
+<span class="sd">    CASA's ``rerefant``: its parameters, defaults and return value.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">rerefant</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h2 id="casars.tasks.run" class="doc doc-heading">
             <code class=" language-python"><span class="n">run</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">parameters</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">values</span><span class="p">)</span></code>
 
@@ -7593,6 +7683,56 @@ Accepted only at CASA's default, where CASA reads them, until #980:
 <div class="doc doc-object doc-function">
 
 
+<h2 id="casars.tasks.smoothcal" class="doc doc-heading">
+            <code class=" language-python"><span class="n">smoothcal</span><span class="p">(</span><span class="n">vis</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">tablein</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">caltable</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="p">[],</span> <span class="n">smoothtype</span><span class="o">=</span><span class="s1">'median'</span><span class="p">,</span> <span class="n">smoothtime</span><span class="o">=</span><span class="mf">60.0</span><span class="p">,</span> <span class="n">ratesmooth</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.smoothcal" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Smooth selected calibration solutions in time.</p>
+<p>CASA's <code>smoothcal</code>: its parameters, defaults and return value.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1331</span>
+<span class="normal">1332</span>
+<span class="normal">1333</span>
+<span class="normal">1334</span>
+<span class="normal">1335</span>
+<span class="normal">1336</span>
+<span class="normal">1337</span>
+<span class="normal">1338</span>
+<span class="normal">1339</span>
+<span class="normal">1340</span>
+<span class="normal">1341</span>
+<span class="normal">1342</span>
+<span class="normal">1343</span>
+<span class="normal">1344</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">smoothcal</span><span class="p">(</span>
+    <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">tablein</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
+    <span class="n">smoothtype</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'median'</span><span class="p">,</span>
+    <span class="n">smoothtime</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span><span class="p">,</span>
+    <span class="n">ratesmooth</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Smooth selected calibration solutions in time.</span>
+
+<span class="sd">    CASA's ``smoothcal``: its parameters, defaults and return value.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">smoothcal</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h2 id="casars.tasks.split" class="doc doc-heading">
             <code class=" language-python"><span class="n">split</span><span class="p">(</span><span class="n">vis</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">outputvis</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">keepmms</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">spw</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">scan</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">antenna</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">correlation</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">timerange</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">intent</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">array</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">uvrange</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">observation</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">feed</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">datacolumn</span><span class="o">=</span><span class="s1">'corrected'</span><span class="p">,</span> <span class="n">keepflags</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">width</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">timebin</span><span class="o">=</span><span class="s1">'0s'</span><span class="p">,</span> <span class="n">combine</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">msselect</span><span class="o">=</span><span class="s1">''</span><span class="p">)</span></code>
 
@@ -7694,38 +7834,38 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1346</span>
-<span class="normal">1347</span>
-<span class="normal">1348</span>
-<span class="normal">1349</span>
-<span class="normal">1350</span>
-<span class="normal">1351</span>
-<span class="normal">1352</span>
-<span class="normal">1353</span>
-<span class="normal">1354</span>
-<span class="normal">1355</span>
-<span class="normal">1356</span>
-<span class="normal">1357</span>
-<span class="normal">1358</span>
-<span class="normal">1359</span>
-<span class="normal">1360</span>
-<span class="normal">1361</span>
-<span class="normal">1362</span>
-<span class="normal">1363</span>
-<span class="normal">1364</span>
-<span class="normal">1365</span>
-<span class="normal">1366</span>
-<span class="normal">1367</span>
-<span class="normal">1368</span>
-<span class="normal">1369</span>
-<span class="normal">1370</span>
-<span class="normal">1371</span>
-<span class="normal">1372</span>
-<span class="normal">1373</span>
-<span class="normal">1374</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1374</span>
 <span class="normal">1375</span>
 <span class="normal">1376</span>
-<span class="normal">1377</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">statwt</span><span class="p">(</span>
+<span class="normal">1377</span>
+<span class="normal">1378</span>
+<span class="normal">1379</span>
+<span class="normal">1380</span>
+<span class="normal">1381</span>
+<span class="normal">1382</span>
+<span class="normal">1383</span>
+<span class="normal">1384</span>
+<span class="normal">1385</span>
+<span class="normal">1386</span>
+<span class="normal">1387</span>
+<span class="normal">1388</span>
+<span class="normal">1389</span>
+<span class="normal">1390</span>
+<span class="normal">1391</span>
+<span class="normal">1392</span>
+<span class="normal">1393</span>
+<span class="normal">1394</span>
+<span class="normal">1395</span>
+<span class="normal">1396</span>
+<span class="normal">1397</span>
+<span class="normal">1398</span>
+<span class="normal">1399</span>
+<span class="normal">1400</span>
+<span class="normal">1401</span>
+<span class="normal">1402</span>
+<span class="normal">1403</span>
+<span class="normal">1404</span>
+<span class="normal">1405</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">statwt</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">selectdata</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
