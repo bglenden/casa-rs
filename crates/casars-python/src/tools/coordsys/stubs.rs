@@ -219,12 +219,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn setobserver(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setobserver")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#type, parameters = None), text_signature = "($self, type, parameters=[-1.0])")]
     fn setprojection(
         &self,
@@ -305,12 +299,6 @@ impl PyCoordsys {
         which: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("settabular")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn settelescope(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("settelescope")
     }
 
     /// Not yet implemented in casa-rs.

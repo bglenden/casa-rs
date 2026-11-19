@@ -291,7 +291,7 @@ const METHODS: &[Method] = &[
         "setobserver",
         &[param("value", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setparentname",
@@ -388,7 +388,7 @@ const METHODS: &[Method] = &[
         "settelescope",
         &[param("value", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setunits",
