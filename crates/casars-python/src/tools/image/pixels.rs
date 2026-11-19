@@ -3,6 +3,10 @@
 use casa_images::{ImageInterface, ImagePixel};
 use ndarray::{ArrayD, Dimension, IxDyn, ShapeBuilder};
 use num_complex::{Complex32, Complex64};
+use numpy::{
+    Element, PyArrayDescrMethods, PyArrayDyn, PyArrayMethods, PyUntypedArray,
+    PyUntypedArrayMethods, npyffi::PY_ARRAY_API,
+};
 use pyo3::prelude::*;
 
 use super::PyImageTool;
@@ -15,7 +19,32 @@ pub(super) enum Pixels {
 }
 
 impl Pixels {
-    pub(super) fn from_variant(value: Option<Variant>, empty: &str) -> PyResult<Self> {
+    pub(super) fn capture(
+        py: Python<'_>,
+        value: Option<&Bound<'_, PyAny>>,
+        creating: bool,
+    ) -> PyResult<Self> {
+        let format_error = if creating {
+            "pixels is not understood, try using an array"
+        } else {
+            "Unsupported type for pixels parameter. It must be either a vector of doubles or ints"
+        };
+        if let Some(value) = value
+            && let Ok(array) = value.cast::<PyUntypedArray>()
+        {
+            let dtype = array.dtype();
+            let pixels = match (dtype.kind(), dtype.itemsize()) {
+                (b'i' | b'u', _) | (b'f', 4 | 8) => Self::Real(snapshot_array(py, array)?),
+                (b'c', 8 | 16) => Self::Complex(snapshot_array(py, array)?),
+                _ => return Err(raised(format_error)),
+            };
+            return pixels.check_shape("The pixels array cannot be empty");
+        }
+        let variant = value.map(|v| v.extract::<Variant>()).transpose()?;
+        Self::from_variant(variant, format_error)
+    }
+
+    fn from_variant(value: Option<Variant>, format_error: &str) -> PyResult<Self> {
         let pixels = match value.unwrap_or(Variant::Empty) {
             Variant::Numbers(values) => Self::Real(ndarray::Array1::from_vec(values).into_dyn()),
             Variant::Complexes(values) => {
@@ -27,17 +56,17 @@ impl Pixels {
             Variant::ComplexArray { shape, values } => {
                 Self::Complex(ArrayD::from_shape_vec(IxDyn(&shape).f(), values).map_err(raised)?)
             }
-            Variant::Empty => return Err(raised(format!("Exception: {empty}"))),
-            _ => {
-                return Err(raised(
-                    "Exception: Unsupported type for pixels parameter. It must be either a vector of doubles or ints",
-                ));
-            }
+            Variant::Empty => return Err(raised("Exception: The pixels array cannot be empty")),
+            _ => return Err(raised(format_error)),
         };
-        if pixels.shape().is_empty() || pixels.shape().contains(&0) {
+        pixels.check_shape("The pixels array cannot be empty")
+    }
+
+    fn check_shape(self, empty: &str) -> PyResult<Self> {
+        if self.shape().is_empty() || self.shape().contains(&0) {
             return Err(raised(format!("Exception: {empty}")));
         }
-        Ok(pixels)
+        Ok(self)
     }
 
     pub(super) fn shape(&self) -> &[usize] {
@@ -99,6 +128,28 @@ impl Pixels {
         };
         format!("[{}]", values.join(","))
     }
+}
+
+// NumPy copies into a private contiguous buffer. No caller can mutate that
+// buffer while Rust reads it with the interpreter detached.
+fn snapshot_array<T: Element + Copy + Send + Sync>(
+    py: Python<'_>,
+    source: &Bound<'_, PyUntypedArray>,
+) -> PyResult<ArrayD<T>> {
+    let shape = source.shape().to_vec();
+    let snapshot = PyArrayDyn::<T>::zeros(py, IxDyn(&shape), true);
+    // SAFETY: both pointers name live NumPy arrays with identical shapes and
+    // numeric dtypes. The destination is freshly allocated and cannot alias
+    // either the input or an object another Python thread can access.
+    let status = unsafe {
+        PY_ARRAY_API.PyArray_CopyInto(py, snapshot.as_array_ptr(), source.as_array_ptr())
+    };
+    if status != 0 {
+        return Err(PyErr::fetch(py));
+    }
+    let snapshot = snapshot.readonly();
+    let values = snapshot.as_slice().map_err(raised)?;
+    py.detach(|| ArrayD::from_shape_vec(IxDyn(&shape).f(), values.to_vec()).map_err(raised))
 }
 
 struct Chunk {
@@ -262,7 +313,7 @@ impl Chunk {
         if axes.is_empty() {
             return Ok(U::output(
                 output_shape,
-                fortran_values(pixels).into_iter().map(&widen).collect(),
+                pixels.reversed_axes().iter().copied().map(&widen).collect(),
             ));
         }
 
@@ -349,6 +400,7 @@ impl PyImageTool {
             let Some(image) = state.image.as_ref() else {
                 return Ok(CasaValue::Bools { shape: vec![0], values: Vec::new() });
             };
+            let image = image.lock();
             let shape = image.shape();
             let chunk = Chunk::read(shape, &blc.map_or_else(Vec::new, |arg| arg.0), &trc.map_or_else(Vec::new, |arg| arg.0), &inc.map_or_else(Vec::new, |arg| arg.0))?;
             let axes = axes.map_or_else(Vec::new, |arg| arg.0);
@@ -360,7 +412,7 @@ impl PyImageTool {
                 }
                 collapse.push(axis as usize);
             }
-            match image {
+            match &*image {
                 ImageHandle::Float(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (f64::from, |v| f64::from(v as f32)))),
                 ImageHandle::Double(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (f64::from, std::convert::identity))),
                 ImageHandle::Complex(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (widen_complex, |v: Complex64| widen_complex(Complex32::new(v.re as f32, v.im as f32))))),
@@ -374,25 +426,27 @@ impl PyImageTool {
     fn putchunk(
         &self,
         py: Python<'_>,
-        pixels: Option<Variant>,
+        pixels: Option<&Bound<'_, PyAny>>,
         blc: Option<IntList>,
         inc: Option<IntList>,
         list: bool,
         locking: bool,
         replicate: bool,
     ) -> PyResult<bool> {
+        let pixels = Pixels::capture(py, pixels, false);
         py.detach(|| {
-            let mut state = self.state();
+            let state = self.state();
             let history = state.history;
-            let Some(image) = state.image.as_mut() else { return Ok(false) };
-            let pixels = Pixels::from_variant(pixels, "The pixels array cannot be empty")?;
+            let Some(image) = state.image.as_ref() else { return Ok(false) };
+            let mut image = image.lock();
+            let pixels = pixels?;
             let blc = blc.unwrap_or_else(|| IntList::of(&[-1])).0;
             let inc = inc.unwrap_or_else(|| IntList::of(&[1])).0;
             let chunk = Chunk::write(image.shape(), pixels.shape(), &blc, &inc, replicate)?;
-            if pixels.is_complex() && matches!(image, ImageHandle::Float(_) | ImageHandle::Double(_)) {
+            if pixels.is_complex() && matches!(&*image, ImageHandle::Float(_) | ImageHandle::Double(_)) {
                 return Err(raised("Exception: Unsupported type for pixels parameter. It must be either a vector of doubles or ints"));
             }
-            match image {
+            match &mut *image {
                 ImageHandle::Float(storage) => chunk.put(storage, pixels.f32())?,
                 ImageHandle::Double(storage) => chunk.put(storage, pixels.f64())?,
                 ImageHandle::Complex(storage) => chunk.put(storage, pixels.c32())?,

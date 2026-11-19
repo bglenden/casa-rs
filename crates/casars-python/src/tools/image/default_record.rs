@@ -20,6 +20,12 @@ pub(super) fn for_shape(shape: &[usize], linear: bool) -> PyResult<RecordValue> 
             spectral.upsert("conversion", Value::Record(spectral_conversion()));
         }
     }
+    for index in 0..coordinates.n_coordinates() {
+        if let Some(Value::Record(linear)) = record.get_mut(&format!("linear{index}")) {
+            linear.remove("coordinate_type");
+            linear.remove("naxes");
+        }
+    }
     for (axis, &length) in shape.iter().enumerate() {
         CoordinateSystem::set_reference_pixel_in_record(&mut record, axis, (length / 2) as f64)
             .map_err(raised)?;

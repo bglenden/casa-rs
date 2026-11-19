@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::path::Path;
-use std::sync::{Mutex, PoisonError};
 
 use casa_coordinates::CoordinateSystem;
+use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_types::{RecordValue, Value};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::convert::{IntList, Variant};
+use crate::convert::IntList;
 use crate::tools::table::casa_record;
 
 use super::PyImageTool;
+use super::attachment::{self, AttachedImage};
 use super::handle::{ImageHandle, Storage, raised};
 use super::pixels::Pixels;
-
-static PUBLICATION: Mutex<()> = Mutex::new(());
 
 struct Create {
     outfile: String,
@@ -147,9 +146,11 @@ impl Create {
         Ok(())
     }
 
-    fn run(&self, pixels: Option<Pixels>, history: bool) -> PyResult<ImageHandle> {
+    fn run(&self, pixels: Option<Pixels>, history: bool) -> PyResult<AttachedImage> {
         if self.outfile.is_empty() {
-            return self.build(pixels, None, history);
+            return self
+                .build(pixels, None, history)
+                .map(AttachedImage::temporary);
         }
         let path = std::path::absolute(&self.outfile).map_err(raised)?;
         let parent = path
@@ -157,9 +158,8 @@ impl Create {
             .ok_or_else(|| raised("Invalid output image path"))?;
         let stage = tempfile::tempdir_in(parent).map_err(raised)?;
         let product = stage.path().join("image");
-        let backup = stage.path().join("previous");
         drop(self.build(pixels, Some(&product), history)?);
-        let _guard = PUBLICATION.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut registry = attachment::registry();
         let existed = match path.symlink_metadata() {
             Ok(_) if !self.overwrite => {
                 return Err(raised(format!(
@@ -168,6 +168,15 @@ impl Create {
                 )));
             }
             Ok(_) => {
+                if registry
+                    .get(&attachment::key(&path)?)
+                    .is_some_and(|image| image.strong_count() > 0)
+                {
+                    return Err(raised(format!(
+                        "Invalid Table operation: SetupNewTable {} is already opened (is in the table cache)",
+                        path.display()
+                    )));
+                }
                 let empty = path
                     .read_dir()
                     .is_ok_and(|mut entries| entries.next().is_none());
@@ -186,33 +195,28 @@ impl Create {
             Err(error) => return Err(raised(error)),
         };
         if existed {
-            std::fs::rename(&path, &backup).map_err(raised)?;
+            exchange_directories(&product, &path).map_err(raised)?;
+        } else {
+            rename_without_replacing(&product, &path).map_err(raised)?;
         }
-        let published = std::fs::rename(&product, &path);
-        let result = match &published {
-            Ok(()) => ImageHandle::open(&path).map_err(raised),
-            Err(error) => Err(raised(error)),
-        };
-        if let Err(error) = result {
-            let restore = (|| -> std::io::Result<()> {
-                if published.is_ok() {
-                    std::fs::rename(&path, &product)?;
+        match AttachedImage::open(&mut registry, &path) {
+            Ok(image) => Ok(image),
+            Err(error) => {
+                let restore = if existed {
+                    exchange_directories(&product, &path)
+                } else {
+                    rename_without_replacing(&path, &product)
+                };
+                if let Err(restore) = restore {
+                    let backup_dir = stage.keep();
+                    return Err(raised(format!(
+                        "{error}. Image publication could not be rolled back; inspect {}: {restore}",
+                        backup_dir.display()
+                    )));
                 }
-                if existed {
-                    std::fs::rename(&backup, &path)?;
-                }
-                Ok(())
-            })();
-            if let Err(restore) = restore {
-                let backup_dir = stage.keep();
-                return Err(raised(format!(
-                    "{error}. Image publication could not be rolled back; inspect {}: {restore}",
-                    backup_dir.display()
-                )));
+                Err(error)
             }
-            return Err(error);
         }
-        result
     }
 }
 
@@ -263,7 +267,7 @@ impl PyImageTool {
         &self,
         py: Python<'_>,
         outfile: &str,
-        pixels: Option<Variant>,
+        pixels: Option<&Bound<'_, PyAny>>,
         csys: Option<&Bound<'_, PyDict>>,
         linear: bool,
         overwrite: bool,
@@ -271,13 +275,14 @@ impl PyImageTool {
         r#type: &str,
     ) -> PyResult<bool> {
         let record = casa_record(py, csys)?;
+        let pixels = Pixels::capture(py, pixels, true);
         py.detach(|| {
             let mut state = self.state();
             state.image = None;
             if !matches!(r#type.to_ascii_lowercase().as_str(), "f" | "d") {
                 return Err(raised(format!("Exception: Unsupported value for type: {type_name:?}. Supported values are \"d\" and \"f\"", type_name = r#type)));
             }
-            let pixels = Pixels::from_variant(pixels, "The pixels array cannot be empty")?;
+            let pixels = pixels?;
             let request = Create {
                 shape: pixels.shape().to_vec(), record, outfile: outfile.into(), linear, overwrite,
                 log, kind: r#type.into(),

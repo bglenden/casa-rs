@@ -3,6 +3,7 @@
 //! with its signature (ADR-0017, #1025). A method casa-rs does not implement
 //! yet raises `NotImplementedError` naming #1027 (`stubs.rs`).
 
+mod attachment;
 mod create;
 mod default_record;
 mod handle;
@@ -17,7 +18,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use pyo3::prelude::*;
 
 use crate::tools::not_yet_implemented_in;
-use handle::ImageHandle;
+use attachment::AttachedImage;
 
 /// The issue that records the methods casa-rs refuses.
 const ISSUE: u32 = 1027;
@@ -34,7 +35,7 @@ pub(crate) struct PyImageTool {
 }
 
 struct ImageState {
-    image: Option<ImageHandle>,
+    image: Option<AttachedImage>,
     history: bool,
 }
 

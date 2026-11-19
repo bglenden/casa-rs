@@ -7,7 +7,8 @@ use numpy::{IntoPyArray, PyArray1};
 use pyo3::prelude::*;
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, raised};
+use super::attachment::{self, AttachedImage};
+use super::handle::raised;
 
 #[pymethods]
 impl PyImageTool {
@@ -20,9 +21,11 @@ impl PyImageTool {
             if !path.exists() {
                 return Err(raised(format!("Exception: File {infile} does not exist..")));
             }
+            // ImageFactory's cache flag applies to component-list images.
             let _ = cache;
             let path = std::path::absolute(path).map_err(raised)?;
-            state.image = Some(ImageHandle::open(&path).map_err(raised)?);
+            let mut registry = attachment::registry();
+            state.image = Some(AttachedImage::open(&mut registry, &path)?);
             Ok(true)
         })
     }
@@ -36,15 +39,9 @@ impl PyImageTool {
     fn done(&self, py: Python<'_>, remove: bool, verbose: bool) -> PyResult<bool> {
         let _ = verbose;
         py.detach(|| {
-            let Some(image) = self.state().image.take() else {
-                return Ok(true);
-            };
-            if remove {
-                let path = image.path().map(Path::to_path_buf);
-                drop(image);
-                if let Some(path) = path {
-                    std::fs::remove_dir_all(path).map_err(raised)?;
-                }
+            let image = self.state().image.take();
+            if remove && let Some(image) = image {
+                image.remove()?;
             }
             Ok(true)
         })
@@ -59,7 +56,7 @@ impl PyImageTool {
             self.state()
                 .image
                 .as_ref()
-                .is_some_and(|image| image.path().is_some())
+                .is_some_and(AttachedImage::is_persistent)
         })
     }
 
@@ -70,6 +67,7 @@ impl PyImageTool {
             let Some(image) = state.image.as_ref() else {
                 return Ok("none".into());
             };
+            let image = image.lock();
             image.check_single_precision("name")?;
             let Some(path) = image.path() else {
                 return Ok("Temporary_Image".into());
@@ -90,7 +88,12 @@ impl PyImageTool {
     fn shape<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i64>> {
         py.detach(|| {
             self.state().image.as_ref().map_or_else(Vec::new, |image| {
-                image.shape().iter().map(|&size| size as i64).collect()
+                image
+                    .lock()
+                    .shape()
+                    .iter()
+                    .map(|&size| size as i64)
+                    .collect()
             })
         })
         .into_pyarray(py)
@@ -98,7 +101,7 @@ impl PyImageTool {
 
     fn pixeltype(&self, py: Python<'_>) -> &'static str {
         py.detach(
-            || match self.state().image.as_ref().map(ImageHandle::kind) {
+            || match self.state().image.as_ref().map(|image| image.lock().kind()) {
                 Some(ImagePixelType::Float32) => "float",
                 Some(ImagePixelType::Float64) => "double",
                 Some(ImagePixelType::Complex32) => "complex",
