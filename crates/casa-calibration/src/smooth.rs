@@ -103,9 +103,9 @@ pub(crate) fn smooth_calibration_table(
             smoother,
             seconds / 2.0,
             fringe,
-            &mut lock,
         )?;
     }
+    lock.record_write();
     crate::output_merge::save_sorted(&mut table, &output.staging).map_err(error_text)?;
     drop(table);
     lock.release().map_err(error_text)?;
@@ -168,7 +168,6 @@ fn smooth_group(
     smoother: Smoother,
     half_width: f64,
     fringe: Option<FringePrediction>,
-    lock: &mut TableWriteLock,
 ) -> Result<(), String> {
     let row_ids = rows.iter().map(|&(row, _)| row).collect::<Vec<_>>();
     let read = |name| {
@@ -250,15 +249,7 @@ fn smooth_group(
             .set_value_at(1, Value::Array(ArrayValue::Bool(flags)))
             .map_err(|error| error.to_string())?;
     }
-    writer.flush().map_err(|error| error.to_string())?;
-    drop(writer);
-    lock.record_write();
-    table
-        .prepare_write()
-        .save_selected_rows(&columns, &row_ids)
-        .map_err(|error| error.to_string())?;
-    table.discard_persisted_cell_updates(&columns, &row_ids);
-    Ok(())
+    writer.flush().map_err(error_text)
 }
 
 fn smooth_complex(

@@ -6914,6 +6914,6 @@ that sample. The same branch also skips the median filter for delays and
 dispersive delays.
 
 casa-rs wraps only the two phase parameters and applies the numerical
-median to the time, rate, and dispersive delay parameters. The use of
+median to the delay, rate, and dispersive delay parameters. The use of
 fringe rates for predicting phase wraps and the phase outputs follow
 CASA (#1525).
