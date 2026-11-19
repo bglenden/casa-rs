@@ -217,14 +217,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name == "gencal":
         return _call_gencal(values)
     if name == "getantposalma":
-        try:
-            return run(name, **values).value
-        except TaskExecutionError as error:
-            if error.completion.parameter == "hosts.json":
-                raise JSONDecodeError(error.completion.message, "", 0) from error
-            if error.completion.parameter == "snr.type":
-                raise TypeError(error.completion.message) from error
-            raise
+        return _call_getantposalma(values)
     if name == "ft":
         for selector in ("uvrange", "observation"):
             if not isinstance(arguments[selector], str):
@@ -299,6 +292,44 @@ def _call_gencal(values: dict[str, Any]) -> Any:
                 reason = message
             raise HTTPError(url, status, reason, None, None) from error
         raise
+
+
+def _call_getantposalma(values: dict[str, Any]) -> Any:
+    import numpy as np
+
+    hosts = values.get("hosts")
+    if hosts is not None and not isinstance(hosts, str):
+        try:
+            values["hosts"] = list(hosts)
+        except TypeError:
+            pass
+    snr = values.get("snr")
+    if isinstance(snr, np.int32):
+        values["snr"] = int(snr)
+    elif isinstance(snr, (np.int64, np.float32, np.float64)):
+        values["snr"] = float(snr)
+    retries = values.get("nretry")
+    if isinstance(retries, (bool, np.int32, np.int64)):
+        values["nretry"] = int(retries)
+    delay = values.get("rdelay")
+    if isinstance(delay, (int, np.int32, np.int64, np.float32, np.float64)):
+        values["rdelay"] = float(delay)
+    if isinstance(values.get("overwrite"), np.bool_):
+        values["overwrite"] = bool(values["overwrite"])
+    if isinstance(values.get("firstintegration"), np.bool_):
+        raise ValueError("Parameter firstintegration must be a boolean")
+    try:
+        return run("getantposalma", **values).value
+    except TaskExecutionError as error:
+        if error.completion.parameter == "hosts.json":
+            raise JSONDecodeError(error.completion.message, "", 0) from error
+        if error.completion.parameter == "snr.type":
+            raise TypeError(error.completion.message) from error
+        raise
+    except TaskParameterError:
+        raise
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
 
 
 def _validate_required_vis(values: dict[str, Any], vis: Any) -> None:

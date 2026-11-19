@@ -85,6 +85,8 @@ def successful_requests(root, endpoint, calls, native):
                      ['failure', 'positions']),
         ('retry', {'hosts': [endpoint + '/retry'], 'nretry': 1, 'rdelay': .01, 'snr': 0, 'search': ''},
                   ['retry', 'retry']),
+        ('numpy-inputs', {'hosts': np.asarray([endpoint + '/positions']), 'snr': np.int64(9),
+                          'rdelay': np.float32(2.5), 'search': np.str_('auto')}, ['positions']),
     ):
         values, sequences = [], []
         for name, engine in (('casa', casa), ('native', native)):
@@ -117,6 +119,7 @@ def errors_and_replacement(root, endpoint, calls, native):
             ('negative-snr', {'snr': -1}, ValueError),
             ('bad-snr', {'snr': '5'}, ValueError),
             ('bad-snr-kind', {'snr': [1]}, TypeError),
+            ('nonpython-firstintegration', {'firstintegration': np.bool_(True)}, ValueError),
             ('negative-retries', {'nretry': -1}, ValueError),
             ('invalid-retry-delay', {'nretry': 1, 'rdelay': 0.}, ValueError),
             ('no-position-service', {'hosts': [endpoint + '/failure']}, RuntimeError),
