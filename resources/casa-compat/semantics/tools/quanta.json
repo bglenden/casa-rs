@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "quanta",
  "casa_version": "6.7.6.14",
- "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "audit_revision": "ea0ad2a5158f77c82e5ab3681ef63ab264fb9332",
  "methods": {
   "abs": {
    "status": "Implemented",
@@ -30,7 +30,8 @@
     "record-complex-array-casa",
     "bare-complex-scalar-casa",
     "record-empty-float-vector-casa",
-    "record-zero-dimensional-casa"
+    "record-zero-dimensional-casa",
+    "record-sequence-edges-casa"
    ]
   },
   "angle": {
@@ -246,7 +247,8 @@
     "record-complex-array-casa",
     "bare-complex-scalar-casa",
     "record-empty-float-vector-casa",
-    "record-zero-dimensional-casa"
+    "record-zero-dimensional-casa",
+    "record-sequence-edges-casa"
    ]
   },
   "getvalue": {
@@ -383,7 +385,8 @@
     "record-complex-array-casa",
     "bare-complex-scalar-casa",
     "record-empty-float-vector-casa",
-    "record-zero-dimensional-casa"
+    "record-zero-dimensional-casa",
+    "record-sequence-edges-casa"
    ]
   },
   "setformat": {
@@ -498,6 +501,36 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "quanta-discarded-numpy-scalar-sequences",
+   "record": "CASA drops NumPy scalars from mixed quantity-record sequences",
+   "inputs": "Quantity-record lists or tuples with unsigned NumPy integer scalars or NumPy booleans, or mixed boolean/numeric sequences with NumPy timedeltas or longlong scalars.",
+   "casa": "CASA 6.7.6.14 discards those members when it builds the record, sometimes returning a shortened scalar or vector.",
+   "ours": "Reject such quantity records before parsing the unit or running the quantity operation.",
+   "rationale": "Preserve input integrity instead of silently dropping numeric values.",
+   "impact": "Calls with a mixed sequence affected by CASA's data loss raise the malformed-record error.",
+   "evidence": [
+    "record-sequence-edges-casa",
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing CASA data-loss rule in AGENTS.md."
+  },
+  {
+   "id": "quanta-record-integer-overflow",
+   "record": "CASA masks quantity-record integer overflow with a wrapper error",
+   "inputs": "For example Python integers 2**63, [2**63], or their tuple and nested singleton forms in quantity records.",
+   "casa": "CASA 6.7.6.14 can return with a pending OverflowError, leading to a CPython SystemError.",
+   "ours": "Raise OverflowError directly for the out-of-range integer. In-range integers keep CASA's signed 32-bit narrowing.",
+   "rationale": "Expose the actual input conversion error to the caller.",
+   "impact": "Callers can handle the range failure as a Python OverflowError.",
+   "evidence": [
+    "record-sequence-edges-casa",
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule in AGENTS.md to correct CASA behavior that contradicts its evident intent."
   }
  ],
  "evidence": {
@@ -509,7 +542,8 @@
     "crates/casars-python/python/tests/data/casa_quanta_signatures.json",
     "crates/casars-python/python/tests/test_tools_quanta.py",
     "crates/casars-python/src/tools/quanta/surface.rs"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "map-casa": {
    "kind": "CASA-recorded values",
@@ -519,7 +553,8 @@
    "links": [
     "crates/casars-python/python/tests/test_tools_quanta.py",
     "crates/casars-python/src/tools/quanta/ops.rs"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "casa-values": {
    "kind": "CASA-probed values",
@@ -532,7 +567,8 @@
    "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool quanta (bg-mac-mini)",
-   "receipt": "resources/casa-compat/evidence/qa-on-casa-20261103.json"
+   "receipt": "resources/casa-compat/evidence/qa-on-casa-20261103.json",
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "bugs-record": {
    "kind": "Deviation record",
@@ -540,7 +576,8 @@
    "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
    "links": [
     "docs/CASA (C++) bugs.md"
-   ]
+   ],
+   "source_revision": "49c810c57210127fc4bc4f66289cadec90f49947"
   },
   "checkfreq-casa": {
    "kind": "CASA-recorded values",
@@ -781,6 +818,22 @@
     "crates/casars-python/python/tests/test_quanta_define.py"
    ],
    "source_revision": "19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee"
+  },
+  "record-sequence-edges-casa": {
+   "kind": "CASA-recorded quantity record values and errors",
+   "state": "passed",
+   "scope": "Unsigned NumPy sequence scalars, mixed bool/numeric record sequences, and signed 64-bit integer overflow.",
+   "result": "All 120 recorded quantity, getunit and add cases pass, including 51 cases with recorded CASA deviations. A separate shared MeasureHolder regression confirms its existing numeric values.",
+   "links": [
+    "crates/casars-python/python/tests/test_quanta_record_sequence_edges.py",
+    "crates/casars-python/python/tests/data/casa_quanta_record_sequence_edges.json",
+    "tools/casa-compat/quantity_record_sequence_edges_oracle.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "source_revision": "ea0ad2a5158f77c82e5ab3681ef63ab264fb9332",
+   "revision": "ea0ad2a5158f77c82e5ab3681ef63ab264fb9332",
+   "command": "python -m pytest -q crates/casars-python/python/tests/test_quanta_record_sequence_edges.py",
+   "receipt": "resources/casa-compat/evidence/qa-sequence-edges-20261119.json"
   }
  }
 }

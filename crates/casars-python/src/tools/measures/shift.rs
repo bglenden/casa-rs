@@ -16,7 +16,8 @@ fn angular_value(value: &Variant, name: &str) -> Result<f64, String> {
     let quantity = match value {
         Variant::Text(text) => Quantity::read(text).map_err(|_| empty())?,
         Variant::Texts(_) => return Err(empty()),
-        Variant::Record(record) => quantity_variant_record(record).map_err(|message| {
+        Variant::Record(record) => quantity_variant_record(record).map_err(|error| {
+            let message = error.to_string();
             if message.starts_with("Illegal Quantum record") {
                 empty()
             } else {

@@ -15,7 +15,7 @@ use casa_types::quanta::{Quantity, Unit};
 
 use super::value::CasaValue;
 use super::{
-    ConvertError, ConvertResult, Variant, VariantRecord, casacore_unit, quantity,
+    ConvertError, ConvertResult, RecordScalarKind, Variant, VariantRecord, casacore_unit, quantity,
     quantity_variant_record,
 };
 
@@ -105,47 +105,42 @@ pub(crate) fn quantum_holder(value: &Variant) -> ConvertResult<Option<Quantum>> 
 
 /// `QuantumHolder::fromRecord`: a value, or an array of values.
 fn record_quantum(record: &VariantRecord) -> ConvertResult<Quantum> {
-    let wrap = |error: String| {
-        if error.starts_with("Unit::check Illegal unit string ") || error.starts_with("Wrong") {
-            ConvertError::runtime(error)
-        } else {
-            ConvertError::runtime(format!("Error {error} in converting quantity"))
+    let unit = |name| casacore_unit(name).map_err(ConvertError::runtime);
+    if let Some(Variant::Text(name)) = record.get("unit") {
+        match &record.scalar_kind {
+            Some(RecordScalarKind::EmptyFloatVector) => {
+                return Ok(Quantum::vector(Vec::new(), unit(name)?));
+            }
+            Some(RecordScalarKind::MixedBoolFloat { shape, values }) => {
+                return Ok(Quantum {
+                    values: values.clone(),
+                    shape: Some(shape.clone()),
+                    unit: unit(name)?,
+                });
+            }
+            _ => {}
         }
-    };
-    if matches!(
-        record.scalar_kind,
-        Some(super::RecordScalarKind::EmptyFloatVector)
-    ) && let Some(Variant::Text(unit)) = record.get("unit")
-    {
-        return Ok(Quantum::vector(
-            Vec::new(),
-            casacore_unit(unit).map_err(wrap)?,
-        ));
     }
     if record.scalar_kind.is_some() {
         return quantity_variant_record(record)
             .map(|quantity| Quantum::scalar(&quantity))
-            .map_err(wrap);
+            .map_err(ConvertError::in_converting_quantity);
     }
     match (record.get("value"), record.get("unit")) {
-        (Some(Variant::Numbers(values)), Some(Variant::Text(unit))) => Ok(Quantum::vector(
-            values.clone(),
-            casacore_unit(unit).map_err(wrap)?,
-        )),
-        (Some(Variant::Array { shape, values }), Some(Variant::Text(unit))) if shape.is_empty() => {
-            Ok(Quantum::vector(
-                values.clone(),
-                casacore_unit(unit).map_err(wrap)?,
-            ))
+        (Some(Variant::Numbers(values)), Some(Variant::Text(name))) => {
+            Ok(Quantum::vector(values.clone(), unit(name)?))
         }
-        (Some(Variant::Array { shape, values }), Some(Variant::Text(unit))) => Ok(Quantum {
+        (Some(Variant::Array { shape, values }), Some(Variant::Text(name))) if shape.is_empty() => {
+            Ok(Quantum::vector(values.clone(), unit(name)?))
+        }
+        (Some(Variant::Array { shape, values }), Some(Variant::Text(name))) => Ok(Quantum {
             values: values.clone(),
             shape: Some(shape.clone()),
-            unit: casacore_unit(unit).map_err(wrap)?,
+            unit: unit(name)?,
         }),
         _ => quantity_variant_record(record)
             .map(|quantity| Quantum::scalar(&quantity))
-            .map_err(wrap),
+            .map_err(ConvertError::in_converting_quantity),
     }
 }
 
