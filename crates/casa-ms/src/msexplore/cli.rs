@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
@@ -164,19 +164,36 @@ const fn one() -> usize {
 /// default) and `plotms`.
 pub fn task_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
+    task_front_end_with_plot_payload(None)
+}
+
+/// Provide a caller-owned array payload for PlotMS figures.
+pub fn task_front_end_with_plot_payload(
+    payload: Option<PathBuf>,
+) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
     TaskFrontEnd::new_with_deferred_schema(
         "msexplore",
         msexplore_task_schema_bundle(),
         &["msexplore", "plotms"],
-        run_task,
+        move |task| run_task(task, payload.as_deref()),
     )
     .expect("the msexplore contract carries msexplore and plotms")
 }
 
 /// Run one resolved `msexplore` or `plotms` request. `msexplore` returns its
 /// summary, as CASA's `listobs` returns its record; `plotms` returns None.
-fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let outcome = run(options_from(task)?)?;
+fn run_task(task: &TaskInvocation<'_>, payload: Option<&Path>) -> Result<TaskSuccess, TaskFailure> {
+    if task.surface() == "plotms"
+        && let Some(path) = super::calibration::input(task)?
+    {
+        return super::calibration::run(task, &path, payload);
+    }
+    let options = if task.surface() == "plotms" {
+        options_from_plotms(task)?
+    } else {
+        options_from(task)?
+    };
+    let outcome = run(options)?;
     let success = if task.surface() == "plotms" {
         TaskSuccess::new(CasaValue::None, &outcome.result)?
     } else {
@@ -952,6 +969,161 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
     let plot_control_used = PLOT_CONTROLS.iter().any(|name| task.is_set(name));
     check_options(&options, plot_control_used).map_err(TaskFailure::validation)?;
     Ok(options)
+}
+
+/// Translate the CASA PlotMS spellings to the existing MS exploration request.
+fn options_from_plotms(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
+    let text = |name| {
+        task.text(name)
+            .map(|text| text.filter(|value| !value.is_empty()))
+    };
+    let plot_output = text("plotfile")?.map(PathBuf::from);
+    let export_format = text("expformat")?.or_else(|| {
+        plot_output
+            .as_deref()
+            .and_then(std::path::Path::extension)
+            .and_then(std::ffi::OsStr::to_str)
+            .map(str::to_owned)
+    });
+    let plot_format = export_format
+        .as_deref()
+        .map(MsExportFormat::parse)
+        .transpose()
+        .map_err(|_| TaskFailure::validation("MeasurementSet figure export is pending #1032"))?
+        .unwrap_or(MsExportFormat::Txt);
+    let x_axis = text("xaxis")?
+        .map_or(Ok(MsAxis::Time), |axis| {
+            MsAxis::parse(&axis.to_ascii_lowercase())
+        })
+        .map_err(TaskFailure::validation)?;
+    let mut ordinates = super::calibration::axis_names(task.value("yaxis"))
+        .map_err(TaskFailure::validation)?
+        .into_iter()
+        .map(|axis| MsAxis::parse(&axis.to_ascii_lowercase()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(TaskFailure::validation)?
+        .into_iter();
+    let y_axis = ordinates.next().unwrap_or(MsAxis::Amplitude);
+    let y_axis2 = ordinates.next();
+    if ordinates.next().is_some() {
+        return Err(TaskFailure::validation(
+            "more than two MeasurementSet ordinates are pending #1032",
+        ));
+    }
+    let averaging = task.flag("averagedata")?;
+    let average = |name| Ok::<_, TaskFailure>(averaging && task.flag(name)?);
+    let average_text = |name| if averaging { text(name) } else { Ok(None) };
+    let data_column = plotms_column(task.value("ydatacolumn"))?
+        .or(text("xdatacolumn")?)
+        .map_or(Ok(MsDataColumn::Data), |column| {
+            MsDataColumn::parse(&column)
+        })
+        .map_err(TaskFailure::validation)?;
+    let color_by = text("coloraxis")?
+        .map_or(Ok(MsColorAxis::None), |axis| {
+            MsColorAxis::parse(&axis.to_ascii_lowercase())
+        })
+        .map_err(TaskFailure::validation)?;
+    let correlation = text("correlation")?.or(text("polarization")?);
+    Ok(CliOptions {
+        ms_path: task.path("vis")?,
+        summary_format: MeasurementSetSummaryOutputFormat::Text,
+        summary_output: None,
+        overwrite: task.flag("overwrite")?,
+        selection: MsSelection {
+            selectdata: task.flag("selectdata")?,
+            field: text("field")?,
+            spw: text("spw")?,
+            timerange: text("timerange")?,
+            uvrange: text("uvrange")?,
+            antenna: text("antenna")?,
+            scan: text("scan")?,
+            correlation,
+            observation: text("observation")?,
+            array: text("array")?,
+            intent: text("intent")?,
+            feed: text("feed")?,
+            msselect: text("msselect")?,
+            ..MsSelection::default()
+        },
+        page_spec: None,
+        preset: None,
+        x_axis: Some(x_axis),
+        y_axis: Some(y_axis),
+        y_axis2,
+        data_column,
+        color_by,
+        avgchannel: average_text("avgchannel")?
+            .map(|value| number::<usize>(&value))
+            .transpose()
+            .map_err(TaskFailure::validation)?,
+        avgtime: average_text("avgtime")?
+            .map(|value| number::<f64>(&value))
+            .transpose()
+            .map_err(TaskFailure::validation)?,
+        avgscan: average("avgscan")?,
+        avgfield: average("avgfield")?,
+        avgbaseline: average("avgbaseline")?,
+        avgantenna: average("avgantenna")?,
+        avgspw: average("avgspw")?,
+        scalar: average("scalar")?,
+        freqframe: text("freqframe")?,
+        restfreq: text("restfreq")?,
+        veldef: task.required_text("veldef")?,
+        iteraxis: text("iteraxis")?
+            .map(|value| MsIterationAxis::parse(&value.to_ascii_lowercase()))
+            .transpose()
+            .map_err(TaskFailure::validation)?,
+        gridrows: count(task, "gridrows")?.max(1),
+        gridcols: count(task, "gridcols")?.max(1),
+        xselfscale: task.flag("xselfscale")?,
+        yselfscale: task.flag("yselfscale")?,
+        xsharedaxis: task.flag("xsharedaxis")?,
+        ysharedaxis: task.flag("ysharedaxis")?,
+        title: text("title")?,
+        xlabel: text("xlabel")?,
+        ylabel: text("ylabel")?,
+        symbol_size: task
+            .optional_number("symbolsize")?
+            .map(|value| value as u32),
+        showlegend: task.flag("showlegend")?,
+        legendposition: text("legendposition")?
+            .map_or(Ok(MsLegendPosition::UpperRight), |value| {
+                legend_position(&value)
+            })
+            .map_err(TaskFailure::validation)?,
+        showmajorgrid: task.flag("showmajorgrid")?,
+        showminorgrid: task.flag("showminorgrid")?,
+        headeritems: text("headeritems")?,
+        max_points: usize::MAX,
+        flag_action: None,
+        flag_xmin: None,
+        flag_xmax: None,
+        flag_ymin: None,
+        flag_ymax: None,
+        flag_plotindex: None,
+        flag_panel: None,
+        flag_extcorr: false,
+        flag_extchannel: false,
+        flag_selected: false,
+        flag_apply: false,
+        flag_output: None,
+        plot_output,
+        plot_format,
+    })
+}
+
+fn plotms_column(value: Option<&ParameterValue>) -> Result<Option<String>, TaskFailure> {
+    let columns = super::calibration::axis_names(value).map_err(TaskFailure::validation)?;
+    let first = columns.first().copied().filter(|name| !name.is_empty());
+    if let Some(first) = first
+        && columns.iter().any(|name| *name != first)
+    {
+        return Err(TaskFailure::validation(
+            "multiple MeasurementSet data columns are pending #1032",
+        ));
+    }
+    Ok(first.map(str::to_owned))
 }
 
 /// Refuse the combinations a plot or flag edit cannot take.

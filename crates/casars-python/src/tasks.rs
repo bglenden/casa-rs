@@ -286,7 +286,7 @@ pub(crate) fn task_outcome<'py>(
     Ok(view)
 }
 
-/// Decode the native simulation figures and check every array before Python
+/// Decode the native task figures and check every array before Python
 /// maps the caller-owned payload. Failed processes have no figures to render.
 #[pyfunction]
 pub(crate) fn task_plot_documents<'py>(
@@ -308,7 +308,11 @@ fn plot_documents(
     stdout: &str,
     payload_bytes: u64,
 ) -> Result<Vec<casa_ms::plot_document::PlotFigure>, String> {
-    if !matches!(surface_id, "simobserve" | "simanalyze" | "simalma") || returncode != 0 {
+    if !matches!(
+        surface_id,
+        "simobserve" | "simanalyze" | "simalma" | "plotms"
+    ) || returncode != 0
+    {
         return Ok(Vec::new());
     }
     let TaskOutcome::Succeeded {
@@ -334,12 +338,13 @@ fn plot_documents(
         artifacts: Vec<casars_simulation::SimobserveArtifact>,
     }
     let reply: PlotReply =
-        serde_json::from_value(result).map_err(|e| format!("simulation plot reply: {e}"))?;
+        serde_json::from_value(result).map_err(|e| format!("{surface_id} plot reply: {e}"))?;
     for plot in &reply.plots {
         plot.document
             .validate_payload(payload_bytes)
             .map_err(|e| e.to_string())?;
-        if let Some(path) = &plot.output_file
+        if surface_id != "plotms"
+            && let Some(path) = &plot.output_file
             && reply
                 .artifacts
                 .iter()

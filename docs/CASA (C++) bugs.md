@@ -7062,3 +7062,11 @@ splits at 72 characters on the first card and `>` plus 71 characters on each
 continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
 all 17 original history entries intact (#977).
+
+## PlotMS disabling selection calls the selection setter with a missing argument
+
+The installed CASA PlotMS wrapper raises `Exception("updateImmediately must
+be a boolean")` for `selectdata=False`. The wrapper's no-selection call omits
+a selector argument before the update flag. casa-rs applies the requested
+unfiltered selection and leaves the caller's selector expressions inactive
+(#1526).

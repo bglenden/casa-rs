@@ -43,7 +43,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 7 | 0 | 0 |
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 38 | 0 | 0 |
-| plotms | plotms | pending | 102 | pending | | | | |
+| plotms | plotms | yes | 102 | 102 | 0 | 17 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
@@ -1005,7 +1005,13 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA source: `casaplotms/plotms.py`, 102 parameters
 - Implementation: `casaplotms/private/task_plotms.py`, `plotms` (line 36): 0 return statements, 27 raise statements
 - Called with its defaults in an empty directory, CASA raises `RuntimeError`: ERROR: DISPLAY environment variable is not set! Cannot run plotms.
-- casa-rs: plotms waits for its own decision (#931): CASA's is the casaplotms GUI
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #1032: `rowindex`, `colindex`, `plotindex`, `xframe`, `xinterp`, `yframe`, `yinterp`, `phasecenter`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
+- Accepted only at CASA's default until #1526: `callib`, `showatm`, `showtsky`, `showimage`, `colorizeoverlay`
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 102, in CASA's order: yes
+- Defaults that differ: none
 
 ### rerefant
 

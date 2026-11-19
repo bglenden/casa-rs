@@ -219,6 +219,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
         _validate_required_path(values, "vis", arguments["vis"])
+    if name == "plotms":
+        return _call_plotms(values, arguments)
     if name == "calstat":
         _validate_required_path(values, "caltable", arguments["caltable"], search_data=True)
         for parameter in ("axis", "datacolumn"):
@@ -284,6 +286,41 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
+
+
+def _call_plotms(values, arguments):
+    paths = {name: arguments[name].strip() for name in ("vis", "caltable")
+             if isinstance(arguments[name], str) and arguments[name].strip()}
+    if len(paths) > 1:
+        raise RuntimeError("Cannot set both vis and caltable parameters")
+    if not paths and arguments["plotfile"]:
+        raise RuntimeError("vis and caltable not set, cannot export empty plot")
+    for name, path in paths.items():
+        absolute = os.path.abspath(path)
+        if not os.path.exists(absolute):
+            raise RuntimeError(f"Input file not found:\n{absolute}")
+        values[name] = absolute
+    index = arguments["plotindex"]
+    if isinstance(index, int) and index < 0:
+        raise ValueError("a negative plotindex is not valid.")
+    if isinstance(index, int) and index and arguments["clearplots"]:
+        raise ValueError("a nonzero plotindex is not valid when clearing plots.")
+    if arguments["correlation"] and arguments["polarization"]:
+        raise RuntimeError("Cannot select both correlation and polarization.")
+    if arguments["averagedata"]:
+        if arguments["avgantenna"] and arguments["avgbaseline"]:
+            raise ValueError("averaging over baselines is mutually exclusive with per-antenna averaging.")
+        if arguments["avgchannel"] and float(arguments["avgchannel"]) < 0:
+            raise ValueError("cannot average negative number of channels")
+        try:
+            if arguments["avgtime"] and float(arguments["avgtime"]) < 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError("avgtime value must be numerical string in seconds (no units)") from None
+    for name in ("field", "spw"):
+        if name in values and isinstance(values[name], (int, float)):
+            values[name] = str(values[name])
+    return run("plotms", **values).value
 
 
 def _call_initweights(values: dict[str, Any]) -> Any:
@@ -551,7 +588,12 @@ def _require_plotting() -> None:
 
 
 def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCompletion:
-    if task in {"simobserve", "simanalyze", "simalma"} and resolved.get("graphics") in {"file", "screen", "both"}:
+    use_payload = task in {"simobserve", "simanalyze", "simalma"} and resolved.get("graphics") in {"file", "screen", "both"}
+    if task == "plotms":
+        path = resolved.get("plotfile") or ""
+        export = resolved.get("expformat") or Path(path).suffix.lstrip(".")
+        use_payload = resolved.get("showgui") or (bool(path) and export.lower() != "txt")
+    if use_payload:
         # Import the renderer before the task creates scientific products.
         _require_plotting()
 
@@ -567,7 +609,7 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
     executable = _task_executable(task)
     command = (executable, *invocation.args)
     environment = dict(os.environ)
-    if task in {"simobserve", "simanalyze", "simalma"}:
+    if task in {"simobserve", "simanalyze", "simalma", "plotms"}:
         environment.pop("CASARS_PLOT_PAYLOAD", None)
     if payload is not None:
         environment["CASARS_PLOT_PAYLOAD"] = str(payload)
@@ -594,7 +636,7 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
     if payload is not None:
         try:
             plots = _native().task_plot_documents(task, process.returncode, stdout, payload.stat().st_size)
-            _render_task_plots(plots, payload, workspace)
+            _render_task_plots(plots, payload, workspace, resolved if task == "plotms" else None)
         except Exception as error:
             raise TaskResultError(f"{task} plot rendering failed: {error}") from error
 
@@ -636,7 +678,7 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
     return completion
 
 
-def _render_task_plots(plots, payload: Path, workspace: Path) -> None:
+def _render_task_plots(plots, payload: Path, workspace: Path, plotms=None) -> None:
     """Draw validated native artists, then release the temporary array file."""
 
     if not plots:
@@ -649,14 +691,22 @@ def _render_task_plots(plots, payload: Path, workspace: Path) -> None:
     # NumPy owns the mapping for as long as any view needs it, including
     # views retained in an artist's exception traceback. Explicit mmap.close
     # could invalidate those arrays while their Python objects are still live.
-    mapped = np.memmap(payload, dtype="u1", mode="r")
+    mapped = np.memmap(payload, dtype="u1", mode="r") if payload.stat().st_size else None
     try:
         for plot in plots:
             figure, _ = render_document(plot["document"], payload=mapped)
             completed = False
             try:
+                if plotms is not None:
+                    from ._plotms_plot import configure
+
+                    configure(figure, plot["document"], plotms)
                 if plot["output_file"] is not None:
-                    _save_figure(figure, workspace / plot["output_file"])
+                    output = workspace / plot["output_file"]
+                    if plotms is None:
+                        _save_figure(figure, output)
+                    else:
+                        _save_plotms_figure(figure, output, plotms)
                 if plot["show"]:
                     figure.show()
                 completed = True
@@ -667,14 +717,30 @@ def _render_task_plots(plots, payload: Path, workspace: Path) -> None:
         del mapped
 
 
-def _save_figure(figure, destination: Path) -> None:
-    """Publish a complete PNG, preserving the previous figure on failure."""
+def _save_plotms_figure(figure, destination: Path, options) -> None:
+    format_ = options.get("expformat") or destination.suffix.lstrip(".") or "png"
+    dpi = options.get("dpi")
+    if dpi <= 0:
+        dpi = 300 if options.get("highres") else figure.dpi
+    width, height = options.get("width"), options.get("height")
+    if width > 0 or height > 0:
+        current_width, current_height = figure.get_size_inches()
+        figure.set_size_inches(width / dpi if width > 0 else current_width,
+                               height / dpi if height > 0 else current_height)
+    _save_figure(figure, destination, replace_existing=options.get("overwrite"), format=format_.lower(), dpi=dpi)
 
-    with tempfile.NamedTemporaryFile(prefix=f".{destination.name}.", suffix=".png", dir=destination.parent, delete=False) as staged:
+
+def _save_figure(figure, destination: Path, *, replace_existing=True, **options) -> None:
+    """Publish a complete figure, preserving the previous file on failure."""
+
+    with tempfile.NamedTemporaryFile(prefix=f".{destination.name}.", suffix=destination.suffix or ".png", dir=destination.parent, delete=False) as staged:
         path = Path(staged.name)
     try:
-        figure.savefig(path)
-        path.replace(destination)
+        figure.savefig(path, **options)
+        if replace_existing:
+            path.replace(destination)
+        else:
+            os.link(path, destination)
     finally:
         path.unlink(missing_ok=True)
 

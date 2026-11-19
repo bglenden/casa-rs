@@ -13413,6 +13413,2033 @@
         ]
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.vis",
+      "semantic_revision": 1,
+      "casa_name": "vis",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "Input MS or CalTable (blank for none)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.gridrows",
+      "semantic_revision": 1,
+      "casa_name": "gridrows",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Number of subplot rows",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.gridcols",
+      "semantic_revision": 1,
+      "casa_name": "gridcols",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Number of subplot columns",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.rowindex",
+      "semantic_revision": 1,
+      "casa_name": "rowindex",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Row location of the plot (0-based)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.colindex",
+      "semantic_revision": 1,
+      "casa_name": "colindex",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Column location of the plot (0-based)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.plotindex",
+      "semantic_revision": 1,
+      "casa_name": "plotindex",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Index to address a subplot (0-based)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.xaxis",
+      "semantic_revision": 1,
+      "casa_name": "xaxis",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "parangle",
+          "baseline",
+          "delay",
+          "antenna position",
+          "swp",
+          "u",
+          "tec",
+          "ant-parang",
+          "gamp",
+          "Antenna1",
+          "UVdist",
+          "WeightSpectrum",
+          "Baseline",
+          "flag",
+          "Real",
+          "switchedpower",
+          "timeint",
+          "WtSp",
+          "Ant-Elevation",
+          "GainReal",
+          "time_interval",
+          "uvdist_l",
+          "GainAmp",
+          "ant1",
+          "flagrow",
+          "Wt",
+          "Velocity",
+          "opac",
+          "Feed2",
+          "corr",
+          "imaginary",
+          "gainamp",
+          "Vwave",
+          "wwave",
+          "Frequency",
+          "observation",
+          "feed1",
+          "ant-azimuth",
+          "rate",
+          "Elevation",
+          "Intent",
+          "Row",
+          "swpower",
+          "antpos",
+          "ant-elevation",
+          "antenna",
+          "v",
+          "V",
+          "interval",
+          "sigmaspectrum",
+          "DelayRate",
+          "tsys",
+          "gainphase",
+          "Ant-Parangle",
+          "imag",
+          "Radial Velocity",
+          "UVwave",
+          "Observation",
+          "Poln",
+          "W",
+          "timeinterval",
+          "Channel",
+          "snr",
+          "SNR",
+          "frequency",
+          "Interval",
+          "uvdistl",
+          "disp",
+          "Imag",
+          "dispdelay",
+          "Feed1",
+          "rho",
+          "Ant-RA",
+          "delayrate",
+          "spgain",
+          "Antenna",
+          "Uwave",
+          "SigmaSpectrum",
+          "Azimuth",
+          "Scan",
+          "Tsys",
+          "polarization",
+          "intent",
+          "phase",
+          "amp",
+          "ant-parangle",
+          "SigmaSp",
+          "freq",
+          "wt*amp",
+          "channel",
+          "uwave",
+          "Flag",
+          "correlation",
+          "FlagRow",
+          "TEC",
+          "SwPower",
+          "GainPhase",
+          "GainImag",
+          "ant-parallacticangle",
+          "real",
+          "Time",
+          "weight",
+          "antenna2",
+          "gainimag",
+          "gimag",
+          "Antenna2",
+          "spw",
+          "gphase",
+          "Opac",
+          "parang",
+          "Amp",
+          "ant-ra",
+          "Sigma",
+          "amplitude",
+          "Ant-DEC",
+          "HourAngle",
+          "U",
+          "row",
+          "Wt*Amp",
+          "gainreal",
+          "chan",
+          "Field",
+          "DispDelay",
+          "hourang",
+          "vwave",
+          "radialvelocity",
+          "sigma",
+          "Antenna Position",
+          "Delay",
+          "uvwave",
+          "vel",
+          "uvdist",
+          "velocity",
+          "hourangle",
+          "poln",
+          "ant2",
+          "Phase",
+          "azimuth",
+          "Corr",
+          "parallacticangle",
+          "weightspectrum",
+          "Ant-Azimuth",
+          "wtsp",
+          "",
+          "Distance",
+          "opacity",
+          "antenna1",
+          "feed2",
+          "sigmasp",
+          "time",
+          "w",
+          "wt",
+          "field",
+          "greal",
+          "elevation",
+          "del",
+          "ant",
+          "ant-dec",
+          "Spw",
+          "scan",
+          "Wwave",
+          "ParAngle"
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Plot x-axis (blank for default/current)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.xdatacolumn",
+      "semantic_revision": 1,
+      "casa_name": "xdatacolumn",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "model",
+          "corrected",
+          "data-model_vector",
+          "data-model",
+          "corrected/model_vector",
+          "residual",
+          "corrected-model",
+          "data/model",
+          "data/model_scalar",
+          "float",
+          "corrected/model_scalar",
+          "corrected/model",
+          "",
+          "corrected-model_vector",
+          "data-model_scalar",
+          "corrected-model_scalar",
+          "data",
+          "data/model_vector"
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.xframe",
+      "semantic_revision": 1,
+      "casa_name": "xframe",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "icrs",
+          "azelgeo",
+          "b1950",
+          "galactic",
+          "",
+          "j2000"
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Coordinate frame to use for x-axis",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.xinterp",
+      "semantic_revision": 1,
+      "casa_name": "xinterp",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "",
+          "nearest",
+          "cubic spline",
+          "spline"
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Interpolation method for x-axis",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.yaxis",
+      "semantic_revision": 1,
+      "casa_name": "yaxis",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Plot y-axis (blank for default/current)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.ydatacolumn",
+      "semantic_revision": 1,
+      "casa_name": "ydatacolumn",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.yframe",
+      "semantic_revision": 1,
+      "casa_name": "yframe",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Coordinate frame to use for y-axis",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.yinterp",
+      "semantic_revision": 1,
+      "casa_name": "yinterp",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Interpolation method for y-axis",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.yaxislocation",
+      "semantic_revision": 1,
+      "casa_name": "yaxislocation",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Location of the y-axis (blank for default: left)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.selectdata",
+      "semantic_revision": 1,
+      "casa_name": "selectdata",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Enable data selection parameters",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.timerange",
+      "semantic_revision": 1,
+      "casa_name": "timerange",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Time range (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.uvrange",
+      "semantic_revision": 1,
+      "casa_name": "uvrange",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "UV range (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.antenna",
+      "semantic_revision": 1,
+      "casa_name": "antenna",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Baseline/antenna names or ids (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.scan",
+      "semantic_revision": 1,
+      "casa_name": "scan",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Scan numbers (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.correlation",
+      "semantic_revision": 1,
+      "casa_name": "correlation",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Correlations/polarizations (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.polarization",
+      "semantic_revision": 1,
+      "casa_name": "polarization",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Polarizations (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.antpos",
+      "semantic_revision": 1,
+      "casa_name": "antpos",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Antenna positions (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.array",
+      "semantic_revision": 1,
+      "casa_name": "array",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "(Sub)array numbers (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.observation",
+      "semantic_revision": 1,
+      "casa_name": "observation",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Observation IDs (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.intent",
+      "semantic_revision": 1,
+      "casa_name": "intent",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Observing intent (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.feed",
+      "semantic_revision": 1,
+      "casa_name": "feed",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Feed numbers (blank for all)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.msselect",
+      "semantic_revision": 1,
+      "casa_name": "msselect",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "MSSelection TaQL string (blank for none)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.averagedata",
+      "semantic_revision": 1,
+      "casa_name": "averagedata",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Enable data averaging parameters",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.avgchannel",
+      "semantic_revision": 1,
+      "casa_name": "avgchannel",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Average over channel (blank = False, otherwise value in channels)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.avgtime",
+      "semantic_revision": 1,
+      "casa_name": "avgtime",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Average over time (blank = False, otherwise value in seconds)",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.transform",
+      "semantic_revision": 1,
+      "casa_name": "transform",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Enable data transformations",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.freqframe",
+      "semantic_revision": 1,
+      "casa_name": "freqframe",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "LSRK",
+          "CMB",
+          "GALACTO",
+          "GEO",
+          "TOPO",
+          "LSRD",
+          "LGROUP",
+          "BARY",
+          ""
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "The frame in which to render frequency and velocity axes",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.restfreq",
+      "semantic_revision": 1,
+      "casa_name": "restfreq",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Rest frequency to use for velocity conversions",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.veldef",
+      "semantic_revision": 1,
+      "casa_name": "veldef",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "RADIO",
+          "OPTICAL",
+          "TRUE"
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "The definition in which to render velocity",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.phasecenter",
+      "semantic_revision": 1,
+      "casa_name": "phasecenter",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "The direction coordinates of the desired center",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.extendflag",
+      "semantic_revision": 1,
+      "casa_name": "extendflag",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Extend flagging to other data points not plotted",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.extcorr",
+      "semantic_revision": 1,
+      "casa_name": "extcorr",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Extend flags based on correlation",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.extchannel",
+      "semantic_revision": 1,
+      "casa_name": "extchannel",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Extend flags based on channel",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.iteraxis",
+      "semantic_revision": 1,
+      "casa_name": "iteraxis",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "baseline",
+          "Baseline",
+          "corr",
+          "antpos",
+          "antenna",
+          "Poln",
+          "AntPos",
+          "Antenna",
+          "Scan",
+          "polarization",
+          "correlation",
+          "Time",
+          "spw",
+          "Field",
+          "poln",
+          "Corr",
+          "",
+          "time",
+          "field",
+          "Spw",
+          "scan"
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "The axis over which to iterate",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.customsymbol",
+      "semantic_revision": 1,
+      "casa_name": "customsymbol",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Enable custom symbol(s) for unflagged points",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.symbolshape",
+      "semantic_revision": 1,
+      "casa_name": "symbolshape",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Shape of plotted unflagged symbols",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.symbolsize",
+      "semantic_revision": 1,
+      "casa_name": "symbolsize",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Size of plotted unflagged symbols",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.symbolcolor",
+      "semantic_revision": 1,
+      "casa_name": "symbolcolor",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Color (name or hex code) of plotted unflagged symbols",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.symbolfill",
+      "semantic_revision": 1,
+      "casa_name": "symbolfill",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Fill type of plotted unflagged symbols",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.symboloutline",
+      "semantic_revision": 1,
+      "casa_name": "symboloutline",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Outline plotted unflagged symbols",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.coloraxis",
+      "semantic_revision": 1,
+      "casa_name": "coloraxis",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "baseline",
+          "Antenna1",
+          "Baseline",
+          "ant1",
+          "corr",
+          "observation",
+          "Intent",
+          "antpos",
+          "Observation",
+          "Poln",
+          "Channel",
+          "AntPos",
+          "Scan",
+          "polarization",
+          "intent",
+          "channel",
+          "correlation",
+          "Time",
+          "antenna2",
+          "Antenna2",
+          "spw",
+          "chan",
+          "Field",
+          "poln",
+          "ant2",
+          "Corr",
+          "",
+          "antenna1",
+          "time",
+          "field",
+          "Spw",
+          "scan"
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Selects data axis for colorizing",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.customflaggedsymbol",
+      "semantic_revision": 1,
+      "casa_name": "customflaggedsymbol",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Enable custom symbol(s) for flagged points",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.flaggedsymbolshape",
+      "semantic_revision": 1,
+      "casa_name": "flaggedsymbolshape",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Shape of plotted flagged symbols",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.flaggedsymbolsize",
+      "semantic_revision": 1,
+      "casa_name": "flaggedsymbolsize",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Size of plotted flagged symbols",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.flaggedsymbolcolor",
+      "semantic_revision": 1,
+      "casa_name": "flaggedsymbolcolor",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Color (name or hex code) of plotted flagged symbols",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.flaggedsymbolfill",
+      "semantic_revision": 1,
+      "casa_name": "flaggedsymbolfill",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Fill type of plotted flagged symbols",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.flaggedsymboloutline",
+      "semantic_revision": 1,
+      "casa_name": "flaggedsymboloutline",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Outline plotted flagged symbols",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.xconnector",
+      "semantic_revision": 1,
+      "casa_name": "xconnector",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "",
+          "none",
+          "line",
+          "step"
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Set connector for data points (blank=\"none\"; \"line\",\"step\")",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.timeconnector",
+      "semantic_revision": 1,
+      "casa_name": "timeconnector",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Connect points by time rather than x-axis",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.plotrange",
+      "semantic_revision": 1,
+      "casa_name": "plotrange",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "float"
+        },
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Plot axes ranges: [xmin,xmax,ymin,ymax]",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.title",
+      "semantic_revision": 1,
+      "casa_name": "title",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Title at top of plot",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.titlefont",
+      "semantic_revision": 1,
+      "casa_name": "titlefont",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Font size for plot title",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.xlabel",
+      "semantic_revision": 1,
+      "casa_name": "xlabel",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Text for horizontal x-axis. Blank for default.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.xaxisfont",
+      "semantic_revision": 1,
+      "casa_name": "xaxisfont",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Font size for x-axis label",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.ylabel",
+      "semantic_revision": 1,
+      "casa_name": "ylabel",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Text for vertical y-axis. Blank for default.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.yaxisfont",
+      "semantic_revision": 1,
+      "casa_name": "yaxisfont",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Font size for y-axis label",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.majorwidth",
+      "semantic_revision": 1,
+      "casa_name": "majorwidth",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Line width in pixels of major grid lines",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.majorstyle",
+      "semantic_revision": 1,
+      "casa_name": "majorstyle",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "none",
+          "dot",
+          "solid",
+          "dash",
+          ""
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Major grid line style",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.majorcolor",
+      "semantic_revision": 1,
+      "casa_name": "majorcolor",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Color (name or hex code) of major grid lines",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.minorwidth",
+      "semantic_revision": 1,
+      "casa_name": "minorwidth",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Line width in pixels of minor grid lines",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.minorstyle",
+      "semantic_revision": 1,
+      "casa_name": "minorstyle",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "none",
+          "dot",
+          "solid",
+          "dash",
+          ""
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Minor grid line style",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.minorcolor",
+      "semantic_revision": 1,
+      "casa_name": "minorcolor",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Color (name or hex code) of minor grid lines",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.legendposition",
+      "semantic_revision": 1,
+      "casa_name": "legendposition",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "exteriorRight",
+          "lowerRight",
+          "exteriorTop",
+          "exteriorLeft",
+          "lowerLeft",
+          "upperRight",
+          "upperLeft",
+          "exteriorBottom",
+          ""
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Legend position, default upperRight.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.plotfile",
+      "semantic_revision": 1,
+      "casa_name": "plotfile",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "file"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Name of plot file to save automatically",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.expformat",
+      "semantic_revision": 1,
+      "casa_name": "expformat",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "pdf",
+          "jpg",
+          "png",
+          "txt",
+          "ps",
+          ""
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Export format type. If not provided, plotfile extension will be used to determine type.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.verbose",
+      "semantic_revision": 1,
+      "casa_name": "verbose",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Include metadata in text export",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.exprange",
+      "semantic_revision": 1,
+      "casa_name": "exprange",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "",
+          "current",
+          "all"
+        ]
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.highres",
+      "semantic_revision": 1,
+      "casa_name": "highres",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Use high resolution",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.dpi",
+      "semantic_revision": 1,
+      "casa_name": "dpi",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "DPI of exported plot",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.width",
+      "semantic_revision": 1,
+      "casa_name": "width",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Width in pixels of exported plot",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.height",
+      "semantic_revision": 1,
+      "casa_name": "height",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "boolean_as_integer"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Height in pixels of exported plot",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.showgui",
+      "semantic_revision": 1,
+      "casa_name": "showgui",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Show GUI",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.clearplots",
+      "semantic_revision": 1,
+      "casa_name": "clearplots",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Remove any existing plots so new ones can replace them.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.callib",
+      "semantic_revision": 1,
+      "casa_name": "callib",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Calibration library string or filename for on-the-fly calibration.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.headeritems",
+      "semantic_revision": 1,
+      "casa_name": "headeritems",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "number_as_text"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Comma-separated list of pre-defined page header items.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.showatm",
+      "semantic_revision": 1,
+      "casa_name": "showatm",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Compute and overlay the atmospheric transmission curve",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.showtsky",
+      "semantic_revision": 1,
+      "casa_name": "showtsky",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Compute and overlay the sky temperature curve",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.showimage",
+      "semantic_revision": 1,
+      "casa_name": "showimage",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Compute and overlay the image sideband curve",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "plotms.colorizeoverlay",
+      "semantic_revision": 1,
+      "casa_name": "colorizeoverlay",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Colorize the curve overlay using coloraxis",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

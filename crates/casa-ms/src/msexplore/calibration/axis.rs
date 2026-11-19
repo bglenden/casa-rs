@@ -110,6 +110,20 @@ impl Axis {
         }
     }
 
+    pub(super) fn unit(self) -> &'static str {
+        match self {
+            Self::Frequency => "GHz",
+            Self::Time => "MJD seconds",
+            Self::Interval => "s",
+            Self::Phase | Self::GainPhase => "deg",
+            Self::Delay => "ns",
+            Self::Rate => "ps/s",
+            Self::SystemTemperature => "K",
+            Self::AntennaPosition => "m",
+            _ => "",
+        }
+    }
+
     pub(super) fn value(self, metadata: &SampleCoordinates, value: Complex64, snr: f64) -> f64 {
         use Axis::*;
         match self {
@@ -129,8 +143,8 @@ impl Axis {
             Phase | GainPhase => value.arg().to_degrees(),
             Imaginary | GainImaginary => value.im,
             SignalToNoise => snr,
-            Real | GainReal | Delay | Rate | DispersiveDelay | SystemTemperature
-                | Opacity | SwitchedPower | Tec | AntennaPosition => value.re,
+            Real | GainReal | Delay | Rate | DispersiveDelay | SystemTemperature | Opacity
+            | SwitchedPower | Tec | AntennaPosition => value.re,
         }
     }
 }
@@ -139,7 +153,7 @@ impl Axis {
 pub(super) struct SampleCoordinates {
     pub(super) row: usize,
     pub(super) channel: usize,
-    pub(super) receptor: usize,
+    pub(super) receptor: i32,
     pub(super) frequency_ghz: f64,
     pub(super) time: f64,
     pub(super) interval: f64,
