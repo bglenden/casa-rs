@@ -693,13 +693,19 @@ pub(crate) fn spectral_window_path(path: &Path) -> Result<Option<PathBuf>, Apply
             reason: error.to_string(),
         }
     })?;
+    let owner = crate::paths::subtable_owner(&table, path).map_err(|error| {
+        ApplyExecutionError::UnsupportedCalibrationTable {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        }
+    })?;
     Ok(table
         .keywords()
         .get("SPECTRAL_WINDOW")
         .and_then(casa_types::Value::as_table_ref)
-        .map(|stored| casa_tables::add_directory(stored, path))
+        .map(|stored| casa_tables::add_directory(stored, &owner))
         .or_else(|| {
-            let child = path.join("SPECTRAL_WINDOW");
+            let child = owner.join("SPECTRAL_WINDOW");
             child.is_dir().then_some(child)
         }))
 }
