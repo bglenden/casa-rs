@@ -197,27 +197,32 @@ pub fn update_calibration_table(path: &Path) -> Result<(), String> {
     }
     drop(table);
     stage_calibration_table_edit(path, path, |table, stage| {
-        if !has_observation_column(table) {
-            table
-                .add_column(
-                    ColumnSchema::scalar(COL_OBSERVATION_ID, PrimitiveType::Int32),
-                    Some(Value::Scalar(ScalarValue::Int32(0))),
-                )
-                .map_err(error_text)?;
-        }
-        if table.keywords().get("OBSERVATION").is_none() {
-            let observation = stage.join("OBSERVATION");
-            if observation.exists() {
-                return Err("the table already contains an unlinked OBSERVATION subtable".into());
-            }
-            write_generic_observation(&observation)?;
-            table.keywords_mut().upsert(
-                "OBSERVATION",
-                Value::table_ref(casa_tables::strip_directory(&observation, stage)),
-            );
-        }
+        repair_observation_metadata(table, stage)?;
         table.save(TableOptions::new(stage)).map_err(error_text)
     })
+}
+
+pub(crate) fn repair_observation_metadata(table: &mut Table, stage: &Path) -> Result<(), String> {
+    if !has_observation_column(table) {
+        table
+            .add_column(
+                ColumnSchema::scalar(COL_OBSERVATION_ID, PrimitiveType::Int32),
+                Some(Value::Scalar(ScalarValue::Int32(0))),
+            )
+            .map_err(error_text)?;
+    }
+    if table.keywords().get("OBSERVATION").is_none() {
+        let observation = stage.join("OBSERVATION");
+        if observation.exists() {
+            return Err("the table already contains an unlinked OBSERVATION subtable".into());
+        }
+        write_generic_observation(&observation)?;
+        table.keywords_mut().upsert(
+            "OBSERVATION",
+            Value::table_ref(casa_tables::strip_directory(&observation, stage)),
+        );
+    }
+    Ok(())
 }
 
 fn has_observation_column(table: &Table) -> bool {

@@ -220,6 +220,44 @@ def accumulate(root, driver, vis, gains, solved):
     cb.close()
     assert not refused.exists()
 
+    legacy_casa, legacy_native = (root/f'{engine}-legacy-source.cal' for engine in ('casa', 'native'))
+    for legacy in (legacy_casa, legacy_native):
+        copy_ms(gains, legacy)
+        with opened(legacy, True) as t:
+            t.removecols('OBSERVATION_ID')
+            t.removekeyword('OBSERVATION')
+        shutil.rmtree(legacy/'OBSERVATION')
+    actual, want = root/'native-legacy-accum.cal', root/'casa-legacy-accum.cal'
+    cb = tool(vis, old=True)
+    assert cb.accumulate(str(legacy_casa), str(gains), str(want))
+    cb.close()
+    run_native(driver, vis, legacy_native, gains, actual)
+    compare_tables(actual, want)
+    with opened(legacy_native) as t:
+        assert 'OBSERVATION_ID' not in t.colnames() and 'OBSERVATION' not in t.getkeywords()
+    assert not (legacy_native/'OBSERVATION').exists()
+
+    simultaneous = root/'simultaneous-fields.cal'
+    copy_ms(gains, simultaneous)
+    with opened(simultaneous, True) as t:
+        t.putcol('FIELD_ID', (t.getcol('ANTENNA1') % 2).astype(np.int32))
+    initial = columns(simultaneous)
+    for field_id, field in enumerate(('FLUX', 'PHASE')):
+        actual = root/f'native-simultaneous-{field}.cal'
+        want = root/f'casa-simultaneous-{field}.cal'
+        run_native(driver, vis, simultaneous, gains, actual, field=field)
+        cb = tool(vis, old=True)
+        assert cb.accumulate(str(simultaneous), str(gains), str(want), field)
+        cb.close()
+        native, casa_result = columns(actual), columns(want)
+        mask = np.broadcast_to(initial['FIELD_ID'] == field_id, initial['FLAG'].shape)
+        changed = mask & ~initial['FLAG']
+        expected = initial['CPARAM'].copy()
+        expected[changed] **= 2
+        np.testing.assert_array_equal(native['FLAG'], initial['FLAG'])
+        np.testing.assert_allclose(native['CPARAM'], expected, rtol=3e-7, atol=2e-7)
+        assert np.max(np.abs(casa_result['CPARAM'] - expected)) > 0.1
+
     scalar = root/'scalar.cal'
     reference_fixture(vis, scalar, 'T Jones', width=1)
     for name, table in [('gain', gains), ('scalar', scalar)]:
@@ -339,7 +377,7 @@ def accumulate(root, driver, vis, gains, solved):
     from casars import tasks as native
     apply_round_trip(root, native, vis, 'gain')
     bandpass_oracle(root, driver, vis)
-    print('29 paired accumulation case groups and four downstream applications', flush=True)
+    print('32 accumulation case groups and four downstream applications', flush=True)
 
 
 def main():

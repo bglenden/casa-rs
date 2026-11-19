@@ -18,7 +18,7 @@ use crate::lookup::{ComplexSolution, TimeQuery, spectral_window_path};
 use crate::lookup_frequency::{relative_axis, relative_axis_at_center};
 use crate::solution_edit::{edit_calibration_table, error_text, update_spectral_window_flags};
 use crate::solve::grouping::collect_selected_rows;
-use crate::table_maintenance::prepare_empty_calibration_table;
+use crate::table_maintenance::{prepare_empty_calibration_table, repair_observation_metadata};
 use crate::writer::SingleChannelFrequency;
 use crate::{
     ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyInterpolationMode,
@@ -148,6 +148,7 @@ pub fn accumulate_calibration(
             if table.info().sub_type != subtype {
                 return Err("cumulative and incremental calibration table types differ".into());
             }
+            repair_observation_metadata(table, stage)?;
             increment.apply(table, stage)
         });
     }
@@ -195,15 +196,16 @@ impl Increment<'_> {
         for row in 0..table.row_count() {
             let window = read_i32(table, row, COL_SPECTRAL_WINDOW_ID)?;
             let time = read_time(table, row)?;
+            let field = read_i32(table, row, COL_FIELD_ID)?;
             groups
-                .entry((window, time.to_bits()))
+                .entry((window, time.to_bits(), field))
                 .or_default()
                 .push(row);
         }
         let output_frequencies = table_frequencies(&path.join("SPECTRAL_WINDOW"))?;
         let selected = groups
             .keys()
-            .map(|&(window, _)| window)
+            .map(|&(window, _, _)| window)
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
@@ -217,8 +219,7 @@ impl Increment<'_> {
         .into_iter()
         .map(|mapping| (mapping.data_spw_id, mapping.calibration_spw_id))
         .collect::<BTreeMap<_, _>>();
-        for ((window, time), rows) in groups {
-            let field = read_i32(table, rows[0], COL_FIELD_ID)?;
+        for ((window, time, field), rows) in groups {
             if !self.fields.is_empty() && self.fields.binary_search(&field).is_err() {
                 continue;
             }

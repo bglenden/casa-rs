@@ -6980,3 +6980,15 @@ statistical weights to the requested rows in one call. Unselected rows
 retain the spectrum obtained by expanding their original scalar values.
 The paired fixture compares this result with CASA's documented two-call
 sequence and checks unselected rows (#1524).
+
+## Selecting a field in simultaneous calibration rows modifies other fields
+
+The old CASA 6.7.6.14 accumulation method groups rows by spectral
+window and time. It uses the first row's FIELD_ID to decide whether
+to modify the entire group. In a fixture that divides antenna
+solutions at the same timestamp between two fields, selecting FLUX
+also changes PHASE rows. Selecting PHASE skips all the rows.
+
+casa-rs applies the correction within each selected field. The paired
+fixture checks the product on every eligible row and checks the
+unselected rows byte for byte (#1525).
