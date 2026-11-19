@@ -8,10 +8,12 @@ use std::process::ExitCode;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     MsTransformError, MsTransformRequest, MsTransformTaskOptions, TimeAverageOptions,
-    TransformDataColumn, ms_task_success, mstransform_task, mstransform_task_schema_bundle,
-    task_selection_text,
+    TransformDataColumn, TransformTaskHistory, ms_task_success, mstransform_task,
+    mstransform_task_schema_bundle, task_selection_text,
 };
-use casa_provider_contracts::{CasaValue, NumpyScalarType, ParameterValue, python_repr};
+use casa_provider_contracts::{
+    CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr,
+};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -76,8 +78,53 @@ fn transform_request(
         use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
         channel_widths,
         time_averaging: time_average_options(task)?,
+        history: Some(task_history(task)),
     };
     Ok((request, options))
+}
+
+fn task_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
+    let mut bindings = task
+        .session()
+        .bundle()
+        .surface
+        .bindings()
+        .iter()
+        .filter(|binding| {
+            binding
+                .projections
+                .python
+                .as_ref()
+                .is_some_and(|python| !python.keyword_only)
+        })
+        .collect::<Vec<_>>();
+    bindings.sort_by_key(|binding| binding.order);
+    let parameters = bindings
+        .into_iter()
+        .filter_map(|binding| {
+            let value = task
+                .session()
+                .states()
+                .get(&binding.name)
+                .and_then(|state| state.value.as_ref())
+                .or(match &binding.default {
+                    DefaultSpec::Literal { value } => Some(value),
+                    DefaultSpec::Conditional { fallback, .. } => Some(fallback),
+                    DefaultSpec::Required => None,
+                })?;
+            let printable = match value {
+                ParameterValue::String(value) => format!("\"{value}\""),
+                ParameterValue::NumpyScalar { value, .. } => python_repr(value),
+                ParameterValue::EmptyArray { .. } => "[]".into(),
+                value => python_repr(value),
+            };
+            Some((binding.name.clone(), printable))
+        })
+        .collect();
+    TransformTaskHistory {
+        task: task.surface().to_string(),
+        parameters,
+    }
 }
 
 fn time_average_options(

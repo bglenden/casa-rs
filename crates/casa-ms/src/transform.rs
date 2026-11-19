@@ -43,6 +43,7 @@ mod correlation_metadata;
 mod main_arrays;
 mod selection_metadata;
 mod spectral_metadata;
+mod task_history;
 mod time_average;
 mod time_projection;
 mod visibility_columns;
@@ -50,6 +51,7 @@ mod visibility_columns;
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 use main_arrays::MainArrayBlock;
+pub use task_history::TransformTaskHistory;
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
 
@@ -110,6 +112,8 @@ pub struct MsTransformTaskOptions {
     pub channel_widths: Option<Vec<usize>>,
     /// Average visibilities along each baseline within this time bin.
     pub time_averaging: Option<TimeAverageOptions>,
+    /// Provenance rows to append to the output's HISTORY table.
+    pub history: Option<TransformTaskHistory>,
 }
 
 /// Time averaging parameters shared by the split and mstransform tasks.
@@ -334,6 +338,9 @@ fn materialize_transform(
     let mut physical_request = request.clone();
     physical_request.output_ms = target.staging_path().to_path_buf();
     let mut report = mstransform_staged(&physical_request, grammar, options)?;
+    if let Some(history) = &options.history {
+        task_history::append_task_history(&physical_request.output_ms, history)?;
+    }
     target
         .commit()
         .map_err(|error| MsTransformError::PrepareOutput {
