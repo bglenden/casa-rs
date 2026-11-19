@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "rerefant",
   "casa_version": "6.7.6.14",
-  "audit_revision": "6076173721a7a1fc39451836fbd518e0d08349e1",
+  "audit_revision": "bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c",
   "parameters": {
     "vis": {
       "scope": "MeasurementSet supplying antenna identifiers and positions.",
@@ -15,7 +15,7 @@
       ]
     },
     "tablein": {
-      "scope": "Existing gain, bandpass, scalar gain, leakage or fringe table. Unsupported delay input raises a task error.",
+      "scope": "Existing gain, bandpass, scalar gain, leakage or fringe table. Unsupported delay input raises a task error. Saved CASA table selections are materialized before editing.",
       "evidence": [
         "paired"
       ],
@@ -25,7 +25,7 @@
       ]
     },
     "caltable": {
-      "scope": "Separate result or an in-place update when empty.",
+      "scope": "Separate result or an in-place update when empty. An actively locked product is preserved.",
       "evidence": [
         "paired"
       ],
@@ -60,7 +60,7 @@
       "id": "table-operation",
       "title": "Calibration table operation",
       "status": "Implemented",
-      "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays.",
+      "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables.",
       "gap": "The documented CASA behavior differences are recorded below.",
       "evidence": [
         "paired"
@@ -85,10 +85,10 @@
     "paired": {
       "kind": "Same-input Python task and casacore interchange",
       "state": "passed",
-      "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays.",
-      "result": "15 paired case groups and four downstream applications passed.",
+      "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables.",
+      "result": "23 paired case groups and four downstream applications passed.",
       "casa_version": "6.7.6.14",
-      "revision": "6076173721a7a1fc39451836fbd518e0d08349e1",
+      "revision": "bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c",
       "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>",
       "receipt": "resources/casa-compat/evidence/calibration-table-maintenance-20261119.json",
       "links": [

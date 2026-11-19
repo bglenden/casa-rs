@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "smoothcal",
   "casa_version": "6.7.6.14",
-  "audit_revision": "6076173721a7a1fc39451836fbd518e0d08349e1",
+  "audit_revision": "bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c",
   "parameters": {
     "vis": {
       "scope": "MeasurementSet supplying field names and IDs.",
@@ -15,7 +15,7 @@
       ]
     },
     "tablein": {
-      "scope": "Existing calibration table. G, T, B, K and Fringe tables have paired coverage.",
+      "scope": "Existing calibration table. G, T, B, K and Fringe tables have paired coverage. Saved CASA table selections are materialized before editing.",
       "evidence": [
         "paired"
       ],
@@ -25,7 +25,7 @@
       ]
     },
     "caltable": {
-      "scope": "Separate result or an in-place update when empty.",
+      "scope": "Separate result or an in-place update when empty. An actively locked product is preserved.",
       "evidence": [
         "paired"
       ],
@@ -80,7 +80,7 @@
       "id": "table-operation",
       "title": "Calibration table operation",
       "status": "Implemented",
-      "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions.",
+      "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection.",
       "gap": "The documented CASA behavior differences are recorded below.",
       "evidence": [
         "paired"
@@ -105,10 +105,10 @@
     "paired": {
       "kind": "Same-input Python task and casacore interchange",
       "state": "passed",
-      "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions.",
-      "result": "17 paired case groups and four downstream applications passed.",
+      "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection.",
+      "result": "28 paired case groups and four downstream applications passed.",
       "casa_version": "6.7.6.14",
-      "revision": "6076173721a7a1fc39451836fbd518e0d08349e1",
+      "revision": "bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c",
       "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_smoothcal_oracle.py --work <empty-directory> --native-bin <calibrate>",
       "receipt": "resources/casa-compat/evidence/calibration-table-maintenance-20261119.json",
       "links": [
