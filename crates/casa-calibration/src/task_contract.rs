@@ -743,6 +743,7 @@ mod tests {
                 "rerefant",
                 "initweights",
                 "statwt",
+                "calstat",
             ]
         );
         assert!(
