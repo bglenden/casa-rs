@@ -22,7 +22,12 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let hosts = task.texts("hosts")?;
     match hosts.first().map(String::as_str) {
         None => return Err(invalid("hosts", "Parameter hosts must be specified")),
-        Some("") => return Err(invalid("hosts", "The first element of the hosts list must be specified")),
+        Some("") => {
+            return Err(invalid(
+                "hosts",
+                "The first element of the hosts list must be specified",
+            ));
+        }
         Some(_) => {}
     }
     let asdm = required(task, "asdm")?;
@@ -32,7 +37,10 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let attempts = Retry::read(task)?;
     let mut metadata = Map::from_iter([
         ("caltype".into(), json!("ALMA antenna positions")),
-        ("description".into(), json!("ALMA ITRF antenna positions in meters")),
+        (
+            "description".into(),
+            json!("ALMA ITRF antenna positions in meters"),
+        ),
         ("product_code".into(), json!("antposalma")),
         ("outfile".into(), json!(outfile)),
         ("hosts".into(), json!(hosts)),
@@ -52,10 +60,18 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     }
     query.push(("firstIntegration", Value::from(first)));
     let (url, data) = retrieve(&hosts, &query_string(&query), attempts)?;
-    metadata.extend(query.into_iter().map(|(name, value)| (name.to_string(), value)));
+    metadata.extend(
+        query
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value)),
+    );
     metadata.insert("successful_url".into(), Value::from(url));
     metadata.insert("timestamp".into(), Value::from(timestamp()?));
-    publish(&destination, overwrite, &json!({"data": data, "metadata": metadata}))?;
+    publish(
+        &destination,
+        overwrite,
+        &json!({"data": data, "metadata": metadata}),
+    )?;
     TaskSuccess::new(CasaValue::None, &())
 }
 
@@ -64,17 +80,24 @@ fn invalid(parameter: &'static str, message: impl Into<String>) -> TaskFailure {
 }
 
 fn required(task: &TaskInvocation<'_>, name: &'static str) -> Result<String, TaskFailure> {
-    task.text(name)?.filter(|text| !text.is_empty())
+    task.text(name)?
+        .filter(|text| !text.is_empty())
         .ok_or_else(|| invalid(name, format!("Parameter {name} must be specified")))
 }
 
 fn exists(path: &Path) -> TaskFailure {
-    TaskFailure::execution(format!("A file or directory named {} already exists and overwrite is False", path.display()))
+    TaskFailure::execution(format!(
+        "A file or directory named {} already exists and overwrite is False",
+        path.display()
+    ))
 }
 
 fn validate_window(tw: &str) -> Result<(), TaskFailure> {
     let Some((begin, end)) = tw.split_once(',').filter(|(_, end)| !end.contains(',')) else {
-        return Err(invalid("tw", "Parameter tw should contain exactly one comma that separates two times"));
+        return Err(invalid(
+            "tw",
+            "Parameter tw should contain exactly one comma that separates two times",
+        ));
     };
     let days = Unit::new("d").expect("known time unit");
     let parse = |label, text: &str| {
@@ -82,7 +105,10 @@ fn validate_window(tw: &str) -> Result<(), TaskFailure> {
             .ok_or_else(|| invalid("tw", format!("{label} time {text} does not appear to have a valid format. The correct format is of the form YYYY-MM-DDThh:mm:ss.")))
     };
     if parse("Begin", begin)? >= parse("End", end)? {
-        return Err(invalid("tw", format!("Parameter tw, start time ({begin}) must be less than end time ({end}).")));
+        return Err(invalid(
+            "tw",
+            format!("Parameter tw, start time ({begin}) must be less than end time ({end})."),
+        ));
     }
     Ok(())
 }
@@ -90,13 +116,17 @@ fn validate_window(tw: &str) -> Result<(), TaskFailure> {
 fn signal_to_noise(value: Option<&ParameterValue>) -> Result<Option<Value>, TaskFailure> {
     match value {
         Some(ParameterValue::String(text)) if text == "default" => Ok(None),
-        Some(ParameterValue::String(_)) => Err(invalid("snr", "If snr is a string, its only permissible value is 'default'")),
+        Some(ParameterValue::String(_)) => Err(invalid(
+            "snr",
+            "If snr is a string, its only permissible value is 'default'",
+        )),
         Some(ParameterValue::Integer(number)) if *number >= 0 => Ok(Some(json!(number))),
         Some(ParameterValue::Float(number)) if *number >= 0.0 => Ok(Some(json!(number))),
         Some(ParameterValue::Bool(value)) => Ok(Some(json!(value))),
-        Some(ParameterValue::Integer(_) | ParameterValue::Float(_)) => {
-            Err(invalid("snr", "If a number, parameter snr must be non-negative"))
-        }
+        Some(ParameterValue::Integer(_) | ParameterValue::Float(_)) => Err(invalid(
+            "snr",
+            "If a number, parameter snr must be non-negative",
+        )),
         _ => Err(TaskFailure::execution("snr must be a string or number").at("snr.type")),
     }
 }
@@ -112,46 +142,66 @@ impl Retry {
         let count = task.integer("nretry")?;
         let mut delay_seconds = task.number("rdelay")?;
         if count < 0 {
-            return Err(invalid("nretry", format!("Parameter nretry (={count}) must be non-negative.")));
+            return Err(invalid(
+                "nretry",
+                format!("Parameter nretry (={count}) must be non-negative."),
+            ));
         }
         if count > 0 {
             if delay_seconds <= 0.0 || Duration::try_from_secs_f64(delay_seconds).is_err() {
-                return Err(invalid("rdelay", format!("If nretry > 0, rdelay (={delay_seconds}) must be positive.")));
+                return Err(invalid(
+                    "rdelay",
+                    format!("If nretry > 0, rdelay (={delay_seconds}) must be positive."),
+                ));
             }
             if delay_seconds < 0.5 {
-                tracing::warn!(original = delay_seconds, "Setting the retry delay to 0.5 seconds");
+                tracing::warn!(
+                    original = delay_seconds,
+                    "Setting the retry delay to 0.5 seconds"
+                );
                 delay_seconds = 0.5;
             }
         }
-        Ok(Self { count, delay_seconds })
+        Ok(Self {
+            count,
+            delay_seconds,
+        })
     }
 }
 
 fn query_string(parameters: &[(&str, Value)]) -> String {
-    parameters.iter().map(|(name, value)| {
-        let text = match value {
-            Value::String(text) => text.clone(),
-            Value::Bool(true) => "True".to_string(),
-            Value::Bool(false) => "False".to_string(),
-            value => value.to_string(),
-        };
-        let mut encoded = format!("{name}=");
-        for byte in text.bytes() {
-            match byte {
-                b' ' => encoded.push('+'),
-                b'-' | b'_' | b'.' | b'~' => encoded.push(char::from(byte)),
-                byte if byte.is_ascii_alphanumeric() => encoded.push(char::from(byte)),
-                byte => {
-                    use std::fmt::Write as _;
-                    write!(&mut encoded, "%{byte:02X}").expect("writing to a string succeeds");
+    parameters
+        .iter()
+        .map(|(name, value)| {
+            let text = match value {
+                Value::String(text) => text.clone(),
+                Value::Bool(true) => "True".to_string(),
+                Value::Bool(false) => "False".to_string(),
+                value => value.to_string(),
+            };
+            let mut encoded = format!("{name}=");
+            for byte in text.bytes() {
+                match byte {
+                    b' ' => encoded.push('+'),
+                    b'-' | b'_' | b'.' | b'~' => encoded.push(char::from(byte)),
+                    byte if byte.is_ascii_alphanumeric() => encoded.push(char::from(byte)),
+                    byte => {
+                        use std::fmt::Write as _;
+                        write!(&mut encoded, "%{byte:02X}").expect("writing to a string succeeds");
+                    }
                 }
             }
-        }
-        encoded
-    }).collect::<Vec<_>>().join("&")
+            encoded
+        })
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
-fn retrieve(hosts: &[String], query: &str, attempts: Retry) -> Result<(String, Value), TaskFailure> {
+fn retrieve(
+    hosts: &[String],
+    query: &str,
+    attempts: Retry,
+) -> Result<(String, Value), TaskFailure> {
     let agent = crate::calibration_service::agent(Duration::from_secs(400))
         .map_err(|error| TaskFailure::execution(error.to_string()).at("hosts"))?;
     for attempt in 0..=attempts.count {
@@ -159,8 +209,15 @@ fn retrieve(hosts: &[String], query: &str, attempts: Retry) -> Result<(String, V
             std::thread::sleep(Duration::from_secs_f64(attempts.delay_seconds));
         }
         for host in hosts {
-            if host.parse::<ureq::http::Uri>().ok().is_none_or(|uri| uri.scheme().is_none() || uri.authority().is_none()) {
-                return Err(invalid("hosts", format!("Parameter hosts: {host} is not a valid host expressed as a URL.")));
+            if host
+                .parse::<ureq::http::Uri>()
+                .ok()
+                .is_none_or(|uri| uri.scheme().is_none() || uri.authority().is_none())
+            {
+                return Err(invalid(
+                    "hosts",
+                    format!("Parameter hosts: {host} is not a valid host expressed as a URL."),
+                ));
             }
             let url = format!("{host}/?{query}");
             let text = match query_host(&agent, &url) {
@@ -179,7 +236,9 @@ fn retrieve(hosts: &[String], query: &str, attempts: Retry) -> Result<(String, V
             break;
         }
     }
-    Err(TaskFailure::execution("All URLs failed to return an antenna position list."))
+    Err(TaskFailure::execution(
+        "All URLs failed to return an antenna position list.",
+    ))
 }
 
 fn response_has_data(data: &Value) -> bool {
@@ -203,34 +262,59 @@ fn query_host(agent: &ureq::Agent, url: &str) -> Result<Option<String>, ureq::Er
 }
 
 fn timestamp() -> Result<String, TaskFailure> {
-    let seconds = SystemTime::now().duration_since(UNIX_EPOCH)
-        .map_err(|error| TaskFailure::execution(error.to_string()))?.as_secs_f64();
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| TaskFailure::execution(error.to_string()))?
+        .as_secs_f64();
     let time = MvTime::from_mjd_seconds(seconds + 40_587.0 * 86_400.0);
-    Ok(format!("{:04}-{:02}-{:02} {}", time.year(), time.month(), time.month_day(), time.format_time(6)))
+    Ok(format!(
+        "{:04}-{:02}-{:02} {}",
+        time.year(),
+        time.month(),
+        time.month_day(),
+        time.format_time(6)
+    ))
 }
 
 fn publish(path: &Path, overwrite: bool, document: &Value) -> Result<(), TaskFailure> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let failed = |error: io::Error| TaskFailure::execution(format!("{}: {error}", path.display())).at("outfile");
+    let failed = |error: io::Error| {
+        TaskFailure::execution(format!("{}: {error}", path.display())).at("outfile")
+    };
     let mut stage = NamedTempFile::new_in(parent).map_err(failed)?;
     serde_json::to_writer(stage.as_file_mut(), document)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"))?;
     stage.as_file().sync_all().map_err(failed)?;
     if !overwrite {
         stage.persist_noclobber(path).map_err(|error| {
-            if error.error.kind() == io::ErrorKind::AlreadyExists { exists(path) } else { failed(error.error) }
+            if error.error.kind() == io::ErrorKind::AlreadyExists {
+                exists(path)
+            } else {
+                failed(error.error)
+            }
         })?;
     } else if path.is_dir() {
         if fs::symlink_metadata(path).map_err(failed)?.is_symlink() {
-            return Err(TaskFailure::execution("cannot replace a symlink to a directory").at("outfile"));
+            return Err(
+                TaskFailure::execution("cannot replace a symlink to a directory").at("outfile"),
+            );
         }
-        let backup = Builder::new().prefix(".getantposalma-replaced-").tempdir_in(parent).map_err(failed)?;
+        let backup = Builder::new()
+            .prefix(".getantposalma-replaced-")
+            .tempdir_in(parent)
+            .map_err(failed)?;
         let recovered = backup.path().join("previous");
         fs::rename(path, &recovered).map_err(failed)?;
         if let Err(error) = stage.persist_noclobber(path) {
             if fs::rename(&recovered, path).is_err() {
                 let saved = backup.keep();
-                return Err(TaskFailure::execution(format!("{}: {}; prior product left at {}", path.display(), error.error, saved.display())).at("outfile"));
+                return Err(TaskFailure::execution(format!(
+                    "{}: {}; prior product left at {}",
+                    path.display(),
+                    error.error,
+                    saved.display()
+                ))
+                .at("outfile"));
             }
             return Err(failed(error.error));
         }

@@ -23,12 +23,12 @@
 
 mod casa_read;
 mod ft;
+mod getantposalma;
 mod history;
 mod model_columns;
 mod multi_ms;
 mod read;
 mod render;
-mod getantposalma;
 mod uvmodelfit;
 
 use std::path::Path;
