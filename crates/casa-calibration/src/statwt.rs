@@ -132,19 +132,18 @@ pub fn classical_scalar_statwt(
                 options.combine.correlations,
             )
         };
-        let shared = (!options.sliding).then(|| estimate(0..samples.len()));
+        let mut previous_window = 0..0;
+        let mut weights = Vec::new();
         for (index, (&row, sample)) in group.rows.iter().zip(&samples).enumerate() {
-            let estimate_for_row;
-            let weights = if let Some(shared) = &shared {
-                shared
-            } else {
-                estimate_for_row = estimate(group.window(index, options.time_bin));
-                &estimate_for_row
-            };
+            let window = group.window(index, options.time_bin, options.sliding);
+            if window != previous_window {
+                weights = estimate(window.clone());
+                previous_window = window;
+            }
             add_summary(
                 &mut summary,
                 sample,
-                weights,
+                &weights,
                 &channels,
                 options.combine.correlations,
             );
@@ -153,7 +152,7 @@ pub fn classical_scalar_statwt(
                 pending.push(RowUpdate::new(
                     row.row_index,
                     sample,
-                    weights,
+                    &weights,
                     &channels,
                     options,
                 ));

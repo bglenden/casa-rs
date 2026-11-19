@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA sorts time bins within the selected array, field, scan and state.
+//! Visibility-iterator chunk boundaries and per-baseline time windows.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -11,7 +11,6 @@ use super::{StatWtCombine, StatWtTimeBin};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Boundary {
-    array: i32,
     scan: i32,
     state: i32,
     field: i32,
@@ -19,7 +18,6 @@ struct Boundary {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Baseline {
-    data_description: i32,
     antenna1: i32,
     antenna2: i32,
 }
@@ -27,18 +25,30 @@ struct Baseline {
 pub(super) struct Group<'a> {
     pub(super) rows: Vec<&'a ResolvedMsSelectionRow>,
     timestamp_indexes: Vec<usize>,
+    timestamp_count: usize,
 }
 
 impl Group<'_> {
-    pub(super) fn window(&self, center: usize, time_bin: StatWtTimeBin) -> Range<usize> {
+    pub(super) fn window(
+        &self,
+        center: usize,
+        time_bin: StatWtTimeBin,
+        sliding: bool,
+    ) -> Range<usize> {
         match time_bin {
             StatWtTimeBin::Timestamps(count) => {
                 let center = self.timestamp_indexes[center];
-                let start = center.saturating_sub(count / 2);
-                let end = center.saturating_add(count / 2);
+                let start = if sliding {
+                    center.saturating_sub((count - 1) / 2)
+                } else {
+                    (center / count) * count
+                };
+                let start = start.min(self.timestamp_count.saturating_sub(count));
+                let end = start.saturating_add(count);
                 self.timestamp_indexes.partition_point(|&slot| slot < start)
-                    ..self.timestamp_indexes.partition_point(|&slot| slot <= end)
+                    ..self.timestamp_indexes.partition_point(|&slot| slot < end)
             }
+            StatWtTimeBin::Seconds(_) if !sliding => 0..self.rows.len(),
             StatWtTimeBin::Seconds(width) => {
                 let center = self.rows[center].time_mjd_seconds;
                 let half = width / 2.0;
@@ -72,64 +82,67 @@ pub(super) fn groups<'a>(
     let mut groups = BTreeMap::<_, Vec<_>>::new();
     for (index, row) in selection.selected_rows.iter().enumerate() {
         let key = Boundary {
-            array: arrays[index],
             scan: if combine.scans { 0 } else { scans[index] },
             state: if combine.states { 0 } else { states[index] },
             field: if combine.fields { 0 } else { row.field_id },
         };
-        groups.entry(key).or_default().push(row);
+        groups
+            .entry((arrays[index], row.data_desc_id))
+            .or_default()
+            .push((row, key));
     }
     let mut ordered = Vec::new();
     for rows in groups.values_mut() {
         rows.sort_unstable_by(|left, right| {
-            left.time_mjd_seconds
-                .total_cmp(&right.time_mjd_seconds)
-                .then_with(|| left.row_index.cmp(&right.row_index))
+            left.0
+                .time_mjd_seconds
+                .total_cmp(&right.0.time_mjd_seconds)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.0.row_index.cmp(&right.0.row_index))
         });
-        baseline_groups(rows, time_bin, sliding, &mut ordered);
+        let mut start = 0;
+        for index in 1..rows.len() {
+            let boundary_changed = rows[index].1 != rows[start].1;
+            let duration_elapsed = matches!(time_bin, StatWtTimeBin::Seconds(width)
+                if !sliding && rows[index].0.time_mjd_seconds - rows[start].0.time_mjd_seconds >= width);
+            if boundary_changed || duration_elapsed {
+                baseline_groups(&rows[start..index], &mut ordered);
+                start = index;
+            }
+        }
+        baseline_groups(&rows[start..], &mut ordered);
     }
     ordered.sort_unstable_by_key(|group| group.rows[0].row_index);
     Ok(ordered)
 }
 
 fn baseline_groups<'a>(
-    rows: &[&'a ResolvedMsSelectionRow],
-    time_bin: StatWtTimeBin,
-    sliding: bool,
+    rows: &[(&'a ResolvedMsSelectionRow, Boundary)],
     output: &mut Vec<Group<'a>>,
 ) {
     let mut groups = BTreeMap::<_, Group<'_>>::new();
     let mut timestamp = 0;
-    let mut previous = rows[0].time_mjd_seconds;
-    let mut start = previous;
-    for &row in rows {
+    let mut previous = rows[0].0.time_mjd_seconds;
+    for &(row, _) in rows {
         let time = row.time_mjd_seconds;
         if time != previous {
             timestamp += 1;
             previous = time;
-            let next_bin = match time_bin {
-                StatWtTimeBin::Timestamps(count) => timestamp == count,
-                StatWtTimeBin::Seconds(width) => time - start >= width,
-            };
-            if next_bin && !sliding {
-                output.extend(std::mem::take(&mut groups).into_values());
-                timestamp = 0;
-                start = time;
-            }
         }
         let key = Baseline {
-            data_description: row.data_desc_id,
             antenna1: row.antenna1_id.min(row.antenna2_id),
             antenna2: row.antenna1_id.max(row.antenna2_id),
         };
         let group = groups.entry(key).or_insert_with(|| Group {
             rows: vec![],
             timestamp_indexes: vec![],
+            timestamp_count: 0,
         });
         group.rows.push(row);
-        if sliding {
-            group.timestamp_indexes.push(timestamp);
-        }
+        group.timestamp_indexes.push(timestamp);
     }
-    output.extend(groups.into_values());
+    output.extend(groups.into_values().map(|mut group| {
+        group.timestamp_count = timestamp + 1;
+        group
+    }));
 }
