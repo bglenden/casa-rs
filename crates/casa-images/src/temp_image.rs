@@ -404,6 +404,11 @@ impl<T: ImagePixel> TempImage<T> {
 // ---- History ----------------------------------------------------------------
 
 impl<T: ImagePixel> TempImage<T> {
+    /// Returns the complete history rows, including their provenance.
+    pub fn history_rows(&self) -> &[ImageHistoryRow] {
+        &self.history
+    }
+
     /// Returns the history entries.
     pub fn history(&self) -> Result<Vec<String>, ImageError> {
         Ok(self

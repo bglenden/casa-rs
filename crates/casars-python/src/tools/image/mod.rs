@@ -6,6 +6,8 @@
 mod attachment;
 mod beam_edit;
 mod beams;
+mod copy;
+mod copy_region;
 mod create;
 mod default_record;
 mod fits_import;

@@ -99,47 +99,9 @@ impl ImageHistoryEntry {
     }
 }
 
-/// Read the persistent image log for replay by `imhead(mode="history")`.
-pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryEntry>, ImageError> {
-    let image = path.as_ref();
-    if image.is_file() {
-        return crate::fits_read::history_entries(image);
-    }
-    let path = image.join(LOGTABLE_NAME);
-    if !path.exists() {
-        let table = Table::open(TableOptions::new(image))?;
-        if table.keywords().get(LOGTABLE_KEYWORD).is_some() {
-            return Err(ImageError::InvalidMetadata(
-                "image history table is missing".into(),
-            ));
-        }
-        return Ok(Vec::new());
-    }
-    let table = Table::open(TableOptions::new(path))?;
-    let mut entries = Vec::new();
-    for row in 0..table.row_count() {
-        let time = table.cell_accessor(row, "TIME")?.value()?;
-        let location = table.cell_accessor(row, "LOCATION")?.value()?;
-        let message = table.cell_accessor(row, "MESSAGE")?.value()?;
-        match (time, location, message) {
-            (
-                Some(Value::Scalar(ScalarValue::Float64(time))),
-                Some(Value::Scalar(ScalarValue::String(location))),
-                Some(Value::Scalar(ScalarValue::String(message))),
-            ) => entries.push(ImageHistoryEntry {
-                time_mjd_seconds: *time,
-                location: location.clone(),
-                message: message.clone(),
-            }),
-            _ => {
-                return Err(ImageError::InvalidMetadata(format!(
-                    "invalid history entry at row {row}"
-                )));
-            }
-        }
-    }
-    Ok(entries)
-}
+mod history;
+pub use history::{image_history_entries, image_history_rows};
+
 const REGION_TYPE_FIELD: &str = "isRegion";
 const REGION_NAME_FIELD: &str = "name";
 const REGION_COMMENT_FIELD: &str = "comment";

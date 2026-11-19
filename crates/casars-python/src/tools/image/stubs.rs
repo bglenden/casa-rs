@@ -425,20 +425,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, infile = None, region = None, mask = None, dropdeg = None, overwrite = None), text_signature = "($self, outfile='', infile='', region=[], mask='', dropdeg=False, overwrite=False)")]
-    fn fromimage(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        infile: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fromimage")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (axis = None, function = None, region = None, mask = None, unit = None, stretch = None, spectype = None, restfreq = None, frame = None, logfile = None), text_signature = "($self, axis=-1, function='mean', region={}, mask='', unit='', stretch=False, spectype='default', restfreq='', frame='', logfile='')")]
     fn getprofile(
         &self,
@@ -653,20 +639,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("moments")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (infile = None, outfile = None, region = None, mask = None, dropdeg = None, overwrite = None), text_signature = "($self, infile='', outfile='', region={}, mask='', dropdeg=False, overwrite=False)")]
-    fn newimagefromimage(
-        &self,
-        infile: Option<&Bound<'_, PyAny>>,
-        outfile: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("newimagefromimage")
     }
 
     /// Not yet implemented in casa-rs.
