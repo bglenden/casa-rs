@@ -635,6 +635,13 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
         except Exception as error:
             raise TaskResultError(f"{task} plot rendering failed: {error}") from error
 
+    if task == "plotweather" and process.returncode == 0:
+        plot = loads(stdout)["result"]["plot"]
+        if plot is not None:
+            from ._weather_plot import render_weather
+
+            render_weather(plot, workspace)
+
     values = [
         (name, _display_value(state.value))
         for name, state in sorted(resolved.states.items())
@@ -670,12 +677,6 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
         raise TaskParameterError(completion)
     if not completion.successful:
         raise TaskExecutionError(completion)
-    if task == "plotweather":
-        plot = loads(stdout)["result"]["plot"]
-        if plot is not None:
-            from ._weather_plot import render_weather
-
-            render_weather(plot, workspace)
     return completion
 
 

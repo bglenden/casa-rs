@@ -33835,7 +33835,21 @@
           "plotweather"
         ],
         "products": {
-          "kind": "no_products"
+          "kind": "declared",
+          "products": [
+            {
+              "id": "plotName",
+              "role": "primary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "plotName"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            }
+          ]
         }
       },
       "bindings": [
@@ -33977,7 +33991,12 @@
             "kind": "never"
           },
           "active_when": {
-            "kind": "always"
+            "kind": "equals",
+            "parameter": "doPlot",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
           },
           "projections": {
             "cli": {
