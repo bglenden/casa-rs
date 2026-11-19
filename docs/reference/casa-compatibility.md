@@ -481,6 +481,156 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 14, in CASA's order: yes
 - Defaults that differ: none
 
+#### gencal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `dc16c0d90b3ec79dbc50d317fe293b0d661ec20c`. Status counts: Default only: 6, Implemented: 7, Not implemented: 0, Partial: 1, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Input MeasurementSet geometry, metadata and table source for the routine families. [tables](#gencal-behavior-tables)<br>Catalog domain: list[`path` (measurement_set)], length 0..many; scalar allowed; Constraints: `[{"kind": "length", "max": 1, "min": 0}]` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | CASA-readable output, cumulative corrections, and validation before replacing an existing table. [tables](#gencal-behavior-tables)<br>Catalog domain: `path` (calibration_table) | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive) |
+| `caltype` | `''` | `''`; `caltype` → `caltype` | Partial | Eleven routine prior types. Eight advanced types belong to CAL-24 (#1535). [tables](#gencal-behavior-tables)<br>Catalog domain: ``, `amp`, `antpos`, `antposvla`, `eff`, `eop`, `evlagain`, `gc`, `gceff`, `jyperk`, `mbd`, `opac`, `ph`, `rq`, `sbd`, `swp/rq`, `swpow`, `swpwts`, `tecim`, `tsys` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive) |
+| `infile` | `''` | `''`; `infile` → `infile` | Default only | Explicit VLA gain curves and ALMA position JSON. The contract tracks the advanced source-file modes in #1535. [positions](#gencal-behavior-positions)<br>Catalog domain: `string`; Non-default refused when (caltype='tecim' or caltype='jyperk' or caltype='eop') (#979) | [vla-priors](#gencal-evidence-vla-priors), [manual-positions](#gencal-evidence-manual-positions), [alma-service](#gencal-evidence-alma-service) |
+| `endpoint` | `'asdm'` | `'asdm'`; `endpoint` → `endpoint` | Default only | Inactive for routine types. Its Jy/K endpoint behavior belongs to CAL-24 (#1535). <br>Catalog domain: `string`; Non-default refused when caltype='jyperk' (#979) | [alma-service](#gencal-evidence-alma-service) |
+| `timeout` | `180` | `180`; `timeout` → `timeout` | Default only | Inactive for routine types. Jy/K service timeout belongs to CAL-24 (#1535). <br>Catalog domain: `integer`; Non-default refused when caltype='jyperk' (#979) | [alma-service](#gencal-evidence-alma-service) |
+| `retry` | `3` | `3`; `retry` → `retry` | Default only | Inactive for routine types. Jy/K service retries belong to CAL-24 (#1535). <br>Catalog domain: `integer`; Non-default refused when caltype='jyperk' (#979) | [alma-service](#gencal-evidence-alma-service) |
+| `retry_wait_time` | `5` | `5`; `retry_wait_time` → `retry_wait_time` | Default only | Inactive for routine types. Jy/K retry delays belong to CAL-24 (#1535). <br>Catalog domain: `integer`; Non-default refused when caltype='jyperk' (#979) | [alma-service](#gencal-evidence-alma-service) |
+| `ant_pos_time_limit` | `0` | `0`; `ant_pos_time_limit` → `ant_pos_time_limit` | Implemented | Automatic VLA correction lookup, with a strict archive-day cutoff and the whole-second posting boundary. [positions](#gencal-behavior-positions)<br>Catalog domain: `integer` | [vla-archive](#gencal-evidence-vla-archive) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Routine spectral-window selection and the family-specific output axes. [tables](#gencal-behavior-tables)<br>Catalog domain: `string` | [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Ordered IDs and expressions, all-antenna defaults, and the applicable automatic lookup. [positions](#gencal-behavior-positions)<br>Catalog domain: `string` | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive) |
+| `pol` | `''` | `''`; `pol` → `pol` | Default only | Ordered receptor behavior for the applicable routine types. Advanced overrides belong to CAL-24 (#1535). [tables](#gencal-behavior-tables)<br>Catalog domain: `string`; Non-default refused when not ((caltype='amp' or caltype='ph' or caltype='sbd' or caltype='mbd' or caltype='gc' or caltype='gceff' or caltype='eff' or caltype='tsys' or caltype='opac' or caltype='antpos' or caltype='antposvla')) (#979) | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity) |
+| `parameter` | `[]` | `[]`; `parameter` → `parameter` | Implemented | Scalar or vector routine correction values, CASA cycling and family-specific units. [tables](#gencal-behavior-tables)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [specified](#gencal-evidence-specified), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions) |
+| `uniform` | `True` | `True`; `uniform` → `uniform` | Implemented | Both antenna-grid policies for scalar and spectral SYSCAL temperatures. [tables](#gencal-behavior-tables)<br>Catalog domain: `bool` | [tsys](#gencal-evidence-tsys) |
+
+#### gencal interacting modes and task behavior
+
+<a id="gencal-behavior-tables"></a>
+##### Routine prior tables and calibrated data
+
+**Implemented** — Compare generated calibration parameters, selections, flags, weights and applied visibilities in both writer-reader directions.
+
+Compared with the installed CASA reference.
+
+Evidence: [specified](#gencal-evidence-specified), [vla-priors](#gencal-evidence-vla-priors), [tsys](#gencal-evidence-tsys), [opacity](#gencal-evidence-opacity), [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive).
+
+<a id="gencal-behavior-positions"></a>
+##### Antenna offsets and service inputs
+
+**Implemented** — Direct vectors, legacy rotated coordinates, ALMA file input and automatic VLA archive corrections, including historical tropospheric delays.
+
+Compared with the installed CASA reference.
+
+Evidence: [manual-positions](#gencal-evidence-manual-positions), [vla-archive](#gencal-evidence-vla-archive), [alma-service](#gencal-evidence-alma-service).
+
+#### gencal deviations and unfinished work
+
+##### safe-whole-axis-selection: Previously agreed
+
+- Record: [Explicit gencal wildcards can index outside the calibration array](https://github.com/bglenden/casa-rs/blob/dc16c0d90b3ec79dbc50d317fe293b0d661ec20c/docs/CASA%20%28C%2B%2B%29%20bugs.md#explicit-gencal-wildcards-can-index-outside-the-calibration-array)
+- Inputs: An explicit whole-axis wildcard, a negated antenna index, or an empty legacy VLA antenna selection.
+- CASA: Some of these selections abort the process when they index a nonexistent table element.
+- casa-rs: Whole-axis selections broadcast, and invalid negative antenna indices raise a task error.
+- Rationale: Prevent native crashes and preserve prior calibration products.
+- User impact: Explicit and equivalent all-antenna selections produce the same intended correction.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [specified](#gencal-evidence-specified), [manual-positions](#gencal-evidence-manual-positions).
+
+##### safe-scalar-opacity: Previously agreed
+
+- Record: [Opacity priors can index a nonexistent second receptor](https://github.com/bglenden/casa-rs/blob/dc16c0d90b3ec79dbc50d317fe293b0d661ec20c/docs/CASA%20%28C%2B%2B%29%20bugs.md#opacity-priors-can-index-a-nonexistent-second-receptor)
+- Inputs: A scalar opacity table with a second-receptor or two-receptor selection.
+- CASA: Indexes a nonexistent second receptor and terminates the task process.
+- casa-rs: Raises a task error and preserves the existing product.
+- Rationale: The opacity coefficient is scalar and the requested selection cannot be applied.
+- User impact: Empty and first-receptor selectors remain usable.
+- Owner decision: Standing CASA bug policy in AGENTS.md.
+- Evidence: [opacity](#gencal-evidence-opacity).
+
+#### gencal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="gencal-evidence-specified"></a>
+##### specified
+
+**Specified G Jones and K Jones corrections — passed.** 31 recorded case groups passed. 31 comparisons cover ordered selectors, both calibration families, precision and cumulative updates. An incompatible grid preserves all 12 existing solutions.
+
+- [tools/casa-compat/calibration_gencal_specify_oracle.py](https://github.com/bglenden/casa-rs/blob/dc16c0d90b3ec79dbc50d317fe293b0d661ec20c/tools/casa-compat/calibration_gencal_specify_oracle.py)
+- Revision: `31ed10ad3054053ea218b83ef68fdec3c4719610`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/calibration_gencal_specify_oracle.py --work <empty-work-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
+
+<a id="gencal-evidence-vla-priors"></a>
+##### vla-priors
+
+**VLA gain curves and efficiency — passed.** 25 recorded case groups passed. 25 comparisons cover standard, explicit and embedded curve data, sparse antennas and gains with and without weight calibration. Sixteen tables agree exactly.
+
+- [tools/casa-compat/calibration_gencal_gaincurve_oracle.py](https://github.com/bglenden/casa-rs/blob/dc16c0d90b3ec79dbc50d317fe293b0d661ec20c/tools/casa-compat/calibration_gencal_gaincurve_oracle.py)
+- Revision: `900221a72c0c57229a02328b01fe935464a99a98`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/calibration_gencal_gaincurve_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms> --gaincurves <GainCurves>`.
+- Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
+
+<a id="gencal-evidence-tsys"></a>
+##### tsys
+
+**Scalar and spectral system temperatures — passed.** 14 recorded case groups passed. 14 comparisons cover both uniform settings, selected image-channel weights, floating-point temperatures, retuned windows and safety of linked SYSCAL inputs.
+
+- [tools/casa-compat/calibration_gencal_tsys_oracle.py](https://github.com/bglenden/casa-rs/blob/dc16c0d90b3ec79dbc50d317fe293b0d661ec20c/tools/casa-compat/calibration_gencal_tsys_oracle.py)
+- Revision: `d9d24a3fdab9ab18735b68cb7aa6704527784825`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/calibration_gencal_tsys_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms>`.
+- Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
+
+<a id="gencal-evidence-opacity"></a>
+##### opacity
+
+**Zenith-opacity priors — passed.** 16 recorded case groups passed. 16 comparisons cover spectral windows, ordered antennas, receptor behavior, cumulative updates and cross-application. Eleven calibration tables agree exactly.
+
+- [tools/casa-compat/calibration_gencal_opacity_oracle.py](https://github.com/bglenden/casa-rs/blob/dc16c0d90b3ec79dbc50d317fe293b0d661ec20c/tools/casa-compat/calibration_gencal_opacity_oracle.py)
+- Revision: `8f5f9c14021326b9bcc2c11fd83ec368d77f39ac`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/calibration_gencal_opacity_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms>`.
+- Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
+
+<a id="gencal-evidence-manual-positions"></a>
+##### manual-positions
+
+**Manual antenna coordinates and ALMA files — passed.** 24 recorded case groups passed. 24 comparisons cover direct ITRF and legacy VLA coordinates, ALMA JSON, moving field reference epochs, forced SPW zero and shared input protection. Thirteen tables agree exactly.
+
+- [tools/casa-compat/calibration_gencal_antpos_oracle.py](https://github.com/bglenden/casa-rs/blob/dc16c0d90b3ec79dbc50d317fe293b0d661ec20c/tools/casa-compat/calibration_gencal_antpos_oracle.py)
+- Revision: `c953d400699acd7e35faa2cc446c3751927312b6`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/calibration_gencal_antpos_oracle.py --work <empty-work-directory> --native-bin <calibrate> --source <NGC5921.ms>`.
+- Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
+
+<a id="gencal-evidence-vla-archive"></a>
+##### vla-archive
+
+**Frozen and live VLA archive correction — passed.** 7 recorded case groups passed. Frozen comparisons cover correction dates, moves, a day cutoff, service failures and the 2016B tropospheric keyword. The live archive yielded the same 3 mm eastward component for ea01 in both products.
+
+- [tools/casa-compat/calibration_gencal_evla_oracle.py](https://github.com/bglenden/casa-rs/blob/dc16c0d90b3ec79dbc50d317fe293b0d661ec20c/tools/casa-compat/calibration_gencal_evla_oracle.py)
+- Revision: `dc16c0d90b3ec79dbc50d317fe293b0d661ec20c`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/calibration_gencal_evla_oracle.py --work <empty-work-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
+
+<a id="gencal-evidence-alma-service"></a>
+##### alma-service
+
+**Frozen and live ALMA position service — passed.** 30 recorded case groups passed. The two clients send matching valid queries, select hosts in the same order, and produce matching antenna data and request metadata. The live case agrees on all ten antennas. Cross-engine files produce exact gencal tables.
+
+- [tools/casa-compat/calibration_getantposalma_oracle.py](https://github.com/bglenden/casa-rs/blob/dc16c0d90b3ec79dbc50d317fe293b0d661ec20c/tools/casa-compat/calibration_getantposalma_oracle.py)
+- Revision: `dc16c0d90b3ec79dbc50d317fe293b0d661ec20c`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/calibration_getantposalma_oracle.py --work <empty-work-directory> --native-bin <calibrate> --live`.
+- Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
+
+<a id="gencal-evidence-performance"></a>
+##### performance
+
+**Matched release performance — planned.** Scheduled for the programme performance qualification in #979. Representative end-to-end throughput, I/O and compute phases, workers and memory.
+
+- [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
+
 ### getantposalma
 
 - CASA source: `casatasks/getantposalma.py`, 10 parameters
@@ -491,6 +641,61 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 10, in CASA's order: yes
 - Defaults that differ: none
+
+#### getantposalma parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `dc16c0d90b3ec79dbc50d317fe293b0d661ec20c`. Status counts: Default only: 0, Implemented: 10, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | Required JSON destination with position data and service metadata. [retrieval](#getantposalma-behavior-retrieval)<br>Catalog domain: `path` (file) | [alma-service](#getantposalma-evidence-alma-service) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Existing file or directory replacement after retrieval and validation. Failed calls preserve the previous output. [retrieval](#getantposalma-behavior-retrieval)<br>Catalog domain: `bool` | [alma-service](#getantposalma-evidence-alma-service) |
+| `asdm` | `''` | `''`; `asdm` → `asdm` | Implemented | Required ASDM UID passed literally as an encoded service parameter. [retrieval](#getantposalma-behavior-retrieval)<br>Catalog domain: `string` | [alma-service](#getantposalma-evidence-alma-service) |
+| `tw` | `''` | `''`; `tw` → `tw` | Implemented | Optional ordered pair of observation times passed to the service. [retrieval](#getantposalma-behavior-retrieval)<br>Catalog domain: `string` | [alma-service](#getantposalma-evidence-alma-service) |
+| `snr` | `'default'` | `'default'`; `snr` → `snr` | Implemented | Server default or a nonnegative numeric cutoff, with CASA NumPy scalar coercion. [retrieval](#getantposalma-behavior-retrieval)<br>Catalog domain: `variant` | [alma-service](#getantposalma-evidence-alma-service) |
+| `search` | `'both_latest'` | `'both_latest'`; `search` → `search` | Implemented | Algorithm passed verbatim, including both_latest, both_closest and auto. [retrieval](#getantposalma-behavior-retrieval)<br>Catalog domain: `string` | [alma-service](#getantposalma-evidence-alma-service) |
+| `hosts` | `['https://asa.alma.cl/uncertainties-service/uncertainties/versions/last/measurements/casa/']` | `['https://asa.alma.cl/uncertainties-service/uncertainties/versions/last/measurements/casa/']`; `hosts` → `hosts` | Implemented | Priority-ranked URLs, scalar or vector input, with fallback on transport errors. [retrieval](#getantposalma-behavior-retrieval)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [alma-service](#getantposalma-evidence-alma-service) |
+| `firstintegration` | `True` | `True`; `firstintegration` → `firstintegration` | Implemented | Python boolean controlling exclusion of flagged first integrations. [retrieval](#getantposalma-behavior-retrieval)<br>Catalog domain: `bool` | [alma-service](#getantposalma-evidence-alma-service) |
+| `nretry` | `0` | `0`; `nretry` → `nretry` | Implemented | Extra attempts through the ordered list of hosts. [retrieval](#getantposalma-behavior-retrieval)<br>Catalog domain: `integer` | [alma-service](#getantposalma-evidence-alma-service) |
+| `rdelay` | `3.0` | `3.0`; `rdelay` → `rdelay` | Implemented | Delay between retry rounds, with CASA’s half-second minimum for positive values below 0.5 seconds. [retrieval](#getantposalma-behavior-retrieval)<br>Catalog domain: `float` | [alma-service](#getantposalma-evidence-alma-service) |
+
+#### getantposalma interacting modes and task behavior
+
+<a id="getantposalma-behavior-retrieval"></a>
+##### ALMA antenna position retrieval and interchange
+
+**Implemented** — Compare the ten public parameters, request order, validated JSON output, live responses and downstream gencal application.
+
+Compared with the installed CASA reference.
+
+Evidence: [alma-service](#getantposalma-evidence-alma-service).
+
+#### getantposalma deviations and unfinished work
+
+#### getantposalma evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="getantposalma-evidence-alma-service"></a>
+##### alma-service
+
+**Frozen and live ALMA position service — passed.** 30 recorded case groups passed. The two clients send matching valid queries, select hosts in the same order, and produce matching antenna data and request metadata. The live case agrees on all ten antennas. Cross-engine files produce exact gencal tables.
+
+- [tools/casa-compat/calibration_getantposalma_oracle.py](https://github.com/bglenden/casa-rs/blob/dc16c0d90b3ec79dbc50d317fe293b0d661ec20c/tools/casa-compat/calibration_getantposalma_oracle.py)
+- Revision: `dc16c0d90b3ec79dbc50d317fe293b0d661ec20c`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/calibration_getantposalma_oracle.py --work <empty-work-directory> --native-bin <calibrate> --live`.
+- Receipt: `resources/casa-compat/evidence/routine-calibration-20261119.json`.
+
+<a id="getantposalma-evidence-performance"></a>
+##### performance
+
+**Matched release performance — planned.** Scheduled for the programme performance qualification in #979. Representative end-to-end throughput, I/O and compute phases, workers and memory.
+
+- [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
 ### imhead
 

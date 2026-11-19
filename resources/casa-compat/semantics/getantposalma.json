@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "task": "getantposalma",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "dc16c0d90b3ec79dbc50d317fe293b0d661ec20c",
+  "parameters": {
+    "outfile": {
+      "scope": "Required JSON destination with position data and service metadata.",
+      "evidence": [
+        "alma-service"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "retrieval"
+      ]
+    },
+    "overwrite": {
+      "scope": "Existing file or directory replacement after retrieval and validation. Failed calls preserve the previous output.",
+      "evidence": [
+        "alma-service"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "retrieval"
+      ]
+    },
+    "asdm": {
+      "scope": "Required ASDM UID passed literally as an encoded service parameter.",
+      "evidence": [
+        "alma-service"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "retrieval"
+      ]
+    },
+    "tw": {
+      "scope": "Optional ordered pair of observation times passed to the service.",
+      "evidence": [
+        "alma-service"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "retrieval"
+      ]
+    },
+    "snr": {
+      "scope": "Server default or a nonnegative numeric cutoff, with CASA NumPy scalar coercion.",
+      "evidence": [
+        "alma-service"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "retrieval"
+      ]
+    },
+    "search": {
+      "scope": "Algorithm passed verbatim, including both_latest, both_closest and auto.",
+      "evidence": [
+        "alma-service"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "retrieval"
+      ]
+    },
+    "hosts": {
+      "scope": "Priority-ranked URLs, scalar or vector input, with fallback on transport errors.",
+      "evidence": [
+        "alma-service"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "retrieval"
+      ]
+    },
+    "firstintegration": {
+      "scope": "Python boolean controlling exclusion of flagged first integrations.",
+      "evidence": [
+        "alma-service"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "retrieval"
+      ]
+    },
+    "nretry": {
+      "scope": "Extra attempts through the ordered list of hosts.",
+      "evidence": [
+        "alma-service"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "retrieval"
+      ]
+    },
+    "rdelay": {
+      "scope": "Delay between retry rounds, with CASA’s half-second minimum for positive values below 0.5 seconds.",
+      "evidence": [
+        "alma-service"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "retrieval"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "retrieval",
+      "title": "ALMA antenna position retrieval and interchange",
+      "status": "Implemented",
+      "scope": "Compare the ten public parameters, request order, validated JSON output, live responses and downstream gencal application.",
+      "gap": "Compared with the installed CASA reference.",
+      "evidence": [
+        "alma-service"
+      ]
+    }
+  ],
+  "decisions": [],
+  "evidence": {
+    "alma-service": {
+      "kind": "Frozen and live ALMA position service",
+      "state": "passed",
+      "scope": "The two clients send matching valid queries, select hosts in the same order, and produce matching antenna data and request metadata. The live case agrees on all ten antennas. Cross-engine files produce exact gencal tables.",
+      "result": "30 recorded case groups passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "dc16c0d90b3ec79dbc50d317fe293b0d661ec20c",
+      "command": "python tools/casa-compat/calibration_getantposalma_oracle.py --work <empty-work-directory> --native-bin <calibrate> --live",
+      "receipt": "resources/casa-compat/evidence/routine-calibration-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_getantposalma_oracle.py"
+      ]
+    },
+    "performance": {
+      "kind": "Matched release performance",
+      "state": "planned",
+      "scope": "Representative end-to-end throughput, I/O and compute phases, workers and memory.",
+      "result": "Scheduled for the programme performance qualification in #979.",
+      "links": [
+        "https://github.com/bglenden/casa-rs/issues/979"
+      ]
+    }
+  }
+}
