@@ -1357,8 +1357,8 @@ def rerefant(
     return _call_casa(rerefant, locals())
 
 def plotweather(
-    vis: StrPath = '',
-    seasonal_weight: ParameterData = 0.5,
+    vis: str = '',
+    seasonal_weight: float = 0.5,
     doPlot: bool = True,
     plotName: str = '',
 ) -> Any:

@@ -33892,7 +33892,8 @@
               "field": "measurement_set"
             },
             "python": {
-              "name": "vis"
+              "name": "vis",
+              "type_hint": "str"
             },
             "presentation": {
               "label": "MeasurementSet",
@@ -33932,7 +33933,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "seasonal_weight"
+              "name": "seasonal_weight",
+              "type_hint": "float"
             },
             "presentation": {
               "label": "seasonal_weight",
