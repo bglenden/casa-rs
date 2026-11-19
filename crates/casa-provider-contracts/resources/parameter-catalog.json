@@ -1410,10 +1410,10 @@
     },
     {
       "id": "ms.transform.width",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "width",
       "value_domain": {
-        "kind": "integer"
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -1422,11 +1422,27 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Number of adjacent selected channels averaged into each output channel.",
+        "summary": "Channel-averaging width as an integer, numeric string, or per-SPW integer list.",
         "details": null,
         "examples": [
           "1"
         ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.chanbin",
+      "semantic_revision": 1,
+      "casa_name": "chanbin",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Channel-averaging width as a single integer or a per-SPW integer list.",
+        "details": null,
+        "examples": ["2", "[2, 4]"]
       },
       "persistence_class": "profile"
     },

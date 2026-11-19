@@ -29,8 +29,8 @@ use crate::ms::{measurement_set_main_table_bindings, measurement_set_table_optio
 use crate::schema::SubtableId;
 use crate::schema::main_table::OptionalMainColumn;
 use crate::selection::{
-    MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget, ResolvedMsSelectionRow,
-    RowGrammar, SpwSelection,
+    ChannelRange, MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget,
+    ResolvedMsSelectionRow, RowGrammar, SpwSelection,
 };
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
@@ -38,11 +38,13 @@ use crate::write_session::{
     MeasurementSetWriteResources, MeasurementSetWriteSession, MeasurementSetWriteTelemetry,
 };
 
+mod channel_average;
 mod correlation_metadata;
 mod selection_metadata;
 mod spectral_metadata;
 mod visibility_columns;
 
+use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 use visibility_columns::VisibilityColumns;
 
@@ -91,6 +93,16 @@ pub struct MsTransformRequest {
     /// CASA `split(keepflags=False)` drops rows whose `FLAG_ROW` is true or
     /// whose selected `FLAG` cube is fully true.
     pub keep_flags: bool,
+}
+
+/// Additional options used by the CASA task surfaces.
+#[derive(Debug, Clone, Default)]
+pub struct MsTransformTaskOptions {
+    /// Create and fill weight and sigma spectra even when the input has none.
+    pub use_weight_spectrum: bool,
+    /// Active per-selected-SPW widths, or a single width broadcast to each SPW.
+    /// When absent, the task uses the scalar width in the request.
+    pub channel_widths: Option<Vec<usize>>,
 }
 
 /// Report returned after materializing a transformed MeasurementSet.
@@ -160,6 +172,16 @@ pub enum MsTransformError {
     /// The input has no visibility column in the requested layout.
     #[error("Did not find and select any data columns.")]
     NoDataColumns,
+
+    /// No complete output bin fits a selected spectral window.
+    #[error(
+        "Channel selection does not allow to produce any output channel with the requested width"
+    )]
+    NoCompleteChannelBins,
+
+    /// Width vectors with more than one entry must cover the selected SPWs.
+    #[error("Number of channel widths is different from the number of spw")]
+    ChannelWidthCount,
 
     /// The row selection failed.
     #[error("failed to select rows from MeasurementSet {path}: {source}")]
@@ -237,19 +259,25 @@ pub enum MsTransformError {
 
 /// Materialize a selected/channel-subset MeasurementSet.
 pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, MsTransformError> {
-    materialize_transform(request, RowGrammar::Casa)
+    materialize_transform(
+        request,
+        RowGrammar::Casa,
+        &MsTransformTaskOptions::default(),
+    )
 }
 
 /// Materialize the selection with the CASA split and mstransform task grammar.
 pub fn mstransform_task(
     request: &MsTransformRequest,
+    options: &MsTransformTaskOptions,
 ) -> Result<MsTransformReport, MsTransformError> {
-    materialize_transform(request, RowGrammar::Transform)
+    materialize_transform(request, RowGrammar::Transform, options)
 }
 
 fn materialize_transform(
     request: &MsTransformRequest,
     grammar: RowGrammar,
+    options: &MsTransformTaskOptions,
 ) -> Result<MsTransformReport, MsTransformError> {
     if request.input_ms == request.output_ms {
         return Err(MsTransformError::SameInputOutput {
@@ -270,7 +298,7 @@ fn materialize_transform(
         })?;
     let mut physical_request = request.clone();
     physical_request.output_ms = target.staging_path().to_path_buf();
-    let mut report = mstransform_staged(&physical_request, grammar)?;
+    let mut report = mstransform_staged(&physical_request, grammar, options)?;
     target
         .commit()
         .map_err(|error| MsTransformError::PrepareOutput {
@@ -288,6 +316,7 @@ fn materialize_transform(
 fn mstransform_staged(
     request: &MsTransformRequest,
     grammar: RowGrammar,
+    options: &MsTransformTaskOptions,
 ) -> Result<MsTransformReport, MsTransformError> {
     let started_at = Instant::now();
     tracing::info!(
@@ -370,7 +399,21 @@ fn mstransform_staged(
     );
     let stage_started_at = Instant::now();
     let channel_selection = resolve_transform_channels(&input, &spw_selection, &request.spw)?;
-    let channel_bins = channel_bins_by_spw(&channel_selection, request.width)?;
+    let task_average = grammar == RowGrammar::Transform
+        && (normalized_width(request.width) > 1 || options.channel_widths.is_some());
+    let widths = channel_widths_by_spw(
+        &channel_selection,
+        &spw_selection,
+        request.width,
+        options.channel_widths.as_deref(),
+    )?;
+    let average_metadata = task_average.then(|| {
+        channel_selection
+            .iter()
+            .map(|(&spw, selection)| (spw, selection.metadata_for_width(widths[&spw])))
+            .collect::<BTreeMap<_, _>>()
+    });
+    let channel_bins = channel_bins_by_spw(&channel_selection, &widths, average_metadata.as_ref())?;
     let ddid_to_spw = data_description_spw_map(&input)?;
     let antenna_ids = selection_metadata::selected_antenna_ids(
         &input,
@@ -446,6 +489,11 @@ fn mstransform_staged(
             });
         }
     }
+    let first_selected_row = selected_rows
+        .iter()
+        .copied()
+        .min()
+        .expect("nonempty row selection");
     let stage_started_at = Instant::now();
     let (selected_rows, selected_ddids) = selection_metadata::sort_selected_rows(
         input.main_table(),
@@ -461,6 +509,16 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
+    let spectra = SpectrumProjection::resolve(
+        input.main_table(),
+        first_selected_row,
+        grammar,
+        options.use_weight_spectrum,
+    )
+    .map_err(|source| MsTransformError::MutateMeasurementSet {
+        path: request.input_ms.display().to_string(),
+        source: Box::new(source),
+    })?;
     prepare_output_root(&request.output_ms)?;
     let mut output_main = materialize_empty_main_table(
         &request.input_ms,
@@ -468,6 +526,7 @@ fn mstransform_staged(
         &request.output_ms,
         &visibility,
         grammar,
+        &spectra,
     )?;
     maybe_log_transform_progress(
         "materialize_selected_main",
@@ -489,6 +548,7 @@ fn mstransform_staged(
         &ddid_to_spw,
         &spw_selection,
         correlations.as_ref(),
+        grammar,
     )?;
     if let Some(correlations) = correlations.as_ref() {
         correlations.write_polarizations(request)?;
@@ -531,7 +591,7 @@ fn mstransform_staged(
         &ddid_to_spw,
         &channel_bins,
         correlations.as_ref(),
-        &visibility,
+        (&visibility, &spectra),
         write_resources,
     )?;
     let batch_rows = write_plan.batch_rows().min(input_batch_rows);
@@ -554,7 +614,6 @@ fn mstransform_staged(
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
-    let spectrum_columns = spectrum_column_names(input.main_table());
     let stage_started_at = Instant::now();
     let mut touched_spws = BTreeSet::new();
     for batch_start in (0..row_count).step_by(batch_rows.max(1)) {
@@ -615,7 +674,8 @@ fn mstransform_staged(
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
             })?;
-        let mut spectrum_values = spectrum_columns
+        let mut spectrum_values = spectra
+            .source
             .iter()
             .map(|&name| {
                 input
@@ -633,6 +693,7 @@ fn mstransform_staged(
         let mut uvw_values = uvw_values.into_iter();
         let mut weight_values = weight_values.into_iter();
         let mut sigma_values = sigma_values.into_iter();
+        let mut row_spectra = vec![None; spectrum_values.len()];
         for (batch_offset, (flags, &ddid)) in flag_values
             .into_iter()
             .zip(&selected_ddids[batch_start..batch_end])
@@ -663,6 +724,49 @@ fn mstransform_staged(
                 selector: request.spw.clone(),
                 reason: format!("selected row {row_index} maps to spectral window {spw_id}, but --spw does not include that SPW"),
             })?;
+            let mutation_error = |source| MsTransformError::MutateMeasurementSet {
+                path: request.output_ms.display().to_string(),
+                source: Box::new(source),
+            };
+            let weight = weight_values
+                .next()
+                .flatten()
+                .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "WEIGHT"))?;
+            let sigma = sigma_values
+                .next()
+                .flatten()
+                .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "SIGMA"))?;
+            let weight = select_correlations(weight, "WEIGHT")?;
+            let sigma = select_correlations(sigma, "SIGMA")?;
+            for ((name, values), output) in spectrum_values.iter_mut().zip(&mut row_spectra) {
+                *output = values
+                    .next()
+                    .flatten()
+                    .filter(|value| !value.is_empty())
+                    .map(|value| select_correlations(value, name))
+                    .transpose()?;
+            }
+            let source_spectrum = |name| spectra.source.iter().position(|&source| source == name);
+            let spectra_cells = SpectrumCells {
+                weight: source_spectrum("WEIGHT_SPECTRUM")
+                    .and_then(|index| row_spectra[index].as_ref()),
+                sigma: source_spectrum("SIGMA_SPECTRUM")
+                    .and_then(|index| row_spectra[index].as_ref()),
+            };
+            let averages = task_average
+                .then(|| {
+                    ChannelAverages::new(
+                        &flags,
+                        bins,
+                        &weight,
+                        &sigma,
+                        spectra_cells,
+                        &visibility,
+                        spectra.propagate_weights,
+                    )
+                })
+                .transpose()
+                .map_err(mutation_error)?;
             for (column, values) in &mut data_values {
                 let source = column.source.name();
                 let target = column.output.name();
@@ -681,6 +785,10 @@ fn mstransform_staged(
                 let value = select_correlations(value, source)?;
                 let transformed = if column.source == OptionalMainColumn::LagData {
                     value
+                } else if let Some(averages) = &averages {
+                    averages
+                        .visibility(column.source, value)
+                        .map_err(mutation_error)?
                 } else {
                     transform_data_channels(value, &flags, bins).map_err(|source| {
                         MsTransformError::MutateMeasurementSet {
@@ -707,13 +815,11 @@ fn mstransform_staged(
                     )?;
                 }
             }
-            let transformed_flags =
-                transform_flag_channels(flags.clone(), bins).map_err(|source| {
-                    MsTransformError::MutateMeasurementSet {
-                        path: request.output_ms.display().to_string(),
-                        source: Box::new(source),
-                    }
-                })?;
+            let transformed_flags = if let Some(averages) = &averages {
+                averages.flags()
+            } else {
+                transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
+            };
             push_bool_array_row(
                 &mut write_session,
                 "FLAG",
@@ -760,17 +866,28 @@ fn mstransform_staged(
                 &request.output_ms,
                 row_index,
             )?;
-            let weight = weight_values
-                .next()
-                .flatten()
-                .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "WEIGHT"))?;
-            let sigma = sigma_values
-                .next()
-                .flatten()
-                .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "SIGMA"))?;
-            let mut weight = select_correlations(weight, "WEIGHT")?;
-            let mut sigma = select_correlations(sigma, "SIGMA")?;
-            if grammar == RowGrammar::Transform && normalized_width(request.width) == 1 {
+            let (mut weight, mut sigma, task_spectra) = if let Some(averages) = averages {
+                let averages = averages.statistics();
+                (
+                    averages.weight,
+                    averages.sigma,
+                    Some((averages.weight_spectrum, averages.sigma_spectrum)),
+                )
+            } else if spectra.fill_standard {
+                let values = unaveraged_spectra(
+                    &weight,
+                    &sigma,
+                    spectra_cells,
+                    &flags,
+                    bins,
+                    visibility.corrected_becomes_data(),
+                )
+                .map_err(mutation_error)?;
+                (weight, sigma, Some(values))
+            } else {
+                (weight, sigma, None)
+            };
+            if grammar == RowGrammar::Transform && !task_average {
                 visibility.align_scalar_weights(&mut weight, &mut sigma);
             }
             push_f32_array_row(
@@ -787,20 +904,25 @@ fn mstransform_staged(
                 &request.output_ms,
                 row_index,
             )?;
-            for (name, values) in &mut spectrum_values {
-                if let Some(value) = values.next().flatten().filter(|value| !value.is_empty()) {
-                    let value = select_correlations(value, name)?;
-                    let transformed = if *name == "SIGMA_SPECTRUM" {
-                        transform_sigma_channels(value, &flags, bins)
-                    } else {
-                        transform_weight_channels(value, &flags, bins)
-                    }
-                    .map_err(|source| {
-                        MsTransformError::MutateMeasurementSet {
-                            path: request.output_ms.display().to_string(),
-                            source: Box::new(source),
-                        }
-                    })?;
+            let (mut task_weight, mut task_sigma) =
+                task_spectra.map_or((None, None), |(weight, sigma)| (Some(weight), Some(sigma)));
+            for &name in &spectra.output {
+                let transformed = match name {
+                    "WEIGHT_SPECTRUM" if grammar == RowGrammar::Transform => task_weight.take(),
+                    "SIGMA_SPECTRUM" if grammar == RowGrammar::Transform => task_sigma.take(),
+                    _ => source_spectrum(name)
+                        .and_then(|index| row_spectra[index].take())
+                        .map(|value| {
+                            if name == "SIGMA_SPECTRUM" {
+                                transform_sigma_channels(value, &flags, bins)
+                            } else {
+                                transform_weight_channels(value, &flags, bins)
+                            }
+                        })
+                        .transpose()
+                        .map_err(mutation_error)?,
+                };
+                if let Some(transformed) = transformed {
                     push_f32_array_row(
                         &mut write_session,
                         name,
@@ -835,7 +957,7 @@ fn mstransform_staged(
     output_column_overrides.insert_deferred("UVW");
     output_column_overrides.insert_deferred("WEIGHT");
     output_column_overrides.insert_deferred("SIGMA");
-    for name in spectrum_columns {
+    for name in spectra.output {
         output_column_overrides.insert_deferred(name);
     }
     for ddid in &selected_ddids {
@@ -893,11 +1015,12 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    if normalized_width(request.width) == 1 {
+    if average_metadata.is_some() || normalized_width(request.width) == 1 {
         spectral_metadata::write_channel_selection(
             &request.output_ms,
             &compact_metadata.spw_map,
             &channel_selection,
+            average_metadata.as_ref(),
         )?;
     } else {
         update_spectral_window_metadata(&compact_metadata.channel_bins, &request.output_ms)?;
@@ -1029,7 +1152,7 @@ fn transform_array_write_plan(
     ddid_to_spw: &BTreeMap<i32, i32>,
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
     correlations: Option<&CorrelationSelection>,
-    visibility: &VisibilityColumns,
+    (visibility, spectra): (&VisibilityColumns, &SpectrumProjection),
     resources: MeasurementSetWriteResources,
 ) -> Result<(MeasurementSetWritePlan, usize), MsTransformError> {
     let input_path = input.path().unwrap_or_else(|| Path::new("<memory>"));
@@ -1077,7 +1200,6 @@ fn transform_array_write_plan(
         &dimensions,
         correlations.is_some(),
     )?;
-    let spectrum_columns = spectrum_column_names(input.main_table());
     let io_error = |error: MsSelectionError| MsTransformError::WriteMeasurementSet {
         path: input_path.display().to_string(),
         reason: error.to_string(),
@@ -1091,7 +1213,7 @@ fn transform_array_write_plan(
         selected_rows.len(),
         resources,
         dimensions.values(),
-        spectrum_columns.len(),
+        spectra.source.len(),
         visibility.regular_bytes_per_sample(),
         largest_input_category.saturating_add(maximum_lag_bytes),
     )
@@ -1136,7 +1258,7 @@ fn transform_array_write_plan(
             storage_manager: MeasurementSetColumnStorage::TiledShape,
         },
     ];
-    for name in spectrum_columns {
+    for &name in &spectra.output {
         columns.push(MeasurementSetArrayColumnPlan {
             name: name.to_string(),
             value_type: StreamedTiledShapeValueType::Float32,
@@ -1170,18 +1292,54 @@ fn transform_array_write_plan(
     Ok((writer, input_batch_rows))
 }
 
-fn spectrum_column_names(table: &Table) -> Vec<&'static str> {
-    let Some(schema) = table.schema() else {
-        return Vec::new();
-    };
-    [
-        "WEIGHT_SPECTRUM",
-        "SIGMA_SPECTRUM",
-        "CORRECTED_WEIGHT_SPECTRUM",
-    ]
-    .into_iter()
-    .filter(|name| schema.contains_column(name))
-    .collect()
+struct SpectrumProjection {
+    source: Vec<&'static str>,
+    output: Vec<&'static str>,
+    propagate_weights: bool,
+    fill_standard: bool,
+}
+
+impl SpectrumProjection {
+    fn resolve(
+        table: &Table,
+        selected_row: usize,
+        grammar: RowGrammar,
+        force_spectra: bool,
+    ) -> Result<Self, TableError> {
+        let source = [
+            "WEIGHT_SPECTRUM",
+            "SIGMA_SPECTRUM",
+            "CORRECTED_WEIGHT_SPECTRUM",
+        ]
+        .into_iter()
+        .filter(|name| {
+            table
+                .schema()
+                .is_some_and(|schema| schema.contains_column(name))
+        })
+        .collect::<Vec<_>>();
+        let has_weight = source.contains(&"WEIGHT_SPECTRUM");
+        let propagate_weights = grammar == RowGrammar::Transform
+            && has_weight
+            && table
+                .array_shape_uncached(selected_row, "WEIGHT_SPECTRUM")?
+                .is_some();
+        let mut output = source.clone();
+        if grammar == RowGrammar::Transform {
+            output.retain(|&name| name == "CORRECTED_WEIGHT_SPECTRUM");
+            if force_spectra
+                || (has_weight && table.array_shape_uncached(0, "WEIGHT_SPECTRUM")?.is_some())
+            {
+                output.extend(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"]);
+            }
+        }
+        Ok(Self {
+            source,
+            output,
+            propagate_weights,
+            fill_standard: (force_spectra || propagate_weights) && grammar == RowGrammar::Transform,
+        })
+    }
 }
 
 fn transform_input_batch_rows<'a>(
@@ -1449,6 +1607,7 @@ fn materialize_empty_main_table(
     output_path: &Path,
     visibility: &VisibilityColumns,
     grammar: RowGrammar,
+    spectra: &SpectrumProjection,
 ) -> Result<Table, MsTransformError> {
     let mut table = Table::open_metadata_for_construction(TableOptions::new(input_path), row_count)
         .map_err(|source| MsTransformError::MutateMeasurementSet {
@@ -1469,7 +1628,9 @@ fn materialize_empty_main_table(
         .into_iter()
         .flat_map(|schema| schema.columns())
         .filter(|column| {
-            is_visibility_column(column.name()) && !visibility.contains_output(column.name())
+            let name = column.name();
+            (is_visibility_column(name) && !visibility.contains_output(name))
+                || (spectra.source.contains(&name) && !spectra.output.contains(&name))
         })
         .map(|column| column.name().to_string())
         .collect::<Vec<_>>();
@@ -1480,6 +1641,19 @@ fn materialize_empty_main_table(
                 path: output_path.display().to_string(),
                 source: Box::new(source),
             })?;
+    }
+    for column in [
+        OptionalMainColumn::WeightSpectrum,
+        OptionalMainColumn::SigmaSpectrum,
+    ] {
+        if spectra.output.contains(&column.name()) && !spectra.source.contains(&column.name()) {
+            table
+                .add_column(crate::column_def::column_schema(column.column_def()), None)
+                .map_err(|source| MsTransformError::MutateMeasurementSet {
+                    path: output_path.display().to_string(),
+                    source: Box::new(source),
+                })?;
+        }
     }
     let mut arrays = vec![
         "FLAG",
@@ -1774,8 +1948,13 @@ fn compact_spectral_subtables(
     ddid_to_spw: &BTreeMap<i32, i32>,
     selection: &SpwSelection,
     correlations: Option<&CorrelationSelection>,
+    grammar: RowGrammar,
 ) -> Result<CompactSpectralMetadata, MsTransformError> {
-    let selected_spws = channel_bins.keys().copied().collect::<Vec<_>>();
+    let selected_spws = if grammar == RowGrammar::Transform {
+        selected_spw_order(channel_bins, selection)
+    } else {
+        channel_bins.keys().copied().collect::<Vec<_>>()
+    };
     let spw_map = selected_spws
         .iter()
         .enumerate()
@@ -1973,6 +2152,28 @@ where
 struct TransformChannelSelection {
     channels: Vec<usize>,
     metadata_ends: Vec<usize>,
+    ranges: Vec<ChannelRange>,
+}
+
+impl TransformChannelSelection {
+    fn metadata_for_width(&self, width: usize) -> Vec<spectral_metadata::ChannelWindow> {
+        let width = width.min(self.channels.len());
+        let mut windows = Vec::new();
+        for range in &self.ranges {
+            let start = range.start as usize;
+            let stop = range.stop as usize;
+            let span = (range.step.max(1) as usize).saturating_mul(width);
+            for first in (start..=stop).step_by(span) {
+                let nominal_last = first.saturating_add(span - 1);
+                windows.push(spectral_metadata::ChannelWindow {
+                    first,
+                    last: nominal_last.min(stop),
+                    dropped: nominal_last > stop,
+                });
+            }
+        }
+        windows
+    }
 }
 
 fn resolve_transform_channels(
@@ -2009,28 +2210,31 @@ fn resolve_transform_channels(
             .channel_list()
             .iter()
             .filter(|range| range.spw_id == row)
-            .peekable();
-        let (channels, metadata_ends) = if ranges.peek().is_some() {
-            let mut indices = Vec::new();
-            let mut ends = Vec::new();
-            for range in ranges {
-                let channels = range
-                    .channels()
-                    .ok_or_else(|| MsTransformError::InvalidSpw {
-                        selector: spw.to_string(),
-                        reason: format!(
-                            "spectral-window {row} range starts before its first channel"
-                        ),
-                    })?;
-                for channel in channels {
-                    indices.push(channel);
-                    ends.push((channel + range.step.max(1) as usize - 1).min(range.stop as usize));
-                }
+            .copied()
+            .collect::<Vec<_>>();
+        if ranges.is_empty() {
+            ranges.push(ChannelRange {
+                spw_id: row,
+                start: 0,
+                stop: num_chan as i32 - 1,
+                step: 1,
+            });
+        }
+        let mut channels = Vec::new();
+        let mut metadata_ends = Vec::new();
+        for range in &ranges {
+            let indices = range
+                .channels()
+                .ok_or_else(|| MsTransformError::InvalidSpw {
+                    selector: spw.to_string(),
+                    reason: format!("spectral-window {row} range starts before its first channel"),
+                })?;
+            for channel in indices {
+                channels.push(channel);
+                metadata_ends
+                    .push((channel + range.step.max(1) as usize - 1).min(range.stop as usize));
             }
-            (indices, ends)
-        } else {
-            ((0..num_chan).collect(), (0..num_chan).collect())
-        };
+        }
         if channels.is_empty() {
             return Err(MsTransformError::InvalidSpw {
                 selector: spw.to_string(),
@@ -2042,6 +2246,7 @@ fn resolve_transform_channels(
             TransformChannelSelection {
                 channels,
                 metadata_ends,
+                ranges,
             },
         );
     }
@@ -2052,18 +2257,77 @@ fn normalized_width(width: usize) -> usize {
     width.max(1)
 }
 
+fn selected_spw_order<T>(windows: &BTreeMap<i32, T>, selection: &SpwSelection) -> Vec<i32> {
+    let mut seen = BTreeSet::new();
+    let mut order = selection
+        .channel_list()
+        .iter()
+        .map(|range| range.spw_id as i32)
+        .filter(|spw| windows.contains_key(spw) && seen.insert(*spw))
+        .collect::<Vec<_>>();
+    order.extend(windows.keys().copied().filter(|spw| seen.insert(*spw)));
+    order
+}
+
+fn channel_widths_by_spw(
+    channels: &BTreeMap<i32, TransformChannelSelection>,
+    spw_selection: &SpwSelection,
+    scalar: usize,
+    vector: Option<&[usize]>,
+) -> Result<BTreeMap<i32, usize>, MsTransformError> {
+    let simple = |width| {
+        channels
+            .keys()
+            .map(|&spw| (spw, normalized_width(width)))
+            .collect()
+    };
+    match vector {
+        None => Ok(simple(scalar)),
+        Some(&[width]) => Ok(simple(width)),
+        Some(vector) => {
+            let order = selected_spw_order(channels, spw_selection);
+            if order.len() != vector.len() {
+                return Err(MsTransformError::ChannelWidthCount);
+            }
+            Ok(order
+                .into_iter()
+                .zip(vector.iter().copied().map(normalized_width))
+                .collect())
+        }
+    }
+}
+
 fn channel_bins_by_spw(
     channel_selection: &BTreeMap<i32, TransformChannelSelection>,
-    width: usize,
+    widths: &BTreeMap<i32, usize>,
+    average_metadata: Option<&BTreeMap<i32, Vec<spectral_metadata::ChannelWindow>>>,
 ) -> Result<BTreeMap<i32, Vec<Vec<usize>>>, MsTransformError> {
-    let width = normalized_width(width);
     let mut by_spw = BTreeMap::new();
     for (&spw_id, selection) in channel_selection {
-        let bins = selection
-            .channels
-            .chunks(width)
-            .map(|chunk| chunk.to_vec())
-            .collect::<Vec<_>>();
+        let width = widths[&spw_id].min(selection.channels.len()).max(1);
+        let bins = if let Some(windows) = average_metadata {
+            let count = windows[&spw_id]
+                .iter()
+                .filter(|window| !window.dropped)
+                .count();
+            if count == 0 {
+                return Err(MsTransformError::NoCompleteChannelBins);
+            }
+            // CASA averages the selected visibility stripe in sequence. It
+            // drops the trailing samples according to the output SPW shape.
+            selection
+                .channels
+                .chunks_exact(width)
+                .take(count)
+                .map(<[usize]>::to_vec)
+                .collect::<Vec<_>>()
+        } else {
+            selection
+                .channels
+                .chunks(width)
+                .map(<[usize]>::to_vec)
+                .collect::<Vec<_>>()
+        };
         if bins.is_empty() {
             return Err(MsTransformError::InvalidSpw {
                 selector: format!("{spw_id}"),

@@ -7,8 +7,8 @@ use std::process::ExitCode;
 
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    MsTransformError, MsTransformRequest, TransformDataColumn, ms_task_success, mstransform_task,
-    mstransform_task_schema_bundle, task_selection_text,
+    MsTransformError, MsTransformRequest, MsTransformTaskOptions, TransformDataColumn,
+    ms_task_success, mstransform_task, mstransform_task_schema_bundle, task_selection_text,
 };
 use casa_provider_contracts::{CasaValue, NumpyScalarType, ParameterValue, python_repr};
 use casa_task_runtime::{
@@ -34,10 +34,10 @@ fn main() -> ExitCode {
 
 /// Both surfaces run the one transform; CASA's tasks return None.
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let request = transform_request(task)?;
+    let (request, options) = transform_request(task)?;
     // The output the transform refuses before it starts is the argument's
     // fault; anything else failed the transform.
-    let report = mstransform_task(&request).map_err(|error| match error {
+    let report = mstransform_task(&request, &options).map_err(|error| match error {
         MsTransformError::OutputExists { .. } | MsTransformError::SameInputOutput { .. } => {
             TaskFailure::validation(error.to_string()).at("outputvis")
         }
@@ -45,47 +45,127 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         MsTransformError::MissingDataColumn { path, column } => TaskFailure::execution(format!(
             "Desired column ({column}) not found in the input MS ({path})."
         )),
+        MsTransformError::ChannelWidthCount => {
+            let parameter = channel_parameter(task);
+            TaskFailure::validation(format!(
+                "Number of {parameter} is different from the number of spw"
+            ))
+            .at(parameter)
+        }
         other => TaskFailure::execution(other.to_string()),
     })?;
     ms_task_success(CasaValue::None, &report)
 }
 
-fn transform_request(task: &TaskInvocation<'_>) -> Result<MsTransformRequest, TaskFailure> {
-    Ok(MsTransformRequest {
+fn transform_request(
+    task: &TaskInvocation<'_>,
+) -> Result<(MsTransformRequest, MsTransformTaskOptions), TaskFailure> {
+    let (width, channel_widths) = channel_width(task)?;
+    let request = MsTransformRequest {
         input_ms: task.path("vis")?,
         output_ms: task.path("outputvis")?,
         spw: task_selection_text(task, "spw")?,
-        width: channel_width(task)?,
+        width,
         data_column: data_column(&task.required_text("datacolumn")?)?,
         selection: selection(task)?,
         keep_flags: task.flag("keepflags")?,
-    })
+    };
+    let options = MsTransformTaskOptions {
+        use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
+        channel_widths,
+    };
+    Ok((request, options))
 }
 
-/// The channels averaged into each output channel: split's `width`, or
-/// mstransform's `chanbin` when its `chanaverage` is set and 1 otherwise,
-/// as CASA's tasks take them. CASA's mstransform refuses to average by one
-/// channel; split's `width=1` averages nothing.
-fn channel_width(task: &TaskInvocation<'_>) -> Result<usize, TaskFailure> {
-    let (name, least) = if task.surface() == "split" {
-        ("width", 1)
-    } else if task.flag("chanaverage")? {
-        ("chanbin", 2)
+fn channel_parameter(task: &TaskInvocation<'_>) -> &'static str {
+    if task.surface() == "split" {
+        "width"
     } else {
-        return Ok(1);
+        "chanbin"
+    }
+}
+
+fn channel_width(task: &TaskInvocation<'_>) -> Result<(usize, Option<Vec<usize>>), TaskFailure> {
+    let name = channel_parameter(task);
+    let split = name == "width";
+    if !split && !task.flag("chanaverage")? {
+        return Ok((1, None));
+    }
+    let invalid_type = || TaskFailure::validation(format!("invalid {name} type")).at(name);
+    let empty = || {
+        let message = if split {
+            "list index out of range"
+        } else {
+            "chanbin must contain at least one width"
+        };
+        TaskFailure::validation(message).at(name)
     };
-    let width = task.integer(name)?;
-    usize::try_from(width)
-        .ok()
-        .filter(|width| *width >= least)
-        .ok_or_else(|| {
-            let message = if least > 1 {
-                format!("Parameter {name} must be > 1 to do channel averaging, found {width}")
+    let value = task.value(name).ok_or_else(invalid_type)?;
+    match value {
+        ParameterValue::Array(values) if values.is_empty() => Err(empty()),
+        ParameterValue::Array(values) => {
+            let widths = values
+                .iter()
+                .map(|value| channel_integer(value).ok_or_else(invalid_type))
+                .collect::<Result<Vec<_>, _>>()?;
+            if split && !widths.iter().any(|&width| width > 1) {
+                return Ok((1, None));
+            }
+            let widths = widths
+                .into_iter()
+                .map(|width| {
+                    usize::try_from(width)
+                        .ok()
+                        .filter(|&width| width > 0)
+                        .ok_or_else(|| {
+                            TaskFailure::validation(format!(
+                                "{name} must contain positive integers"
+                            ))
+                            .at(name)
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((widths[0], Some(widths)))
+        }
+        ParameterValue::EmptyArray { .. } => Err(empty()),
+        ParameterValue::String(text) if split => {
+            let width = if text.bytes().all(|digit| digit.is_ascii_digit()) {
+                text.parse::<usize>().unwrap_or(1)
             } else {
-                format!("{name} must be at least 1, found {width}")
+                1
             };
-            TaskFailure::validation(message).at(name)
-        })
+            Ok((width.max(1), None))
+        }
+        value => {
+            // CLI flags for variant parameters are passed as text. The
+            // Python task validates the accepted argument types separately.
+            let width = match value {
+                ParameterValue::String(text) => text.parse().ok(),
+                value => channel_integer(value),
+            }
+            .ok_or_else(invalid_type)?;
+            if !split && width <= 1 && !matches!(value, ParameterValue::NumpyScalar { .. }) {
+                return Err(TaskFailure::validation(
+                    "Parameter chanbin must be > 1 to do channel averaging",
+                )
+                .at(name));
+            }
+            Ok((usize::try_from(width).unwrap_or(1).max(1), None))
+        }
+    }
+}
+
+fn channel_integer(value: &ParameterValue) -> Option<i64> {
+    match value {
+        ParameterValue::Integer(value) => Some(*value),
+        ParameterValue::Bool(value) => Some(i64::from(*value)),
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+            value,
+        }
+        | ParameterValue::ScalarArray(value) => channel_integer(value),
+        _ => None,
+    }
 }
 
 /// The row selection; the TaQL expression is split's `msselect`, a
@@ -229,6 +309,7 @@ mod tests {
             .open_session(line.open_session_request(bundle))
             .unwrap();
         transform_request(&TaskInvocation::new(&session, std::path::Path::new(".")))
+            .map(|(request, _)| request)
     }
 
     #[test]

@@ -8,6 +8,7 @@ use casa_types::ArrayValue;
 
 use crate::schema::main_table::OptionalMainColumn;
 
+use super::channel_average::{sigma_from_weight, weight_from_sigma};
 use super::{MsTransformError, TransformDataColumn};
 
 #[derive(Clone, Copy)]
@@ -108,7 +109,7 @@ impl VisibilityColumns {
             .join(",")
     }
 
-    fn corrected_becomes_data(&self) -> bool {
+    pub(super) fn corrected_becomes_data(&self) -> bool {
         self.0.iter().any(|copy| {
             copy.source == OptionalMainColumn::CorrectedData
                 && copy.output == OptionalMainColumn::Data
@@ -118,24 +119,12 @@ impl VisibilityColumns {
     pub(super) fn align_scalar_weights(&self, weight: &mut ArrayValue, sigma: &mut ArrayValue) {
         if self.corrected_becomes_data() {
             if let ArrayValue::Float32(values) = weight {
-                *sigma = ArrayValue::Float32(values.mapv(|weight| {
-                    if weight > f32::MIN_POSITIVE {
-                        1.0 / weight.sqrt()
-                    } else {
-                        -1.0
-                    }
-                }));
+                *sigma = ArrayValue::Float32(values.mapv(sigma_from_weight));
             }
         } else if !self.preserves_both_scalars()
             && let ArrayValue::Float32(values) = sigma
         {
-            *weight = ArrayValue::Float32(values.mapv(|sigma| {
-                if sigma > f32::MIN_POSITIVE {
-                    1.0 / (sigma * sigma)
-                } else {
-                    0.0
-                }
-            }));
+            *weight = ArrayValue::Float32(values.mapv(weight_from_sigma));
         }
     }
 
