@@ -3,7 +3,10 @@
 use std::ffi::CStr;
 use std::path::Path;
 
-use casa_coordinates::{CoordinateSystem, FitsHeader, FitsValue, fits::from_fits_header};
+use casa_coordinates::{
+    CoordinateSystem, FitsHeader, FitsValue, LinearCoordinate,
+    fits::coordinate_util::from_fits_header_with_axis_order,
+};
 use casa_types::measures::{
     EpochRef, MEpoch, MPosition,
     direction::{DirectionRef, MDirection},
@@ -15,13 +18,13 @@ use fitsio::{
     errors::check_status,
     hdu::{FitsHdu, HduInfo},
 };
-use ndarray::{IxDyn, ShapeBuilder};
+use ndarray::{Axis, IxDyn, ShapeBuilder};
 
 use super::{
     PrimaryHdu, brightness_unit, history::history_from_cards, image_info_from_fits_header,
     read_fits_axis_shape,
 };
-use crate::{ImageError, MutableImageInterface, image::ImageHistoryEntry};
+use crate::{ImageError, MutableImageInterface, image::ImageHistoryRow};
 
 /// A selected FITS image ready to copy into a CASA image.
 ///
@@ -38,7 +41,7 @@ pub struct FitsToolImport {
     /// FITS keywords that Casa did not consume to decode the image.
     pub misc_info: RecordValue,
     /// Original history entries, in FITS card order.
-    pub history: Vec<ImageHistoryEntry>,
+    pub history: Vec<ImageHistoryRow>,
 }
 
 impl FitsToolImport {
@@ -96,7 +99,27 @@ impl FitsToolImport {
             };
             header.set("RADESYS", FitsValue::String(system.into()));
         }
-        let mut coordinates = from_fits_header(&header, &shape)?;
+        let mut has_wcs = false;
+        for axis in 1..=shape.len() {
+            for (prefix, default) in [("CRVAL", 0.0), ("CRPIX", 0.0), ("CDELT", 1.0)] {
+                let name = format!("{prefix}{axis}");
+                if header.get(&name).is_none() {
+                    header.set(name, FitsValue::Float(default));
+                } else {
+                    has_wcs = true;
+                }
+            }
+            has_wcs |= header.get(&format!("CTYPE{axis}")).is_some();
+        }
+        let (mut coordinates, axis_order) = from_fits_header_with_axis_order(&header, &shape)?;
+        if !has_wcs {
+            let ndim = shape.len();
+            coordinates = CoordinateSystem::new().with_obs_info(coordinates.obs_info().clone());
+            coordinates.add_coordinate(
+                LinearCoordinate::new(ndim, vec![String::new(); ndim], vec![String::new(); ndim])
+                    .with_reference_pixel(vec![-1.0; ndim]),
+            );
+        }
         let obs = coordinates.obs_info_mut();
         if obs.observer.is_empty() {
             obs.observer = "UNKNOWN".into();
@@ -112,7 +135,17 @@ impl FitsToolImport {
         {
             obs.telescope_position = Some(MPosition::new_itrf(x, y, z));
         }
-        let coordinate_record = fits_coordinate_record(&coordinates, &header)?;
+        let coordinate_record = fits_coordinate_record(&coordinates, &axis_order, &header)?;
+        let coordinates = CoordinateSystem::from_record(&coordinate_record).map_err(|error| {
+            if matches!(
+                error,
+                casa_coordinates::CoordinateError::UnsupportedAxisLayout(_)
+            ) {
+                ImageError::CasaSelection(format!("{error} (casa-rs issue #1002)"))
+            } else {
+                error.into()
+            }
+        })?;
         let mut source = PrimaryHdu {
             fits,
             hdu,
@@ -141,7 +174,7 @@ impl FitsToolImport {
             units: brightness_unit(&source.header),
             image_info: info,
             misc_info: miscellaneous(&physical),
-            history: history_from_cards(&cards),
+            history: history_from_cards(&cards, true),
             source,
         })
     }
@@ -227,6 +260,7 @@ impl FitsToolImport {
 
 fn fits_coordinate_record(
     coordinates: &CoordinateSystem,
+    axis_order: &[usize],
     header: &FitsHeader,
 ) -> Result<RecordValue, ImageError> {
     let original = coordinates.to_record();
@@ -258,15 +292,55 @@ fn fits_coordinate_record(
         let old_index = &coordinate.field[kind.len()..];
         for field in mapping_fields {
             if let Some(value) = original.get(&format!("{field}{old_index}")) {
-                record.upsert(format!("{field}{index}"), value.clone());
+                let value = if matches!(field, "pixelmap" | "worldmap")
+                    && let Value::Array(ArrayValue::Int32(map)) = value
+                {
+                    Value::Array(ArrayValue::Int32(
+                        map.mapv(|axis| axis_order[axis as usize] as i32),
+                    ))
+                } else {
+                    value.clone()
+                };
+                record.upsert(format!("{field}{index}"), value);
             }
         }
         if let Some(Value::Record(mut fields)) = original.get(&coordinate.field).cloned() {
+            let pixel_axes = coordinate
+                .pixel_axes
+                .iter()
+                .map(|axis| axis.map(|axis| axis_order[axis]))
+                .collect::<Vec<_>>();
             if kind == "direction" {
-                set_fits_pole_and_projection(&mut fields, &coordinate.pixel_axes, header);
+                set_fits_pole_and_projection(&mut fields, &pixel_axes, header);
+                normalize_direction_matrix(&mut fields);
+            } else if kind == "linear" {
+                fields.remove("naxes");
+                fields.remove("coordinate_type");
             } else if kind == "spectral"
-                && let Some(system) = fields.get("system")
+                && let Some(Some(axis)) = pixel_axes.first()
             {
+                let ctype = header
+                    .get_string(&format!("CTYPE{}", axis + 1))
+                    .unwrap_or("");
+                if ctype.eq_ignore_ascii_case("VOPT") {
+                    fields.upsert("nativeType", Value::Scalar(ScalarValue::Int32(2)));
+                }
+                if let Some(Value::Record(tabular)) = fields.get_mut("tabular") {
+                    tabular.upsert(
+                        "pc",
+                        Value::Array(ArrayValue::Float64(ndarray::arr2(&[[1.0]]).into_dyn())),
+                    );
+                }
+                if header.get("SPECSYS").is_none()
+                    && header.get("VELREF").is_none()
+                    && !ctype.to_ascii_uppercase().ends_with("-LSR")
+                {
+                    fields.upsert(
+                        "system",
+                        Value::Scalar(ScalarValue::String("Undefined".into())),
+                    );
+                }
+                let system = fields.get("system").expect("spectral coordinate system");
                 let mut conversion = RecordValue::default();
                 conversion.upsert("system", system.clone());
                 conversion.upsert(
@@ -291,6 +365,32 @@ fn fits_coordinate_record(
         }
     }
     Ok(record)
+}
+
+fn normalize_direction_matrix(record: &mut RecordValue) {
+    let Some(Value::Array(ArrayValue::Float64(mut matrix))) = record.get("pc").cloned() else {
+        return;
+    };
+    let Some(Value::Array(ArrayValue::Float64(mut increments))) = record.get("cdelt").cloned()
+    else {
+        return;
+    };
+    // The saved PC matrix is transposed with respect to the WCS transform.
+    // casacore moves each world-axis row's norm into its CDELT.
+    for (axis, increment) in matrix.axis_iter_mut(Axis(1)).zip(&mut increments) {
+        let norm = axis
+            .iter()
+            .map(|coefficient| coefficient * coefficient)
+            .sum::<f64>()
+            .sqrt();
+        if norm != 0.0 && norm != 1.0 {
+            *increment *= norm;
+            axis.into_iter()
+                .for_each(|coefficient| *coefficient /= norm);
+        }
+    }
+    record.upsert("pc", Value::Array(ArrayValue::Float64(matrix)));
+    record.upsert("cdelt", Value::Array(ArrayValue::Float64(increments)));
 }
 
 fn set_fits_pole_and_projection(

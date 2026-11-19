@@ -153,3 +153,75 @@ def test_import_casa_written_spectral_stokes_cube(tmp_path, oracle):
     _assert_value(image.restoringbeam(), expected.restoringbeam())
     assert image.done()
     assert expected.done()
+
+
+def _raw_fits(path, shape, keys=(), history=()):
+    structural = [("SIMPLE", True), ("BITPIX", -32), ("NAXIS", len(shape))]
+    structural += [(f"NAXIS{axis}", length) for axis, length in enumerate(shape, 1)]
+    cards = b"".join(_card(key, value) for key, value in (*structural, *keys))
+    cards += b"".join(f"HISTORY {entry}".ljust(80).encode("ascii") for entry in history)
+    cards += b"END".ljust(80)
+    data = np.arange(np.prod(shape), dtype=">f4").tobytes()
+    path.write_bytes(cards.ljust(len(cards) + (-len(cards) % 2880)) + data.ljust(len(data) + (-len(data) % 2880), b"\0"))
+
+
+@pytest.mark.parametrize("shape, keys", [
+    ((3, 2, 2), [
+        ("CTYPE1", "FREQ"), ("CUNIT1", "Hz"), ("CRPIX1", 1),
+        ("CRVAL1", 1e9), ("CDELT1", 1e6),
+        ("CTYPE2", "RA---TAN"), ("CTYPE3", "DEC--TAN"),
+        ("CRPIX2", 1), ("CRPIX3", 1), ("CRVAL2", 5), ("CRVAL3", 6),
+        ("CDELT2", -0.02), ("CDELT3", 0.03),
+    ]),
+    ((2, 2), [
+        ("CTYPE1", "RA---TAN"), ("CTYPE2", "DEC--TAN"), ("CRVAL1", 5), ("CRVAL2", 6),
+        ("CDELT1", -0.02), ("CDELT2", 0.03), ("PC1_2", 0.5),
+    ]),
+    ((3, 2), [
+        ("CTYPE1", "VOPT"), ("CTYPE2", "LINEAR"), ("CUNIT1", "m/s"),
+        ("CRVAL1", 100.0), ("CDELT1", 100000.0), ("RESTFRQ", 1e9),
+    ]),
+    ((2, 2), []),
+    ((2, 2), [
+        ("CTYPE1", "STOKES"), ("CTYPE2", "LINEAR"),
+        ("CRPIX1", 1), ("CRVAL1", -1), ("CDELT1", -1),
+    ]),
+])
+def test_fits_axis_maps_and_wcs_variants(tmp_path, oracle, shape, keys):
+    source = tmp_path / "coordinates.fits"
+    result = tmp_path / "coordinates.im"
+    _raw_fits(source, shape, keys)
+    expected = oracle.image()
+    assert expected.fromfits(infile=str(source))
+    actual = tools.image()
+    assert actual.fromfits(str(result), str(source))
+    _assert_value(actual.getchunk(), expected.getchunk())
+    _assert_value(actual.coordsys().torecord(), expected.coordsys().torecord())
+    assert actual.done()
+    assert actual.open(str(result))
+    _assert_value(actual.coordsys().torecord(), expected.coordsys().torecord())
+    assert actual.done()
+    assert expected.done()
+
+
+def test_fits_import_preserves_full_history_rows(tmp_path, oracle):
+    file = tmp_path / "log.fits"
+    _raw_fits(file, (2, 2), history=[
+        "CASA START LOGTABLE",
+        "2000-01-01T00:00:00 WARN SRCCODE='::test location' OBJID='obj42'",
+        "history from FITS",
+        "CASA END LOGTABLE",
+    ])
+    for module, name in [(oracle, "casa.im"), (tools, "casars.im")]:
+        image = module.image()
+        result = tmp_path / name
+        assert image.fromfits(str(result), str(file))
+        assert image.done()
+        table = oracle.table()
+        assert table.open(str(result / "logtable"))
+        assert table.getcell("MESSAGE", 0) == "history from FITS"
+        assert table.getcell("PRIORITY", 0) == "WARN"
+        assert table.getcell("OBJECT_ID", 0) == "obj42"
+        assert table.getcell("LOCATION", 0) == "::test location' OBJID='obj42"
+        assert table.getcell("TIME", 0) == 51544 * 86400.0
+        assert table.done()

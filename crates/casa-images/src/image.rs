@@ -54,6 +54,27 @@ pub struct ImageHistoryEntry {
     pub message: String,
 }
 
+/// Complete casacore log metadata retained when importing history records.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageHistoryRow {
+    /// Time, source location and message of the entry.
+    pub entry: ImageHistoryEntry,
+    /// Severity as stored in the CASA log table.
+    pub priority: String,
+    /// Object identifier as stored in the CASA log table.
+    pub object_id: String,
+}
+
+impl ImageHistoryRow {
+    pub(crate) fn informational(entry: ImageHistoryEntry) -> Self {
+        Self {
+            entry,
+            priority: "INFO".into(),
+            object_id: String::new(),
+        }
+    }
+}
+
 impl ImageHistoryEntry {
     pub(crate) fn current_time() -> Result<f64, ImageError> {
         const UNIX_EPOCH_MJD_SECONDS: f64 = 40_587.0 * 86_400.0;
@@ -1950,7 +1971,7 @@ impl<T: ImagePixel> PagedImage<T> {
     /// Returns an error if the image log cannot be created, written or locked.
     pub fn append_history_entries(
         &mut self,
-        entries: &[ImageHistoryEntry],
+        entries: &[ImageHistoryRow],
     ) -> Result<(), ImageError> {
         if entries.is_empty() {
             return Ok(());
@@ -1961,15 +1982,17 @@ impl<T: ImagePixel> PagedImage<T> {
                 &Self::logtable_path(&path),
                 entries.iter().map(|entry| {
                     (
-                        entry.time_mjd_seconds,
-                        entry.location.as_str(),
-                        &entry.message,
+                        entry.entry.time_mjd_seconds,
+                        entry.entry.location.as_str(),
+                        entry.entry.message.as_str(),
+                        entry.priority.as_str(),
+                        entry.object_id.as_str(),
                     )
                 }),
             )
         } else {
             self.temp_history
-                .extend(entries.iter().map(|entry| entry.message.clone()));
+                .extend(entries.iter().map(|row| row.entry.message.clone()));
             Ok(())
         }
     }
@@ -2589,29 +2612,31 @@ impl<T: ImagePixel> PagedImage<T> {
         let time = ImageHistoryEntry::current_time()?;
         Self::append_logtable_entries(
             path,
-            messages.iter().map(|message| (time, location, message)),
+            messages
+                .iter()
+                .map(|message| (time, location, message.as_str(), "INFO", "")),
         )
     }
 
     fn append_logtable_entries<'a>(
         path: &Path,
-        entries: impl IntoIterator<Item = (f64, &'a str, &'a String)>,
+        entries: impl IntoIterator<Item = (f64, &'a str, &'a str, &'a str, &'a str)>,
     ) -> Result<(), ImageError> {
         // casacore takes a reopened table's row count from the sync data in
         // `table.lock`, which this lock publishes: a save alone leaves a
         // `logtable` CASA wrote unreadable to it.
         let mut lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
-        for (time, location, message) in entries {
+        for (time, location, message, priority, object_id) in entries {
             table.add_row(RecordValue::new(vec![
                 RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
                 RecordField::new(
                     "PRIORITY",
-                    Value::Scalar(ScalarValue::String("INFO".into())),
+                    Value::Scalar(ScalarValue::String(priority.into())),
                 ),
                 RecordField::new(
                     "MESSAGE",
-                    Value::Scalar(ScalarValue::String(message.clone())),
+                    Value::Scalar(ScalarValue::String(message.into())),
                 ),
                 RecordField::new(
                     "LOCATION",
@@ -2619,7 +2644,7 @@ impl<T: ImagePixel> PagedImage<T> {
                 ),
                 RecordField::new(
                     "OBJECT_ID",
-                    Value::Scalar(ScalarValue::String(String::new())),
+                    Value::Scalar(ScalarValue::String(object_id.into())),
                 ),
             ]))?;
         }

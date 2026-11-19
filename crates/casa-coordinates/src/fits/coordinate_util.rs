@@ -368,6 +368,21 @@ pub fn from_fits_header(
     header: &FitsHeader,
     shape: &[usize],
 ) -> Result<CoordinateSystem, CoordinateError> {
+    from_fits_header_with_axis_order(header, shape).map(|(coordinates, _)| coordinates)
+}
+
+/// Decode a FITS header and report each model axis's original FITS pixel axis.
+///
+/// The model groups direction axes together, even when their position differs
+/// in the input array. Use the resulting permutation when saving a record for
+/// an array that retains the original FITS axis order.
+///
+/// # Errors
+/// Returns a coordinate error when the header cannot produce a model.
+pub fn from_fits_header_with_axis_order(
+    header: &FitsHeader,
+    shape: &[usize],
+) -> Result<(CoordinateSystem, Vec<usize>), CoordinateError> {
     let naxis = header.get_int("NAXIS").unwrap_or(shape.len() as i64) as usize;
 
     // Read CTYPEn for all axes
@@ -382,6 +397,11 @@ pub fn from_fits_header(
 
     let mut cs = CoordinateSystem::new();
     let mut consumed = vec![false; naxis];
+    let mut axis_order = Vec::with_capacity(naxis);
+    let has_rest_frequency = header
+        .get_float("RESTFRQ")
+        .or_else(|| header.get_float("RESTFREQ"))
+        .is_some_and(|frequency| frequency > 0.0);
 
     // Pass 1: find direction coordinate pairs
     for i in 0..naxis {
@@ -393,6 +413,7 @@ pub fn from_fits_header(
         {
             let coord = parse_direction(header, lon_axis, lat_axis, &proj_code, dir_ref)?;
             cs.add_coordinate(coord);
+            axis_order.extend([lon_axis, lat_axis]);
             consumed[lon_axis] = true;
             consumed[lat_axis] = true;
         }
@@ -406,8 +427,12 @@ pub fn from_fits_header(
         let ctype = &ctypes[i];
         let upper = ctype.to_uppercase();
 
-        if upper.starts_with("FREQ") || upper.starts_with("VRAD") || upper.starts_with("VELO") {
-            let coord = parse_spectral(header, i + 1)?;
+        if upper.starts_with("FREQ")
+            || upper.starts_with("VRAD")
+            || upper.starts_with("VELO")
+            || (upper == "VOPT" && has_rest_frequency)
+        {
+            let coord = parse_spectral(header, i + 1, shape.get(i).copied().unwrap_or(1))?;
             cs.add_coordinate(coord);
         } else if upper == "STOKES" {
             let axis_len = shape.get(i).copied().unwrap_or(1);
@@ -418,6 +443,7 @@ pub fn from_fits_header(
             cs.add_coordinate(coord);
         }
         consumed[i] = true;
+        axis_order.push(i);
     }
 
     // Observation info
@@ -435,7 +461,7 @@ pub fn from_fits_header(
     );
     *cs.obs_info_mut() = obs;
 
-    Ok(cs)
+    Ok((cs, axis_order))
 }
 
 /// Identifies a direction coordinate pair starting from axis index `start`.
@@ -646,12 +672,16 @@ fn read_linear_transform_2d(
             .get_float(&format!("CDELT{a2}"))
             .ok_or_else(|| CoordinateError::InvalidRecord(format!("missing CDELT{a2}")))?;
 
-        let pc = if let Some(pc11) = h.get_float(&format!("PC{a1}_{a1}")) {
+        let matrix = [(a1, a1), (a1, a2), (a2, a1), (a2, a2)]
+            .map(|(i, j)| h.get_float(&format!("PC{i}_{j}")));
+        let pc = if matrix.iter().any(Option::is_some) {
             // Explicit PC matrix
-            let pc12 = h.get_float(&format!("PC{a1}_{a2}")).unwrap_or(0.0);
-            let pc21 = h.get_float(&format!("PC{a2}_{a1}")).unwrap_or(0.0);
-            let pc22 = h.get_float(&format!("PC{a2}_{a2}")).unwrap_or(1.0);
-            ndarray::Array2::from_shape_vec((2, 2), vec![pc11, pc12, pc21, pc22]).unwrap()
+            let values = matrix
+                .into_iter()
+                .zip([1.0, 0.0, 0.0, 1.0])
+                .map(|(value, default)| value.unwrap_or(default))
+                .collect();
+            ndarray::Array2::from_shape_vec((2, 2), values).unwrap()
         } else if let Some(crota2) = h.get_float("CROTA2") {
             // Legacy CROTA2 rotation (in degrees)
             let rot = crota2 * DEG_TO_RAD;
@@ -682,7 +712,11 @@ fn celestial_unit_scale_to_rad(h: &FitsHeader, axis: usize) -> Result<f64, Coord
 }
 
 /// Parses a spectral coordinate from the FITS header.
-fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, CoordinateError> {
+fn parse_spectral(
+    h: &FitsHeader,
+    axis: usize,
+    axis_len: usize,
+) -> Result<SpectralCoordinate, CoordinateError> {
     let crval = h
         .get_float(&format!("CRVAL{axis}"))
         .ok_or_else(|| CoordinateError::InvalidRecord(format!("missing CRVAL{axis}")))?;
@@ -719,12 +753,18 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
         FrequencyRef::TOPO
     };
 
-    let radio_velocity = h
+    let ctype = h
         .get_string(&format!("CTYPE{axis}"))
-        .is_some_and(|ctype| ctype.to_ascii_uppercase().starts_with("VRAD"));
+        .map_or_else(String::new, str::to_ascii_uppercase);
+    let radio_velocity = ctype.starts_with("VRAD");
+    let optical_velocity = ctype == "VOPT";
     let unit = h
         .get_string(&format!("CUNIT{axis}"))
-        .unwrap_or(if radio_velocity { "m/s" } else { "Hz" })
+        .unwrap_or(if radio_velocity || optical_velocity {
+            "m/s"
+        } else {
+            "Hz"
+        })
         .to_string();
     // FITS permits the historical uppercase Hz spelling (Unit::addFITS in
     // casacore), including the ppdisk tutorial's CUNIT4='HZ'.
@@ -734,14 +774,19 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
         unit
     };
 
-    if radio_velocity {
+    if radio_velocity || optical_velocity {
         let velocity_unit = casa_types::quanta::Unit::new(&unit)
             .map_err(|error| CoordinateError::InvalidRecord(error.to_string()))?;
         let metres_per_second =
             casa_types::quanta::Unit::new("m/s").expect("built-in velocity unit");
         if !velocity_unit.conformant(&metres_per_second) {
             return Err(CoordinateError::InvalidRecord(
-                "radio velocity axis needs a velocity unit".into(),
+                if radio_velocity {
+                    "radio velocity axis needs a velocity unit"
+                } else {
+                    "optical velocity axis needs a velocity unit"
+                }
+                .into(),
             ));
         }
         let scale = velocity_unit.val().factor / metres_per_second.val().factor;
@@ -757,6 +802,19 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
             ));
         }
         let speed_of_light = 299_792_458.0;
+        if optical_velocity {
+            let frequency = |pixel: f64| {
+                rest_freq / (1.0 + (crval + (pixel - crpix) * cdelt) * scale / speed_of_light)
+            };
+            let pixels: Vec<_> = (0..axis_len).map(|pixel| pixel as f64).collect();
+            let worlds: Vec<_> = pixels.iter().copied().map(frequency).collect();
+            let first = frequency(0.0);
+            let last = axis_len.saturating_sub(1).max(1) as f64;
+            let increment = (frequency(last) - first) / last;
+            return SpectralCoordinate::from_tabular(
+                freq_ref, pixels, worlds, first, increment, 0.0, rest_freq,
+            );
+        }
         let reference_hz = rest_freq * (1.0 - crval * scale / speed_of_light);
         let increment_hz = -rest_freq * cdelt * scale / speed_of_light;
         return Ok(SpectralCoordinate::new(
@@ -801,8 +859,18 @@ fn parse_stokes(
     let mut stokes = Vec::with_capacity(axis_len);
     for i in 0..axis_len {
         let code = (crval + cdelt * (i as f64 - crpix)).round() as i32;
-        let st = StokesType::from_code(code)
-            .ok_or_else(|| CoordinateError::InvalidRecord(format!("unknown Stokes code {code}")))?;
+        let st = match code {
+            -1 => Some(StokesType::RR),
+            -2 => Some(StokesType::LL),
+            -3 => Some(StokesType::RL),
+            -4 => Some(StokesType::LR),
+            -5 => Some(StokesType::XX),
+            -6 => Some(StokesType::YY),
+            -7 => Some(StokesType::XY),
+            -8 => Some(StokesType::YX),
+            _ => StokesType::from_code(code),
+        }
+        .ok_or_else(|| CoordinateError::InvalidRecord(format!("unknown Stokes code {code}")))?;
         stokes.push(st);
     }
 

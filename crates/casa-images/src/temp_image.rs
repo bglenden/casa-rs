@@ -41,7 +41,8 @@ use casa_types::{ArrayD, RecordValue};
 
 use crate::error::ImageError;
 use crate::image::{
-    ImageHistoryEntry, ImageInterface, ImagePixel, MutableImageInterface, PagedImage,
+    ImageHistoryEntry, ImageHistoryRow, ImageInterface, ImagePixel, MutableImageInterface,
+    PagedImage,
 };
 use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
@@ -66,7 +67,7 @@ pub struct TempImage<T: ImagePixel> {
     image_info_record: Option<RecordValue>,
     masks: Vec<(String, ArrayD<bool>)>,
     default_mask: Option<String>,
-    history: Vec<ImageHistoryEntry>,
+    history: Vec<ImageHistoryRow>,
 }
 
 // ---- Constructors -----------------------------------------------------------
@@ -408,7 +409,7 @@ impl<T: ImagePixel> TempImage<T> {
         Ok(self
             .history
             .iter()
-            .map(|entry| entry.message.clone())
+            .map(|row| row.entry.message.clone())
             .collect())
     }
 
@@ -427,19 +428,20 @@ impl<T: ImagePixel> TempImage<T> {
         messages: &[String],
     ) -> Result<(), ImageError> {
         let time = ImageHistoryEntry::current_time()?;
-        self.history
-            .extend(messages.iter().map(|message| ImageHistoryEntry {
+        self.history.extend(messages.iter().map(|message| {
+            ImageHistoryRow::informational(ImageHistoryEntry {
                 time_mjd_seconds: time,
                 location: location.into(),
                 message: message.clone(),
-            }));
+            })
+        }));
         Ok(())
     }
 
     /// Append the original FITS or CASA log entries for future saves.
     pub fn append_history_entries(
         &mut self,
-        entries: &[ImageHistoryEntry],
+        entries: &[ImageHistoryRow],
     ) -> Result<(), ImageError> {
         self.history.extend_from_slice(entries);
         Ok(())

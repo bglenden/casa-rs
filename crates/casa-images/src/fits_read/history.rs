@@ -4,14 +4,23 @@
 use std::io::{BufReader, Read};
 use std::path::Path;
 
-use crate::{ImageError, image::ImageHistoryEntry};
+use crate::{
+    ImageError,
+    image::{ImageHistoryEntry, ImageHistoryRow},
+};
 
 pub(crate) fn history_entries(path: &Path) -> Result<Vec<ImageHistoryEntry>, ImageError> {
     let cards = read_cards(path)?;
-    Ok(history_from_cards(&cards))
+    Ok(history_from_cards(&cards, false)
+        .into_iter()
+        .map(|row| row.entry)
+        .collect())
 }
 
-pub(super) fn history_from_cards(cards: &[String]) -> Vec<ImageHistoryEntry> {
+pub(super) fn history_from_cards(
+    cards: &[String],
+    preserve_casacore_location: bool,
+) -> Vec<ImageHistoryRow> {
     let cards = cards.iter().filter_map(|card| {
         card.strip_prefix("HISTORY ")
             .map(|line| line.trim_end().to_string())
@@ -25,11 +34,11 @@ pub(super) fn history_from_cards(cards: &[String]) -> Vec<ImageHistoryEntry> {
         let first = words.next().unwrap_or("");
         let second = words.next().unwrap_or("");
         if first.eq_ignore_ascii_case("CASA") && second.eq_ignore_ascii_case("START") {
-            append_group(&mut entries, &group, &lines);
+            append_group(&mut entries, &group, &lines, preserve_casacore_location);
             lines.clear();
             group = words.collect::<String>();
         } else if first.eq_ignore_ascii_case("CASA") && second.eq_ignore_ascii_case("END") {
-            append_group(&mut entries, &group, &lines);
+            append_group(&mut entries, &group, &lines, preserve_casacore_location);
             lines.clear();
             group.clear();
         } else if let Some(continuation) = line.strip_prefix('>') {
@@ -42,7 +51,7 @@ pub(super) fn history_from_cards(cards: &[String]) -> Vec<ImageHistoryEntry> {
             lines.push(line);
         }
     }
-    append_group(&mut entries, &group, &lines);
+    append_group(&mut entries, &group, &lines, preserve_casacore_location);
     entries
 }
 
@@ -63,26 +72,50 @@ pub(crate) fn read_cards(path: &Path) -> Result<Vec<String>, ImageError> {
     Ok(cards)
 }
 
-fn append_group(entries: &mut Vec<ImageHistoryEntry>, group: &str, lines: &[String]) {
+fn append_group(
+    entries: &mut Vec<ImageHistoryRow>,
+    group: &str,
+    lines: &[String],
+    preserve_casacore_location: bool,
+) {
     if group == "LOGTABLE" && lines.len().is_multiple_of(2) {
         for pair in lines.as_chunks::<2>().0 {
             let header = &pair[0];
-            let date = header.split_whitespace().next().unwrap_or("");
-            let location = header
-                .split_once("SRCCODE='")
-                .and_then(|(_, rest)| rest.split_once('\''))
-                .map_or("", |(location, _)| location);
-            entries.push(ImageHistoryEntry {
-                time_mjd_seconds: parse_time(date).unwrap_or(-1.0),
-                location: location.to_string(),
-                message: pair[1].clone(),
+            let mut fields = header.split_whitespace();
+            let date = fields.next().unwrap_or("");
+            let priority = fields
+                .next()
+                .filter(|value| !value.contains('='))
+                .unwrap_or("INFO");
+            let quoted = |prefix, consume_suffix| {
+                header
+                    .split_once(prefix)
+                    .and_then(|(_, rest)| {
+                        if consume_suffix {
+                            rest.rsplit_once('\'')
+                        } else {
+                            rest.split_once('\'')
+                        }
+                    })
+                    .map_or("", |(value, _)| value)
+            };
+            entries.push(ImageHistoryRow {
+                entry: ImageHistoryEntry {
+                    time_mjd_seconds: parse_time(date).unwrap_or(-1.0),
+                    location: quoted("SRCCODE='", preserve_casacore_location).into(),
+                    message: pair[1].clone(),
+                },
+                priority: priority.into(),
+                object_id: quoted("OBJID='", false).into(),
             });
         }
     } else if group.is_empty() || group == "LOGTABLE" {
-        entries.extend(lines.iter().map(|line| ImageHistoryEntry {
-            time_mjd_seconds: -1.0,
-            location: String::new(),
-            message: line.clone(),
+        entries.extend(lines.iter().map(|line| {
+            ImageHistoryRow::informational(ImageHistoryEntry {
+                time_mjd_seconds: -1.0,
+                location: String::new(),
+                message: line.clone(),
+            })
         }));
     }
 }
