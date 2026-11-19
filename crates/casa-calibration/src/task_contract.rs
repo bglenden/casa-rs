@@ -744,6 +744,7 @@ mod tests {
                 "initweights",
                 "statwt",
                 "calstat",
+                "listcal",
             ]
         );
         assert!(
