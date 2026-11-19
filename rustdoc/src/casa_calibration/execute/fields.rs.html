@@ -220,8 +220,8 @@
 <a href=#220 id=220 data-nosnippet>220</a>        TimeParameterFamily::Antpos =&gt; {
 <a href=#221 id=221 data-nosnippet>221</a>            CalibrationGrid::Antpos(AntposGrid::from_arrays(path, <span class="kw-2">&amp;</span>values, <span class="kw-2">&amp;</span>flags)<span class="question-mark">?</span>)
 <a href=#222 id=222 data-nosnippet>222</a>        }
-<a href=#223 id=223 data-nosnippet>223</a>        TimeParameterFamily::GainCurve =&gt; {
-<a href=#224 id=224 data-nosnippet>224</a>            CalibrationGrid::GainCurve(GainCurveGrid::from_arrays(path, <span class="kw-2">&amp;</span>values, <span class="kw-2">&amp;</span>flags)<span class="question-mark">?</span>)
+<a href=#223 id=223 data-nosnippet>223</a>        TimeParameterFamily::GainCurve { power } =&gt; {
+<a href=#224 id=224 data-nosnippet>224</a>            CalibrationGrid::GainCurve(GainCurveGrid::from_arrays(path, <span class="kw-2">&amp;</span>values, <span class="kw-2">&amp;</span>flags, power)<span class="question-mark">?</span>)
 <a href=#225 id=225 data-nosnippet>225</a>        }
 <a href=#226 id=226 data-nosnippet>226</a>        TimeParameterFamily::Opacity =&gt; {
 <a href=#227 id=227 data-nosnippet>227</a>            CalibrationGrid::Opacity(OpacityGrid::from_arrays(path, <span class="kw-2">&amp;</span>values, <span class="kw-2">&amp;</span>flags)<span class="question-mark">?</span>)

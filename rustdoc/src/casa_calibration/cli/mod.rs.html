@@ -160,7 +160,7 @@
 <a href=#160 id=160 data-nosnippet>160</a>    request: <span class="kw-2">&amp;</span>CalibrationTaskRequest,
 <a href=#161 id=161 data-nosnippet>161</a>    task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;,
 <a href=#162 id=162 data-nosnippet>162</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
-<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">let </span><span class="kw-2">mut </span>products = scientific_paths(request);
+<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">let </span><span class="kw-2">mut </span>products = scientific_paths(request)<span class="question-mark">?</span>;
 <a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">if </span>task.surface() == <span class="string">"fluxscale"
 <a href=#165 id=165 data-nosnippet>165</a>        </span>&amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(vis) = task.text(<span class="string">"vis"</span>)<span class="question-mark">?
 <a href=#166 id=166 data-nosnippet>166</a>    </span>{
@@ -184,50 +184,50 @@
 <a href=#184 id=184 data-nosnippet>184</a>    <span class="prelude-val">Ok</span>(())
 <a href=#185 id=185 data-nosnippet>185</a>}
 <a href=#186 id=186 data-nosnippet>186</a>
-<a href=#187 id=187 data-nosnippet>187</a><span class="kw">fn </span>scientific_paths(request: <span class="kw-2">&amp;</span>CalibrationTaskRequest) -&gt; Vec&lt;std::path::PathBuf&gt; {
-<a href=#188 id=188 data-nosnippet>188</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>paths, chain) = <span class="kw">match </span>request {
-<a href=#189 id=189 data-nosnippet>189</a>        CalibrationTaskRequest::SolveGain(r) =&gt; (
-<a href=#190 id=190 data-nosnippet>190</a>            <span class="macro">vec!</span>[r.measurement_set.clone(), r.output_table.clone()],
-<a href=#191 id=191 data-nosnippet>191</a>            r.prior_calibration_tables.as_slice(),
-<a href=#192 id=192 data-nosnippet>192</a>        ),
-<a href=#193 id=193 data-nosnippet>193</a>        CalibrationTaskRequest::SolveBandpass(r) =&gt; (
-<a href=#194 id=194 data-nosnippet>194</a>            <span class="macro">vec!</span>[r.measurement_set.clone(), r.output_table.clone()],
-<a href=#195 id=195 data-nosnippet>195</a>            r.prior_calibration_tables.as_slice(),
-<a href=#196 id=196 data-nosnippet>196</a>        ),
-<a href=#197 id=197 data-nosnippet>197</a>        CalibrationTaskRequest::ExecuteApply(r) =&gt; (
-<a href=#198 id=198 data-nosnippet>198</a>            <span class="macro">vec!</span>[r.measurement_set.clone()],
-<a href=#199 id=199 data-nosnippet>199</a>            r.calibration_tables.as_slice(),
-<a href=#200 id=200 data-nosnippet>200</a>        ),
-<a href=#201 id=201 data-nosnippet>201</a>        CalibrationTaskRequest::PlanApply(r) =&gt; (
-<a href=#202 id=202 data-nosnippet>202</a>            <span class="macro">vec!</span>[r.measurement_set.clone()],
-<a href=#203 id=203 data-nosnippet>203</a>            r.calibration_tables.as_slice(),
-<a href=#204 id=204 data-nosnippet>204</a>        ),
-<a href=#205 id=205 data-nosnippet>205</a>        CalibrationTaskRequest::Summary(r) =&gt; (r.paths.clone(), <span class="kw-2">&amp;</span>[][..]),
-<a href=#206 id=206 data-nosnippet>206</a>        CalibrationTaskRequest::Stats(r) =&gt; (<span class="macro">vec!</span>[r.path.clone()], <span class="kw-2">&amp;</span>[][..]),
-<a href=#207 id=207 data-nosnippet>207</a>        CalibrationTaskRequest::FluxScale(r) =&gt; {
-<a href=#208 id=208 data-nosnippet>208</a>            <span class="kw">let </span><span class="kw-2">mut </span>paths = <span class="macro">vec!</span>[r.input_table.clone(), r.output_table.clone()];
-<a href=#209 id=209 data-nosnippet>209</a>            paths.extend(r.options.listfile.iter().cloned());
-<a href=#210 id=210 data-nosnippet>210</a>            (paths, <span class="kw-2">&amp;</span>[][..])
-<a href=#211 id=211 data-nosnippet>211</a>        }
-<a href=#212 id=212 data-nosnippet>212</a>        CalibrationTaskRequest::ExportCorrectedData(r) =&gt; {
-<a href=#213 id=213 data-nosnippet>213</a>            (<span class="macro">vec!</span>[r.input_ms.clone(), r.output_ms.clone()], <span class="kw-2">&amp;</span>[][..])
-<a href=#214 id=214 data-nosnippet>214</a>        }
-<a href=#215 id=215 data-nosnippet>215</a>        CalibrationTaskRequest::Gencal(r) =&gt; {
-<a href=#216 id=216 data-nosnippet>216</a>            <span class="kw">let </span>r = <span class="kw-2">&amp;</span>r.prior;
-<a href=#217 id=217 data-nosnippet>217</a>            <span class="kw">let </span><span class="kw-2">mut </span>paths = <span class="macro">vec!</span>[r.measurement_set.clone(), r.output_table.clone()];
-<a href=#218 id=218 data-nosnippet>218</a>            <span class="kw">if </span>r.caltype == <span class="kw">crate</span>::GencalType::Gceff
-<a href=#219 id=219 data-nosnippet>219</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(source) = r
-<a href=#220 id=220 data-nosnippet>220</a>                    .gaincurve_table
-<a href=#221 id=221 data-nosnippet>221</a>                    .clone()
-<a href=#222 id=222 data-nosnippet>222</a>                    .or_else(<span class="kw">crate</span>::gencal::default_vla_gaincurve_table)
-<a href=#223 id=223 data-nosnippet>223</a>            {
-<a href=#224 id=224 data-nosnippet>224</a>                paths.push(source);
-<a href=#225 id=225 data-nosnippet>225</a>            }
+<a href=#187 id=187 data-nosnippet>187</a><span class="kw">fn </span>scientific_paths(
+<a href=#188 id=188 data-nosnippet>188</a>    request: <span class="kw-2">&amp;</span>CalibrationTaskRequest,
+<a href=#189 id=189 data-nosnippet>189</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;std::path::PathBuf&gt;, TaskFailure&gt; {
+<a href=#190 id=190 data-nosnippet>190</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>paths, chain) = <span class="kw">match </span>request {
+<a href=#191 id=191 data-nosnippet>191</a>        CalibrationTaskRequest::SolveGain(r) =&gt; (
+<a href=#192 id=192 data-nosnippet>192</a>            <span class="macro">vec!</span>[r.measurement_set.clone(), r.output_table.clone()],
+<a href=#193 id=193 data-nosnippet>193</a>            r.prior_calibration_tables.as_slice(),
+<a href=#194 id=194 data-nosnippet>194</a>        ),
+<a href=#195 id=195 data-nosnippet>195</a>        CalibrationTaskRequest::SolveBandpass(r) =&gt; (
+<a href=#196 id=196 data-nosnippet>196</a>            <span class="macro">vec!</span>[r.measurement_set.clone(), r.output_table.clone()],
+<a href=#197 id=197 data-nosnippet>197</a>            r.prior_calibration_tables.as_slice(),
+<a href=#198 id=198 data-nosnippet>198</a>        ),
+<a href=#199 id=199 data-nosnippet>199</a>        CalibrationTaskRequest::ExecuteApply(r) =&gt; (
+<a href=#200 id=200 data-nosnippet>200</a>            <span class="macro">vec!</span>[r.measurement_set.clone()],
+<a href=#201 id=201 data-nosnippet>201</a>            r.calibration_tables.as_slice(),
+<a href=#202 id=202 data-nosnippet>202</a>        ),
+<a href=#203 id=203 data-nosnippet>203</a>        CalibrationTaskRequest::PlanApply(r) =&gt; (
+<a href=#204 id=204 data-nosnippet>204</a>            <span class="macro">vec!</span>[r.measurement_set.clone()],
+<a href=#205 id=205 data-nosnippet>205</a>            r.calibration_tables.as_slice(),
+<a href=#206 id=206 data-nosnippet>206</a>        ),
+<a href=#207 id=207 data-nosnippet>207</a>        CalibrationTaskRequest::Summary(r) =&gt; (r.paths.clone(), <span class="kw-2">&amp;</span>[][..]),
+<a href=#208 id=208 data-nosnippet>208</a>        CalibrationTaskRequest::Stats(r) =&gt; (<span class="macro">vec!</span>[r.path.clone()], <span class="kw-2">&amp;</span>[][..]),
+<a href=#209 id=209 data-nosnippet>209</a>        CalibrationTaskRequest::FluxScale(r) =&gt; {
+<a href=#210 id=210 data-nosnippet>210</a>            <span class="kw">let </span><span class="kw-2">mut </span>paths = <span class="macro">vec!</span>[r.input_table.clone(), r.output_table.clone()];
+<a href=#211 id=211 data-nosnippet>211</a>            paths.extend(r.options.listfile.iter().cloned());
+<a href=#212 id=212 data-nosnippet>212</a>            (paths, <span class="kw-2">&amp;</span>[][..])
+<a href=#213 id=213 data-nosnippet>213</a>        }
+<a href=#214 id=214 data-nosnippet>214</a>        CalibrationTaskRequest::ExportCorrectedData(r) =&gt; {
+<a href=#215 id=215 data-nosnippet>215</a>            (<span class="macro">vec!</span>[r.input_ms.clone(), r.output_ms.clone()], <span class="kw-2">&amp;</span>[][..])
+<a href=#216 id=216 data-nosnippet>216</a>        }
+<a href=#217 id=217 data-nosnippet>217</a>        CalibrationTaskRequest::Gencal(r) =&gt; {
+<a href=#218 id=218 data-nosnippet>218</a>            <span class="kw">let </span><span class="kw-2">mut </span>paths = <span class="macro">vec!</span>[
+<a href=#219 id=219 data-nosnippet>219</a>                r.prior.measurement_set.clone(),
+<a href=#220 id=220 data-nosnippet>220</a>                r.prior.output_table.clone(),
+<a href=#221 id=221 data-nosnippet>221</a>            ];
+<a href=#222 id=222 data-nosnippet>222</a>            paths.extend(
+<a href=#223 id=223 data-nosnippet>223</a>                <span class="kw">crate</span>::gencal::gaincurve_report_input(<span class="kw-2">&amp;</span>r.prior, r.gaincurve_infile.as_deref())
+<a href=#224 id=224 data-nosnippet>224</a>                    .map_err(|error| TaskFailure::validation(error.to_string()).at(<span class="string">"vis"</span>))<span class="question-mark">?</span>,
+<a href=#225 id=225 data-nosnippet>225</a>            );
 <a href=#226 id=226 data-nosnippet>226</a>            (paths, <span class="kw-2">&amp;</span>[][..])
 <a href=#227 id=227 data-nosnippet>227</a>        }
 <a href=#228 id=228 data-nosnippet>228</a>    };
 <a href=#229 id=229 data-nosnippet>229</a>    paths.extend(chain.iter().map(|table| table.path.clone()));
-<a href=#230 id=230 data-nosnippet>230</a>    paths
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="prelude-val">Ok</span>(paths)
 <a href=#231 id=231 data-nosnippet>231</a>}
 <a href=#232 id=232 data-nosnippet>232</a>
 <a href=#233 id=233 data-nosnippet>233</a><span class="doccomment">/// What `surface` returns for `result`, as CASA's task of that name does;
