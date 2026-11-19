@@ -42,29 +42,54 @@ pub(super) fn doframe(state: &mut State, v: &RecordArg, lines: &mut Vec<LogLine>
     if let Some(warning) = values.warning.take() {
         lines.push(LogLine::warning(warning));
     }
-    let frame = &mut state.frame;
     let measure = values.values[0];
-    let slot = match measure.kind() {
+    let kind = measure.kind();
+    if !matches!(
+        kind,
+        MeasureKind::Epoch
+            | MeasureKind::Position
+            | MeasureKind::Direction
+            | MeasureKind::RadialVelocity
+    ) {
+        return CasaValue::Bool(false);
+    }
+    let absolute = match frame_absolute_value(state, measure, values.offset.as_deref()) {
+        Ok(absolute) => absolute,
+        Err(reason) => {
+            lines.push(LogLine::error(format!("Exception Reports: {reason}")));
+            return CasaValue::Bool(false);
+        }
+    };
+    let frame = &mut state.frame;
+    let slot = match kind {
         MeasureKind::Epoch => &mut frame.epoch,
         MeasureKind::Position => &mut frame.position,
         MeasureKind::Direction => &mut frame.direction,
-        MeasureKind::RadialVelocity => {
-            frame.radial_velocity = Some(values.into_reference_origin());
-            frame.rendered = None;
-            return CasaValue::Bool(true);
-        }
-        MeasureKind::Frequency
-        | MeasureKind::Doppler
-        | MeasureKind::Baseline
-        | MeasureKind::Uvw
-        | MeasureKind::EarthMagnetic => return CasaValue::Bool(false),
+        MeasureKind::RadialVelocity => &mut frame.radial_velocity,
+        _ => unreachable!("only four measure kinds are frame elements"),
     };
-    *slot = Some(FrameValue {
-        measure,
-        origin: values.offset,
-    });
+    *slot = Some(FrameValue { measure, absolute });
     frame.rendered = None;
     CasaValue::Bool(true)
+}
+
+fn frame_absolute_value(
+    state: &mut State,
+    measure: Measure,
+    origin: Option<&record::Measures>,
+) -> Result<Measure, String> {
+    record::absolute_value(measure, origin, &mut |origin, target| {
+        // casacore builds the frame converter from the record's own
+        // reference. An offset cannot borrow the tool's ambient frame
+        // while that reference is being installed.
+        let mut frame = MeasFrame::new();
+        if origin.kind() == MeasureKind::Epoch && origin.refer != target {
+            frame = frame.with_measures(state.measures()?);
+        }
+        convert_native(origin, target, &frame, |direction, refer| {
+            direction.convert_to(refer, &frame)
+        })
+    })
 }
 
 /// `me.framenow()`: the frame's epoch is the system clock's UTC.
@@ -205,7 +230,7 @@ pub(super) fn convert(
         measure.value,
         MeasureValue::Frequency(_) | MeasureValue::RadialVelocity(_)
     ) {
-        with_comet_direction(state, frame)
+        with_resolved_direction(state, frame)
     } else {
         frame
     };
@@ -280,18 +305,14 @@ fn convert_native(
     Ok(Measure::from_casa(&converted))
 }
 
-pub(super) fn with_comet_direction(state: &State, frame: MeasFrame) -> MeasFrame {
-    if frame
-        .direction()
-        .is_some_and(|dir| dir.refer() == DirectionRef::COMET)
+pub(super) fn with_resolved_direction(state: &mut State, frame: MeasFrame) -> MeasFrame {
+    if let Some(direction) = frame.direction()
+        && direction.refer().casacore_code() >= 32
+        && let Ok((direction, distance)) = resolve_direction(state, direction, &frame)
     {
-        // Resolve the active sky position and its range. If it
-        // cannot be resolved, the actual conversion decides whether it needs
-        // a direction, just as it would with any other incomplete frame.
-        if let Ok((direction, distance)) = super::comet::resolve_direction(state, &frame) {
-            return frame.with_ephemeris_direction(direction, distance);
-        }
+        return frame.with_ephemeris_direction(direction, distance);
     }
+    // Some conversions do not need a direction even if one was supplied.
     frame
 }
 
@@ -354,31 +375,14 @@ pub(super) fn materialize(
     elements: &super::Frame,
     mut frame: MeasFrame,
 ) -> Result<MeasFrame, String> {
-    let elements_in_order = [
+    let frame_elements = [
         elements.position.as_ref(),
         elements.epoch.as_ref(),
         elements.direction.as_ref(),
+        elements.radial_velocity.as_ref(),
     ];
-    for element in elements_in_order.into_iter().flatten() {
-        frame = install_frame_value(frame, element.measure)?;
-    }
-    for element in elements_in_order
-        .into_iter()
-        .flatten()
-        .filter(|element| element.origin.is_some())
-    {
-        let mut convert = |measure, target| {
-            convert_native(measure, target, &frame, |dir, refer| {
-                dir.convert_to(refer, &frame)
-            })
-        };
-        let absolute =
-            record::absolute_value(element.measure, element.origin.as_deref(), &mut convert)?;
-        frame = install_frame_value(frame, absolute)?;
-    }
-    if let Some(velocity) = &elements.radial_velocity {
-        let value = velocity.radial_velocity(&frame)?;
-        frame = frame.with_radial_velocity(value);
+    for element in frame_elements.into_iter().flatten() {
+        frame = install_frame_value(frame, element.absolute)?;
     }
     Ok(frame)
 }
@@ -388,7 +392,8 @@ fn install_frame_value(frame: MeasFrame, measure: Measure) -> Result<MeasFrame, 
         CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
         CasaMeasure::Position(position) => frame.with_position(position),
         CasaMeasure::Direction(direction) => frame.with_direction(direction),
-        _ => unreachable!("only epochs, positions and directions use this path"),
+        CasaMeasure::RadialVelocity(velocity) => frame.with_radial_velocity(velocity),
+        _ => unreachable!("only four measure kinds are frame elements"),
     })
 }
 

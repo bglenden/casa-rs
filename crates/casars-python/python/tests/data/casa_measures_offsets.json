@@ -6101,6 +6101,568 @@
           "type": "direction"
         }
       ]
+    },
+    {
+      "name": "SUN_frame_display",
+      "method": "showframe",
+      "args": [],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [-64.5384, -9.31637] deg)",
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "SUN",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.22689280275926282
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.12217304763960307
+            },
+            "refer": "SUN",
+            "type": "direction"
+          }
+        }
+      ]
+    },
+    {
+      "name": "SUN_frame_barycentric_frequency",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "BARY"
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000046476.6075348
+        },
+        "refer": "BARY",
+        "type": "frequency"
+      },
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "SUN",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.22689280275926282
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.12217304763960307
+            },
+            "refer": "SUN",
+            "type": "direction"
+          }
+        }
+      ]
+    },
+    {
+      "name": "PLUTO_frame_display",
+      "method": "showframe",
+      "args": [],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [-72.903, -5.328] deg)",
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "PLUTO",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.22689280275926282
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.12217304763960307
+            },
+            "refer": "PLUTO",
+            "type": "direction"
+          }
+        }
+      ]
+    },
+    {
+      "name": "PLUTO_frame_barycentric_frequency",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "BARY"
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000052159.6805172
+        },
+        "refer": "BARY",
+        "type": "frequency"
+      },
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "PLUTO",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.22689280275926282
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.12217304763960307
+            },
+            "refer": "PLUTO",
+            "type": "direction"
+          }
+        }
+      ]
+    },
+    {
+      "name": "frame_J2000_MOON_origin_refused",
+      "method": "doframe",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "MOON",
+            "type": "direction"
+          }
+        }
+      ],
+      "result": false
+    },
+    {
+      "name": "measure_J2000_MOON_origin_resolved",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "MOON",
+            "type": "direction"
+          }
+        },
+        "J2000"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -0.6398443691201573
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.04038071971321597
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "frame_APP_J2000_origin_refused",
+      "method": "doframe",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "APP",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        }
+      ],
+      "result": false
+    },
+    {
+      "name": "measure_APP_J2000_origin_resolved",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "APP",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        },
+        "APP"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17473304785889165
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9605250374500095
+        },
+        "refer": "APP",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "position_near_geocentre_42000",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 2.3809523805024656e-05
+          },
+          "m2": {
+            "unit": "m",
+            "value": 42000.00001190476
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "WGS84"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.1823243514072451
+        },
+        "m2": {
+          "unit": "m",
+          "value": 742.9353868918681
+        },
+        "refer": "WGS84",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_near_geocentre_42500",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 2.352941176036366e-05
+          },
+          "m2": {
+            "unit": "m",
+            "value": 42500.00001176471
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "WGS84"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.0990141891658402
+        },
+        "m2": {
+          "unit": "m",
+          "value": 742.9354363558298
+        },
+        "refer": "WGS84",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_near_geocentre_42700",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 2.341920374279111e-05
+          },
+          "m2": {
+            "unit": "m",
+            "value": 42700.0000117096
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "WGS84"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.035111967519633885
+        },
+        "m2": {
+          "unit": "m",
+          "value": 742.9354563025614
+        },
+        "refer": "WGS84",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_near_geocentre_43500",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 2.2988505743076847e-05
+          },
+          "m2": {
+            "unit": "m",
+            "value": 43500.00001149425
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "WGS84"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.0012463171105177593
+        },
+        "m2": {
+          "unit": "m",
+          "value": 742.9355363000624
+        },
+        "refer": "WGS84",
+        "type": "position"
+      }
     }
   ]
 }

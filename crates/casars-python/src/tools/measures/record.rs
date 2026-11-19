@@ -137,31 +137,6 @@ impl Measures {
         self
     }
 
-    /// Materialize a radial-velocity frame origin against the real frame.
-    /// Keep its offset until this point so doframe can precede other elements.
-    pub(super) fn radial_velocity(
-        &self,
-        frame: &casa_types::measures::MeasFrame,
-    ) -> Result<casa_types::measures::radial_velocity::MRadialVelocity, String> {
-        use casa_types::measures::radial_velocity::MRadialVelocity;
-        let first = self.values[0];
-        let MeasureValue::RadialVelocity(mut ms) = first.value else {
-            return Err("Non-radialvelocity frame element".into());
-        };
-        let refer = first
-            .refer
-            .parse()
-            .map_err(|e: casa_types::measures::MeasureError| e.to_string())?;
-        if let Some(offset) = &self.offset {
-            ms += offset
-                .radial_velocity(frame)?
-                .convert_to(refer, frame)
-                .map_err(|e| e.to_string())?
-                .ms();
-        }
-        Ok(MRadialVelocity::new(ms, refer))
-    }
-
     /// Express absolute values relative to one output reference origin.
     pub(super) fn relative_to(
         mut self,

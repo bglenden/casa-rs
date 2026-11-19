@@ -98,13 +98,13 @@ fn render(state: &mut State, mut native: MeasFrame) -> Result<String, String> {
             vector(raw),
             vector([longitude.to_degrees(), latitude.to_degrees()])
         ));
-        if direction.refer() == DirectionRef::COMET && native.radial_velocity().is_some() {
-            native = frame::with_comet_direction(state, native);
+        if native.radial_velocity().is_some() {
+            native = frame::with_resolved_direction(state, native);
         }
     }
     if let (Some(record), Some(velocity)) = (&state.frame.radial_velocity, native.radial_velocity())
     {
-        let MeasureValue::RadialVelocity(raw) = record.values[0].value else {
+        let MeasureValue::RadialVelocity(raw) = record.measure.value else {
             unreachable!("the frame holds a radial velocity");
         };
         if matches!(

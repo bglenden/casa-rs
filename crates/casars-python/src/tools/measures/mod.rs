@@ -60,24 +60,24 @@ struct Frame {
     epoch: Option<FrameValue>,
     position: Option<FrameValue>,
     direction: Option<FrameValue>,
-    radial_velocity: Option<record::Measures>,
+    radial_velocity: Option<FrameValue>,
     comet: Option<Arc<CometTable>>,
     // Formatted display of these frame elements, cleared when an element changes.
     rendered: Option<String>,
 }
 
-/// A scalar frame item, keeping its displayed coordinates and its origin.
+/// A scalar frame item, keeping its displayed and absolute coordinates.
 #[derive(Debug, Clone)]
 struct FrameValue {
     measure: Measure,
-    origin: Option<Box<record::Measures>>,
+    absolute: Measure,
 }
 
 impl From<Measure> for FrameValue {
     fn from(measure: Measure) -> Self {
         Self {
             measure,
-            origin: None,
+            absolute: measure,
         }
     }
 }

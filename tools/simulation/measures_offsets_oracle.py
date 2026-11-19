@@ -212,6 +212,38 @@ case = record("showframe_with_vectors", "showframe", [])
 case["frame"] = vector_frame
 cases.append(case)
 tool.done()
+for model in ("SUN", "PLUTO"):
+    model_direction = dict(tool.direction(model, "10deg", "20deg"),
+                           offset=tool.direction(model, "13deg", "7deg"))
+    model_frame = [*frame[:2], model_direction]
+    assert all(tool.doframe(element) for element in model_frame)
+    for case in (
+        record(f"{model}_frame_display", "showframe", []),
+        record(f"{model}_frame_barycentric_frequency", "measure",
+               [tool.frequency("LSRK", "1GHz"), "BARY"]),
+    ):
+        case["frame"] = model_frame
+        cases.append(case)
+    tool.done()
+
+for refer, origin in (("J2000", "MOON"), ("APP", "J2000")):
+    assert all(tool.doframe(element) for element in frame)
+    direction = dict(tool.direction(refer, "10deg", "20deg"),
+                     offset=tool.direction(origin))
+    case = record(f"frame_{refer}_{origin}_origin_refused", "doframe", [direction])
+    assert case["result"] is False
+    cases.append(case)
+    tool.done()
+    assert all(tool.doframe(element) for element in frame)
+    case = record(f"measure_{refer}_{origin}_origin_resolved", "measure", [direction, refer])
+    assert case["result"]
+    cases.append(case)
+    tool.done()
+
+for x in (42000, 42500, 42700, 43500):
+    cartesian = tool.position("ITRF", f"{x}m", "0m", "1m")
+    cases.append(record(f"position_near_geocentre_{x}", "measure", [cartesian, "WGS84"]))
+
 args.out.write_text(json.dumps({"casa_version": version_string(), "frame": frame, "cases": cases},
                                indent=2, allow_nan=False) + "\n")
 print(len(cases), "CASA offset cases")

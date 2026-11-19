@@ -291,14 +291,22 @@ fn casacore_itrf_to_wgs84([x, y, z]: [f64; 3]) -> Result<[f64; 3], MeasureError>
     const FLATTENING: f64 = 1.0 / 298.257_223_563;
     const ECCENTRICITY_SQUARED: f64 = FLATTENING * (2.0 - FLATTENING);
     let radius = (x * x + y * y + z * z).sqrt();
+    if !radius.is_finite() {
+        return Err(MeasureError::ModelError {
+            model: "WGS84",
+            reason: "ITRF position has a non-finite radius".into(),
+        });
+    }
     let longitude = y.atan2(x);
     let mut latitude = if radius == 0.0 {
         0.0
     } else {
-        (z / radius).asin()
+        (z / radius).clamp(-1.0, 1.0).asin()
     };
     let planar_radius = radius * latitude.cos();
-    for _ in 0..128 {
+    // For finite positions the iteration is monotone and bounded by ±π/2.
+    // Near the equatorial evolute convergence can take many steps.
+    loop {
         let previous = latitude;
         let sine = previous.sin();
         let normal_radius = CASACORE_WGS84_A_M / (1.0 - ECCENTRICITY_SQUARED * sine * sine).sqrt();
@@ -317,10 +325,6 @@ fn casacore_itrf_to_wgs84([x, y, z]: [f64; 3]) -> Result<[f64; 3], MeasureError>
             return Ok([longitude, latitude, height]);
         }
     }
-    Err(MeasureError::ModelError {
-        model: "WGS84",
-        reason: "ITRF to WGS84 conversion did not converge".into(),
-    })
 }
 
 fn casacore_wgs84_to_itrf(longitude_rad: f64, latitude_rad: f64, height_m: f64) -> [f64; 3] {

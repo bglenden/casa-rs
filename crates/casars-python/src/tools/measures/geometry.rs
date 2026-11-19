@@ -130,25 +130,8 @@ pub(super) fn touvw(
             3,
         ));
     };
-    let raw = direction.measure;
-    let result = if direction.origin.is_some() {
-        let frame = match super::frame::native_frame(state)? {
-            Ok(frame) => frame,
-            Err(error) => return Ok(failed_tuple(lines, error, 3)),
-        };
-        super::frame::convert_direction(
-            state,
-            frame.direction().expect("explicit frame direction"),
-            DirectionRef::J2000,
-            &frame,
-        )
-        .map(|direction| {
-            Measure::from_casa(&crate::convert::holder::CasaMeasure::Direction(direction))
-        })
-        .map_err(|error| error.to_string())
-    } else {
-        super::frame::convert(state, &raw, "J2000")?
-    };
+    let direction = direction.absolute;
+    let result = super::frame::convert(state, &direction, "J2000")?;
     let direction = match result {
         Ok(direction) => direction,
         Err(error) => return Ok(failed_tuple(lines, error, 3)),
@@ -208,7 +191,7 @@ impl Conversion {
         target: &'static str,
     ) -> PyResult<Result<Self, String>> {
         let frame = match super::frame::native_frame(state)? {
-            Ok(frame) => super::frame::with_comet_direction(state, frame),
+            Ok(frame) => super::frame::with_resolved_direction(state, frame),
             Err(error) => return Ok(Err(error)),
         };
         Ok((|| {
