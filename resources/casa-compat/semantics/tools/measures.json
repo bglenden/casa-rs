@@ -648,9 +648,9 @@
   },
   "spectral-casa": {
    "kind": "CASA 6.7.6.14 scalar/vector/offset comparisons and release performance",
-   "state": "measured",
+   "state": "passed",
    "scope": "Six spectral methods and their shared query/frame/offset paths; full measures acceptance remains open.",
-   "result": "526 independently captured CASA cases, including scalar controls for CASA vector data loss and an isolated redefined-Hz regression; three native cyclic-input safety regressions. Final integrated gates and source-pinned release benchmark are pending.",
+   "result": "526 CASA 6.7.6.14 cases plus 3 isolated safety regressions pass; 1588 affected Python tests and 61 Rust/provider tests pass. All 12 release benchmark cases are faster than CASA (minimum 5.1457x); vector helper comparisons explicitly use complete scalar controls where CASA truncates.",
    "links": [
     "tools/simulation/measures_spectral_oracle.py",
     "tools/simulation/measures_spectral_benchmark.py",
@@ -658,7 +658,11 @@
     "crates/casars-python/python/tests/test_measures_spectral.py",
     "docs/CASA (C++) bugs.md"
    ],
-   "source_revision": "3f8e6726c60d3ff270d57063befec54302d1fe07"
+   "source_revision": "3f8e6726c60d3ff270d57063befec54302d1fe07",
+   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+   "revision": "66f34458e3df5fbcbe6626aa6fa136eedce30787",
+   "command": "python -m pytest -q crates/casars-python/python/tests/test_measures_spectral.py; tools/simulation/measures_spectral_benchmark.py --backend casa/casars --repeat 1000 --samples 7",
+   "receipt": "resources/casa-compat/evidence/me-spectral-equivalence-20261119.json"
   }
  }
 }
