@@ -9656,7 +9656,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "output_policy",
-      "documentation": {"summary": "Write the flags the automatic modes compute to the MeasurementSet.", "details": null, "examples": ["true"]},
+      "documentation": {"summary": "Internal flag-write argument. Flagdata derives persistence from action.", "details": null, "examples": ["true"]},
       "persistence_class": "profile"
     },
     {

@@ -968,7 +968,7 @@ def flagdata(
     ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
     ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
     ``flagneartime``, ``flagnearfreq``, ``display``, ``savepars``,
-    ``cmdreason``, ``outfile``, ``overwrite``, ``writeflags``.
+    ``cmdreason``, ``outfile``, ``overwrite``.
     """
     return _call_casa(flagdata, locals())
 

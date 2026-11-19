@@ -1090,7 +1090,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>cmdreason</code> | <code>flagdata.cmdreason@r1</code> | <code>string</code> | <code>""</code>; optional | Output | Reason saved with the flag commands. |
 | <code>outfile</code> | <code>savepars.outfile@r1</code> | <code>string</code> | <code>""</code>; optional | Output | File that receives the saved flag commands; empty for the FLAG_CMD table. |
 | <code>overwrite</code> | <code>savepars.overwrite@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Let savepars replace an existing command file. |
-| <code>writeflags</code> | <code>flagdata.writeflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Write the flags the automatic modes compute to the MeasurementSet. |
+| <code>writeflags</code> | <code>flagdata.writeflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Internal flag-write argument. Flagdata derives persistence from action. |
 
 <a id="surface-flagmanager"></a>
 

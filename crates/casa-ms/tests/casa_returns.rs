@@ -403,10 +403,12 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
     let outputvis = workspace.path().join("out.ms");
     for (binary, surface, values, parameter) in [
         (FLAGDATA, "flagdata", json!({"mode": "shadow"}), "mode"),
+        // Routine previews now run. RFlag's calculated thresholds still
+        // need their CASA return and output behavior.
         (
             FLAGDATA,
             "flagdata",
-            json!({"action": "calculate"}),
+            json!({"mode": "rflag", "action": "calculate"}),
             "action",
         ),
         (
